@@ -75,8 +75,6 @@ pub struct WorkspaceInfo {
     pub selected: Vec<SelectedCrate>,
     /// crate_name -> rlib path, for all external (non-workspace) deps
     pub extern_rlibs: HashMap<String, PathBuf>,
-    /// crate_name -> set of direct dep crate names (underscored)
-    pub dep_graph: HashMap<String, Vec<String>>,
 }
 
 pub struct SelectedCrate {
@@ -115,32 +113,9 @@ pub fn load_workspace(manifest_dir: &Path, selected_packages: &[String]) -> Work
     // Build everything and collect ALL non-workspace lib rlibs
     let extern_rlibs = build_and_collect_rlibs(manifest_dir, &ws_pkg_names);
 
-    // Build dep graph: crate_name -> [dep crate names]
-    // Map package IDs to underscored crate names
-    let pkg_id_to_name: HashMap<&str, String> = meta
-        .packages
-        .iter()
-        .map(|p| (p.id.as_str(), p.name.replace('-', "_")))
-        .collect();
-
-    let mut dep_graph: HashMap<String, Vec<String>> = HashMap::new();
-    for node in &meta.resolve.nodes {
-        let Some(name) = pkg_id_to_name.get(node.id.as_str()) else {
-            continue;
-        };
-        let deps: Vec<String> = node
-            .deps
-            .iter()
-            .filter(|d| d.dep_kinds.iter().any(|dk| dk.kind.is_none()))
-            .filter_map(|d| pkg_id_to_name.get(d.pkg.as_str()).cloned())
-            .collect();
-        dep_graph.insert(name.clone(), deps);
-    }
-
     WorkspaceInfo {
         selected,
         extern_rlibs,
-        dep_graph,
     }
 }
 
