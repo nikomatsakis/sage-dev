@@ -32,22 +32,39 @@ maximum control over what work gets done.
 
 ### The stub-crate trick
 
-`rustc_interface` requires a crate to compile. We feed it a trivial one:
+`rustc_interface` requires a crate to compile. We feed it a dynamically
+generated stub with `extern crate` declarations for each direct dep:
 
 ```rust
-// stub/lib.rs
 #![crate_type = "lib"]
+#![allow(unused_extern_crates)]
+extern crate serde;
+extern crate clap;
+// ...
 ```
 
-With `--extern` flags for every transitive dep, `creader` populates `CStore`
-from every rlib. By `after_expansion`, every dep is loaded into `TyCtxt` and
-queryable. Cost is negligible — one line of parsing, empty name resolution.
+The key insight is matching **cargo's own `--extern` pattern**:
+
+- `--extern name=path` for **direct deps only** (not transitive)
+- `-L dependency=<target/debug/deps>` so rustc resolves transitive deps itself
+
+Rustc finds transitive deps by reading each rlib's embedded metadata, which
+records dependencies by hash. It matches the exact rlib in the search path.
+This avoids sysroot version conflicts entirely — rustc never falls back to
+sysroot copies because the hash match is exact.
+
+**Do NOT pass `--extern` for every transitive dep.** This causes E0460 errors
+when a transitive dep also exists in the sysroot with a different hash. Cargo
+doesn't do this and neither should we.
+
+By `after_expansion`, every dep (direct and transitive) is loaded into `TyCtxt`
+and queryable.
 
 ### Pipeline (target state)
 
-1. `cargo metadata` → resolved dep graph + rlib paths
-2. `cargo check` with pinned nightly → ensure rlibs exist
-3. Stub crate + `--extern` flags → `TyCtxt` with all dep metadata
+1. `cargo metadata` → workspace members, resolved dep graph, direct deps
+2. `cargo build --message-format=json` → ensure rlibs exist, collect paths
+3. Stub crate + `-L dependency` + `--extern` (direct only) → `TyCtxt`
 4. Extract dep snapshot into sage's own IR
 5. tree-sitter parse workspace crates
 6. Name resolution against dep snapshot
@@ -58,35 +75,22 @@ queryable. Cost is negligible — one line of parsing, empty name resolution.
 - **Toolchain:** pinned to `nightly-2026-03-15` with `rustc-dev` component
 - **CLI:** `sage (-p CRATE)*` via clap. No `-p` = all workspace members.
 - **Cargo metadata integration:** parses workspace members, resolved dep graph,
-  identifies transitive external deps (excluding proc-macros)
+  identifies direct normal deps of selected crates
 - **Dep building:** shells out to `cargo build --message-format=json`, collects
-  rlib paths for external deps
-- **Stub driver:** generates a temp stub with `extern crate` for each dep,
-  passes `--extern` flags. Loads deps into `TyCtxt` at `after_expansion`.
-  Tolerates partial load failures (sysroot version conflicts) via
-  `catch_fatal_errors`.
+  rlib paths for direct deps
+- **Stub driver:** generates a temp stub with `extern crate` for each direct
+  dep, passes `-L dependency=<deps_dir>` + `--extern` for direct deps only.
+  Loads all deps (direct + transitive) into `TyCtxt` at `after_expansion`.
 - **Dep stats:** walks `tcx.crates(())` + `tcx.module_children()`, counts items
-  by `DefKind`. Self-test: 38 crates, 23K+ items.
+  by `DefKind`. Self-test: 46 crates loaded, 0 errors.
 - **Tree-sitter parsing:** parses workspace `.rs` files, counts AST nodes by
-  kind. Self-test: 2 files, 521 lines, 4794 nodes.
-
-### Known limitations
-
-- Crates that overlap with the sysroot (e.g., `hashbrown`, `regex`, `memchr`)
-  may fail to load due to version conflicts. This is inherent to running a
-  rustc driver with `--extern` flags for crates that also exist in the sysroot.
-  Affects sage-on-sage more than typical target workspaces.
-- Proc-macro crates are excluded from `--extern` (correct — they're host-side
-  dylibs), but their non-proc-macro transitive deps are also excluded (may miss
-  some deps that are shared between proc-macro and normal dep trees).
+  kind. Self-test: 2 files, 460 lines, 4234 nodes.
 
 ## Next steps
 
 1. Design sage's own type IR (owned types decoupled from `'tcx`)
 2. Name resolution for workspace crates against the dep snapshot
 3. Wire up `rustc_next_trait_solver` via `Interner` impl
-4. Improve dep loading: resolve sysroot conflicts by providing complete
-   transitive closure of `--extern` flags
 
 ## Out of scope (for now)
 
