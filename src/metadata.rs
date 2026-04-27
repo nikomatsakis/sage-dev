@@ -56,42 +56,37 @@ pub struct DepKindInfo {
 // --- cargo build artifact message ---
 
 #[derive(Deserialize)]
-pub struct BuildMessage {
-    pub reason: String,
-    pub package_id: Option<String>,
-    pub target: Option<BuildTarget>,
-    pub filenames: Option<Vec<PathBuf>>,
+struct BuildMessage {
+    reason: String,
+    package_id: Option<String>,
+    target: Option<BuildTarget>,
+    filenames: Option<Vec<PathBuf>>,
 }
 
 #[derive(Deserialize)]
-pub struct BuildTarget {
-    pub name: String,
-    pub kind: Vec<String>,
+struct BuildTarget {
+    name: String,
+    kind: Vec<String>,
 }
 
 // --- public API ---
 
 pub struct WorkspaceInfo {
-    pub root: PathBuf,
-    pub target_dir: PathBuf,
     pub selected: Vec<SelectedCrate>,
-    /// crate_name -> rlib path, for all external deps of selected crates
+    /// crate_name -> rlib path, for all external (non-workspace) deps
     pub extern_rlibs: HashMap<String, PathBuf>,
+    /// crate_name -> set of direct dep crate names (underscored)
+    pub dep_graph: HashMap<String, Vec<String>>,
 }
 
 pub struct SelectedCrate {
     pub name: String,
-    pub src_path: PathBuf,
     pub manifest_dir: PathBuf,
 }
 
 pub fn load_workspace(manifest_dir: &Path, selected_packages: &[String]) -> WorkspaceInfo {
     let meta = run_cargo_metadata(manifest_dir);
     let ws_member_ids: HashSet<&str> = meta.workspace_members.iter().map(|s| s.as_str()).collect();
-
-    // Build package lookup
-    let pkg_by_id: HashMap<&str, &Package> =
-        meta.packages.iter().map(|p| (p.id.as_str(), p)).collect();
 
     // Determine selected crates
     let selected: Vec<SelectedCrate> = meta
@@ -100,97 +95,52 @@ pub fn load_workspace(manifest_dir: &Path, selected_packages: &[String]) -> Work
         .filter(|p| ws_member_ids.contains(p.id.as_str()))
         .filter(|p| selected_packages.is_empty() || selected_packages.iter().any(|s| s == &p.name))
         .filter_map(|p| {
-            // Prefer lib target, fall back to first target (bin crates)
-            let target = p
-                .targets
-                .iter()
-                .find(|t| t.kind.iter().any(|k| k == "lib" || k == "proc-macro"))
-                .or_else(|| p.targets.first())?;
+            // Need at least one target
+            p.targets.first()?;
             Some(SelectedCrate {
                 name: p.name.clone(),
-                src_path: target.src_path.clone(),
                 manifest_dir: p.manifest_path.parent().unwrap().to_path_buf(),
             })
         })
         .collect();
 
-    // Collect all external dep package IDs needed by selected crates
-    let selected_ids: HashSet<&str> = meta
+    // Workspace package names (to exclude from --extern)
+    let ws_pkg_names: HashSet<&str> = meta
         .packages
         .iter()
-        .filter(|p| {
-            selected.iter().any(|s| s.name == p.name) && ws_member_ids.contains(p.id.as_str())
-        })
-        .map(|p| p.id.as_str())
+        .filter(|p| ws_member_ids.contains(p.id.as_str()))
+        .map(|p| p.name.as_str())
         .collect();
 
-    let node_by_id: HashMap<&str, &ResolveNode> = meta
-        .resolve
-        .nodes
-        .iter()
-        .map(|n| (n.id.as_str(), n))
-        .collect();
+    // Build everything and collect ALL non-workspace lib rlibs
+    let extern_rlibs = build_and_collect_rlibs(manifest_dir, &ws_pkg_names);
 
-    // Identify proc-macro packages (these are host-side, not target-side)
-    let proc_macro_ids: HashSet<&str> = meta
+    // Build dep graph: crate_name -> [dep crate names]
+    // Map package IDs to underscored crate names
+    let pkg_id_to_name: HashMap<&str, String> = meta
         .packages
         .iter()
-        .filter(|p| {
-            p.targets
-                .iter()
-                .any(|t| t.kind.iter().any(|k| k == "proc-macro"))
-        })
-        .map(|p| p.id.as_str())
+        .map(|p| (p.id.as_str(), p.name.replace('-', "_")))
         .collect();
 
-    let mut extern_pkg_ids: HashSet<&str> = HashSet::new();
-    let mut queue: Vec<&str> = Vec::new();
-
-    // Seed with direct non-workspace, non-proc-macro deps of selected crates
-    for &sel_id in &selected_ids {
-        if let Some(node) = node_by_id.get(sel_id) {
-            for dep in &node.deps {
-                let is_normal = dep.dep_kinds.iter().any(|dk| dk.kind.is_none());
-                if is_normal
-                    && !ws_member_ids.contains(dep.pkg.as_str())
-                    && !proc_macro_ids.contains(dep.pkg.as_str())
-                {
-                    if extern_pkg_ids.insert(&dep.pkg) {
-                        queue.push(&dep.pkg);
-                    }
-                }
-            }
-        }
+    let mut dep_graph: HashMap<String, Vec<String>> = HashMap::new();
+    for node in &meta.resolve.nodes {
+        let Some(name) = pkg_id_to_name.get(node.id.as_str()) else {
+            continue;
+        };
+        let deps: Vec<String> = node
+            .deps
+            .iter()
+            .filter(|d| d.dep_kinds.iter().any(|dk| dk.kind.is_none()))
+            .filter_map(|d| pkg_id_to_name.get(d.pkg.as_str()).cloned())
+            .collect();
+        dep_graph.insert(name.clone(), deps);
     }
-
-    // Transitively collect all external deps (skipping proc-macros)
-    while let Some(pkg_id) = queue.pop() {
-        if let Some(node) = node_by_id.get(pkg_id) {
-            for dep in &node.deps {
-                let is_normal = dep.dep_kinds.iter().any(|dk| dk.kind.is_none());
-                if is_normal
-                    && !proc_macro_ids.contains(dep.pkg.as_str())
-                    && extern_pkg_ids.insert(&dep.pkg)
-                {
-                    queue.push(&dep.pkg);
-                }
-            }
-        }
-    }
-
-    // Build external deps and collect rlib paths
-    let extern_rlibs = build_and_collect_rlibs(
-        manifest_dir,
-        &meta.target_directory,
-        &extern_pkg_ids,
-        &pkg_by_id,
-    );
 
     WorkspaceInfo {
-        root: meta.workspace_root,
-        target_dir: meta.target_directory,
         selected,
         extern_rlibs,
+        dep_graph,
     }
 }
 
@@ -210,18 +160,10 @@ fn run_cargo_metadata(manifest_dir: &Path) -> Metadata {
 
 fn build_and_collect_rlibs(
     manifest_dir: &Path,
-    target_dir: &Path,
-    extern_pkg_ids: &HashSet<&str>,
-    pkg_by_id: &HashMap<&str, &Package>,
+    ws_pkg_names: &HashSet<&str>,
 ) -> HashMap<String, PathBuf> {
-    eprintln!(
-        "sage: building {} external dependencies...",
-        extern_pkg_ids.len()
-    );
+    eprintln!("sage: building dependencies...");
 
-    // Build the whole workspace (deps get built as side effect).
-    // We use `cargo check` which produces .rmeta but not full rlibs.
-    // Actually we need rlibs for --extern, so use `cargo build`.
     let output = Command::new("cargo")
         .args(["build", "--message-format=json"])
         .current_dir(manifest_dir)
@@ -236,12 +178,10 @@ fn build_and_collect_rlibs(
         panic!("cargo build failed");
     }
 
-    // Parse artifact messages to find rlib paths
+    // Collect every non-workspace artifact from the build output.
+    // This gives us the complete transitive closure with consistent versions.
+    // We collect both lib rlibs and proc-macro dylibs.
     let mut rlibs: HashMap<String, PathBuf> = HashMap::new();
-    let wanted_names: HashSet<&str> = extern_pkg_ids
-        .iter()
-        .filter_map(|id| pkg_by_id.get(id).map(|p| p.name.as_str()))
-        .collect();
 
     for line in output.stdout.split(|&b| b == b'\n') {
         if line.is_empty() {
@@ -254,28 +194,36 @@ fn build_and_collect_rlibs(
             continue;
         }
         let Some(target) = &msg.target else { continue };
-        if !target.kind.iter().any(|k| k == "lib") {
+
+        // Skip workspace crates — sage handles those
+        if ws_pkg_names.contains(target.name.as_str()) {
             continue;
         }
+
+        let is_lib = target.kind.iter().any(|k| k == "lib");
+        let is_proc_macro = target.kind.iter().any(|k| k == "proc-macro");
+        if !is_lib && !is_proc_macro {
+            continue;
+        }
+
         let Some(filenames) = &msg.filenames else {
             continue;
         };
-        let Some(rlib) = filenames
-            .iter()
-            .find(|f| f.extension().is_some_and(|e| e == "rlib"))
-        else {
-            continue;
-        };
 
-        // Match by crate name (underscored)
-        let crate_name = target.name.replace('-', "_");
-        if wanted_names.contains(target.name.as_str())
-            || wanted_names
+        // For libs, prefer .rlib; for proc-macros, take the dylib
+        let artifact = if is_lib {
+            filenames
                 .iter()
-                .any(|&n| n.replace('-', "_") == crate_name)
-        {
-            rlibs.insert(crate_name, rlib.clone());
-        }
+                .find(|f| f.extension().is_some_and(|e| e == "rlib"))
+        } else {
+            filenames
+                .iter()
+                .find(|f| f.extension().is_some_and(|e| e == "dylib" || e == "so"))
+        };
+        let Some(artifact) = artifact else { continue };
+
+        let crate_name = target.name.replace('-', "_");
+        rlibs.insert(crate_name, artifact.clone());
     }
 
     rlibs
