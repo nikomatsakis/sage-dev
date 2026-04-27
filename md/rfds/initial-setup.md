@@ -56,19 +56,37 @@ queryable. Cost is negligible — one line of parsing, empty name resolution.
 ## Current state
 
 - **Toolchain:** pinned to `nightly-2026-03-15` with `rustc-dev` component
-- **Stub driver:** working. Implements `Callbacks::after_expansion`, walks all
-  foreign crates via `tcx.crates(())` + `tcx.module_children()`, prints module
-  tree with `DefKind` annotations
-- **Loads sysroot:** 19 crates (std, core, alloc, compiler_builtins, libc, etc.),
-  21K+ items enumerated
-- **No `--extern` plumbing yet** — only sysroot deps are loaded
+- **CLI:** `sage (-p CRATE)*` via clap. No `-p` = all workspace members.
+- **Cargo metadata integration:** parses workspace members, resolved dep graph,
+  identifies transitive external deps (excluding proc-macros)
+- **Dep building:** shells out to `cargo build --message-format=json`, collects
+  rlib paths for external deps
+- **Stub driver:** generates a temp stub with `extern crate` for each dep,
+  passes `--extern` flags. Loads deps into `TyCtxt` at `after_expansion`.
+  Tolerates partial load failures (sysroot version conflicts) via
+  `catch_fatal_errors`.
+- **Dep stats:** walks `tcx.crates(())` + `tcx.module_children()`, counts items
+  by `DefKind`. Self-test: 38 crates, 23K+ items.
+- **Tree-sitter parsing:** parses workspace `.rs` files, counts AST nodes by
+  kind. Self-test: 2 files, 521 lines, 4794 nodes.
+
+### Known limitations
+
+- Crates that overlap with the sysroot (e.g., `hashbrown`, `regex`, `memchr`)
+  may fail to load due to version conflicts. This is inherent to running a
+  rustc driver with `--extern` flags for crates that also exist in the sysroot.
+  Affects sage-on-sage more than typical target workspaces.
+- Proc-macro crates are excluded from `--extern` (correct — they're host-side
+  dylibs), but their non-proc-macro transitive deps are also excluded (may miss
+  some deps that are shared between proc-macro and normal dep trees).
 
 ## Next steps
 
-1. Add `cargo metadata` integration to discover workspace dep rlib paths
-2. Pass `--extern` flags to load real dependencies
-3. Begin designing sage's own type IR (owned types decoupled from `'tcx`)
-4. tree-sitter parsing of workspace `.rs` files
+1. Design sage's own type IR (owned types decoupled from `'tcx`)
+2. Name resolution for workspace crates against the dep snapshot
+3. Wire up `rustc_next_trait_solver` via `Interner` impl
+4. Improve dep loading: resolve sysroot conflicts by providing complete
+   transitive closure of `--extern` flags
 
 ## Out of scope (for now)
 
