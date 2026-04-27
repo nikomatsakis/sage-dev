@@ -34,9 +34,9 @@ fn main() {
     let ws = metadata::load_workspace(&cwd, &cli.p);
 
     eprintln!(
-        "sage: {} workspace crate(s) selected, {} external dep rlibs collected",
+        "sage: {} workspace crate(s) selected, {} direct deps",
         ws.selected.len(),
-        ws.extern_rlibs.len(),
+        ws.direct_dep_rlibs.len(),
     );
 
     if ws.selected.is_empty() {
@@ -44,7 +44,7 @@ fn main() {
         return;
     }
 
-    run_stub_driver(&ws.extern_rlibs);
+    run_stub_driver(&ws.deps_dir, &ws.direct_dep_rlibs);
 
     for krate in &ws.selected {
         parse_workspace_crate(krate);
@@ -124,7 +124,7 @@ fn count_items(
     }
 }
 
-fn run_stub_driver(extern_rlibs: &HashMap<String, PathBuf>) {
+fn run_stub_driver(deps_dir: &Path, direct_dep_rlibs: &HashMap<String, PathBuf>) {
     let sysroot = String::from_utf8(
         std::process::Command::new("rustc")
             .arg("--print=sysroot")
@@ -136,60 +136,36 @@ fn run_stub_driver(extern_rlibs: &HashMap<String, PathBuf>) {
     .trim()
     .to_string();
 
-    // Generate a stub with `extern crate` for every dep so rustc loads them.
-    // We provide the complete transitive closure from cargo build, so rustc
-    // uses our versions consistently (overriding any sysroot copies).
+    // Generate stub with extern crate for each direct dep
     let stub_dir = std::env::temp_dir().join("sage-stub");
     std::fs::create_dir_all(&stub_dir).unwrap();
     let stub_path = stub_dir.join("lib.rs");
     let mut stub_src = String::from("#![crate_type = \"lib\"]\n#![allow(unused_extern_crates)]\n");
-    for name in extern_rlibs.keys() {
+    for name in direct_dep_rlibs.keys() {
         stub_src.push_str(&format!("extern crate {name};\n"));
     }
     std::fs::write(&stub_path, &stub_src).unwrap();
 
+    // Match cargo's pattern:
+    //   -L dependency=<target/debug/deps>   (search path for transitive deps)
+    //   --extern name=<path>                (only direct deps)
     let mut args: Vec<String> = vec![
         "sage".into(),
         stub_path.to_string_lossy().into_owned(),
         "--edition=2021".into(),
         "--crate-type=lib".into(),
         format!("--sysroot={sysroot}"),
+        format!("-Ldependency={}", deps_dir.display()),
     ];
 
-    for (name, path) in extern_rlibs {
+    for (name, path) in direct_dep_rlibs {
         args.push(format!("--extern={name}={}", path.display()));
     }
 
     let mut driver = SageDriver;
-    // Suppress rustc's error output — we expect some errors from sysroot
-    // version conflicts and handle them gracefully via catch_fatal_errors.
-    let saved_stderr = suppress_stderr();
     let _ = rustc_driver::catch_fatal_errors(|| {
         rustc_driver::run_compiler(&args, &mut driver);
     });
-    restore_stderr(saved_stderr);
-}
-
-#[cfg(unix)]
-fn suppress_stderr() -> i32 {
-    use std::os::unix::io::AsRawFd;
-    unsafe {
-        let saved = libc::dup(2);
-        if let Ok(devnull) = std::fs::File::open("/dev/null") {
-            libc::dup2(devnull.as_raw_fd(), 2);
-        }
-        saved
-    }
-}
-
-#[cfg(unix)]
-fn restore_stderr(saved: i32) {
-    if saved >= 0 {
-        unsafe {
-            libc::dup2(saved, 2);
-            libc::close(saved);
-        }
-    }
 }
 
 // --- tree-sitter workspace parsing ---

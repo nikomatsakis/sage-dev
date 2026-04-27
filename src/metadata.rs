@@ -4,53 +4,49 @@ use std::process::Command;
 
 use serde::Deserialize;
 
-// --- cargo metadata types (only the fields we need) ---
-
 #[derive(Deserialize)]
-pub struct Metadata {
-    pub packages: Vec<Package>,
-    pub workspace_members: Vec<String>,
-    pub resolve: Resolve,
-    pub target_directory: PathBuf,
-    pub workspace_root: PathBuf,
+struct Metadata {
+    packages: Vec<Package>,
+    workspace_members: Vec<String>,
+    resolve: Resolve,
+    target_directory: PathBuf,
 }
 
 #[derive(Deserialize)]
-pub struct Package {
-    pub id: String,
-    pub name: String,
-    pub manifest_path: PathBuf,
-    pub targets: Vec<Target>,
+struct Package {
+    id: String,
+    name: String,
+    manifest_path: PathBuf,
+    targets: Vec<Target>,
 }
 
 #[derive(Deserialize)]
-pub struct Target {
-    pub name: String,
-    pub kind: Vec<String>,
-    pub src_path: PathBuf,
+struct Target {
+    name: String,
+    kind: Vec<String>,
 }
 
 #[derive(Deserialize)]
-pub struct Resolve {
-    pub nodes: Vec<ResolveNode>,
+struct Resolve {
+    nodes: Vec<ResolveNode>,
 }
 
 #[derive(Deserialize)]
-pub struct ResolveNode {
-    pub id: String,
-    pub deps: Vec<ResolveDep>,
+struct ResolveNode {
+    id: String,
+    deps: Vec<ResolveDep>,
 }
 
 #[derive(Deserialize)]
-pub struct ResolveDep {
-    pub name: String,
-    pub pkg: String,
-    pub dep_kinds: Vec<DepKindInfo>,
+struct ResolveDep {
+    name: String,
+    pkg: String,
+    dep_kinds: Vec<DepKindInfo>,
 }
 
 #[derive(Deserialize)]
-pub struct DepKindInfo {
-    pub kind: Option<String>,
+struct DepKindInfo {
+    kind: Option<String>,
 }
 
 // --- cargo build artifact message ---
@@ -58,7 +54,6 @@ pub struct DepKindInfo {
 #[derive(Deserialize)]
 struct BuildMessage {
     reason: String,
-    package_id: Option<String>,
     target: Option<BuildTarget>,
     filenames: Option<Vec<PathBuf>>,
 }
@@ -73,8 +68,10 @@ struct BuildTarget {
 
 pub struct WorkspaceInfo {
     pub selected: Vec<SelectedCrate>,
-    /// crate_name -> rlib path, for all external (non-workspace) deps
-    pub extern_rlibs: HashMap<String, PathBuf>,
+    /// -L dependency search path (target/debug/deps)
+    pub deps_dir: PathBuf,
+    /// Direct dep crate_name -> rlib path (only direct deps of selected crates)
+    pub direct_dep_rlibs: HashMap<String, PathBuf>,
 }
 
 pub struct SelectedCrate {
@@ -86,6 +83,9 @@ pub fn load_workspace(manifest_dir: &Path, selected_packages: &[String]) -> Work
     let meta = run_cargo_metadata(manifest_dir);
     let ws_member_ids: HashSet<&str> = meta.workspace_members.iter().map(|s| s.as_str()).collect();
 
+    let pkg_by_id: HashMap<&str, &Package> =
+        meta.packages.iter().map(|p| (p.id.as_str(), p)).collect();
+
     // Determine selected crates
     let selected: Vec<SelectedCrate> = meta
         .packages
@@ -93,7 +93,6 @@ pub fn load_workspace(manifest_dir: &Path, selected_packages: &[String]) -> Work
         .filter(|p| ws_member_ids.contains(p.id.as_str()))
         .filter(|p| selected_packages.is_empty() || selected_packages.iter().any(|s| s == &p.name))
         .filter_map(|p| {
-            // Need at least one target
             p.targets.first()?;
             Some(SelectedCrate {
                 name: p.name.clone(),
@@ -102,20 +101,44 @@ pub fn load_workspace(manifest_dir: &Path, selected_packages: &[String]) -> Work
         })
         .collect();
 
-    // Workspace package names (to exclude from --extern)
-    let ws_pkg_names: HashSet<&str> = meta
+    // Find direct (normal) deps of selected workspace crates
+    let selected_ids: HashSet<&str> = meta
         .packages
         .iter()
-        .filter(|p| ws_member_ids.contains(p.id.as_str()))
-        .map(|p| p.name.as_str())
+        .filter(|p| {
+            ws_member_ids.contains(p.id.as_str()) && selected.iter().any(|s| s.name == p.name)
+        })
+        .map(|p| p.id.as_str())
         .collect();
 
-    // Build everything and collect ALL non-workspace lib rlibs
-    let extern_rlibs = build_and_collect_rlibs(manifest_dir, &ws_pkg_names);
+    let node_by_id: HashMap<&str, &ResolveNode> = meta
+        .resolve
+        .nodes
+        .iter()
+        .map(|n| (n.id.as_str(), n))
+        .collect();
+
+    let mut direct_dep_names: HashSet<String> = HashSet::new();
+    for &sel_id in &selected_ids {
+        if let Some(node) = node_by_id.get(sel_id) {
+            for dep in &node.deps {
+                let is_normal = dep.dep_kinds.iter().any(|dk| dk.kind.is_none());
+                if is_normal && !ws_member_ids.contains(dep.pkg.as_str()) {
+                    // Use the `name` field — this is the extern crate name cargo uses
+                    direct_dep_names.insert(dep.name.replace('-', "_"));
+                }
+            }
+        }
+    }
+
+    // Build and collect rlib paths for direct deps only
+    let deps_dir = meta.target_directory.join("debug/deps");
+    let direct_dep_rlibs = build_and_collect_direct_deps(manifest_dir, &direct_dep_names);
 
     WorkspaceInfo {
         selected,
-        extern_rlibs,
+        deps_dir,
+        direct_dep_rlibs,
     }
 }
 
@@ -133,9 +156,9 @@ fn run_cargo_metadata(manifest_dir: &Path) -> Metadata {
     serde_json::from_slice(&output.stdout).expect("failed to parse cargo metadata")
 }
 
-fn build_and_collect_rlibs(
+fn build_and_collect_direct_deps(
     manifest_dir: &Path,
-    ws_pkg_names: &HashSet<&str>,
+    direct_dep_names: &HashSet<String>,
 ) -> HashMap<String, PathBuf> {
     eprintln!("sage: building dependencies...");
 
@@ -153,9 +176,6 @@ fn build_and_collect_rlibs(
         panic!("cargo build failed");
     }
 
-    // Collect every non-workspace artifact from the build output.
-    // This gives us the complete transitive closure with consistent versions.
-    // We collect both lib rlibs and proc-macro dylibs.
     let mut rlibs: HashMap<String, PathBuf> = HashMap::new();
 
     for line in output.stdout.split(|&b| b == b'\n') {
@@ -169,9 +189,9 @@ fn build_and_collect_rlibs(
             continue;
         }
         let Some(target) = &msg.target else { continue };
+        let crate_name = target.name.replace('-', "_");
 
-        // Skip workspace crates — sage handles those
-        if ws_pkg_names.contains(target.name.as_str()) {
+        if !direct_dep_names.contains(&crate_name) {
             continue;
         }
 
@@ -184,8 +204,6 @@ fn build_and_collect_rlibs(
         let Some(filenames) = &msg.filenames else {
             continue;
         };
-
-        // For libs, prefer .rlib; for proc-macros, take the dylib
         let artifact = if is_lib {
             filenames
                 .iter()
@@ -195,10 +213,9 @@ fn build_and_collect_rlibs(
                 .iter()
                 .find(|f| f.extension().is_some_and(|e| e == "dylib" || e == "so"))
         };
-        let Some(artifact) = artifact else { continue };
-
-        let crate_name = target.name.replace('-', "_");
-        rlibs.insert(crate_name, artifact.clone());
+        if let Some(artifact) = artifact {
+            rlibs.insert(crate_name, artifact.clone());
+        }
     }
 
     rlibs
