@@ -49,8 +49,6 @@ struct DepKindInfo {
     kind: Option<String>,
 }
 
-// --- cargo build artifact message ---
-
 #[derive(Deserialize)]
 struct BuildMessage {
     reason: String,
@@ -68,9 +66,7 @@ struct BuildTarget {
 
 pub struct WorkspaceInfo {
     pub selected: Vec<SelectedCrate>,
-    /// -L dependency search path (target/debug/deps)
     pub deps_dir: PathBuf,
-    /// Direct dep crate_name -> rlib path (only direct deps of selected crates)
     pub direct_dep_rlibs: HashMap<String, PathBuf>,
 }
 
@@ -79,14 +75,74 @@ pub struct SelectedCrate {
     pub manifest_dir: PathBuf,
 }
 
+/// Get the sysroot for sage's own embedded rustc.
+/// We derive this from the DYLD_FALLBACK_LIBRARY_PATH or by finding the
+/// rustc_driver dylib that we're linked against.
+pub fn our_sysroot() -> String {
+    // The most reliable way: look at where our rustc_driver dylib lives.
+    // It's in <sysroot>/lib/librustc_driver-*.dylib
+    // We can find it via DYLD_FALLBACK_LIBRARY_PATH which cargo sets for us,
+    // or we can just use the compile-time known toolchain.
+    //
+    // Simplest correct approach: use env SYSROOT if set, otherwise derive
+    // from the known toolchain path.
+    if let Ok(s) = std::env::var("SAGE_SYSROOT") {
+        return s;
+    }
+
+    // Try to find our sysroot from the dylib fallback path
+    if let Ok(paths) = std::env::var("DYLD_FALLBACK_LIBRARY_PATH") {
+        for path in paths.split(':') {
+            let p = Path::new(path);
+            // <sysroot>/lib -> <sysroot>
+            if p.join("librustc_driver-b8aea76aae5b2f7f.dylib").exists() {
+                if let Some(sysroot) = p.parent() {
+                    return sysroot.to_string_lossy().to_string();
+                }
+            }
+        }
+    }
+
+    // Fallback: known toolchain
+    let home = std::env::var("HOME").unwrap_or_default();
+    let candidate = format!(
+        "{home}/.rustup/toolchains/nightly-2026-03-15-{}-{}/",
+        std::env::consts::ARCH,
+        match std::env::consts::OS {
+            "macos" => "apple-darwin",
+            "linux" => "unknown-linux-gnu",
+            "windows" => "pc-windows-msvc",
+            os => os,
+        }
+    );
+    if Path::new(&candidate).exists() {
+        return candidate.trim_end_matches('/').to_string();
+    }
+
+    // Last resort
+    String::from_utf8(
+        Command::new("rustc")
+            .arg("--print=sysroot")
+            .output()
+            .expect("rustc not found")
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_string()
+}
+
+/// Get the path to the rustc binary in sage's sysroot.
+/// This is the exact rustc linked into sage — using it for cargo build
+/// guarantees rlib version compatibility.
+pub fn our_rustc() -> PathBuf {
+    Path::new(&our_sysroot()).join("bin/rustc")
+}
+
 pub fn load_workspace(manifest_dir: &Path, selected_packages: &[String]) -> WorkspaceInfo {
     let meta = run_cargo_metadata(manifest_dir);
     let ws_member_ids: HashSet<&str> = meta.workspace_members.iter().map(|s| s.as_str()).collect();
 
-    let pkg_by_id: HashMap<&str, &Package> =
-        meta.packages.iter().map(|p| (p.id.as_str(), p)).collect();
-
-    // Determine selected crates
     let selected: Vec<SelectedCrate> = meta
         .packages
         .iter()
@@ -101,7 +157,6 @@ pub fn load_workspace(manifest_dir: &Path, selected_packages: &[String]) -> Work
         })
         .collect();
 
-    // Find direct (normal) deps of selected workspace crates
     let selected_ids: HashSet<&str> = meta
         .packages
         .iter()
@@ -124,14 +179,12 @@ pub fn load_workspace(manifest_dir: &Path, selected_packages: &[String]) -> Work
             for dep in &node.deps {
                 let is_normal = dep.dep_kinds.iter().any(|dk| dk.kind.is_none());
                 if is_normal && !ws_member_ids.contains(dep.pkg.as_str()) {
-                    // Use the `name` field — this is the extern crate name cargo uses
                     direct_dep_names.insert(dep.name.replace('-', "_"));
                 }
             }
         }
     }
 
-    // Build and collect rlib paths for direct deps only
     let deps_dir = meta.target_directory.join("debug/deps");
     let direct_dep_rlibs = build_and_collect_direct_deps(manifest_dir, &direct_dep_names);
 
@@ -142,40 +195,10 @@ pub fn load_workspace(manifest_dir: &Path, selected_packages: &[String]) -> Work
     }
 }
 
-pub fn our_toolchain() -> String {
-    // Extract toolchain name from the sysroot of the rustc that compiled sage.
-    // sage is always compiled with the pinned nightly, so this is reliable.
-    let output = std::process::Command::new("rustup")
-        .args(["run", "nightly-2026-03-15", "rustc", "--print=sysroot"])
-        .output();
-    if let Ok(output) = output {
-        let sysroot = String::from_utf8_lossy(&output.stdout);
-        let sysroot = sysroot.trim();
-        if let Some(name) = sysroot.rsplit('/').next() {
-            // "nightly-2026-03-15-aarch64-apple-darwin" -> "nightly-2026-03-15"
-            if let Some(idx) = name
-                .find("-aarch64")
-                .or_else(|| name.find("-x86_64"))
-                .or_else(|| name.find("-i686"))
-            {
-                return name[..idx].to_string();
-            }
-        }
-    }
-    "nightly-2026-03-15".to_string()
-}
-
-fn cargo_command(manifest_dir: &Path) -> Command {
-    let toolchain = our_toolchain();
-    let mut cmd = Command::new("rustup");
-    cmd.args(["run", &toolchain, "cargo"]);
-    cmd.current_dir(manifest_dir);
-    cmd
-}
-
 fn run_cargo_metadata(manifest_dir: &Path) -> Metadata {
-    let output = cargo_command(manifest_dir)
+    let output = Command::new("cargo")
         .args(["metadata", "--format-version", "1"])
+        .current_dir(manifest_dir)
         .output()
         .expect("failed to run cargo metadata");
     assert!(
@@ -192,8 +215,12 @@ fn build_and_collect_direct_deps(
 ) -> HashMap<String, PathBuf> {
     eprintln!("sage: building dependencies...");
 
-    let output = cargo_command(manifest_dir)
+    // Use RUSTC to force cargo to use the exact same rustc that's linked into sage.
+    // This guarantees rlib metadata version compatibility.
+    let output = Command::new("cargo")
         .args(["build", "--message-format=json"])
+        .env("RUSTC", our_rustc())
+        .current_dir(manifest_dir)
         .output()
         .expect("failed to run cargo build");
 

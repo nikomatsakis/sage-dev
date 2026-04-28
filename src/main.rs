@@ -20,7 +20,11 @@ use rustc_middle::ty::TyCtxt;
 use rustc_span::def_id::CRATE_DEF_INDEX;
 
 #[derive(Parser)]
-#[command(name = "sage", about = "Fast Rust analysis tool")]
+#[command(
+    name = "cargo-sage",
+    bin_name = "cargo sage",
+    about = "Fast Rust analysis tool"
+)]
 struct Cli {
     /// Select workspace crates to analyze (default: all)
     #[arg(short, long = "package", value_name = "CRATE")]
@@ -125,22 +129,7 @@ fn count_items(
 }
 
 fn run_stub_driver(deps_dir: &Path, direct_dep_rlibs: &HashMap<String, PathBuf>) {
-    // Get sysroot for our pinned nightly (not whatever rustc is on PATH)
-    let sysroot = String::from_utf8(
-        std::process::Command::new("rustup")
-            .args([
-                "run",
-                &metadata::our_toolchain(),
-                "rustc",
-                "--print=sysroot",
-            ])
-            .output()
-            .expect("rustc not found")
-            .stdout,
-    )
-    .unwrap()
-    .trim()
-    .to_string();
+    let sysroot = metadata::our_sysroot();
 
     // Generate stub with extern crate for each direct dep
     let stub_dir = std::env::temp_dir().join("sage-stub");
