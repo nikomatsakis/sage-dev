@@ -3,27 +3,11 @@ name: salsa
 description: "Guide to salsa 0.26 incremental computation framework. Use when designing or implementing Salsa-based databases, tracked structs, interned types, tracked functions, or accumulators. Covers the full API: #[salsa::input], #[salsa::tracked], #[salsa::interned], #[salsa::db], #[salsa::accumulator], field tracking, the Update trait, lifecycle of tracked structs, and performance tuning. Use whenever the user is working with salsa or designing an incremental IR."
 ---
 
-# Salsa 0.26 — Incremental Computation Framework
+# Salsa 0.26 — Incremental Computation
 
-Version: 0.26.1. Used by rust-analyzer. Crate: `salsa` on crates.io.
+## Database Setup
 
-## Core concept
-
-Salsa memoizes function results and tracks dependencies. When inputs change,
-only functions whose dependencies changed are re-executed. Everything else
-returns cached results.
-
-```
-Input changes → Salsa checks which tracked functions depend on it
-             → Re-executes only those → Compares results
-             → If result unchanged, downstream stays cached
-```
-
-## Database
-
-Every Salsa program needs a database struct. It stores all inputs, tracked
-structs, interned values, and memoized results.
-
+**DO:** Always start with this pattern
 ```rust
 #[salsa::db]
 #[derive(Clone, Default)]
@@ -35,88 +19,56 @@ pub struct Database {
 impl salsa::Database for Database {}
 ```
 
-All Salsa structs are just newtyped integer IDs (`salsa::Id`). The actual data
-lives in the database. You need `&db` to read fields, `&mut db` to modify inputs.
+**DON'T:** Forget `Clone` — salsa requires it for snapshots.
 
-## Input structs — `#[salsa::input]`
+## Input Structs — Root Data
 
-Root mutable data. The starting point of all computation.
-
+**DO:** Use for mutable root data only.
 ```rust
 #[salsa::input]
 struct SourceFile {
-    #[returns(ref)]
-    path: String,
-    #[returns(ref)]
+    #[returns(ref)]  // avoid cloning large values
     contents: String,
 }
 ```
 
-- **Create:** `SourceFile::new(&db, path, contents)` — takes `&db` (not `&mut`)
-- **Read:** `file.path(db)` returns `&String` (because `#[returns(ref)]`)
-- **Write:** `file.set_contents(&mut db).to(new_value)` — requires `&mut db`, bumps revision
-- **Durability:** `file.set_contents(&mut db).with_durability(Durability::LOW).to(value)`
+**DON'T:** Try to mutate inputs inside tracked functions — use `&mut db` only outside.
 
-Inputs are the ONLY things that can be mutated. Everything else is derived.
+- **Create:** `SourceFile::new(&db, contents)` — takes `&db`, not `&mut`
+- **Read:** `file.contents(db)` — returns `&String` with `#[returns(ref)]`
+- **Write:** `file.set_contents(&mut db).to(new_value)` — requires `&mut db`
 
-## Tracked functions — `#[salsa::tracked]`
+## Tracked Functions — Memoized Computation
 
-Memoized pure functions. The core of incremental computation.
-
+**DO:** Follow this signature pattern.
 ```rust
 #[salsa::tracked]
-fn parse(db: &dyn salsa::Database, file: SourceFile) -> ItemTree<'_> {
-    let contents = file.contents(db);  // creates dependency on file.contents
-    // ... parse ...
-    ItemTree::new(db, items)
+fn parse(db: &dyn Database, file: SourceFile) -> ItemTree<'_> {
+    let text = file.contents(db);  // creates dependency on file.contents
+    ItemTree::new(db, parse_items(text))
 }
 ```
 
-**Rules:**
-- First arg must be `&dyn SomeDatabase` (read-only — cannot mutate inputs)
-- Second arg should be a Salsa struct (input, tracked, or interned)
-- Additional args are allowed but discouraged (less efficient caching)
-- Return type must implement `Clone` (or use `#[returns(ref)]`)
-- Must be deterministic — same inputs → same output
+**DON'T:**
+- Take `&mut db` — tracked functions are read-only
+- Add extra parameters beyond the salsa struct — hurts caching
+- Return non-Clone types without `#[returns(ref)]`
 
 **Options:**
-- `#[salsa::tracked(returns(ref))]` — return `&T` from cache instead of cloning
-- `#[salsa::tracked(lru = 128)]` — LRU cache eviction
-- `#[salsa::tracked(specify)]` — allow externally specifying the result for a key
+- `#[salsa::tracked(returns(ref))]` — return `&T` instead of cloning
+- `#[salsa::tracked(lru = 128)]` — LRU cache eviction for long-running processes
+- `#[salsa::tracked(specify)]` — allow external specification for builtins
 
-**Re-execution logic:** When a dependency changes, Salsa re-executes the function.
-If the new result equals the old result (via `Update` trait / `PartialEq`), downstream
-functions that depend on this result are NOT re-executed. This is "backdating."
+## Tracked Structs — Intermediate Data
 
-## Tracked structs — `#[salsa::tracked]`
-
-Intermediate computed data created inside tracked functions.
-
-```rust
-#[salsa::tracked]
-struct ItemTree<'db> {
-    #[returns(ref)]
-    items: Vec<Item>,
-}
-```
-
-- **Create:** `ItemTree::new(db, items)` — only inside tracked functions
-- **Read:** `tree.items(db)` — returns `&Vec<Item>` (because `#[returns(ref)]`)
-- **Immutable** — no setters. Values are fixed for the revision.
-- **Lifetime:** `'db` ties the struct to the database lifetime
-
-### Field tracking with `#[tracked]`
-
-By default, all fields of a tracked struct are compared as a unit when checking
-for changes. You can opt individual fields into independent tracking:
-
+**DO:** Create inside tracked functions only.
 ```rust
 #[salsa::tracked]
 struct Function<'db> {
-    #[id]
+    #[id]       // stable identity across revisions
     name: Name<'db>,
 
-    #[tracked]
+    #[tracked]  // independent change tracking
     #[returns(ref)]
     signature: Signature,
 
@@ -126,55 +78,17 @@ struct Function<'db> {
 }
 ```
 
-With `#[tracked]` on individual fields:
-- Each field is independently monitored for changes
-- If only `body` changes but `signature` stays the same, functions that only
-  read `signature` are NOT re-executed
-- This is the **incremental firewall** — editing a function body doesn't
-  invalidate callers that only depend on the signature
+**DON'T:** Create tracked structs outside tracked functions — runtime panic.
 
-Without `#[tracked]`, all fields are compared together — any field change
-invalidates all readers.
+**Field annotations:**
+- **`#[tracked]`:** Each field tracked independently. Signature change doesn't invalidate body readers. This is the **incremental firewall**.
+- **Without `#[tracked]`:** All fields compared as a unit — any change invalidates all readers.
+- **`#[id]`:** Match structs by this field across revisions instead of creation order. Use for named entities (functions, structs, modules) that can be reordered.
+- **`#[returns(ref)]`:** Return `&T` from getter instead of cloning.
 
-### `#[id]` fields for stable matching
+## Interned Structs — Fast Equality
 
-When a tracked function is re-executed, tracked structs from the new execution
-are matched against those from the old execution. By default, matching is by
-creation order (first created → first matched).
-
-`#[id]` fields override this — structs are matched by their `#[id]` field values:
-
-```rust
-#[salsa::tracked]
-struct Item<'db> {
-    #[id]
-    name: Name<'db>,  // matched by name across revisions
-    #[tracked]
-    #[returns(ref)]
-    kind: ItemKind,
-}
-```
-
-If items are reordered in the source, `#[id]` ensures the old `foo` matches the
-new `foo` (not whatever happens to be created first). This avoids spurious
-invalidation.
-
-**Use `#[id]` when:** the tracked struct represents a named entity (function,
-struct, module) that can be reordered without semantic change.
-
-### Lifecycle across revisions
-
-1. Tracked function re-executes
-2. New tracked structs are created and matched against old ones (by order or `#[id]`)
-3. Fields are compared — unchanged fields don't invalidate downstream
-4. Old tracked structs with no matching new struct are **deleted**
-5. Deletion cascades: any tracked function that took the deleted struct as input
-   has its memoized result discarded
-
-## Interned structs — `#[salsa::interned]`
-
-Canonical deduplicated values. Same fields → same ID. Fast equality (integer comparison).
-
+**DO:** Use for frequently compared values.
 ```rust
 #[salsa::interned]
 struct Name<'db> {
@@ -183,136 +97,83 @@ struct Name<'db> {
 }
 ```
 
-- **Create:** `Name::new(db, "foo".to_string())` — returns existing ID if same value exists
-- **Equality:** `name1 == name2` is just integer comparison (O(1))
-- **Read:** `name.text(db)` returns `&String`
-- **Use for:** identifiers, paths, type names — anything compared frequently
+Same content → same ID. Equality is O(1) integer comparison.
+Use for: identifiers, paths, type names.
 
-Interned structs don't need `#[id]` — they ARE their own identity.
+## Accumulators — Side Channel Data
 
-## Accumulators — `#[salsa::accumulator]`
-
-Side-channel data collection (diagnostics, warnings).
-
+**DO:** Use for diagnostics and warnings.
 ```rust
 #[salsa::accumulator]
-pub struct Diagnostic(String);
+struct Diagnostic(String);
+
+// Push inside tracked function:
+Diagnostic("type error".to_string()).accumulate(db);
+
+// Collect later:
+let errors = check::accumulated::<Diagnostic>(db, item);
 ```
 
-**Push during tracked function:**
+## The Update Trait
+
+**DO:** Derive `salsa::Update` for types containing salsa IDs (`'db` lifetime).
 ```rust
-#[salsa::tracked]
-fn check(db: &dyn Db, item: Item) {
-    // ...
-    Diagnostic("type mismatch".to_string()).accumulate(db);
+#[derive(Clone, Debug, PartialEq, Eq, salsa::Update)]
+struct Signature<'db> {
+    params: Vec<TypeRef<'db>>,
+    return_type: Option<TypeRef<'db>>,
 }
 ```
 
-**Collect from outside:**
-```rust
-let diagnostics: Vec<Diagnostic> = check::accumulated::<Diagnostic>(db, item);
-```
+**DON'T:** Forget `salsa::Update` on types stored in tracked struct fields — compilation error.
 
-Accumulators are re-collected when the tracked function re-executes. They
-participate in Salsa's incremental tracking.
+## Common Gotchas
 
-## The `Update` trait
+**Runtime panics:**
+- Creating tracked structs outside tracked functions
+- Accessing tracked structs deleted in a previous revision
 
-Salsa uses the `Update` trait to determine if a value has changed. For most
-types, this is `PartialEq`. For types containing Salsa IDs, derive it:
+**Compilation errors:**
+- Missing `salsa::Update` on field types with `'db` lifetime
+- Missing `Clone` on tracked function return types (unless `returns(ref)`)
 
-```rust
-#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
-pub struct Signature {
-    pub params: Vec<TypeRef>,
-    pub return_type: Option<TypeRef>,
-}
-```
+**Subtle bugs:**
+- Not using `#[id]` on named entities → reordering causes spurious recomputation
+- Not using `#[tracked]` on independent fields → body edits invalidate signature readers
 
-**Important:** Types stored in tracked struct fields or returned from tracked
-functions must implement `Update`. Use `#[derive(salsa::Update)]` for types
-that contain Salsa struct IDs (which have a `'db` lifetime).
+## Incremental Firewall Pattern
 
-## Common patterns
-
-### The ItemTree pattern (incremental firewall)
+Separate item skeletons from bodies so body edits don't cascade:
 
 ```rust
-#[salsa::input]
-struct SourceFile { #[returns(ref)] text: String }
+#[salsa::tracked]
+fn file_items(db: &dyn Db, file: SourceFile) -> ItemTree<'_> { ... }
 
 #[salsa::tracked]
-struct ItemTree<'db> {
-    #[returns(ref)]
-    items: Vec<ItemData<'db>>,
-}
-
-#[salsa::tracked]
-struct FunctionItem<'db> {
+struct Function<'db> {
     #[id] name: Name<'db>,
-    #[tracked] #[returns(ref)] params: Vec<Param<'db>>,
-    #[tracked] #[returns(ref)] return_type: Option<TypeRef<'db>>,
-    // NO body — parsed on demand in a separate query
+    #[tracked] #[returns(ref)] signature: Signature<'db>,
+    // NO body — parsed separately
 }
 
 #[salsa::tracked]
-fn file_item_tree(db: &dyn Db, file: SourceFile) -> ItemTree<'_> { ... }
-
-#[salsa::tracked]
-fn function_body(db: &dyn Db, func: FunctionItem<'_>) -> Body<'_> { ... }
+fn function_body(db: &dyn Db, func: Function<'_>) -> Body<'_> { ... }
 ```
 
-Editing a function body → `function_body` re-executes → but `FunctionItem`'s
-`params` and `return_type` haven't changed → callers of those fields are cached.
+Editing a function body → `function_body` re-executes → `Function`'s signature unchanged → callers of signature stay cached.
 
-### Specify pattern (for external/builtin items)
+## Lifecycle Across Revisions
 
-```rust
-#[salsa::tracked(specify)]
-fn item_type(db: &dyn Db, item: Item<'_>) -> Type<'_> {
-    // default: compute from source
-    ...
-}
+1. Tracked function re-executes
+2. New tracked structs matched against old (by `#[id]` or creation order)
+3. Field values compared — unchanged `#[tracked]` fields don't invalidate downstream
+4. Unmatched old structs are **deleted** — dependent cached results discarded
 
-// For builtins:
-let item = Item::new(db, builtin_name);
-item_type::specify(db, item, known_type);
-```
+## Performance Tips
 
-### Database trait pattern (for extensibility)
-
-```rust
-pub trait Db: salsa::Database {
-    // custom methods if needed
-}
-
-#[salsa::db]
-impl Db for MyDatabase {}
-```
-
-Tracked functions take `&dyn Db` so different database implementations can be used.
-
-## Performance notes
-
-- **Interned structs** are cheap to compare (integer equality) — use them for
-  names, paths, anything compared frequently
-- **`#[returns(ref)]`** avoids cloning — use for Vec, String, any large value
-- **`#[tracked]` fields** enable fine-grained invalidation — use on fields that
-  change independently (e.g., signature vs body)
-- **`#[id]` fields** prevent spurious invalidation from reordering — use on
-  named entities
-- **LRU** (`lru = N`) prevents unbounded memory in long-running processes
-- **Durability** hints (`Durability::HIGH`) help Salsa skip checking stable data
-- **Don't intern solver types** (Ty, GenericArgs, etc.) — they churn too much.
-  Use arena allocation for those. (Lesson from rust-analyzer PR #21295/#21307)
-
-## Gotchas
-
-- Tracked structs can ONLY be created inside tracked functions. Creating one
-  outside panics at runtime.
-- `&mut db` is needed to set inputs. Tracked functions only get `&db`.
-- Tracked struct fields with `'db` lifetime types must derive `salsa::Update`.
-- The `inventory` feature (default) enables automatic registration. Without it,
-  you need manual registration via `salsa::plumbing`.
-- Salsa structs are `Copy` (they're just integer IDs). Don't store large data
-  in them directly — store it in the database via fields.
+- **Intern** frequently compared values (names, paths)
+- **`#[returns(ref)]`** for Vec, String, any large value
+- **`#[tracked]` fields** when changes are independent (signature vs body)
+- **`#[id]` fields** for named entities to prevent reorder invalidation
+- **`Durability::HIGH`** for inputs that rarely change (dep metadata)
+- **Don't intern solver types** that churn (Ty, GenericArgs) — use arena allocation
