@@ -94,8 +94,17 @@ pub fn our_sysroot() -> String {
     if let Ok(paths) = std::env::var("DYLD_FALLBACK_LIBRARY_PATH") {
         for path in paths.split(':') {
             let p = Path::new(path);
-            // <sysroot>/lib -> <sysroot>
-            if p.join("librustc_driver-b8aea76aae5b2f7f.dylib").exists() {
+            // <sysroot>/lib contains librustc_driver-*.dylib
+            let has_driver = std::fs::read_dir(p)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .any(|e| {
+                    let name = e.file_name();
+                    let name = name.to_string_lossy();
+                    name.starts_with("librustc_driver-") && name.ends_with(".dylib")
+                });
+            if has_driver {
                 if let Some(sysroot) = p.parent() {
                     return sysroot.to_string_lossy().to_string();
                 }
