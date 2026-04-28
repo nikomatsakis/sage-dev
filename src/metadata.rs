@@ -142,10 +142,40 @@ pub fn load_workspace(manifest_dir: &Path, selected_packages: &[String]) -> Work
     }
 }
 
+pub fn our_toolchain() -> String {
+    // Extract toolchain name from the sysroot of the rustc that compiled sage.
+    // sage is always compiled with the pinned nightly, so this is reliable.
+    let output = std::process::Command::new("rustup")
+        .args(["run", "nightly-2026-03-15", "rustc", "--print=sysroot"])
+        .output();
+    if let Ok(output) = output {
+        let sysroot = String::from_utf8_lossy(&output.stdout);
+        let sysroot = sysroot.trim();
+        if let Some(name) = sysroot.rsplit('/').next() {
+            // "nightly-2026-03-15-aarch64-apple-darwin" -> "nightly-2026-03-15"
+            if let Some(idx) = name
+                .find("-aarch64")
+                .or_else(|| name.find("-x86_64"))
+                .or_else(|| name.find("-i686"))
+            {
+                return name[..idx].to_string();
+            }
+        }
+    }
+    "nightly-2026-03-15".to_string()
+}
+
+fn cargo_command(manifest_dir: &Path) -> Command {
+    let toolchain = our_toolchain();
+    let mut cmd = Command::new("rustup");
+    cmd.args(["run", &toolchain, "cargo"]);
+    cmd.current_dir(manifest_dir);
+    cmd
+}
+
 fn run_cargo_metadata(manifest_dir: &Path) -> Metadata {
-    let output = Command::new("cargo")
+    let output = cargo_command(manifest_dir)
         .args(["metadata", "--format-version", "1"])
-        .current_dir(manifest_dir)
         .output()
         .expect("failed to run cargo metadata");
     assert!(
@@ -162,9 +192,8 @@ fn build_and_collect_direct_deps(
 ) -> HashMap<String, PathBuf> {
     eprintln!("sage: building dependencies...");
 
-    let output = Command::new("cargo")
+    let output = cargo_command(manifest_dir)
         .args(["build", "--message-format=json"])
-        .current_dir(manifest_dir)
         .output()
         .expect("failed to run cargo build");
 

@@ -125,9 +125,15 @@ fn count_items(
 }
 
 fn run_stub_driver(deps_dir: &Path, direct_dep_rlibs: &HashMap<String, PathBuf>) {
+    // Get sysroot for our pinned nightly (not whatever rustc is on PATH)
     let sysroot = String::from_utf8(
-        std::process::Command::new("rustc")
-            .arg("--print=sysroot")
+        std::process::Command::new("rustup")
+            .args([
+                "run",
+                &metadata::our_toolchain(),
+                "rustc",
+                "--print=sysroot",
+            ])
             .output()
             .expect("rustc not found")
             .stdout,
@@ -177,47 +183,185 @@ fn parse_workspace_crate(krate: &metadata::SelectedCrate) {
         .expect("failed to set tree-sitter language");
 
     let rs_files = collect_rs_files(&krate.manifest_dir.join("src"));
-    let mut total_nodes = 0usize;
-    let mut total_lines = 0usize;
-    let mut node_kinds: HashMap<&'static str, usize> = HashMap::new();
+
+    println!(
+        "\n=== Workspace crate: {} ({} files) ===",
+        krate.name,
+        rs_files.len(),
+    );
 
     for path in &rs_files {
         let source = std::fs::read_to_string(path).expect("failed to read file");
-        total_lines += source.lines().count();
         let Some(tree) = parser.parse(&source, None) else {
             continue;
         };
-        count_tree_nodes(tree.root_node(), &mut total_nodes, &mut node_kinds);
-    }
-
-    println!(
-        "\n=== Workspace crate: {} ({} files, {} lines) ===",
-        krate.name,
-        rs_files.len(),
-        total_lines,
-    );
-    println!("  Total AST nodes: {total_nodes}");
-
-    let mut sorted: Vec<_> = node_kinds.into_iter().collect();
-    sorted.sort_by(|a, b| b.1.cmp(&a.1));
-    println!("  Top node kinds:");
-    for (kind, count) in sorted.iter().take(15) {
-        println!("    {kind}: {count}");
+        let rel = path.strip_prefix(&krate.manifest_dir).unwrap_or(path);
+        println!(
+            "\n  --- {} ({} lines) ---",
+            rel.display(),
+            source.lines().count()
+        );
+        print_top_level_items(tree.root_node(), &source, 2);
     }
 }
 
-fn count_tree_nodes<'a>(
-    node: tree_sitter::Node<'a>,
-    total: &mut usize,
-    kinds: &mut HashMap<&'static str, usize>,
-) {
-    *total += 1;
-    let kind: &'static str = unsafe { std::mem::transmute(node.kind()) };
-    *kinds.entry(kind).or_default() += 1;
+fn print_top_level_items(node: tree_sitter::Node<'_>, source: &str, indent: usize) {
+    let pad = "  ".repeat(indent);
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        count_tree_nodes(child, total, kinds);
+        match child.kind() {
+            "use_declaration" => {
+                let text = child_text(child, source);
+                println!("{pad}use {text}");
+            }
+            "function_item" => {
+                let name = named_child_text(child, "name", source).unwrap_or("?");
+                let is_async = child
+                    .children(&mut child.walk())
+                    .any(|c| c.kind() == "async");
+                let attrs = collect_attrs(child, source);
+                let attr_str = if attrs.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {}", attrs.join(" "))
+                };
+                let async_str = if is_async { "async " } else { "" };
+                println!("{pad}{async_str}fn {name}{attr_str}");
+            }
+            "struct_item" => {
+                let name = named_child_text(child, "name", source).unwrap_or("?");
+                let attrs = collect_attrs(child, source);
+                let fields = count_child_kind(child, "field_declaration");
+                let attr_str = if attrs.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {}", attrs.join(" "))
+                };
+                println!("{pad}struct {name} ({fields} fields){attr_str}");
+            }
+            "enum_item" => {
+                let name = named_child_text(child, "name", source).unwrap_or("?");
+                let variants = count_child_kind(child, "enum_variant");
+                let attrs = collect_attrs(child, source);
+                let attr_str = if attrs.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {}", attrs.join(" "))
+                };
+                println!("{pad}enum {name} ({variants} variants){attr_str}");
+            }
+            "impl_item" => {
+                let type_name = named_child_text(child, "type", source).unwrap_or("?");
+                let trait_node = child.child_by_field_name("trait");
+                let methods = count_child_kind(child, "function_item");
+                if let Some(t) = trait_node {
+                    let trait_text = node_text(t, source);
+                    println!("{pad}impl {trait_text} for {type_name} ({methods} methods)");
+                } else {
+                    println!("{pad}impl {type_name} ({methods} methods)");
+                }
+            }
+            "trait_item" => {
+                let name = named_child_text(child, "name", source).unwrap_or("?");
+                let methods = count_child_kind(child, "function_signature_item")
+                    + count_child_kind(child, "function_item");
+                println!("{pad}trait {name} ({methods} methods)");
+            }
+            "type_item" => {
+                let name = named_child_text(child, "name", source).unwrap_or("?");
+                println!("{pad}type {name}");
+            }
+            "const_item" => {
+                let name = named_child_text(child, "name", source).unwrap_or("?");
+                println!("{pad}const {name}");
+            }
+            "static_item" => {
+                let name = named_child_text(child, "name", source).unwrap_or("?");
+                println!("{pad}static {name}");
+            }
+            "mod_item" => {
+                let name = named_child_text(child, "name", source).unwrap_or("?");
+                let has_body = child.child_by_field_name("body").is_some();
+                if has_body {
+                    println!("{pad}mod {name} {{");
+                    if let Some(body) = child.child_by_field_name("body") {
+                        print_top_level_items(body, source, indent + 1);
+                    }
+                    println!("{pad}}}");
+                } else {
+                    println!("{pad}mod {name};");
+                }
+            }
+            "macro_invocation" => {
+                let macro_name = child
+                    .child_by_field_name("macro")
+                    .map(|n| node_text(n, source))
+                    .unwrap_or("?");
+                println!("{pad}{macro_name}!(...)");
+            }
+            "macro_definition" => {
+                let name = named_child_text(child, "name", source).unwrap_or("?");
+                println!("{pad}macro_rules! {name}");
+            }
+            "attribute_item" | "inner_attribute_item" => {
+                // skip standalone attributes, they'll be collected with their item
+            }
+            "line_comment" | "block_comment" => {}
+            _ => {}
+        }
     }
+}
+
+fn node_text<'a>(node: tree_sitter::Node<'_>, source: &'a str) -> &'a str {
+    &source[node.byte_range()]
+}
+
+fn named_child_text<'a>(
+    node: tree_sitter::Node<'_>,
+    field: &str,
+    source: &'a str,
+) -> Option<&'a str> {
+    node.child_by_field_name(field)
+        .map(|n| node_text(n, source))
+}
+
+fn child_text<'a>(node: tree_sitter::Node<'_>, source: &'a str) -> &'a str {
+    // For use declarations, grab everything after "use " and before ";"
+    let text = node_text(node, source);
+    text.trim_start_matches("use ").trim_end_matches(';').trim()
+}
+
+fn collect_attrs(node: tree_sitter::Node<'_>, source: &str) -> Vec<String> {
+    let mut attrs = Vec::new();
+    // Look at preceding siblings for attribute_item nodes
+    let mut sib = node.prev_sibling();
+    while let Some(s) = sib {
+        if s.kind() == "attribute_item" {
+            attrs.push(node_text(s, source).to_string());
+        } else if s.kind() != "line_comment" && s.kind() != "block_comment" {
+            break;
+        }
+        sib = s.prev_sibling();
+    }
+    attrs.reverse();
+    attrs
+}
+
+fn count_child_kind(node: tree_sitter::Node<'_>, kind: &str) -> usize {
+    let mut count = 0;
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == kind {
+            count += 1;
+        }
+        let mut c2 = child.walk();
+        for grandchild in child.children(&mut c2) {
+            if grandchild.kind() == kind {
+                count += 1;
+            }
+        }
+    }
+    count
 }
 
 fn collect_rs_files(dir: &Path) -> Vec<PathBuf> {
