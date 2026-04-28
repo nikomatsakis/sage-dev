@@ -76,76 +76,14 @@ pub struct SelectedCrate {
 }
 
 /// Get the sysroot for sage's own embedded rustc.
-/// We derive this from the DYLD_FALLBACK_LIBRARY_PATH or by finding the
-/// rustc_driver dylib that we're linked against.
-pub fn our_sysroot() -> String {
-    // The most reliable way: look at where our rustc_driver dylib lives.
-    // It's in <sysroot>/lib/librustc_driver-*.dylib
-    // We can find it via DYLD_FALLBACK_LIBRARY_PATH which cargo sets for us,
-    // or we can just use the compile-time known toolchain.
-    //
-    // Simplest correct approach: use env SYSROOT if set, otherwise derive
-    // from the known toolchain path.
-    if let Ok(s) = std::env::var("SAGE_SYSROOT") {
-        return s;
-    }
-
-    // Try to find our sysroot from the dylib fallback path
-    if let Ok(paths) = std::env::var("DYLD_FALLBACK_LIBRARY_PATH") {
-        for path in paths.split(':') {
-            let p = Path::new(path);
-            // <sysroot>/lib contains librustc_driver-*.dylib
-            let has_driver = std::fs::read_dir(p)
-                .into_iter()
-                .flatten()
-                .flatten()
-                .any(|e| {
-                    let name = e.file_name();
-                    let name = name.to_string_lossy();
-                    name.starts_with("librustc_driver-") && name.ends_with(".dylib")
-                });
-            if has_driver {
-                if let Some(sysroot) = p.parent() {
-                    return sysroot.to_string_lossy().to_string();
-                }
-            }
-        }
-    }
-
-    // Fallback: known toolchain
-    let home = std::env::var("HOME").unwrap_or_default();
-    let candidate = format!(
-        "{home}/.rustup/toolchains/nightly-2026-03-15-{}-{}/",
-        std::env::consts::ARCH,
-        match std::env::consts::OS {
-            "macos" => "apple-darwin",
-            "linux" => "unknown-linux-gnu",
-            "windows" => "pc-windows-msvc",
-            os => os,
-        }
-    );
-    if Path::new(&candidate).exists() {
-        return candidate.trim_end_matches('/').to_string();
-    }
-
-    // Last resort
-    String::from_utf8(
-        Command::new("rustc")
-            .arg("--print=sysroot")
-            .output()
-            .expect("rustc not found")
-            .stdout,
-    )
-    .unwrap()
-    .trim()
-    .to_string()
+/// Embedded at compile time by build.rs — always matches the linked rustc.
+pub fn our_sysroot() -> &'static str {
+    env!("SAGE_SYSROOT")
 }
 
 /// Get the path to the rustc binary in sage's sysroot.
-/// This is the exact rustc linked into sage — using it for cargo build
-/// guarantees rlib version compatibility.
 pub fn our_rustc() -> PathBuf {
-    Path::new(&our_sysroot()).join("bin/rustc")
+    Path::new(our_sysroot()).join("bin/rustc")
 }
 
 pub fn load_workspace(manifest_dir: &Path, selected_packages: &[String]) -> WorkspaceInfo {

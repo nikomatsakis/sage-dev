@@ -20,22 +20,29 @@ use rustc_middle::ty::TyCtxt;
 use rustc_span::def_id::CRATE_DEF_INDEX;
 
 #[derive(Parser)]
-#[command(
-    name = "cargo-sage",
-    bin_name = "cargo sage",
-    about = "Fast Rust analysis tool"
-)]
-struct Cli {
-    /// Select workspace crates to analyze (default: all)
-    #[arg(short, long = "package", value_name = "CRATE")]
-    p: Vec<String>,
+#[command(name = "cargo")]
+struct Cargo {
+    #[command(subcommand)]
+    cmd: CargoCmd,
+}
+
+#[derive(clap::Subcommand)]
+enum CargoCmd {
+    /// Fast Rust analysis tool
+    Sage {
+        /// Select workspace crates to analyze (default: all)
+        #[arg(short, long = "package", value_name = "CRATE")]
+        p: Vec<String>,
+    },
 }
 
 fn main() {
-    let cli = Cli::parse();
+    let Cargo {
+        cmd: CargoCmd::Sage { p },
+    } = Cargo::parse();
     let cwd = std::env::current_dir().expect("no cwd");
 
-    let ws = metadata::load_workspace(&cwd, &cli.p);
+    let ws = metadata::load_workspace(&cwd, &p);
 
     eprintln!(
         "sage: {} workspace crate(s) selected, {} direct deps",
