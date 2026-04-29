@@ -1,0 +1,11 @@
+[package]
+name = "sage-stash"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+sage-stash-macros = { path = "../sage-stash-macros" }
+salsa = { version = "0.26.1", optional = true }
+
+[features]
+default = []

@@ -2,14 +2,14 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{DeriveInput, GenericParam, Lifetime, parse_macro_input};
 
-/// Derive `AllocArenaData` for a `Copy` type with at most one lifetime `'db`.
-#[proc_macro_derive(AllocArenaData)]
+/// Derive `AllocStashData` for a `Copy` type with at most one lifetime `'db`.
+#[proc_macro_derive(AllocStashData)]
 pub fn derive_alloc_arena_data(input: TokenStream) -> TokenStream {
     derive_arena_data_impl(input, false)
 }
 
-/// Derive `InternArenaData` for a `Copy + Hash + Eq` type with at most one lifetime `'db`.
-#[proc_macro_derive(InternArenaData)]
+/// Derive `InternStashData` for a `Copy + Hash + Eq` type with at most one lifetime `'db`.
+#[proc_macro_derive(InternStashData)]
 pub fn derive_intern_arena_data(input: TokenStream) -> TokenStream {
     derive_arena_data_impl(input, true)
 }
@@ -67,9 +67,9 @@ fn derive_arena_data_impl(input: TokenStream, intern: bool) -> TokenStream {
     };
 
     let trait_name = if intern {
-        quote! { ::sage_arena::InternArenaData }
+        quote! { ::sage_stash::InternStashData }
     } else {
-        quote! { ::sage_arena::AllocArenaData }
+        quote! { ::sage_stash::AllocStashData }
     };
 
     let ty = if has_lifetime {
@@ -79,7 +79,7 @@ fn derive_arena_data_impl(input: TokenStream, intern: bool) -> TokenStream {
     };
 
     quote! {
-        unsafe impl<'db> ::sage_arena::ArenaData<'db> for #ty {
+        unsafe impl<'db> ::sage_stash::StashData<'db> for #ty {
             fn static_type_id() -> ::core::any::TypeId {
                 ::core::any::TypeId::of::<#static_ty>()
             }

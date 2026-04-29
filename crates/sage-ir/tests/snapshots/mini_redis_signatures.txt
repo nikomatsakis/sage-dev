@@ -1,0 +1,519 @@
+// --- bin/cli.rs ---
+use mini_redis::{clients::Client, DEFAULT_PORT}
+use bytes::Bytes
+use clap::{Parser, Subcommand}
+use std::num::ParseIntError
+use std::str
+use std::time::Duration
+struct Cli {
+  command: Command
+  host: String
+  port: u16
+}
+enum Command {
+  Ping {
+    msg: Option<Bytes>
+  }
+  Get {
+    key: String
+  }
+  Set {
+    key: String
+    value: Bytes
+    expires: Option<Duration>
+  }
+  Publish {
+    channel: String
+    message: Bytes
+  }
+  Subscribe {
+    channels: Vec<String>
+  }
+}
+fn main() -> mini_redis::Result<()>
+fn duration_from_ms_str(src: &str) -> Result<Duration, ParseIntError>
+
+// --- bin/server.rs ---
+use mini_redis::{server, DEFAULT_PORT}
+use clap::Parser
+use tokio::net::TcpListener
+use tokio::signal
+use opentelemetry::global
+use opentelemetry::sdk::trace as sdktrace
+use opentelemetry_aws::trace::XrayPropagator
+use tracing_subscriber::{
+    fmt, layer::SubscriberExt, util::SubscriberInitExt, util::TryInitError, EnvFilter,
+}
+fn main() -> mini_redis::Result<()>
+struct Cli {
+  port: Option<u16>
+}
+fn set_up_logging() -> mini_redis::Result<()>
+fn set_up_logging() -> Result<(), TryInitError>
+
+// --- clients/blocking_client.rs ---
+use bytes::Bytes
+use std::time::Duration
+use tokio::net::ToSocketAddrs
+use tokio::runtime::Runtime
+use pub use crate::clients::Message
+struct BlockingClient {
+  inner: crate::clients::Client
+  rt: Runtime
+}
+struct BlockingSubscriber {
+  inner: crate::clients::Subscriber
+  rt: Runtime
+}
+struct SubscriberIterator {
+  inner: crate::clients::Subscriber
+  rt: Runtime
+}
+impl BlockingClient {
+  fn connect(addr: T) -> crate::Result<BlockingClient>
+  fn get(self: &mut Self, key: &str) -> crate::Result<Option<Bytes>>
+  fn set(self: &mut Self, key: &str, value: Bytes) -> crate::Result<()>
+  fn set_expires(self: &mut Self, key: &str, value: Bytes, expiration: Duration) -> crate::Result<()>
+  fn publish(self: &mut Self, channel: &str, message: Bytes) -> crate::Result<u64>
+  fn subscribe(self: Self, channels: Vec<String>) -> crate::Result<BlockingSubscriber>
+}
+impl BlockingSubscriber {
+  fn get_subscribed(self: &Self) -> &[String; _]
+  fn next_message(self: &mut Self) -> crate::Result<Option<Message>>
+  fn into_iter(self: Self) -> impl Iterator<Item = crate::Result<Message>>
+  fn subscribe(self: &mut Self, channels: &[String; _]) -> crate::Result<()>
+  fn unsubscribe(self: &mut Self, channels: &[String; _]) -> crate::Result<()>
+}
+impl Iterator for SubscriberIterator {
+  type Item = crate::Result<Message>
+  fn next(self: &mut Self) -> Option<crate::Result<Message>>
+}
+
+// --- clients/buffered_client.rs ---
+use crate::clients::Client
+use crate::Result
+use bytes::Bytes
+use tokio::sync::mpsc::{channel, Receiver, Sender}
+use tokio::sync::oneshot
+enum Command {
+  Get
+  Set
+}
+type Message = (Command, oneshot::Sender<Result<Option<Bytes>>>)
+fn run(client: Client, rx: Receiver<Message>)
+struct BufferedClient {
+  tx: Sender<Message>
+}
+impl BufferedClient {
+  fn buffer(client: Client) -> BufferedClient
+  fn get(self: &mut Self, key: &str) -> Result<Option<Bytes>>
+  fn set(self: &mut Self, key: &str, value: Bytes) -> Result<()>
+}
+
+// --- clients/client.rs ---
+use crate::cmd::{Get, Ping, Publish, Set, Subscribe, Unsubscribe}
+use crate::{Connection, Frame}
+use async_stream::try_stream
+use bytes::Bytes
+use std::io::{Error, ErrorKind}
+use std::time::Duration
+use tokio::net::{TcpStream, ToSocketAddrs}
+use tokio_stream::Stream
+use tracing::{debug, instrument}
+struct Client {
+  connection: Connection
+}
+struct Subscriber {
+  client: Client
+  subscribed_channels: Vec<String>
+}
+struct Message {
+  channel: String
+  content: Bytes
+}
+impl Client {
+  fn connect(addr: T) -> crate::Result<Client>
+  fn ping(self: &mut Self, msg: Option<Bytes>) -> crate::Result<Bytes>
+  fn get(self: &mut Self, key: &str) -> crate::Result<Option<Bytes>>
+  fn set(self: &mut Self, key: &str, value: Bytes) -> crate::Result<()>
+  fn set_expires(self: &mut Self, key: &str, value: Bytes, expiration: Duration) -> crate::Result<()>
+  fn set_cmd(self: &mut Self, cmd: Set) -> crate::Result<()>
+  fn publish(self: &mut Self, channel: &str, message: Bytes) -> crate::Result<u64>
+  fn subscribe(self: Self, channels: Vec<String>) -> crate::Result<Subscriber>
+  fn subscribe_cmd(self: &mut Self, channels: &[String; _]) -> crate::Result<()>
+  fn read_response(self: &mut Self) -> crate::Result<Frame>
+}
+impl Subscriber {
+  fn get_subscribed(self: &Self) -> &[String; _]
+  fn next_message(self: &mut Self) -> crate::Result<Option<Message>>
+  fn into_stream(self: Self) -> impl Stream<Item = crate::Result<Message>>
+  fn subscribe(self: &mut Self, channels: &[String; _]) -> crate::Result<()>
+  fn unsubscribe(self: &mut Self, channels: &[String; _]) -> crate::Result<()>
+}
+
+// --- clients/mod.rs ---
+mod client;
+use pub use client::{Client, Message, Subscriber}
+mod blocking_client;
+use pub use blocking_client::BlockingClient
+mod buffered_client;
+use pub use buffered_client::BufferedClient
+
+// --- cmd/get.rs ---
+use crate::{Connection, Db, Frame, Parse}
+use bytes::Bytes
+use tracing::{debug, instrument}
+struct Get {
+  key: String
+}
+impl Get {
+  fn new(key: impl ToString) -> Get
+  fn key(self: &Self) -> &str
+  fn parse_frames(parse: &mut Parse) -> crate::Result<Get>
+  fn apply(self: Self, db: &Db, dst: &mut Connection) -> crate::Result<()>
+  fn into_frame(self: Self) -> Frame
+}
+
+// --- cmd/mod.rs ---
+mod get;
+use pub use get::Get
+mod publish;
+use pub use publish::Publish
+mod set;
+use pub use set::Set
+mod subscribe;
+use pub use subscribe::{Subscribe, Unsubscribe}
+mod ping;
+use pub use ping::Ping
+mod unknown;
+use pub use unknown::Unknown
+use crate::{Connection, Db, Frame, Parse, ParseError, Shutdown}
+enum Command {
+  Get
+  Publish
+  Set
+  Subscribe
+  Unsubscribe
+  Ping
+  Unknown
+}
+impl Command {
+  fn from_frame(frame: Frame) -> crate::Result<Command>
+  fn apply(self: Self, db: &Db, dst: &mut Connection, shutdown: &mut Shutdown) -> crate::Result<()>
+  fn get_name(self: &Self) -> &str
+}
+
+// --- cmd/ping.rs ---
+use crate::{Connection, Frame, Parse, ParseError}
+use bytes::Bytes
+use tracing::{debug, instrument}
+struct Ping {
+  msg: Option<Bytes>
+}
+impl Ping {
+  fn new(msg: Option<Bytes>) -> Ping
+  fn parse_frames(parse: &mut Parse) -> crate::Result<Ping>
+  fn apply(self: Self, dst: &mut Connection) -> crate::Result<()>
+  fn into_frame(self: Self) -> Frame
+}
+
+// --- cmd/publish.rs ---
+use crate::{Connection, Db, Frame, Parse}
+use bytes::Bytes
+struct Publish {
+  channel: String
+  message: Bytes
+}
+impl Publish {
+  fn new(channel: impl ToString, message: Bytes) -> Publish
+  fn parse_frames(parse: &mut Parse) -> crate::Result<Publish>
+  fn apply(self: Self, db: &Db, dst: &mut Connection) -> crate::Result<()>
+  fn into_frame(self: Self) -> Frame
+}
+
+// --- cmd/set.rs ---
+use crate::cmd::{Parse, ParseError}
+use crate::{Connection, Db, Frame}
+use bytes::Bytes
+use std::time::Duration
+use tracing::{debug, instrument}
+struct Set {
+  key: String
+  value: Bytes
+  expire: Option<Duration>
+}
+impl Set {
+  fn new(key: impl ToString, value: Bytes, expire: Option<Duration>) -> Set
+  fn key(self: &Self) -> &str
+  fn value(self: &Self) -> &Bytes
+  fn expire(self: &Self) -> Option<Duration>
+  fn parse_frames(parse: &mut Parse) -> crate::Result<Set>
+  fn apply(self: Self, db: &Db, dst: &mut Connection) -> crate::Result<()>
+  fn into_frame(self: Self) -> Frame
+}
+
+// --- cmd/subscribe.rs ---
+use crate::cmd::{Parse, ParseError, Unknown}
+use crate::{Command, Connection, Db, Frame, Shutdown}
+use bytes::Bytes
+use std::pin::Pin
+use tokio::select
+use tokio::sync::broadcast
+use tokio_stream::{Stream, StreamExt, StreamMap}
+struct Subscribe {
+  channels: Vec<String>
+}
+struct Unsubscribe {
+  channels: Vec<String>
+}
+type Messages = Pin<Box<dyn Stream<Item = Bytes> + Send>>
+impl Subscribe {
+  fn new(channels: Vec<String>) -> Subscribe
+  fn parse_frames(parse: &mut Parse) -> crate::Result<Subscribe>
+  fn apply(self: Self, db: &Db, dst: &mut Connection, shutdown: &mut Shutdown) -> crate::Result<()>
+  fn into_frame(self: Self) -> Frame
+}
+fn subscribe_to_channel(channel_name: String, subscriptions: &mut StreamMap<String, Messages>, db: &Db, dst: &mut Connection) -> crate::Result<()>
+fn handle_command(frame: Frame, subscribe_to: &mut Vec<String>, subscriptions: &mut StreamMap<String, Messages>, dst: &mut Connection) -> crate::Result<()>
+fn make_subscribe_frame(channel_name: String, num_subs: usize) -> Frame
+fn make_unsubscribe_frame(channel_name: String, num_subs: usize) -> Frame
+fn make_message_frame(channel_name: String, msg: Bytes) -> Frame
+impl Unsubscribe {
+  fn new(channels: &[String; _]) -> Unsubscribe
+  fn parse_frames(parse: &mut Parse) -> Result<Unsubscribe, ParseError>
+  fn into_frame(self: Self) -> Frame
+}
+
+// --- cmd/unknown.rs ---
+use crate::{Connection, Frame}
+use tracing::{debug, instrument}
+struct Unknown {
+  command_name: String
+}
+impl Unknown {
+  fn new(key: impl ToString) -> Unknown
+  fn get_name(self: &Self) -> &str
+  fn apply(self: Self, dst: &mut Connection) -> crate::Result<()>
+}
+
+// --- connection.rs ---
+use crate::frame::{self, Frame}
+use bytes::{Buf, BytesMut}
+use std::io::{self, Cursor}
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufWriter}
+use tokio::net::TcpStream
+struct Connection {
+  stream: BufWriter<TcpStream>
+  buffer: BytesMut
+}
+impl Connection {
+  fn new(socket: TcpStream) -> Connection
+  fn read_frame(self: &mut Self) -> crate::Result<Option<Frame>>
+  fn parse_frame(self: &mut Self) -> crate::Result<Option<Frame>>
+  fn write_frame(self: &mut Self, frame: &Frame) -> io::Result<()>
+  fn write_value(self: &mut Self, frame: &Frame) -> io::Result<()>
+  fn write_decimal(self: &mut Self, val: u64) -> io::Result<()>
+}
+
+// --- db.rs ---
+use tokio::sync::{broadcast, Notify}
+use tokio::time::{self, Duration, Instant}
+use bytes::Bytes
+use std::collections::{BTreeSet, HashMap}
+use std::sync::{Arc, Mutex}
+use tracing::debug
+struct DbDropGuard {
+  db: Db
+}
+struct Db {
+  shared: Arc<Shared>
+}
+struct Shared {
+  state: Mutex<State>
+  background_task: Notify
+}
+struct State {
+  entries: HashMap<String, Entry>
+  pub_sub: HashMap<String, broadcast::Sender<Bytes>>
+  expirations: BTreeSet<(Instant, String)>
+  shutdown: bool
+}
+struct Entry {
+  data: Bytes
+  expires_at: Option<Instant>
+}
+impl DbDropGuard {
+  fn new() -> DbDropGuard
+  fn db(self: &Self) -> Db
+}
+impl Drop for DbDropGuard {
+  fn drop(self: &mut Self)
+}
+impl Db {
+  fn new() -> Db
+  fn get(self: &Self, key: &str) -> Option<Bytes>
+  fn set(self: &Self, key: String, value: Bytes, expire: Option<Duration>)
+  fn subscribe(self: &Self, key: String) -> broadcast::Receiver<Bytes>
+  fn publish(self: &Self, key: &str, value: Bytes) -> usize
+  fn shutdown_purge_task(self: &Self)
+}
+impl Shared {
+  fn purge_expired_keys(self: &Self) -> Option<Instant>
+  fn is_shutdown(self: &Self) -> bool
+}
+impl State {
+  fn next_expiration(self: &Self) -> Option<Instant>
+}
+fn purge_expired_tasks(shared: Arc<Shared>)
+
+// --- frame.rs ---
+use bytes::{Buf, Bytes}
+use std::convert::TryInto
+use std::fmt
+use std::io::Cursor
+use std::num::TryFromIntError
+use std::string::FromUtf8Error
+enum Frame {
+  Simple
+  Error
+  Integer
+  Bulk
+  Null
+  Array
+}
+enum Error {
+  Incomplete
+  Other
+}
+impl Frame {
+  fn array() -> Frame
+  fn push_bulk(self: &mut Self, bytes: Bytes)
+  fn push_int(self: &mut Self, value: u64)
+  fn check(src: &mut Cursor<&[u8]>) -> Result<(), Error>
+  fn parse(src: &mut Cursor<&[u8]>) -> Result<Frame, Error>
+  fn to_error(self: &Self) -> crate::Error
+}
+impl PartialEq<&str> for Frame {
+  fn eq(self: &Self, other: &&str) -> bool
+}
+impl fmt::Display for Frame {
+  fn fmt(self: &Self, fmt: &mut fmt::Formatter) -> fmt::Result
+}
+fn peek_u8(src: &mut Cursor<&[u8]>) -> Result<u8, Error>
+fn get_u8(src: &mut Cursor<&[u8]>) -> Result<u8, Error>
+fn skip(src: &mut Cursor<&[u8]>, n: usize) -> Result<(), Error>
+fn get_decimal(src: &mut Cursor<&[u8]>) -> Result<u64, Error>
+fn get_line(src: &mut Cursor<&'a [u8]>) -> Result<&'a [u8], Error>
+impl From<String> for Error {
+  fn from(src: String) -> Error
+}
+impl From<&str> for Error {
+  fn from(src: &str) -> Error
+}
+impl From<FromUtf8Error> for Error {
+  fn from(_src: FromUtf8Error) -> Error
+}
+impl From<TryFromIntError> for Error {
+  fn from(_src: TryFromIntError) -> Error
+}
+impl std::error::Error for Error {
+}
+impl fmt::Display for Error {
+  fn fmt(self: &Self, fmt: &mut fmt::Formatter) -> fmt::Result
+}
+
+// --- lib.rs ---
+mod clients;
+use pub use clients::{BlockingClient, BufferedClient, Client}
+mod cmd;
+use pub use cmd::Command
+mod connection;
+use pub use connection::Connection
+mod frame;
+use pub use frame::Frame
+mod db;
+use db::Db
+use db::DbDropGuard
+mod parse;
+use parse::{Parse, ParseError}
+mod server;
+mod shutdown;
+use shutdown::Shutdown
+const DEFAULT_PORT: u16
+type Error = Box<dyn std::error::Error + Send + Sync>
+type Result = std::result::Result<T, Error>
+
+// --- parse.rs ---
+use crate::Frame
+use bytes::Bytes
+use std::{fmt, str, vec}
+struct Parse {
+  parts: vec::IntoIter<Frame>
+}
+enum ParseError {
+  EndOfStream
+  Other
+}
+impl Parse {
+  fn new(frame: Frame) -> Result<Parse, ParseError>
+  fn next(self: &mut Self) -> Result<Frame, ParseError>
+  fn next_string(self: &mut Self) -> Result<String, ParseError>
+  fn next_bytes(self: &mut Self) -> Result<Bytes, ParseError>
+  fn next_int(self: &mut Self) -> Result<u64, ParseError>
+  fn finish(self: &mut Self) -> Result<(), ParseError>
+}
+impl From<String> for ParseError {
+  fn from(src: String) -> ParseError
+}
+impl From<&str> for ParseError {
+  fn from(src: &str) -> ParseError
+}
+impl fmt::Display for ParseError {
+  fn fmt(self: &Self, f: &mut fmt::Formatter<'_>) -> fmt::Result
+}
+impl std::error::Error for ParseError {
+}
+
+// --- server.rs ---
+use crate::{Command, Connection, Db, DbDropGuard, Shutdown}
+use std::future::Future
+use std::sync::Arc
+use tokio::net::{TcpListener, TcpStream}
+use tokio::sync::{broadcast, mpsc, Semaphore}
+use tokio::time::{self, Duration}
+use tracing::{debug, error, info, instrument}
+struct Listener {
+  db_holder: DbDropGuard
+  listener: TcpListener
+  limit_connections: Arc<Semaphore>
+  notify_shutdown: broadcast::Sender<()>
+  shutdown_complete_tx: mpsc::Sender<()>
+}
+struct Handler {
+  db: Db
+  connection: Connection
+  shutdown: Shutdown
+  _shutdown_complete: mpsc::Sender<()>
+}
+const MAX_CONNECTIONS: usize
+fn run(listener: TcpListener, shutdown: impl Future)
+impl Listener {
+  fn run(self: &mut Self) -> crate::Result<()>
+  fn accept(self: &mut Self) -> crate::Result<TcpStream>
+}
+impl Handler {
+  fn run(self: &mut Self) -> crate::Result<()>
+}
+
+// --- shutdown.rs ---
+use tokio::sync::broadcast
+struct Shutdown {
+  is_shutdown: bool
+  notify: broadcast::Receiver<()>
+}
+impl Shutdown {
+  fn new(notify: broadcast::Receiver<()>) -> Shutdown
+  fn is_shutdown(self: &Self) -> bool
+  fn recv(self: &mut Self)
+}
+
