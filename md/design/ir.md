@@ -4,250 +4,197 @@ The sage IR lives in the `sage-ir` crate. It's built on salsa 0.26 and
 represents Rust source code as a collection of tracked structs with
 strategically placed incremental firewalls.
 
-## Database
+## Overview
 
-```rust
-#[salsa::db]
-pub trait Db: salsa::Database {}
+The IR has three layers: **items** (top-level declarations), **types**
+(as written in source, unresolved), and **bodies** (expressions, statements,
+patterns inside function bodies).
+
+```mermaid
+graph TD
+    SF[SourceFile<br><i>salsa input</i>]
+    FIT[file_item_tree<br><i>salsa tracked fn</i>]
+    Items[Item enum]
+    FI[FunctionItem]
+    SI[StructItem]
+    EI[EnumItem]
+    TI[TraitItem]
+    II[ImplItem]
+    Other[TypeAlias, Const,<br>Static, Mod, Use]
+
+    SF --> FIT --> Items
+    Items --> FI
+    Items --> SI
+    Items --> EI
+    Items --> TI
+    Items --> II
+    Items --> Other
 ```
 
-All tracked structs and functions are parameterized over `&dyn Db`. The
-concrete `Database` struct holds salsa's storage.
+## Items and tracked fields
 
-## Source files
+Each item kind is its own salsa tracked struct. The `Item` enum wraps them
+all — it's `Copy` since each variant is just a salsa ID.
 
-```rust
-#[salsa::input]
-pub struct SourceFile {
-    pub path: String,
-    pub text: String,
-}
+Tracked fields create **incremental firewalls**. Salsa compares each
+`#[tracked]` field independently across revisions. A query that only reads
+`params` won't re-execute when `body` changes.
+
+```mermaid
+graph LR
+    subgraph FunctionItem
+        name["name<br><i>identity</i>"]
+        attrs["attrs"]
+        params["params"]
+        ret["ret_type"]
+        flags["is_async, is_unsafe"]
+        body["body"]
+        span["span, span_table"]
+    end
+
+    style name fill:#f9f,stroke:#333
+    style body fill:#ff9,stroke:#333
+
+    params -.- SigReaders[Signature readers<br><i>not invalidated by body edits</i>]
+    ret -.- SigReaders
+    body -.- BodyReaders[Body readers<br><i>not invalidated by sig edits</i>]
 ```
 
-One `SourceFile` per file in the workspace. This is the root input — when
-the text changes, salsa knows to re-execute queries that depend on it.
-
-## Names
-
-```rust
-#[salsa::interned]
-pub struct Name<'db> {
-    pub text: String,
-}
-```
-
-Interned identifiers. Two `Name` values with the same text are the same
-salsa ID, so equality is O(1). Used for all identifiers, path segments,
-field names, etc.
-
-## Items
-
-Items are the top-level declarations in a file. Each item kind is its own
-salsa tracked struct, wrapped in a thin `Item` enum:
-
-```rust
-enum Item<'db> {
-    Function(FunctionItem<'db>),
-    Struct(StructItem<'db>),
-    Enum(EnumItem<'db>),
-    Trait(TraitItem<'db>),
-    Impl(ImplItem<'db>),
-    TypeAlias(TypeAliasItem<'db>),
-    Const(ConstItem<'db>),
-    Static(StaticItem<'db>),
-    Mod(ModItem<'db>),
-    Use(UseItem<'db>),
-    Error(SpanIndices),
-}
-```
-
-The `Item` enum is `Copy` — each variant is just a salsa ID (a `u32`).
-
-### Tracked fields and incrementality
-
-Each item struct uses `#[tracked]` fields to create incremental firewalls.
-For example, `FunctionItem`:
-
-```rust
-#[salsa::tracked]
-pub struct FunctionItem<'db> {
-    // Identity field (untracked) — used to match items across revisions.
-    pub name: Name<'db>,
-
-    // Each #[tracked] field is independently change-tracked.
-    #[tracked] pub attrs: Vec<Attr<'db>>,
-    #[tracked] pub params: Vec<Param<'db>>,
-    #[tracked] pub ret_type: Option<TypeRef<'db>>,
-    #[tracked] pub is_async: bool,
-    #[tracked] pub is_unsafe: bool,
-    #[tracked] pub body: FunctionBody<'db>,
-    #[tracked] pub span_table: SpanTable<'db>,
-    #[tracked] pub span: SpanIndices,
-}
-```
-
-The key insight: **editing a function body doesn't invalidate readers of
-its signature.** A query that only reads `params` and `ret_type` won't
-re-execute when the body changes, because salsa tracks each field
-independently.
-
-The `name` field is *untracked* — it serves as the item's identity. When
-`file_item_tree` re-executes after an edit, salsa matches the new
-`FunctionItem` to the old one by comparing `name`. If the name matches,
-salsa compares each tracked field individually and only marks changed
-fields as dirty.
+The `name` field is **untracked** — it serves as the item's identity. When
+`file_item_tree` re-executes after an edit, salsa matches the new item to
+the old one by comparing `name`. If the name matches, each tracked field is
+compared individually and only changed fields are marked dirty.
 
 ## Types
 
-Type references are salsa tracked structs representing types as written in
-source (unresolved):
+Type references represent types as written in source (unresolved). They're
+salsa tracked structs, so recursive types like `&Vec<String>` are just
+nested salsa IDs — cheap and `Copy`.
 
-```rust
-#[salsa::tracked]
-pub struct TypeRef<'db> {
-    pub kind: TypeRefKind<'db>,
-    pub span: SpanIndices,
-}
+```mermaid
+graph TD
+    TR[TypeRef]
+    TRK[TypeRefKind]
+    P[Path]
+    Ref["Reference(TypeRef, Mutability)"]
+    Sl["Slice(TypeRef)"]
+    Arr["Array(TypeRef)"]
+    Tup["Tuple(TupleTypeRef)"]
+    Never
+    Infer
+    Err[Error]
 
-enum TypeRefKind<'db> {
-    Path(Path<'db>),
-    Reference(TypeRef<'db>, Mutability),
-    Slice(TypeRef<'db>),
-    Array(TypeRef<'db>),
-    Tuple(TupleTypeRef<'db>),
-    Never,
-    Infer,
-    Error,
-}
+    TR --> TRK
+    TRK --> P
+    TRK --> Ref
+    TRK --> Sl
+    TRK --> Arr
+    TRK --> Tup
+    TRK --> Never
+    TRK --> Infer
+    TRK --> Err
 ```
 
-Recursive types (like `&Vec<String>`) use salsa IDs for the inner types —
-`TypeRef<'db>` is just a `u32`, so `Reference(TypeRef<'db>, Mutability)` is
-cheap and `Copy`.
+`Path` holds a `Vec<Name>` of segments. For now, paths are captured as a
+single segment with the full source text. Proper multi-segment resolution
+comes later.
 
-`Path<'db>` holds a `Vec<Name<'db>>` of segments. For now, paths are
-captured as a single segment with the full text (e.g., `std::collections::HashMap`
-is one segment). Proper multi-segment path resolution comes later.
+`Error` marks type nodes the lowering didn't recognize — any new
+tree-sitter node kind we haven't handled yet shows up as `{error}` in
+test output, making gaps immediately visible.
 
 ## Attributes
 
-```rust
-#[salsa::tracked]
-pub struct Attr<'db> {
-    pub kind: AttrKind,       // Normal or DocComment
-    pub path: Path<'db>,      // e.g., "derive", "cfg", "doc"
-    pub args: Option<TokenTree<'db>>,
-    pub span: SpanIndices,
-    pub is_inner: bool,       // #![...] vs #[...]
-}
+Attributes are tracked structs with a `kind` distinguishing normal
+attributes (`#[derive(Debug)]`) from doc comments (`/// ...`). Doc
+comments are lowered as `DocComment` attrs and displayed in their original
+syntax form.
+
+```mermaid
+graph LR
+    Attr --> AttrKind
+    Attr --> Path
+    Attr --> TokenTree["TokenTree<br><i>raw args text</i>"]
+    AttrKind --> Normal["Normal<br>#[path(args)]"]
+    AttrKind --> Doc["DocComment<br>/// text"]
 ```
 
-Doc comments (`///`, `//!`) are lowered as `DocComment` attrs and displayed
-in their original syntax form, not as `#[doc = "..."]`. Regular attributes
-capture the path and raw token tree arguments.
-
-Every item struct carries `attrs: Vec<Attr<'db>>` as a tracked field, so
+Every item struct carries `attrs: Vec<Attr>` as a tracked field, so
 attribute changes are tracked independently from other item properties.
 
 ## Bodies
 
-Function bodies are stored in a `Stash` — a type-erased flat buffer for
+Function bodies live in a **Stash** — a type-erased flat buffer for
 `Copy`-only data with thin handles (`Ptr<T>`, `Slice<T>`). This avoids
-the overhead of creating a salsa tracked struct per expression node.
+the overhead of a salsa tracked struct per expression node.
 
-```rust
-pub type FunctionBody<'db> = Stashed<Ptr<Body<'db>>>;
+The body is wrapped in `Stashed<T>`, which pairs a `Stash` with a root
+pointer and implements `PartialEq` via byte comparison. If the body didn't
+change, the bytes are identical and salsa skips downstream invalidation.
 
-pub struct Body<'db> {
-    pub root: Ptr<Expr<'db>>,
-    pub span: SpanIndices,
-}
-```
+```mermaid
+graph TD
+    FB["FunctionBody<br>= Stashed&lt;Ptr&lt;Body&gt;&gt;"]
+    Stash["Stash<br><i>flat byte buffer</i>"]
+    Body --> RootExpr["root: Ptr&lt;Expr&gt;"]
 
-`Stashed<T>` pairs a `Stash` with a root value. It implements `PartialEq`
-by comparing the stash's raw bytes — if the body didn't change, the bytes
-are identical and salsa skips downstream invalidation.
+    FB --> Stash
+    FB --> Body
 
-### Expressions
+    subgraph "Inside the Stash"
+        Expr --> ExprKind
+        ExprKind --> Literal
+        ExprKind --> PathE[Path]
+        ExprKind --> Block["Block(stmts, tail)"]
+        ExprKind --> Call["Call(func, args)"]
+        ExprKind --> If["If(cond, then, else)"]
+        ExprKind --> Match["Match(scrutinee, arms)"]
+        ExprKind --> MoreExpr["...20+ more variants"]
 
-```rust
-enum ExprKind<'db> {
-    Literal(Literal),
-    Path(Path<'db>),
-    Block(Slice<Stmt<'db>>, Option<Ptr<Expr<'db>>>),
-    Call(Ptr<Expr<'db>>, Slice<Expr<'db>>),
-    MethodCall(Ptr<Expr<'db>>, Name<'db>, Slice<Expr<'db>>),
-    Field(Ptr<Expr<'db>>, Name<'db>),
-    Binary(Ptr<Expr<'db>>, BinaryOp, Ptr<Expr<'db>>),
-    If(Ptr<Expr<'db>>, Ptr<Expr<'db>>, Option<Ptr<Expr<'db>>>),
-    Match(Ptr<Expr<'db>>, Slice<MatchArm<'db>>),
-    // ... and many more
-    MacroCall(Path<'db>, TokenTree<'db>),
-    Missing,
-}
+        Stmt --> Let["Let(pat, ty, init)"]
+        Stmt --> ExprStmt["Expr(expr)"]
+
+        Pat --> PatKind
+        PatKind --> Bind["Bind(name, mut)"]
+        PatKind --> TuplePat["Tuple, Struct, ..."]
+        PatKind --> MorePat["..."]
+    end
 ```
 
 Body types mix stash handles (`Ptr`, `Slice`) for tree structure with
-salsa IDs (`Name<'db>`, `Path<'db>`, `TypeRef<'db>`) for data that's
-shared with the signature level. This means a `Cast` expression can
-reference the same `TypeRef` tracked struct that appears in a function's
-return type.
-
-### Patterns
-
-```rust
-enum PatKind<'db> {
-    Wildcard,
-    Bind(Name<'db>, Mutability),
-    Path(Path<'db>),
-    Tuple(Slice<Pat<'db>>),
-    Struct(Path<'db>, Slice<FieldPat<'db>>),
-    TupleStruct(Path<'db>, Slice<Pat<'db>>),
-    // ...
-}
-```
+salsa IDs (`Name`, `Path`, `TypeRef`) for data shared with the signature
+level. A `Cast` expression references the same `TypeRef` tracked struct
+that might appear in a function's return type.
 
 ## Spans
 
-```rust
-pub struct SpanIndices {
-    pub start: u32,
-    pub end: u32,
-}
-```
+Every node carries `SpanIndices` — a pair of `u32` byte offsets into the
+source file. These are 8 bytes, `Copy`, and carry no lifetime.
 
-Every node carries a `SpanIndices` — byte offsets into the source file.
-These are 8 bytes, `Copy`, and don't carry a lifetime. A `SpanTable`
-tracked struct maps a span back to its source file, but semantic queries
-that don't need source locations never read the span table, so span
-changes don't trigger re-analysis.
+A `SpanTable` tracked struct maps spans back to their source file, but
+semantic queries that don't need source locations never read the span
+table, so span changes don't trigger re-analysis.
 
-## The query graph
+## Query graph
 
-```
-SourceFile (input)
-  │
-  ▼
-file_item_tree(file) → Vec<Item>
-  │                     Each item is a tracked struct with:
-  │                     - identity (name)
-  │                     - tracked signature fields (params, ret_type, ...)
-  │                     - tracked body (Stashed<Ptr<Body>>)
-  │                     - tracked attrs
-  │
-  ▼
-crate_def_map(krate)                    [planned]
-  │  Merges item trees + dep snapshot
-  │  into a name resolution map.
-  │
-  ▼
-Body analysis                           [planned]
-  │  Resolves names, type-checks
-  │  expressions in function bodies.
+```mermaid
+graph TD
+    SF["SourceFile<br><i>input: path + text</i>"]
+    FIT["file_item_tree(file)<br><i>→ Vec&lt;Item&gt;</i>"]
+    CDM["crate_def_map(krate)<br><i>planned</i>"]
+    BA["Body analysis<br><i>planned</i>"]
+    DS["Dep snapshot<br><i>from rustc_driver</i>"]
+
+    SF --> FIT
+    FIT --> CDM
+    DS --> CDM
+    CDM --> BA
+
+    style CDM stroke-dasharray: 5 5
+    style BA stroke-dasharray: 5 5
 ```
 
 The critical property: each level only depends on the specific tracked
-fields it reads. A name resolution query that reads function signatures
-won't be invalidated by body edits. A body analysis query won't be
-invalidated by changes to unrelated functions (salsa matches items by
-name across revisions).
+fields it reads. Name resolution reads signatures but not bodies. Body
+analysis reads bodies but isn't invalidated by changes to unrelated
+functions (salsa matches items by name across revisions).

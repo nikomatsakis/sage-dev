@@ -5,27 +5,23 @@
 Sage processes Rust source code through a series of demand-driven queries,
 each built as a salsa tracked function. The pipeline looks like this:
 
-```
-SourceFile (salsa input: path + text)
-  │
-  ▼
-file_item_tree(file)
-  │  Parses with tree-sitter, lowers CST into salsa tracked structs.
-  │  Produces: FunctionItem, StructItem, EnumItem, ImplItem, ...
-  │  Each item carries its signature (params, return type, fields)
-  │  and its body (expressions, statements, patterns in a Stash).
-  │
-  ▼
-crate_def_map(krate)                          [not yet implemented]
-  │  Walks module tree, merges item trees from all files,
-  │  resolves use declarations against item trees + dep snapshot.
-  │
-  ▼
-function_body analysis                        [not yet implemented]
-  │  Resolves names in function bodies, type-checks expressions.
-  │
-  ▼
-Results (diagnostics, type info, etc.)
+```mermaid
+graph TD
+    SF["SourceFile<br><i>salsa input: path + text</i>"]
+    TS["tree-sitter parse"]
+    FIT["file_item_tree(file)<br><i>salsa tracked fn</i>"]
+    Items["Items, Types, Bodies<br><i>salsa tracked structs + Stash</i>"]
+    CDM["crate_def_map(krate)<br><i>planned</i>"]
+    BA["Body analysis<br><i>planned</i>"]
+    DS["Dep snapshot<br><i>rustc_driver TyCtxt</i>"]
+
+    SF --> TS --> FIT --> Items
+    Items --> CDM
+    DS --> CDM
+    CDM --> BA
+
+    style CDM stroke-dasharray: 5 5
+    style BA stroke-dasharray: 5 5
 ```
 
 ## Crates
