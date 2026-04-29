@@ -3,3 +3,13 @@ title = "Symposiun AGentic Environment (SAGE)"
 authors = ["Niko Matsakis"]
 language = "en"
 src = "md"
+
+[preprocessor]
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+
+[output]
+
+[output.html]
+additional-js = ["mermaid.min.js", "mermaid-init.js"]
