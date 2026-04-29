@@ -2,7 +2,10 @@
 
 use tree_sitter::Node;
 
+use sage_stash::{Ptr, Stash, Stashed};
+
 use crate::Db;
+use crate::body::*;
 use crate::item::*;
 use crate::name::Name;
 use crate::source::SourceFile;
@@ -105,8 +108,10 @@ impl<'db> LowerCtx<'db> {
             .child_by_field_name("return_type")
             .map(|n| self.lower_type(n));
 
+        let body = self.lower_body(node);
+
         FunctionItem::new(
-            self.db, name, params, ret_type, is_async, is_unsafe, span_table, span,
+            self.db, name, params, ret_type, is_async, is_unsafe, body, span_table, span,
         )
     }
 
@@ -385,6 +390,733 @@ impl<'db> LowerCtx<'db> {
 
     fn make_error_type(&self, node: Node<'_>) -> TypeRef<'db> {
         TypeRef::new(self.db, TypeRefKind::Error, self.span(node))
+    }
+
+    // -- Body lowering -----------------------------------------------------
+
+    fn lower_body(&self, fn_node: Node<'_>) -> FunctionBody<'db> {
+        let mut bcx = BodyLowerCtx::new(self.db, self.text);
+        let body_node = fn_node.child_by_field_name("body");
+        let root_expr = body_node
+            .map(|n| bcx.lower_expr(n))
+            .unwrap_or_else(|| bcx.missing_expr(fn_node));
+        let body = bcx.stash.alloc(Body {
+            root: root_expr,
+            span: self.span(fn_node),
+        });
+        Stashed::new(bcx.stash, body)
+    }
+}
+
+// ===========================================================================
+// Body lowering — expressions, statements, patterns into a Stash
+// ===========================================================================
+
+struct BodyLowerCtx<'db> {
+    db: &'db dyn Db,
+    text: &'db str,
+    stash: Stash,
+}
+
+impl<'db> BodyLowerCtx<'db> {
+    fn new(db: &'db dyn Db, text: &'db str) -> Self {
+        Self {
+            db,
+            text,
+            stash: Stash::new(),
+        }
+    }
+
+    fn node_text(&self, node: Node<'_>) -> &'db str {
+        &self.text[node.byte_range()]
+    }
+
+    fn span(&self, node: Node<'_>) -> SpanIndices {
+        SpanIndices {
+            start: node.start_byte() as u32,
+            end: node.end_byte() as u32,
+        }
+    }
+
+    fn name(&self, node: Node<'_>) -> Name<'db> {
+        Name::new(self.db, self.node_text(node).to_owned())
+    }
+
+    fn missing_expr(&mut self, node: Node<'_>) -> Ptr<Expr<'db>> {
+        self.stash.alloc(Expr {
+            kind: ExprKind::Missing,
+            span: self.span(node),
+        })
+    }
+
+    fn lower_path(&self, node: Node<'_>) -> Path<'db> {
+        Path::new(
+            self.db,
+            vec![Name::new(self.db, self.node_text(node).to_owned())],
+            self.span(node),
+        )
+    }
+
+    // -- Expressions -------------------------------------------------------
+
+    fn lower_expr(&mut self, node: Node<'_>) -> Ptr<Expr<'db>> {
+        let span = self.span(node);
+        let kind = match node.kind() {
+            "block" => return self.lower_block(node),
+            "integer_literal" => ExprKind::Literal(Literal::Int),
+            "float_literal" => ExprKind::Literal(Literal::Float),
+            "string_literal" | "raw_string_literal" => ExprKind::Literal(Literal::String),
+            "char_literal" => ExprKind::Literal(Literal::Char),
+            "boolean_literal" => ExprKind::Literal(Literal::Bool(self.node_text(node) == "true")),
+            "identifier" | "scoped_identifier" | "self" => ExprKind::Path(self.lower_path(node)),
+            "unit_expression" => ExprKind::Tuple(self.stash.alloc_slice(&[])),
+            "tuple_expression" => {
+                let elems = self.lower_expr_children(node);
+                ExprKind::Tuple(self.stash.alloc_slice(&elems))
+            }
+            "array_expression" => {
+                let elems = self.lower_expr_children(node);
+                ExprKind::Array(self.stash.alloc_slice(&elems))
+            }
+            "parenthesized_expression" => {
+                let inner = node
+                    .named_child(0)
+                    .map(|n| self.lower_expr(n))
+                    .unwrap_or_else(|| self.missing_expr(node));
+                return inner;
+            }
+            "call_expression" => {
+                let func = node
+                    .child_by_field_name("function")
+                    .map(|n| self.lower_expr(n))
+                    .unwrap_or_else(|| self.missing_expr(node));
+                let args = node
+                    .child_by_field_name("arguments")
+                    .map(|n| self.lower_expr_children(n))
+                    .unwrap_or_default();
+                ExprKind::Call(func, self.stash.alloc_slice(&args))
+            }
+            "field_expression" => {
+                let obj = node
+                    .child_by_field_name("value")
+                    .map(|n| self.lower_expr(n))
+                    .unwrap_or_else(|| self.missing_expr(node));
+                let field = node
+                    .child_by_field_name("field")
+                    .map(|n| self.name(n))
+                    .unwrap_or_else(|| Name::new(self.db, "?".to_owned()));
+                ExprKind::Field(obj, field)
+            }
+            "method_call_expression" | "generic_function" => {
+                // tree-sitter puts method calls as call_expression with field_expression inside,
+                // but also has a dedicated method node in some grammars. Handle both.
+                return self.lower_method_or_call(node);
+            }
+            "binary_expression" => {
+                let lhs = node
+                    .child_by_field_name("left")
+                    .map(|n| self.lower_expr(n))
+                    .unwrap_or_else(|| self.missing_expr(node));
+                let rhs = node
+                    .child_by_field_name("right")
+                    .map(|n| self.lower_expr(n))
+                    .unwrap_or_else(|| self.missing_expr(node));
+                let op = node
+                    .child_by_field_name("operator")
+                    .map(|n| lower_binary_op(self.node_text(n)))
+                    .unwrap_or(BinaryOp::Add);
+                ExprKind::Binary(lhs, op, rhs)
+            }
+            "unary_expression" => {
+                let op_text = node.child(0).map(|n| self.node_text(n)).unwrap_or("!");
+                let op = match op_text {
+                    "-" => UnaryOp::Neg,
+                    "*" => UnaryOp::Deref,
+                    _ => UnaryOp::Not,
+                };
+                let operand = node
+                    .named_child(0)
+                    .map(|n| self.lower_expr(n))
+                    .unwrap_or_else(|| self.missing_expr(node));
+                ExprKind::Unary(op, operand)
+            }
+            "reference_expression" => {
+                let is_mut = node
+                    .children(&mut node.walk())
+                    .any(|c| c.kind() == "mutable_specifier");
+                let inner = node
+                    .child_by_field_name("value")
+                    .map(|n| self.lower_expr(n))
+                    .unwrap_or_else(|| self.missing_expr(node));
+                let m = if is_mut {
+                    Mutability::Mut
+                } else {
+                    Mutability::Shared
+                };
+                ExprKind::Ref(inner, m)
+            }
+            "if_expression" => return self.lower_if(node),
+            "match_expression" => return self.lower_match(node),
+            "loop_expression" => {
+                let body = node
+                    .child_by_field_name("body")
+                    .map(|n| self.lower_expr(n))
+                    .unwrap_or_else(|| self.missing_expr(node));
+                ExprKind::Loop(body)
+            }
+            "while_expression" => {
+                let cond = node
+                    .child_by_field_name("condition")
+                    .map(|n| self.lower_expr(n))
+                    .unwrap_or_else(|| self.missing_expr(node));
+                let body = node
+                    .child_by_field_name("body")
+                    .map(|n| self.lower_expr(n))
+                    .unwrap_or_else(|| self.missing_expr(node));
+                ExprKind::While(cond, body)
+            }
+            "for_expression" => {
+                let pat = node
+                    .child_by_field_name("pattern")
+                    .map(|n| self.lower_pat(n))
+                    .unwrap_or_else(|| self.missing_pat(node));
+                let iter = node
+                    .child_by_field_name("value")
+                    .map(|n| self.lower_expr(n))
+                    .unwrap_or_else(|| self.missing_expr(node));
+                let body = node
+                    .child_by_field_name("body")
+                    .map(|n| self.lower_expr(n))
+                    .unwrap_or_else(|| self.missing_expr(node));
+                ExprKind::For(pat, iter, body)
+            }
+            "break_expression" => {
+                let val = node.named_child(0).map(|n| self.lower_expr(n));
+                ExprKind::Break(val)
+            }
+            "continue_expression" => ExprKind::Continue,
+            "return_expression" => {
+                let val = node.named_child(0).map(|n| self.lower_expr(n));
+                ExprKind::Return(val)
+            }
+            "assignment_expression" | "compound_assignment_expr" => {
+                let lhs = node
+                    .child_by_field_name("left")
+                    .map(|n| self.lower_expr(n))
+                    .unwrap_or_else(|| self.missing_expr(node));
+                let rhs = node
+                    .child_by_field_name("right")
+                    .map(|n| self.lower_expr(n))
+                    .unwrap_or_else(|| self.missing_expr(node));
+                ExprKind::Assign(lhs, rhs)
+            }
+            "await_expression" => {
+                let inner = node
+                    .named_child(0)
+                    .map(|n| self.lower_expr(n))
+                    .unwrap_or_else(|| self.missing_expr(node));
+                ExprKind::Await(inner)
+            }
+            "try_expression" => {
+                let inner = node
+                    .named_child(0)
+                    .map(|n| self.lower_expr(n))
+                    .unwrap_or_else(|| self.missing_expr(node));
+                ExprKind::Try(inner)
+            }
+            "closure_expression" => return self.lower_closure(node),
+            "index_expression" => {
+                let obj = node
+                    .named_child(0)
+                    .map(|n| self.lower_expr(n))
+                    .unwrap_or_else(|| self.missing_expr(node));
+                let idx = node
+                    .named_child(1)
+                    .map(|n| self.lower_expr(n))
+                    .unwrap_or_else(|| self.missing_expr(node));
+                ExprKind::Index(obj, idx)
+            }
+            "type_cast_expression" => {
+                let expr = node
+                    .child_by_field_name("value")
+                    .map(|n| self.lower_expr(n))
+                    .unwrap_or_else(|| self.missing_expr(node));
+                let ty = node
+                    .child_by_field_name("type")
+                    .map(|n| {
+                        let text = self.node_text(n);
+                        Path::new(
+                            self.db,
+                            vec![Name::new(self.db, text.to_owned())],
+                            self.span(n),
+                        );
+                        TypeRef::new(self.db, TypeRefKind::Path(self.lower_path(n)), self.span(n))
+                    })
+                    .unwrap_or_else(|| TypeRef::new(self.db, TypeRefKind::Error, self.span(node)));
+                ExprKind::Cast(expr, ty)
+            }
+            "struct_expression" => return self.lower_struct_lit(node),
+            "range_expression" => {
+                let children: Vec<_> = node.named_children(&mut node.walk()).collect();
+                let (lo, hi) = match children.len() {
+                    0 => (None, None),
+                    1 => {
+                        let c = self.lower_expr(children[0]);
+                        // Heuristic: if child starts at range start, it's the lower bound
+                        if children[0].start_byte() == node.start_byte() {
+                            (Some(c), None)
+                        } else {
+                            (None, Some(c))
+                        }
+                    }
+                    _ => {
+                        let lo = self.lower_expr(children[0]);
+                        let hi = self.lower_expr(children[1]);
+                        (Some(lo), Some(hi))
+                    }
+                };
+                ExprKind::Range(lo, hi)
+            }
+            "macro_invocation" => {
+                let path = node
+                    .child_by_field_name("macro")
+                    .map(|n| self.lower_path(n))
+                    .unwrap_or_else(|| {
+                        Path::new(
+                            self.db,
+                            vec![Name::new(self.db, "?".to_owned())],
+                            self.span(node),
+                        )
+                    });
+                ExprKind::MacroCall(path)
+            }
+            // Catch-all: anything we don't handle becomes Missing
+            "let_condition" => {
+                // `if let Some(x) = expr` — lower as the inner expression
+                let inner = node.named_children(&mut node.walk()).last();
+                return inner
+                    .map(|n| self.lower_expr(n))
+                    .unwrap_or_else(|| self.missing_expr(node));
+            }
+            "async_block" => {
+                let body = node
+                    .child_by_field_name("body")
+                    .or_else(|| node.named_child(0))
+                    .map(|n| self.lower_expr(n))
+                    .unwrap_or_else(|| self.missing_expr(node));
+                return body;
+            }
+            // Skip non-expression nodes that appear in blocks
+            "line_comment"
+            | "block_comment"
+            | "attribute_item"
+            | "inner_attribute_item"
+            | "empty_statement"
+            | "use_declaration"
+            | "const_item" => ExprKind::Missing,
+            // Catch-all
+            _ => ExprKind::Missing,
+        };
+        self.stash.alloc(Expr { kind, span })
+    }
+
+    fn lower_expr_children(&mut self, node: Node<'_>) -> Vec<Expr<'db>> {
+        let mut exprs = Vec::new();
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            let ptr = self.lower_expr(child);
+            exprs.push(self.stash[ptr]);
+        }
+        exprs
+    }
+
+    fn lower_block(&mut self, node: Node<'_>) -> Ptr<Expr<'db>> {
+        let span = self.span(node);
+        let mut stmts = Vec::new();
+        let mut tail: Option<Ptr<Expr<'db>>> = None;
+        let mut cursor = node.walk();
+        let children: Vec<_> = node.named_children(&mut cursor).collect();
+
+        for (i, child) in children.iter().enumerate() {
+            let is_last = i == children.len() - 1;
+            match child.kind() {
+                // Skip non-statement nodes
+                "line_comment"
+                | "block_comment"
+                | "attribute_item"
+                | "inner_attribute_item"
+                | "empty_statement"
+                | "use_declaration"
+                | "const_item" => continue,
+                "let_declaration" => {
+                    stmts.push(self.lower_let(*child));
+                }
+                "expression_statement" => {
+                    if let Some(expr_node) = child.named_child(0) {
+                        let expr = self.lower_expr(expr_node);
+                        stmts.push(Stmt {
+                            kind: StmtKind::Expr(expr),
+                            span: self.span(*child),
+                        });
+                    }
+                }
+                _ if is_last => {
+                    // Last expression without semicolon = tail
+                    tail = Some(self.lower_expr(*child));
+                }
+                _ => {
+                    let expr = self.lower_expr(*child);
+                    stmts.push(Stmt {
+                        kind: StmtKind::Expr(expr),
+                        span: self.span(*child),
+                    });
+                }
+            }
+        }
+
+        let stmts = self.stash.alloc_slice(&stmts);
+        self.stash.alloc(Expr {
+            kind: ExprKind::Block(stmts, tail),
+            span,
+        })
+    }
+
+    fn lower_let(&mut self, node: Node<'_>) -> Stmt<'db> {
+        let pat = node
+            .child_by_field_name("pattern")
+            .map(|n| self.lower_pat(n))
+            .unwrap_or_else(|| self.missing_pat(node));
+        let ty = node.child_by_field_name("type").map(|n| {
+            let text = self.node_text(n);
+            TypeRef::new(
+                self.db,
+                TypeRefKind::Path(Path::new(
+                    self.db,
+                    vec![Name::new(self.db, text.to_owned())],
+                    self.span(n),
+                )),
+                self.span(n),
+            )
+        });
+        let init = node
+            .child_by_field_name("value")
+            .map(|n| self.lower_expr(n));
+        Stmt {
+            kind: StmtKind::Let(pat, ty, init),
+            span: self.span(node),
+        }
+    }
+
+    fn lower_if(&mut self, node: Node<'_>) -> Ptr<Expr<'db>> {
+        let span = self.span(node);
+        let cond = node
+            .child_by_field_name("condition")
+            .map(|n| self.lower_expr(n))
+            .unwrap_or_else(|| self.missing_expr(node));
+        let then = node
+            .child_by_field_name("consequence")
+            .map(|n| self.lower_expr(n))
+            .unwrap_or_else(|| self.missing_expr(node));
+        let else_ = node
+            .child_by_field_name("alternative")
+            .and_then(|n| n.named_child(0))
+            .map(|n| self.lower_expr(n));
+        self.stash.alloc(Expr {
+            kind: ExprKind::If(cond, then, else_),
+            span,
+        })
+    }
+
+    fn lower_match(&mut self, node: Node<'_>) -> Ptr<Expr<'db>> {
+        let span = self.span(node);
+        let scrutinee = node
+            .child_by_field_name("value")
+            .map(|n| self.lower_expr(n))
+            .unwrap_or_else(|| self.missing_expr(node));
+        let mut arms = Vec::new();
+        if let Some(body) = node.child_by_field_name("body") {
+            let mut cursor = body.walk();
+            for child in body.named_children(&mut cursor) {
+                if child.kind() == "match_arm" {
+                    let pat = child
+                        .child_by_field_name("pattern")
+                        .map(|n| self.lower_pat(n))
+                        .unwrap_or_else(|| self.missing_pat(child));
+                    let guard = child
+                        .child_by_field_name("condition") // tree-sitter uses "condition" for guard
+                        .map(|n| self.lower_expr(n));
+                    let body = child
+                        .child_by_field_name("value")
+                        .map(|n| self.lower_expr(n))
+                        .unwrap_or_else(|| self.missing_expr(child));
+                    arms.push(MatchArm {
+                        pat,
+                        guard,
+                        body,
+                        span: self.span(child),
+                    });
+                }
+            }
+        }
+        let arms = self.stash.alloc_slice(&arms);
+        self.stash.alloc(Expr {
+            kind: ExprKind::Match(scrutinee, arms),
+            span,
+        })
+    }
+
+    fn lower_closure(&mut self, node: Node<'_>) -> Ptr<Expr<'db>> {
+        let span = self.span(node);
+        let mut params = Vec::new();
+        if let Some(params_node) = node.child_by_field_name("parameters") {
+            let mut cursor = params_node.walk();
+            for child in params_node.named_children(&mut cursor) {
+                let pat = self.lower_pat(child);
+                params.push(ClosureParam {
+                    pat,
+                    ty: None,
+                    span: self.span(child),
+                });
+            }
+        }
+        let body = node
+            .child_by_field_name("body")
+            .map(|n| self.lower_expr(n))
+            .unwrap_or_else(|| self.missing_expr(node));
+        let params = self.stash.alloc_slice(&params);
+        self.stash.alloc(Expr {
+            kind: ExprKind::Closure(params, body),
+            span,
+        })
+    }
+
+    fn lower_method_or_call(&mut self, node: Node<'_>) -> Ptr<Expr<'db>> {
+        // tree-sitter-rust doesn't have a dedicated method_call node;
+        // it's a call_expression whose function is a field_expression.
+        // Just lower as a regular call.
+        let span = self.span(node);
+        let func = node
+            .child_by_field_name("function")
+            .map(|n| self.lower_expr(n))
+            .unwrap_or_else(|| self.missing_expr(node));
+        let args = node
+            .child_by_field_name("arguments")
+            .map(|n| self.lower_expr_children(n))
+            .unwrap_or_default();
+        let args = self.stash.alloc_slice(&args);
+        self.stash.alloc(Expr {
+            kind: ExprKind::Call(func, args),
+            span,
+        })
+    }
+
+    fn lower_struct_lit(&mut self, node: Node<'_>) -> Ptr<Expr<'db>> {
+        let span = self.span(node);
+        let path = node
+            .child_by_field_name("name")
+            .map(|n| self.lower_path(n))
+            .unwrap_or_else(|| {
+                Path::new(
+                    self.db,
+                    vec![Name::new(self.db, "?".to_owned())],
+                    self.span(node),
+                )
+            });
+        let mut fields = Vec::new();
+        if let Some(body) = node.child_by_field_name("body") {
+            let mut cursor = body.walk();
+            for child in body.named_children(&mut cursor) {
+                if child.kind() == "field_initializer" {
+                    let name = child
+                        .child_by_field_name("field")
+                        .map(|n| self.name(n))
+                        .unwrap_or_else(|| Name::new(self.db, "?".to_owned()));
+                    let value = child
+                        .child_by_field_name("value")
+                        .map(|n| self.lower_expr(n))
+                        .unwrap_or_else(|| self.missing_expr(child));
+                    fields.push(FieldInit {
+                        name,
+                        value,
+                        span: self.span(child),
+                    });
+                } else if child.kind() == "shorthand_field_initializer" {
+                    let name = self.name(child);
+                    let value = self.stash.alloc(Expr {
+                        kind: ExprKind::Path(self.lower_path(child)),
+                        span: self.span(child),
+                    });
+                    fields.push(FieldInit {
+                        name,
+                        value,
+                        span: self.span(child),
+                    });
+                }
+            }
+        }
+        let fields = self.stash.alloc_slice(&fields);
+        self.stash.alloc(Expr {
+            kind: ExprKind::StructLit(path, fields),
+            span,
+        })
+    }
+
+    // -- Patterns ----------------------------------------------------------
+
+    fn lower_pat(&mut self, node: Node<'_>) -> Ptr<Pat<'db>> {
+        let span = self.span(node);
+        let kind = match node.kind() {
+            // match_pattern wraps the actual pattern in match arms
+            "match_pattern" => {
+                return node
+                    .named_child(0)
+                    .map(|n| self.lower_pat(n))
+                    .unwrap_or_else(|| self.missing_pat(node));
+            }
+            "_" | "wildcard_pattern" => PatKind::Wildcard,
+            "identifier" => PatKind::Bind(self.name(node), Mutability::Shared),
+            "mut_pattern" => {
+                let inner = node.named_child(0);
+                let name = inner
+                    .map(|n| self.name(n))
+                    .unwrap_or_else(|| Name::new(self.db, "?".to_owned()));
+                PatKind::Bind(name, Mutability::Mut)
+            }
+            "tuple_pattern" => {
+                let pats = self.lower_pat_children(node);
+                PatKind::Tuple(self.stash.alloc_slice(&pats))
+            }
+            "tuple_struct_pattern" => {
+                let path = node
+                    .child_by_field_name("type")
+                    .map(|n| self.lower_path(n))
+                    .unwrap_or_else(|| {
+                        Path::new(
+                            self.db,
+                            vec![Name::new(self.db, "?".to_owned())],
+                            self.span(node),
+                        )
+                    });
+                let pats = self.lower_pat_children(node);
+                PatKind::TupleStruct(path, self.stash.alloc_slice(&pats))
+            }
+            "struct_pattern" => {
+                let path = node
+                    .child_by_field_name("type")
+                    .map(|n| self.lower_path(n))
+                    .unwrap_or_else(|| {
+                        Path::new(
+                            self.db,
+                            vec![Name::new(self.db, "?".to_owned())],
+                            self.span(node),
+                        )
+                    });
+                let mut field_pats = Vec::new();
+                let mut cursor = node.walk();
+                for child in node.named_children(&mut cursor) {
+                    if child.kind() == "field_pattern" {
+                        let name = child
+                            .child_by_field_name("name")
+                            .map(|n| self.name(n))
+                            .unwrap_or_else(|| Name::new(self.db, "?".to_owned()));
+                        let pat = child
+                            .child_by_field_name("pattern")
+                            .map(|n| self.lower_pat(n))
+                            .unwrap_or_else(|| {
+                                // Shorthand: `Foo { x }` means `Foo { x: x }`
+                                self.stash.alloc(Pat {
+                                    kind: PatKind::Bind(name, Mutability::Shared),
+                                    span: self.span(child),
+                                })
+                            });
+                        field_pats.push(FieldPat {
+                            name,
+                            pat,
+                            span: self.span(child),
+                        });
+                    }
+                }
+                PatKind::Struct(path, self.stash.alloc_slice(&field_pats))
+            }
+            "ref_pattern" => {
+                let is_mut = node
+                    .children(&mut node.walk())
+                    .any(|c| c.kind() == "mutable_specifier");
+                let inner = node
+                    .named_child(0)
+                    .map(|n| self.lower_pat(n))
+                    .unwrap_or_else(|| self.missing_pat(node));
+                let m = if is_mut {
+                    Mutability::Mut
+                } else {
+                    Mutability::Shared
+                };
+                PatKind::Ref(inner, m)
+            }
+            "or_pattern" => {
+                let pats = self.lower_pat_children(node);
+                PatKind::Or(self.stash.alloc_slice(&pats))
+            }
+            "scoped_identifier" | "scoped_type_identifier" => PatKind::Path(self.lower_path(node)),
+            "integer_literal" => PatKind::Literal(Literal::Int),
+            "string_literal" => PatKind::Literal(Literal::String),
+            "boolean_literal" => PatKind::Literal(Literal::Bool(self.node_text(node) == "true")),
+            "negative_literal" => PatKind::Literal(Literal::Int),
+            "rest_pattern" | ".." => PatKind::Rest,
+            _ => PatKind::Missing,
+        };
+        self.stash.alloc(Pat { kind, span })
+    }
+
+    fn lower_pat_children(&mut self, node: Node<'_>) -> Vec<Pat<'db>> {
+        let mut pats = Vec::new();
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            if child.kind() == "identifier"
+                || child.kind() == "scoped_identifier"
+                || child.kind() == "scoped_type_identifier"
+            {
+                if node.kind() == "tuple_struct_pattern"
+                    && node.child_by_field_name("type") == Some(child)
+                {
+                    continue;
+                }
+            }
+            let ptr = self.lower_pat(child);
+            pats.push(self.stash[ptr]);
+        }
+        pats
+    }
+
+    fn missing_pat(&mut self, node: Node<'_>) -> Ptr<Pat<'db>> {
+        self.stash.alloc(Pat {
+            kind: PatKind::Missing,
+            span: self.span(node),
+        })
+    }
+}
+
+fn lower_binary_op(op: &str) -> BinaryOp {
+    match op {
+        "+" => BinaryOp::Add,
+        "-" => BinaryOp::Sub,
+        "*" => BinaryOp::Mul,
+        "/" => BinaryOp::Div,
+        "%" => BinaryOp::Rem,
+        "&&" => BinaryOp::And,
+        "||" => BinaryOp::Or,
+        "&" => BinaryOp::BitAnd,
+        "|" => BinaryOp::BitOr,
+        "^" => BinaryOp::BitXor,
+        "<<" => BinaryOp::Shl,
+        ">>" => BinaryOp::Shr,
+        "==" => BinaryOp::Eq,
+        "!=" => BinaryOp::Ne,
+        "<" => BinaryOp::Lt,
+        "<=" => BinaryOp::Le,
+        ">" => BinaryOp::Gt,
+        ">=" => BinaryOp::Ge,
+        _ => BinaryOp::Add,
     }
 }
 

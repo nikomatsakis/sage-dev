@@ -1,0 +1,225 @@
+// --- bin/cli.rs ---
+fn main() -> mini_redis::Result<()> {
+  tracing_subscriber::fmt::try_init()?;
+  let cli = Cli::parse();
+  let addr = format!(...);
+  let client = Client::connect(&addr).await?;
+  match cli.command {
+    Command::Ping { msg: msg } => {
+      let value = client.ping(msg).await?;
+      if str::from_utf8(&value) {
+        println!(...);
+      } else {
+        println!(...);
+      };
+    }
+    Command::Get { key: key } => {
+      if client.get(&key).await? {
+        if str::from_utf8(&value) {
+          println!(...);
+        } else {
+          println!(...);
+        };
+      } else {
+        println!(...);
+      };
+    }
+    Command::Set { key: key, value: value, expires: None } => {
+      client.set(&key, value).await?;
+      println!(...);
+    }
+    Command::Set { key: key, value: value, expires: Some(expires) } => {
+      client.set_expires(&key, value, expires).await?;
+      println!(...);
+    }
+    Command::Publish { channel: channel, message: message } => {
+      client.publish(&channel, message).await?;
+      println!(...);
+    }
+    Command::Subscribe { channels: channels } => {
+      if channels.is_empty() {
+        return Err(String.into());
+      };
+      let subscriber = client.subscribe(channels).await?;
+      while subscriber.next_message().await? {
+        println!(...);
+      };
+    }
+  };
+  Ok(())
+}
+fn duration_from_ms_str(src: &str) -> Result<Duration, ParseIntError> {
+  let ms = src.parse()()?;
+  Ok(Duration::from_millis(ms))
+}
+
+// --- bin/server.rs ---
+fn main() -> mini_redis::Result<()> {
+  set_up_logging()?;
+  let cli = Cli::parse();
+  let port = cli.port.unwrap_or(DEFAULT_PORT);
+  let listener = TcpListener::bind(&format!(...)).await?;
+  server::run(listener, signal::ctrl_c()).await;
+  Ok(())
+}
+fn set_up_logging() -> mini_redis::Result<()> {
+  tracing_subscriber::fmt::try_init()
+}
+fn set_up_logging() -> Result<(), TryInitError> {
+  global::set_text_map_propagator(XrayPropagator::default());
+  let tracer = opentelemetry_otlp::new_pipeline().tracing().with_exporter(opentelemetry_otlp::new_exporter().tonic()).with_trace_config(sdktrace::config().with_sampler(sdktrace::Sampler::AlwaysOn).with_id_generator(sdktrace::XrayIdGenerator::default())).install_simple().expect(String);
+  let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+  let filter = EnvFilter::from_default_env();
+  tracing_subscriber::registry().with(opentelemetry).with(filter).with(fmt::Layer::default()).try_init()
+}
+
+// --- clients/blocking_client.rs ---
+
+// --- clients/buffered_client.rs ---
+fn run(client: Client, rx: Receiver<Message>) {
+  while rx.recv().await {
+    let response = match cmd {
+      Command::Get(key) => client.get(&key).await
+      Command::Set(key, value) => client.set(&key, value).await.map(|| None)
+    };
+    let _ = tx.send(response);
+  };
+}
+
+// --- clients/client.rs ---
+
+// --- clients/mod.rs ---
+
+// --- cmd/get.rs ---
+
+// --- cmd/mod.rs ---
+
+// --- cmd/ping.rs ---
+
+// --- cmd/publish.rs ---
+
+// --- cmd/set.rs ---
+
+// --- cmd/subscribe.rs ---
+fn subscribe_to_channel(channel_name: String, subscriptions: &mut StreamMap<String, Messages>, db: &Db, dst: &mut Connection) -> crate::Result<()> {
+  let rx = db.subscribe(channel_name.clone());
+  let rx = Box::pin(async_stream::stream!(...));
+  subscriptions.insert(channel_name.clone(), rx);
+  let response = make_subscribe_frame(channel_name, subscriptions.len());
+  dst.write_frame(&response).await?;
+  Ok(())
+}
+fn handle_command(frame: Frame, subscribe_to: &mut Vec<String>, subscriptions: &mut StreamMap<String, Messages>, dst: &mut Connection) -> crate::Result<()> {
+  match Command::from_frame(frame)? {
+    Command::Subscribe(subscribe) => {
+      subscribe_to.extend(subscribe.channels.into_iter());
+    }
+    Command::Unsubscribe(mut mut) => {
+      if unsubscribe.channels.is_empty() {
+        unsubscribe.channels = subscriptions.keys().map(|channel_name| channel_name.to_string()).collect();
+      };
+      for channel_name in unsubscribe.channels {
+        subscriptions.remove(&channel_name);
+        let response = make_unsubscribe_frame(channel_name, subscriptions.len());
+        dst.write_frame(&response).await?;
+      };
+    }
+    command => {
+      let cmd = Unknown::new(command.get_name());
+      cmd.apply(dst).await?;
+    }
+  };
+  Ok(())
+}
+fn make_subscribe_frame(channel_name: String, num_subs: usize) -> Frame {
+  let response = Frame::array();
+  response.push_bulk(Bytes::from_static(String));
+  response.push_bulk(Bytes::from(channel_name));
+  response.push_int(num_subs as u64);
+  response
+}
+fn make_unsubscribe_frame(channel_name: String, num_subs: usize) -> Frame {
+  let response = Frame::array();
+  response.push_bulk(Bytes::from_static(String));
+  response.push_bulk(Bytes::from(channel_name));
+  response.push_int(num_subs as u64);
+  response
+}
+fn make_message_frame(channel_name: String, msg: Bytes) -> Frame {
+  let response = Frame::array();
+  response.push_bulk(Bytes::from_static(String));
+  response.push_bulk(Bytes::from(channel_name));
+  response.push_bulk(msg);
+  response
+}
+
+// --- cmd/unknown.rs ---
+
+// --- connection.rs ---
+
+// --- db.rs ---
+fn purge_expired_tasks(shared: Arc<Shared>) {
+  while Notshared.is_shutdown() {
+    if shared.purge_expired_keys() {
+      tokio::select!(...)
+    } else {
+      shared.background_task.notified().await;
+    };
+  };
+  debug!(...)
+}
+
+// --- frame.rs ---
+fn peek_u8(src: &mut Cursor<&[u8]>) -> Result<u8, Error> {
+  if Notsrc.has_remaining() {
+    return Err(Error::Incomplete);
+  };
+  Ok(src.chunk()[Int])
+}
+fn get_u8(src: &mut Cursor<&[u8]>) -> Result<u8, Error> {
+  if Notsrc.has_remaining() {
+    return Err(Error::Incomplete);
+  };
+  Ok(src.get_u8())
+}
+fn skip(src: &mut Cursor<&[u8]>, n: usize) -> Result<(), Error> {
+  if src.remaining() Lt n {
+    return Err(Error::Incomplete);
+  };
+  src.advance(n);
+  Ok(())
+}
+fn get_decimal(src: &mut Cursor<&[u8]>) -> Result<u64, Error> {
+  let line = get_line(src)?;
+  atoi()(line).ok_or_else(|| String.into())
+}
+fn get_line(src: &mut Cursor<&'a [u8]>) -> Result<&'a [u8], Error> {
+  let start = src.position() as usize;
+  let end = src.get_ref().len() Sub Int;
+  for i in start..end {
+    if src.get_ref()[i] Eq Char And src.get_ref()[i Add Int] Eq Char {
+      src.set_position(i Add Int as u64);
+      return Ok(&src.get_ref()[start..i]);
+    };
+  };
+  Err(Error::Incomplete)
+}
+
+// --- lib.rs ---
+
+// --- parse.rs ---
+
+// --- server.rs ---
+fn run(listener: TcpListener, shutdown: impl Future) {
+  let (notify_shutdown) = broadcast::channel(Int);
+  let (shutdown_complete_tx, mut mut) = mpsc::channel(Int);
+  let server = Listener { listener: listener, db_holder: DbDropGuard::new(), limit_connections: Arc::new(Semaphore::new(MAX_CONNECTIONS)), notify_shutdown: notify_shutdown, shutdown_complete_tx: shutdown_complete_tx };
+  tokio::select!(...);
+  let Listener { shutdown_complete_tx: shutdown_complete_tx, notify_shutdown: notify_shutdown } = server;
+  drop(notify_shutdown);
+  drop(shutdown_complete_tx);
+  let _ = shutdown_complete_rx.recv().await;
+}
+
+// --- shutdown.rs ---
+

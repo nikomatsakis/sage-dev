@@ -1,24 +1,18 @@
-use sage_stash::{AllocStashData, Ptr, Slice, Stash, Stashed};
+use sage_stash::{AllocStashData, Ptr, Slice, Stashed};
 
-use crate::item::FunctionItem;
 use crate::name::Name;
 use crate::span::SpanIndices;
 use crate::types::{Mutability, Path, TypeRef};
 
-/// Function body: `Stashed<Ptr<Expr<'db>>>`.
-/// The stash owns all expressions, statements, and patterns.
-/// `PartialEq` compares by value through the stash.
-pub type FunctionBody<'db> = Stashed<Ptr<Expr<'db>>>;
+/// A function body stored in a `Stash`.
+pub type FunctionBody<'db> = Stashed<Ptr<Body<'db>>>;
 
-/// On-demand body lowering. Re-walks the CST to build the body.
-#[salsa::tracked(returns(ref))]
-pub fn function_body<'db>(db: &'db dyn crate::Db, func: FunctionItem<'db>) -> FunctionBody<'db> {
-    // TODO: implement CST → body lowering
-    let _ = (db, func);
-    Stashed::new(Stash::new(), Ptr::DANGLING)
+/// The root of a function body.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, AllocStashData)]
+pub struct Body<'db> {
+    pub root: Ptr<Expr<'db>>,
+    pub span: SpanIndices,
 }
-
-// -- Arena-allocated body types --
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, AllocStashData)]
 pub struct Expr<'db> {
@@ -59,7 +53,6 @@ pub enum ExprKind<'db> {
     Missing,
 }
 
-/// Closure parameter (arena-allocated, distinct from signature `types::Param`).
 #[derive(Copy, Clone, PartialEq, Eq, Hash, AllocStashData)]
 pub struct ClosureParam<'db> {
     pub pat: Ptr<Pat<'db>>,
@@ -120,8 +113,6 @@ pub enum UnaryOp {
     Deref,
 }
 
-// -- Statements --
-
 #[derive(Copy, Clone, PartialEq, Eq, Hash, AllocStashData)]
 pub struct Stmt<'db> {
     pub kind: StmtKind<'db>,
@@ -133,8 +124,6 @@ pub enum StmtKind<'db> {
     Let(Ptr<Pat<'db>>, Option<TypeRef<'db>>, Option<Ptr<Expr<'db>>>),
     Expr(Ptr<Expr<'db>>),
 }
-
-// -- Patterns --
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, AllocStashData)]
 pub struct Pat<'db> {

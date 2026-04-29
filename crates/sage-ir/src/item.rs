@@ -1,3 +1,4 @@
+use crate::body::FunctionBody;
 use crate::name::Name;
 use crate::span::{SpanIndices, SpanTable};
 use crate::types::{FieldDef, Param, Path, TypeRef, VariantDef};
@@ -38,6 +39,10 @@ pub struct FunctionItem<'db> {
 
     #[tracked]
     pub is_unsafe: bool,
+
+    #[tracked]
+    #[returns(ref)]
+    pub body: FunctionBody<'db>,
 
     #[tracked]
     pub span_table: SpanTable<'db>,

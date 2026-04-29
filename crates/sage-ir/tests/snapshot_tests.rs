@@ -49,3 +49,39 @@ fn mini_redis_signatures() {
         expect_file!["./snapshots/mini_redis_signatures.txt"].assert_eq(&out);
     });
 }
+
+#[test]
+fn mini_redis_bodies() {
+    let db = Database::default();
+    let fixture_dir =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test-fixtures/mini-redis/src");
+
+    db.attach(|db| {
+        let mut out = String::new();
+        let files = collect_rs_files(&fixture_dir);
+
+        for path in &files {
+            let rel = path.strip_prefix(&fixture_dir).unwrap();
+            let text = std::fs::read_to_string(path).unwrap();
+            let file = SourceFile::new(db, rel.display().to_string(), text);
+            let items = file_item_tree(db, file);
+
+            out.push_str(&format!("// --- {} ---\n", rel.display()));
+            for item in items {
+                if let sage_ir::item::Item::Function(f) = item {
+                    // Use a helper struct to call dump_function_body
+                    struct FnBody<'a>(sage_ir::item::FunctionItem<'a>);
+                    impl std::fmt::Display for FnBody<'_> {
+                        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                            sage_ir::display::dump_function_body(f, self.0)
+                        }
+                    }
+                    out.push_str(&format!("{}\n", FnBody(*f)));
+                }
+            }
+            out.push('\n');
+        }
+
+        expect_file!["./snapshots/mini_redis_bodies.txt"].assert_eq(&out);
+    });
+}
