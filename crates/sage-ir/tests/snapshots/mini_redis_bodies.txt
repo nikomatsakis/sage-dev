@@ -1,40 +1,50 @@
 // --- bin/cli.rs ---
+/// Entry point for CLI tool.
+///
+/// The `[tokio::main]` annotation signals that the Tokio runtime should be
+/// started when the function is called. The body of the function is executed
+/// within the newly spawned runtime.
+///
+/// `flavor = "current_thread"` is used here to avoid spawning background
+/// threads. The CLI tool use case benefits more by being lighter instead of
+/// multi-threaded.
+#[tokio::main(flavor = "current_thread")]
 fn main() -> mini_redis::Result<()> {
   tracing_subscriber::fmt::try_init()?;
   let cli = Cli::parse();
-  let addr = format!(...);
+  let addr = format!("{}:{}", cli.host, cli.port);
   let client = Client::connect(&addr).await?;
   match cli.command {
     Command::Ping { msg: msg } => {
       let value = client.ping(msg).await?;
       if str::from_utf8(&value) {
-        println!(...);
+        println!("\"{string}\"");
       } else {
-        println!(...);
+        println!("{value:?}");
       };
     }
     Command::Get { key: key } => {
       if client.get(&key).await? {
         if str::from_utf8(&value) {
-          println!(...);
+          println!("\"{string}\"");
         } else {
-          println!(...);
+          println!("{value:?}");
         };
       } else {
-        println!(...);
+        println!("(nil)");
       };
     }
     Command::Set { key: key, value: value, expires: None } => {
       client.set(&key, value).await?;
-      println!(...);
+      println!("OK");
     }
     Command::Set { key: key, value: value, expires: Some(expires) } => {
       client.set_expires(&key, value, expires).await?;
-      println!(...);
+      println!("OK");
     }
     Command::Publish { channel: channel, message: message } => {
       client.publish(&channel, message).await?;
-      println!(...);
+      println!("Publish OK");
     }
     Command::Subscribe { channels: channels } => {
       if channels.is_empty() {
@@ -42,7 +52,10 @@ fn main() -> mini_redis::Result<()> {
       };
       let subscriber = client.subscribe(channels).await?;
       while subscriber.next_message().await? {
-        println!(...);
+        println!(
+                    "got message from the channel: {}; message = {:?}",
+                    msg.channel, msg.content
+                );
       };
     }
   };
@@ -54,17 +67,20 @@ fn duration_from_ms_str(src: &str) -> Result<Duration, ParseIntError> {
 }
 
 // --- bin/server.rs ---
+#[tokio::main]
 fn main() -> mini_redis::Result<()> {
   set_up_logging()?;
   let cli = Cli::parse();
   let port = cli.port.unwrap_or(DEFAULT_PORT);
-  let listener = TcpListener::bind(&format!(...)).await?;
+  let listener = TcpListener::bind(&format!("127.0.0.1:{port}")).await?;
   server::run(listener, signal::ctrl_c()).await;
   Ok(())
 }
+#[cfg(not(feature = "otel"))]
 fn set_up_logging() -> mini_redis::Result<()> {
   tracing_subscriber::fmt::try_init()
 }
+#[cfg(feature = "otel")]
 fn set_up_logging() -> Result<(), TryInitError> {
   global::set_text_map_propagator(XrayPropagator::default());
   let tracer = opentelemetry_otlp::new_pipeline().tracing().with_exporter(opentelemetry_otlp::new_exporter().tonic()).with_trace_config(sdktrace::config().with_sampler(sdktrace::Sampler::AlwaysOn).with_id_generator(sdktrace::XrayIdGenerator::default())).install_simple().expect(String);
@@ -76,6 +92,8 @@ fn set_up_logging() -> Result<(), TryInitError> {
 // --- clients/blocking_client.rs ---
 
 // --- clients/buffered_client.rs ---
+/// Receive commands sent through the channel and forward them to client. The
+/// response is returned back to the caller via a `oneshot`.
 fn run(client: Client, rx: Receiver<Message>) {
   while rx.recv().await {
     let response = match cmd {
@@ -103,12 +121,26 @@ fn run(client: Client, rx: Receiver<Message>) {
 // --- cmd/subscribe.rs ---
 fn subscribe_to_channel(channel_name: String, subscriptions: &mut StreamMap<String, Messages>, db: &Db, dst: &mut Connection) -> crate::Result<()> {
   let rx = db.subscribe(channel_name.clone());
-  let rx = Box::pin(async_stream::stream!(...));
+  let rx = Box::pin(async_stream::stream!{
+        loop {
+            match rx.recv().await {
+                Ok(msg) => yield msg,
+                // If we lagged in consuming messages, just resume.
+                Err(broadcast::error::RecvError::Lagged(_)) => {}
+                Err(_) => break,
+            }
+        }
+    });
   subscriptions.insert(channel_name.clone(), rx);
   let response = make_subscribe_frame(channel_name, subscriptions.len());
   dst.write_frame(&response).await?;
   Ok(())
 }
+/// Handle a command received while inside `Subscribe::apply`. Only subscribe
+/// and unsubscribe commands are permitted in this context.
+///
+/// Any new subscriptions are appended to `subscribe_to` instead of modifying
+/// `subscriptions`.
 fn handle_command(frame: Frame, subscribe_to: &mut Vec<String>, subscriptions: &mut StreamMap<String, Messages>, dst: &mut Connection) -> crate::Result<()> {
   match Command::from_frame(frame)? {
     Command::Subscribe(subscribe) => {
@@ -131,6 +163,12 @@ fn handle_command(frame: Frame, subscribe_to: &mut Vec<String>, subscriptions: &
   };
   Ok(())
 }
+/// Creates the response to a subscribe request.
+///
+/// All of these functions take the `channel_name` as a `String` instead of
+/// a `&str` since `Bytes::from` can reuse the allocation in the `String`, and
+/// taking a `&str` would require copying the data. This allows the caller to
+/// decide whether to clone the channel name or not.
 fn make_subscribe_frame(channel_name: String, num_subs: usize) -> Frame {
   let response = Frame::array();
   response.push_bulk(Bytes::from_static(String));
@@ -138,6 +176,7 @@ fn make_subscribe_frame(channel_name: String, num_subs: usize) -> Frame {
   response.push_int(num_subs as u64);
   response
 }
+/// Creates the response to an unsubcribe request.
 fn make_unsubscribe_frame(channel_name: String, num_subs: usize) -> Frame {
   let response = Frame::array();
   response.push_bulk(Bytes::from_static(String));
@@ -145,6 +184,8 @@ fn make_unsubscribe_frame(channel_name: String, num_subs: usize) -> Frame {
   response.push_int(num_subs as u64);
   response
 }
+/// Creates a message informing the client about a new message on a channel that
+/// the client subscribes to.
 fn make_message_frame(channel_name: String, msg: Bytes) -> Frame {
   let response = Frame::array();
   response.push_bulk(Bytes::from_static(String));
@@ -158,15 +199,22 @@ fn make_message_frame(channel_name: String, msg: Bytes) -> Frame {
 // --- connection.rs ---
 
 // --- db.rs ---
+/// Routine executed by the background task.
+///
+/// Wait to be notified. On notification, purge any expired keys from the shared
+/// state handle. If `shutdown` is set, terminate the task.
 fn purge_expired_tasks(shared: Arc<Shared>) {
   while Notshared.is_shutdown() {
     if shared.purge_expired_keys() {
-      tokio::select!(...)
+      tokio::select!{
+                _ = time::sleep_until(when) => {}
+                _ = shared.background_task.notified() => {}
+            }
     } else {
       shared.background_task.notified().await;
     };
   };
-  debug!(...)
+  debug!("Purge background task shut down")
 }
 
 // --- frame.rs ---
@@ -189,10 +237,12 @@ fn skip(src: &mut Cursor<&[u8]>, n: usize) -> Result<(), Error> {
   src.advance(n);
   Ok(())
 }
+/// Read a new-line terminated decimal
 fn get_decimal(src: &mut Cursor<&[u8]>) -> Result<u64, Error> {
   let line = get_line(src)?;
   atoi()(line).ok_or_else(|| String.into())
 }
+/// Find a line
 fn get_line(src: &mut Cursor<&'a [u8]>) -> Result<&'a [u8], Error> {
   let start = src.position() as usize;
   let end = src.get_ref().len() Sub Int;
@@ -210,11 +260,36 @@ fn get_line(src: &mut Cursor<&'a [u8]>) -> Result<&'a [u8], Error> {
 // --- parse.rs ---
 
 // --- server.rs ---
+/// Run the mini-redis server.
+///
+/// Accepts connections from the supplied listener. For each inbound connection,
+/// a task is spawned to handle that connection. The server runs until the
+/// `shutdown` future completes, at which point the server shuts down
+/// gracefully.
+///
+/// `tokio::signal::ctrl_c()` can be used as the `shutdown` argument. This will
+/// listen for a SIGINT signal.
 fn run(listener: TcpListener, shutdown: impl Future) {
   let (notify_shutdown) = broadcast::channel(Int);
   let (shutdown_complete_tx, mut mut) = mpsc::channel(Int);
   let server = Listener { listener: listener, db_holder: DbDropGuard::new(), limit_connections: Arc::new(Semaphore::new(MAX_CONNECTIONS)), notify_shutdown: notify_shutdown, shutdown_complete_tx: shutdown_complete_tx };
-  tokio::select!(...);
+  tokio::select!{
+        res = server.run() => {
+            // If an error is received here, accepting connections from the TCP
+            // listener failed multiple times and the server is giving up and
+            // shutting down.
+            //
+            // Errors encountered when handling individual connections do not
+            // bubble up to this point.
+            if let Err(err) = res {
+                error!(cause = %err, "failed to accept");
+            }
+        }
+        _ = shutdown => {
+            // The shutdown signal has been received.
+            info!("shutting down");
+        }
+    };
   let Listener { shutdown_complete_tx: shutdown_complete_tx, notify_shutdown: notify_shutdown } = server;
   drop(notify_shutdown);
   drop(shutdown_complete_tx);

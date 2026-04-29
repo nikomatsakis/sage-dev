@@ -67,3 +67,35 @@ pub struct VariantDef<'db> {
     pub fields: Vec<FieldDef<'db>>,
     pub span: SpanIndices,
 }
+
+/// The syntactic form of an attribute.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub enum AttrKind {
+    /// `#[path(args)]` or `#![path(args)]`
+    Normal,
+    /// `/// text` or `/** text */`
+    DocComment,
+}
+
+/// An attribute: `#[foo]`, `#[derive(Debug)]`, `/// doc comment`, etc.
+#[salsa::tracked]
+pub struct Attr<'db> {
+    pub kind: AttrKind,
+    /// For normal attrs: the path (`derive`, `cfg`, etc.).
+    /// For doc comments: path is `doc`.
+    pub path: Path<'db>,
+    /// For normal attrs: the arguments inside parens, if any.
+    /// For doc comments: the comment text.
+    pub args: Option<TokenTree<'db>>,
+    pub span: SpanIndices,
+    /// True for inner attributes (`#![...]`) or inner doc comments (`//!`).
+    pub is_inner: bool,
+}
+
+/// Raw token tree — the unparsed arguments of a macro invocation or attribute.
+#[salsa::tracked]
+pub struct TokenTree<'db> {
+    #[returns(ref)]
+    pub text: String,
+    pub span: SpanIndices,
+}

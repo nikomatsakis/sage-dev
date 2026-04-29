@@ -39,6 +39,7 @@ impl fmt::Display for Item<'_> {
 impl fmt::Display for FunctionItem<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         with_db(|db| {
+            write_attrs(f, self.attrs(db))?;
             if self.is_async(db) {
                 f.write_str("async ")?;
             }
@@ -66,6 +67,7 @@ impl fmt::Display for FunctionItem<'_> {
 impl fmt::Display for StructItem<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         with_db(|db| {
+            write_attrs(f, self.attrs(db))?;
             writeln!(f, "struct {} {{", self.name(db).text(db))?;
             for field in self.fields(db) {
                 writeln!(f, "  {field}")?;
@@ -80,6 +82,7 @@ impl fmt::Display for StructItem<'_> {
 impl fmt::Display for EnumItem<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         with_db(|db| {
+            write_attrs(f, self.attrs(db))?;
             writeln!(f, "enum {} {{", self.name(db).text(db))?;
             for v in self.variants(db) {
                 let fields = v.fields(db);
@@ -103,6 +106,7 @@ impl fmt::Display for EnumItem<'_> {
 impl fmt::Display for TraitItem<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         with_db(|db| {
+            write_attrs(f, self.attrs(db))?;
             writeln!(f, "trait {} {{", self.name(db).text(db))?;
             for item in self.items(db) {
                 writeln!(f, "  {item}")?;
@@ -117,6 +121,7 @@ impl fmt::Display for TraitItem<'_> {
 impl fmt::Display for ImplItem<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         with_db(|db| {
+            write_attrs(f, self.attrs(db))?;
             if let Some(trait_path) = self.trait_path(db) {
                 write!(f, "impl {trait_path} for {} {{", self.self_ty(db))?;
             } else {
@@ -136,6 +141,7 @@ impl fmt::Display for ImplItem<'_> {
 impl fmt::Display for TypeAliasItem<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         with_db(|db| {
+            write_attrs(f, self.attrs(db))?;
             write!(f, "type {}", self.name(db).text(db))?;
             if let Some(ty) = self.ty(db) {
                 write!(f, " = {ty}")?;
@@ -150,6 +156,7 @@ impl fmt::Display for TypeAliasItem<'_> {
 impl fmt::Display for ConstItem<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         with_db(|db| {
+            write_attrs(f, self.attrs(db))?;
             write!(f, "const {}", self.name(db).text(db))?;
             if let Some(ty) = self.ty(db) {
                 write!(f, ": {ty}")?;
@@ -164,6 +171,7 @@ impl fmt::Display for ConstItem<'_> {
 impl fmt::Display for StaticItem<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         with_db(|db| {
+            write_attrs(f, self.attrs(db))?;
             if self.is_mut(db) {
                 f.write_str("static mut ")?;
             } else {
@@ -182,15 +190,18 @@ impl fmt::Display for StaticItem<'_> {
 
 impl fmt::Display for ModItem<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        with_db(|db| match self.items(db) {
-            Some(items) => {
-                writeln!(f, "mod {} {{", self.name(db).text(db))?;
-                for item in items {
-                    writeln!(f, "  {item}")?;
+        with_db(|db| {
+            write_attrs(f, self.attrs(db))?;
+            match self.items(db) {
+                Some(items) => {
+                    writeln!(f, "mod {} {{", self.name(db).text(db))?;
+                    for item in items {
+                        writeln!(f, "  {item}")?;
+                    }
+                    f.write_str("}")
                 }
-                f.write_str("}")
+                None => write!(f, "mod {};", self.name(db).text(db)),
             }
-            None => write!(f, "mod {};", self.name(db).text(db)),
         })
     }
 }
@@ -200,6 +211,7 @@ impl fmt::Display for ModItem<'_> {
 impl fmt::Display for UseItem<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         with_db(|db| {
+            write_attrs(f, self.attrs(db))?;
             write!(f, "use {}", self.path(db))?;
             if let Some(alias) = self.alias(db) {
                 write!(f, " as {}", alias.text(db))?;
@@ -291,6 +303,47 @@ impl fmt::Display for VariantDef<'_> {
             }
         })
     }
+}
+
+// -- Attr --
+
+impl fmt::Display for Attr<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        with_db(|db| match self.kind(db) {
+            AttrKind::DocComment => {
+                let prefix = if self.is_inner(db) { "//!" } else { "///" };
+                if let Some(args) = self.args(db) {
+                    let text = args.text(db);
+                    if text.is_empty() {
+                        write!(f, "{prefix}")
+                    } else {
+                        write!(f, "{prefix} {text}")
+                    }
+                } else {
+                    write!(f, "{prefix}")
+                }
+            }
+            AttrKind::Normal => {
+                if self.is_inner(db) {
+                    f.write_str("#![")?;
+                } else {
+                    f.write_str("#[")?;
+                }
+                write!(f, "{}", self.path(db))?;
+                if let Some(args) = self.args(db) {
+                    write!(f, "{}", args.text(db))?;
+                }
+                f.write_str("]")
+            }
+        })
+    }
+}
+
+fn write_attrs(f: &mut fmt::Formatter<'_>, attrs: &[Attr<'_>]) -> fmt::Result {
+    for attr in attrs {
+        writeln!(f, "{attr}")?;
+    }
+    Ok(())
 }
 
 // ===========================================================================
@@ -537,7 +590,7 @@ impl<'db> PrettyPrint<'db> for ExprKind<'db> {
                 }
                 Ok(())
             }
-            ExprKind::MacroCall(path) => write!(f, "{path}!(...)"),
+            ExprKind::MacroCall(path, args) => with_db(|db| write!(f, "{path}!{}", args.text(db))),
             ExprKind::Missing => f.write_str("{missing}"),
         }
     }

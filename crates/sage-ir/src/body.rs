@@ -2,7 +2,7 @@ use sage_stash::{AllocStashData, Ptr, Slice, Stashed};
 
 use crate::name::Name;
 use crate::span::SpanIndices;
-use crate::types::{Mutability, Path, TypeRef};
+use crate::types::{Mutability, Path, TokenTree, TypeRef};
 
 /// A function body stored in a `Stash`.
 pub type FunctionBody<'db> = Stashed<Ptr<Body<'db>>>;
@@ -49,7 +49,7 @@ pub enum ExprKind<'db> {
     Cast(Ptr<Expr<'db>>, TypeRef<'db>),
     StructLit(Path<'db>, Slice<FieldInit<'db>>),
     Range(Option<Ptr<Expr<'db>>>, Option<Ptr<Expr<'db>>>),
-    MacroCall(Path<'db>),
+    MacroCall(Path<'db>, TokenTree<'db>),
     Missing,
 }
 

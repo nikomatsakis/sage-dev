@@ -5,11 +5,19 @@ use clap::{Parser, Subcommand}
 use std::num::ParseIntError
 use std::str
 use std::time::Duration
+#[derive(Parser, Debug)]
+#[command(
+    name = "mini-redis-cli",
+    version,
+    author,
+    about = "Issue Redis commands"
+)]
 struct Cli {
   command: Command
   host: String
   port: u16
 }
+#[derive(Subcommand, Debug)]
 enum Command {
   Ping {
     msg: Option<Bytes>
@@ -30,59 +38,230 @@ enum Command {
     channels: Vec<String>
   }
 }
+/// Entry point for CLI tool.
+///
+/// The `[tokio::main]` annotation signals that the Tokio runtime should be
+/// started when the function is called. The body of the function is executed
+/// within the newly spawned runtime.
+///
+/// `flavor = "current_thread"` is used here to avoid spawning background
+/// threads. The CLI tool use case benefits more by being lighter instead of
+/// multi-threaded.
+#[tokio::main(flavor = "current_thread")]
 fn main() -> mini_redis::Result<()>
 fn duration_from_ms_str(src: &str) -> Result<Duration, ParseIntError>
 
 // --- bin/server.rs ---
+//! mini-redis server.
+//!
+//! This file is the entry point for the server implemented in the library. It
+//! performs command line parsing and passes the arguments on to
+//! `mini_redis::server`.
+//!
+//! The `clap` crate is used for parsing arguments.
 use mini_redis::{server, DEFAULT_PORT}
 use clap::Parser
 use tokio::net::TcpListener
 use tokio::signal
+#[cfg(feature = "otel")]
 use opentelemetry::global
+#[cfg(feature = "otel")]
 use opentelemetry::sdk::trace as sdktrace
+#[cfg(feature = "otel")]
 use opentelemetry_aws::trace::XrayPropagator
+#[cfg(feature = "otel")]
 use tracing_subscriber::{
     fmt, layer::SubscriberExt, util::SubscriberInitExt, util::TryInitError, EnvFilter,
 }
+#[tokio::main]
 fn main() -> mini_redis::Result<()>
+#[derive(Parser, Debug)]
+#[command(name = "mini-redis-server", version, author, about = "A Redis server")]
 struct Cli {
   port: Option<u16>
 }
+#[cfg(not(feature = "otel"))]
 fn set_up_logging() -> mini_redis::Result<()>
+#[cfg(feature = "otel")]
 fn set_up_logging() -> Result<(), TryInitError>
 
 // --- clients/blocking_client.rs ---
+//! Minimal blocking Redis client implementation
+//!
+//! Provides a blocking connect and methods for issuing the supported commands.
 use bytes::Bytes
 use std::time::Duration
 use tokio::net::ToSocketAddrs
 use tokio::runtime::Runtime
-use pub use crate::clients::Message
+use crate::clients::Message
+/// Established connection with a Redis server.
+///
+/// Backed by a single `TcpStream`, `BlockingClient` provides basic network
+/// client functionality (no pooling, retrying, ...). Connections are
+/// established using the [`connect`](fn@connect) function.
+///
+/// Requests are issued using the various methods of `Client`.
 struct BlockingClient {
   inner: crate::clients::Client
   rt: Runtime
 }
+/// A client that has entered pub/sub mode.
+///
+/// Once clients subscribe to a channel, they may only perform pub/sub related
+/// commands. The `BlockingClient` type is transitioned to a
+/// `BlockingSubscriber` type in order to prevent non-pub/sub methods from being
+/// called.
 struct BlockingSubscriber {
   inner: crate::clients::Subscriber
   rt: Runtime
 }
+/// The iterator returned by `Subscriber::into_iter`.
 struct SubscriberIterator {
   inner: crate::clients::Subscriber
   rt: Runtime
 }
 impl BlockingClient {
-  fn connect(addr: T) -> crate::Result<BlockingClient>
-  fn get(self: &mut Self, key: &str) -> crate::Result<Option<Bytes>>
-  fn set(self: &mut Self, key: &str, value: Bytes) -> crate::Result<()>
-  fn set_expires(self: &mut Self, key: &str, value: Bytes, expiration: Duration) -> crate::Result<()>
-  fn publish(self: &mut Self, channel: &str, message: Bytes) -> crate::Result<u64>
-  fn subscribe(self: Self, channels: Vec<String>) -> crate::Result<BlockingSubscriber>
+  /// Establish a connection with the Redis server located at `addr`.
+///
+/// `addr` may be any type that can be asynchronously converted to a
+/// `SocketAddr`. This includes `SocketAddr` and strings. The `ToSocketAddrs`
+/// trait is the Tokio version and not the `std` version.
+///
+/// # Examples
+///
+/// ```no_run
+/// use mini_redis::clients::BlockingClient;
+///
+/// let client = match BlockingClient::connect("localhost:6379") {
+///     Ok(client) => client,
+///     Err(_) => panic!("failed to establish connection"),
+/// };
+/// # drop(client);
+/// ```
+fn connect(addr: T) -> crate::Result<BlockingClient>
+  /// Get the value of key.
+///
+/// If the key does not exist the special value `None` is returned.
+///
+/// # Examples
+///
+/// Demonstrates basic usage.
+///
+/// ```no_run
+/// use mini_redis::clients::BlockingClient;
+///
+/// let mut client = BlockingClient::connect("localhost:6379").unwrap();
+///
+/// let val = client.get("foo").unwrap();
+/// println!("Got = {val:?}");
+/// ```
+fn get(self: &mut Self, key: &str) -> crate::Result<Option<Bytes>>
+  /// Set `key` to hold the given `value`.
+///
+/// The `value` is associated with `key` until it is overwritten by the next
+/// call to `set` or it is removed.
+///
+/// If key already holds a value, it is overwritten. Any previous time to
+/// live associated with the key is discarded on successful SET operation.
+///
+/// # Examples
+///
+/// Demonstrates basic usage.
+///
+/// ```no_run
+/// use mini_redis::clients::BlockingClient;
+///
+/// let mut client = BlockingClient::connect("localhost:6379").unwrap();
+///
+/// client.set("foo", "bar".into()).unwrap();
+///
+/// // Getting the value immediately works
+/// let val = client.get("foo").unwrap().unwrap();
+/// assert_eq!(val, "bar");
+/// ```
+fn set(self: &mut Self, key: &str, value: Bytes) -> crate::Result<()>
+  /// Set `key` to hold the given `value`. The value expires after `expiration`
+///
+/// The `value` is associated with `key` until one of the following:
+/// - it expires.
+/// - it is overwritten by the next call to `set`.
+/// - it is removed.
+///
+/// If key already holds a value, it is overwritten. Any previous time to
+/// live associated with the key is discarded on a successful SET operation.
+///
+/// # Examples
+///
+/// Demonstrates basic usage. This example is not **guaranteed** to always
+/// work as it relies on time based logic and assumes the client and server
+/// stay relatively synchronized in time. The real world tends to not be so
+/// favorable.
+///
+/// ```no_run
+/// use mini_redis::clients::BlockingClient;
+/// use std::thread;
+/// use std::time::Duration;
+///
+/// let ttl = Duration::from_millis(500);
+/// let mut client = BlockingClient::connect("localhost:6379").unwrap();
+///
+/// client.set_expires("foo", "bar".into(), ttl).unwrap();
+///
+/// // Getting the value immediately works
+/// let val = client.get("foo").unwrap().unwrap();
+/// assert_eq!(val, "bar");
+///
+/// // Wait for the TTL to expire
+/// thread::sleep(ttl);
+///
+/// let val = client.get("foo").unwrap();
+/// assert!(val.is_none());
+/// ```
+fn set_expires(self: &mut Self, key: &str, value: Bytes, expiration: Duration) -> crate::Result<()>
+  /// Posts `message` to the given `channel`.
+///
+/// Returns the number of subscribers currently listening on the channel.
+/// There is no guarantee that these subscribers receive the message as they
+/// may disconnect at any time.
+///
+/// # Examples
+///
+/// Demonstrates basic usage.
+///
+/// ```no_run
+/// use mini_redis::clients::BlockingClient;
+///
+/// let mut client = BlockingClient::connect("localhost:6379").unwrap();
+///
+/// let val = client.publish("foo", "bar".into()).unwrap();
+/// println!("Got = {val:?}");
+/// ```
+fn publish(self: &mut Self, channel: &str, message: Bytes) -> crate::Result<u64>
+  /// Subscribes the client to the specified channels.
+///
+/// Once a client issues a subscribe command, it may no longer issue any
+/// non-pub/sub commands. The function consumes `self` and returns a
+/// `BlockingSubscriber`.
+///
+/// The `BlockingSubscriber` value is used to receive messages as well as
+/// manage the list of channels the client is subscribed to.
+fn subscribe(self: Self, channels: Vec<String>) -> crate::Result<BlockingSubscriber>
 }
 impl BlockingSubscriber {
-  fn get_subscribed(self: &Self) -> &[String; _]
-  fn next_message(self: &mut Self) -> crate::Result<Option<Message>>
-  fn into_iter(self: Self) -> impl Iterator<Item = crate::Result<Message>>
-  fn subscribe(self: &mut Self, channels: &[String; _]) -> crate::Result<()>
-  fn unsubscribe(self: &mut Self, channels: &[String; _]) -> crate::Result<()>
+  /// Returns the set of channels currently subscribed to.
+fn get_subscribed(self: &Self) -> &[String; _]
+  /// Receive the next message published on a subscribed channel, waiting if
+/// necessary.
+///
+/// `None` indicates the subscription has been terminated.
+fn next_message(self: &mut Self) -> crate::Result<Option<Message>>
+  /// Convert the subscriber into an `Iterator` yielding new messages published
+/// on subscribed channels.
+fn into_iter(self: Self) -> impl Iterator<Item = crate::Result<Message>>
+  /// Subscribe to a list of new channels
+fn subscribe(self: &mut Self, channels: &[String; _]) -> crate::Result<()>
+  /// Unsubscribe to a list of new channels
+fn unsubscribe(self: &mut Self, channels: &[String; _]) -> crate::Result<()>
 }
 impl Iterator for SubscriberIterator {
   type Item = crate::Result<Message>
@@ -95,22 +274,53 @@ use crate::Result
 use bytes::Bytes
 use tokio::sync::mpsc::{channel, Receiver, Sender}
 use tokio::sync::oneshot
+#[derive(Debug)]
 enum Command {
   Get
   Set
 }
 type Message = (Command, oneshot::Sender<Result<Option<Bytes>>>)
+/// Receive commands sent through the channel and forward them to client. The
+/// response is returned back to the caller via a `oneshot`.
 fn run(client: Client, rx: Receiver<Message>)
+#[derive(Clone)]
 struct BufferedClient {
   tx: Sender<Message>
 }
 impl BufferedClient {
-  fn buffer(client: Client) -> BufferedClient
-  fn get(self: &mut Self, key: &str) -> Result<Option<Bytes>>
-  fn set(self: &mut Self, key: &str, value: Bytes) -> Result<()>
+  /// Create a new client request buffer
+///
+/// The `Client` performs Redis commands directly on the TCP connection. Only a
+/// single request may be in-flight at a given time and operations require
+/// mutable access to the `Client` handle. This prevents using a single Redis
+/// connection from multiple Tokio tasks.
+///
+/// The strategy for dealing with this class of problem is to spawn a dedicated
+/// Tokio task to manage the Redis connection and using "message passing" to
+/// operate on the connection. Commands are pushed into a channel. The
+/// connection task pops commands off of the channel and applies them to the
+/// Redis connection. When the response is received, it is forwarded to the
+/// original requester.
+///
+/// The returned `BufferedClient` handle may be cloned before passing the new handle to
+/// separate tasks.
+fn buffer(client: Client) -> BufferedClient
+  /// Get the value of a key.
+///
+/// Same as `Client::get` but requests are **buffered** until the associated
+/// connection has the ability to send the request.
+fn get(self: &mut Self, key: &str) -> Result<Option<Bytes>>
+  /// Set `key` to hold the given `value`.
+///
+/// Same as `Client::set` but requests are **buffered** until the associated
+/// connection has the ability to send the request
+fn set(self: &mut Self, key: &str, value: Bytes) -> Result<()>
 }
 
 // --- clients/client.rs ---
+//! Minimal Redis client implementation
+//!
+//! Provides an async connect and methods for issuing the supported commands.
 use crate::cmd::{Get, Ping, Publish, Set, Subscribe, Unsubscribe}
 use crate::{Connection, Frame}
 use async_stream::try_stream
@@ -120,74 +330,313 @@ use std::time::Duration
 use tokio::net::{TcpStream, ToSocketAddrs}
 use tokio_stream::Stream
 use tracing::{debug, instrument}
+/// Established connection with a Redis server.
+///
+/// Backed by a single `TcpStream`, `Client` provides basic network client
+/// functionality (no pooling, retrying, ...). Connections are established using
+/// the [`connect`](fn@connect) function.
+///
+/// Requests are issued using the various methods of `Client`.
 struct Client {
   connection: Connection
 }
+/// A client that has entered pub/sub mode.
+///
+/// Once clients subscribe to a channel, they may only perform pub/sub related
+/// commands. The `Client` type is transitioned to a `Subscriber` type in order
+/// to prevent non-pub/sub methods from being called.
 struct Subscriber {
   client: Client
   subscribed_channels: Vec<String>
 }
+/// A message received on a subscribed channel.
+#[derive(Debug, Clone)]
 struct Message {
   channel: String
   content: Bytes
 }
 impl Client {
-  fn connect(addr: T) -> crate::Result<Client>
-  fn ping(self: &mut Self, msg: Option<Bytes>) -> crate::Result<Bytes>
-  fn get(self: &mut Self, key: &str) -> crate::Result<Option<Bytes>>
-  fn set(self: &mut Self, key: &str, value: Bytes) -> crate::Result<()>
-  fn set_expires(self: &mut Self, key: &str, value: Bytes, expiration: Duration) -> crate::Result<()>
-  fn set_cmd(self: &mut Self, cmd: Set) -> crate::Result<()>
-  fn publish(self: &mut Self, channel: &str, message: Bytes) -> crate::Result<u64>
-  fn subscribe(self: Self, channels: Vec<String>) -> crate::Result<Subscriber>
-  fn subscribe_cmd(self: &mut Self, channels: &[String; _]) -> crate::Result<()>
-  fn read_response(self: &mut Self) -> crate::Result<Frame>
+  /// Establish a connection with the Redis server located at `addr`.
+///
+/// `addr` may be any type that can be asynchronously converted to a
+/// `SocketAddr`. This includes `SocketAddr` and strings. The `ToSocketAddrs`
+/// trait is the Tokio version and not the `std` version.
+///
+/// # Examples
+///
+/// ```no_run
+/// use mini_redis::clients::Client;
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let client = match Client::connect("localhost:6379").await {
+///         Ok(client) => client,
+///         Err(_) => panic!("failed to establish connection"),
+///     };
+/// # drop(client);
+/// }
+/// ```
+///
+fn connect(addr: T) -> crate::Result<Client>
+  /// Ping to the server.
+///
+/// Returns PONG if no argument is provided, otherwise
+/// return a copy of the argument as a bulk.
+///
+/// This command is often used to test if a connection
+/// is still alive, or to measure latency.
+///
+/// # Examples
+///
+/// Demonstrates basic usage.
+/// ```no_run
+/// use mini_redis::clients::Client;
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let mut client = Client::connect("localhost:6379").await.unwrap();
+///
+///     let pong = client.ping(None).await.unwrap();
+///     assert_eq!(b"PONG", &pong[..]);
+/// }
+/// ```
+#[instrument(skip(self))]
+fn ping(self: &mut Self, msg: Option<Bytes>) -> crate::Result<Bytes>
+  /// Get the value of key.
+///
+/// If the key does not exist the special value `None` is returned.
+///
+/// # Examples
+///
+/// Demonstrates basic usage.
+///
+/// ```no_run
+/// use mini_redis::clients::Client;
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let mut client = Client::connect("localhost:6379").await.unwrap();
+///
+///     let val = client.get("foo").await.unwrap();
+///     println!("Got = {:?}", val);
+/// }
+/// ```
+#[instrument(skip(self))]
+fn get(self: &mut Self, key: &str) -> crate::Result<Option<Bytes>>
+  /// Set `key` to hold the given `value`.
+///
+/// The `value` is associated with `key` until it is overwritten by the next
+/// call to `set` or it is removed.
+///
+/// If key already holds a value, it is overwritten. Any previous time to
+/// live associated with the key is discarded on successful SET operation.
+///
+/// # Examples
+///
+/// Demonstrates basic usage.
+///
+/// ```no_run
+/// use mini_redis::clients::Client;
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let mut client = Client::connect("localhost:6379").await.unwrap();
+///
+///     client.set("foo", "bar".into()).await.unwrap();
+///
+///     // Getting the value immediately works
+///     let val = client.get("foo").await.unwrap().unwrap();
+///     assert_eq!(val, "bar");
+/// }
+/// ```
+#[instrument(skip(self))]
+fn set(self: &mut Self, key: &str, value: Bytes) -> crate::Result<()>
+  /// Set `key` to hold the given `value`. The value expires after `expiration`
+///
+/// The `value` is associated with `key` until one of the following:
+/// - it expires.
+/// - it is overwritten by the next call to `set`.
+/// - it is removed.
+///
+/// If key already holds a value, it is overwritten. Any previous time to
+/// live associated with the key is discarded on a successful SET operation.
+///
+/// # Examples
+///
+/// Demonstrates basic usage. This example is not **guaranteed** to always
+/// work as it relies on time based logic and assumes the client and server
+/// stay relatively synchronized in time. The real world tends to not be so
+/// favorable.
+///
+/// ```no_run
+/// use mini_redis::clients::Client;
+/// use tokio::time;
+/// use std::time::Duration;
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let ttl = Duration::from_millis(500);
+///     let mut client = Client::connect("localhost:6379").await.unwrap();
+///
+///     client.set_expires("foo", "bar".into(), ttl).await.unwrap();
+///
+///     // Getting the value immediately works
+///     let val = client.get("foo").await.unwrap().unwrap();
+///     assert_eq!(val, "bar");
+///
+///     // Wait for the TTL to expire
+///     time::sleep(ttl).await;
+///
+///     let val = client.get("foo").await.unwrap();
+///     assert!(val.is_some());
+/// }
+/// ```
+#[instrument(skip(self))]
+fn set_expires(self: &mut Self, key: &str, value: Bytes, expiration: Duration) -> crate::Result<()>
+  /// The core `SET` logic, used by both `set` and `set_expires.
+fn set_cmd(self: &mut Self, cmd: Set) -> crate::Result<()>
+  /// Posts `message` to the given `channel`.
+///
+/// Returns the number of subscribers currently listening on the channel.
+/// There is no guarantee that these subscribers receive the message as they
+/// may disconnect at any time.
+///
+/// # Examples
+///
+/// Demonstrates basic usage.
+///
+/// ```no_run
+/// use mini_redis::clients::Client;
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let mut client = Client::connect("localhost:6379").await.unwrap();
+///
+///     let val = client.publish("foo", "bar".into()).await.unwrap();
+///     println!("Got = {:?}", val);
+/// }
+/// ```
+#[instrument(skip(self))]
+fn publish(self: &mut Self, channel: &str, message: Bytes) -> crate::Result<u64>
+  /// Subscribes the client to the specified channels.
+///
+/// Once a client issues a subscribe command, it may no longer issue any
+/// non-pub/sub commands. The function consumes `self` and returns a `Subscriber`.
+///
+/// The `Subscriber` value is used to receive messages as well as manage the
+/// list of channels the client is subscribed to.
+#[instrument(skip(self))]
+fn subscribe(self: Self, channels: Vec<String>) -> crate::Result<Subscriber>
+  /// The core `SUBSCRIBE` logic, used by misc subscribe fns
+fn subscribe_cmd(self: &mut Self, channels: &[String; _]) -> crate::Result<()>
+  /// Reads a response frame from the socket.
+///
+/// If an `Error` frame is received, it is converted to `Err`.
+fn read_response(self: &mut Self) -> crate::Result<Frame>
 }
 impl Subscriber {
-  fn get_subscribed(self: &Self) -> &[String; _]
-  fn next_message(self: &mut Self) -> crate::Result<Option<Message>>
-  fn into_stream(self: Self) -> impl Stream<Item = crate::Result<Message>>
-  fn subscribe(self: &mut Self, channels: &[String; _]) -> crate::Result<()>
-  fn unsubscribe(self: &mut Self, channels: &[String; _]) -> crate::Result<()>
+  /// Returns the set of channels currently subscribed to.
+fn get_subscribed(self: &Self) -> &[String; _]
+  /// Receive the next message published on a subscribed channel, waiting if
+/// necessary.
+///
+/// `None` indicates the subscription has been terminated.
+fn next_message(self: &mut Self) -> crate::Result<Option<Message>>
+  /// Convert the subscriber into a `Stream` yielding new messages published
+/// on subscribed channels.
+///
+/// `Subscriber` does not implement stream itself as doing so with safe code
+/// is non trivial. The usage of async/await would require a manual Stream
+/// implementation to use `unsafe` code. Instead, a conversion function is
+/// provided and the returned stream is implemented with the help of the
+/// `async-stream` crate.
+fn into_stream(self: Self) -> impl Stream<Item = crate::Result<Message>>
+  /// Subscribe to a list of new channels
+#[instrument(skip(self))]
+fn subscribe(self: &mut Self, channels: &[String; _]) -> crate::Result<()>
+  /// Unsubscribe to a list of new channels
+#[instrument(skip(self))]
+fn unsubscribe(self: &mut Self, channels: &[String; _]) -> crate::Result<()>
 }
 
 // --- clients/mod.rs ---
 mod client;
-use pub use client::{Client, Message, Subscriber}
+use client::{Client, Message, Subscriber}
 mod blocking_client;
-use pub use blocking_client::BlockingClient
+use blocking_client::BlockingClient
 mod buffered_client;
-use pub use buffered_client::BufferedClient
+use buffered_client::BufferedClient
 
 // --- cmd/get.rs ---
 use crate::{Connection, Db, Frame, Parse}
 use bytes::Bytes
 use tracing::{debug, instrument}
+/// Get the value of key.
+///
+/// If the key does not exist the special value nil is returned. An error is
+/// returned if the value stored at key is not a string, because GET only
+/// handles string values.
+#[derive(Debug)]
 struct Get {
   key: String
 }
 impl Get {
-  fn new(key: impl ToString) -> Get
-  fn key(self: &Self) -> &str
-  fn parse_frames(parse: &mut Parse) -> crate::Result<Get>
-  fn apply(self: Self, db: &Db, dst: &mut Connection) -> crate::Result<()>
-  fn into_frame(self: Self) -> Frame
+  /// Create a new `Get` command which fetches `key`.
+fn new(key: impl ToString) -> Get
+  /// Get the key
+fn key(self: &Self) -> &str
+  /// Parse a `Get` instance from a received frame.
+///
+/// The `Parse` argument provides a cursor-like API to read fields from the
+/// `Frame`. At this point, the entire frame has already been received from
+/// the socket.
+///
+/// The `GET` string has already been consumed.
+///
+/// # Returns
+///
+/// Returns the `Get` value on success. If the frame is malformed, `Err` is
+/// returned.
+///
+/// # Format
+///
+/// Expects an array frame containing two entries.
+///
+/// ```text
+/// GET key
+/// ```
+fn parse_frames(parse: &mut Parse) -> crate::Result<Get>
+  /// Apply the `Get` command to the specified `Db` instance.
+///
+/// The response is written to `dst`. This is called by the server in order
+/// to execute a received command.
+#[instrument(skip(self, db, dst))]
+fn apply(self: Self, db: &Db, dst: &mut Connection) -> crate::Result<()>
+  /// Converts the command into an equivalent `Frame`.
+///
+/// This is called by the client when encoding a `Get` command to send to
+/// the server.
+fn into_frame(self: Self) -> Frame
 }
 
 // --- cmd/mod.rs ---
 mod get;
-use pub use get::Get
+use get::Get
 mod publish;
-use pub use publish::Publish
+use publish::Publish
 mod set;
-use pub use set::Set
+use set::Set
 mod subscribe;
-use pub use subscribe::{Subscribe, Unsubscribe}
+use subscribe::{Subscribe, Unsubscribe}
 mod ping;
-use pub use ping::Ping
+use ping::Ping
 mod unknown;
-use pub use unknown::Unknown
+use unknown::Unknown
 use crate::{Connection, Db, Frame, Parse, ParseError, Shutdown}
+/// Enumeration of supported Redis commands.
+///
+/// Methods called on `Command` are delegated to the command implementation.
+#[derive(Debug)]
 enum Command {
   Get
   Publish
@@ -198,37 +647,123 @@ enum Command {
   Unknown
 }
 impl Command {
-  fn from_frame(frame: Frame) -> crate::Result<Command>
-  fn apply(self: Self, db: &Db, dst: &mut Connection, shutdown: &mut Shutdown) -> crate::Result<()>
-  fn get_name(self: &Self) -> &str
+  /// Parse a command from a received frame.
+///
+/// The `Frame` must represent a Redis command supported by `mini-redis` and
+/// be the array variant.
+///
+/// # Returns
+///
+/// On success, the command value is returned, otherwise, `Err` is returned.
+fn from_frame(frame: Frame) -> crate::Result<Command>
+  /// Apply the command to the specified `Db` instance.
+///
+/// The response is written to `dst`. This is called by the server in order
+/// to execute a received command.
+fn apply(self: Self, db: &Db, dst: &mut Connection, shutdown: &mut Shutdown) -> crate::Result<()>
+  /// Returns the command name
+fn get_name(self: &Self) -> &str
 }
 
 // --- cmd/ping.rs ---
 use crate::{Connection, Frame, Parse, ParseError}
 use bytes::Bytes
 use tracing::{debug, instrument}
+/// Returns PONG if no argument is provided, otherwise
+/// return a copy of the argument as a bulk.
+///
+/// This command is often used to test if a connection
+/// is still alive, or to measure latency.
+#[derive(Debug, Default)]
 struct Ping {
   msg: Option<Bytes>
 }
 impl Ping {
-  fn new(msg: Option<Bytes>) -> Ping
-  fn parse_frames(parse: &mut Parse) -> crate::Result<Ping>
-  fn apply(self: Self, dst: &mut Connection) -> crate::Result<()>
-  fn into_frame(self: Self) -> Frame
+  /// Create a new `Ping` command with optional `msg`.
+fn new(msg: Option<Bytes>) -> Ping
+  /// Parse a `Ping` instance from a received frame.
+///
+/// The `Parse` argument provides a cursor-like API to read fields from the
+/// `Frame`. At this point, the entire frame has already been received from
+/// the socket.
+///
+/// The `PING` string has already been consumed.
+///
+/// # Returns
+///
+/// Returns the `Ping` value on success. If the frame is malformed, `Err` is
+/// returned.
+///
+/// # Format
+///
+/// Expects an array frame containing `PING` and an optional message.
+///
+/// ```text
+/// PING [message]
+/// ```
+fn parse_frames(parse: &mut Parse) -> crate::Result<Ping>
+  /// Apply the `Ping` command and return the message.
+///
+/// The response is written to `dst`. This is called by the server in order
+/// to execute a received command.
+#[instrument(skip(self, dst))]
+fn apply(self: Self, dst: &mut Connection) -> crate::Result<()>
+  /// Converts the command into an equivalent `Frame`.
+///
+/// This is called by the client when encoding a `Ping` command to send
+/// to the server.
+fn into_frame(self: Self) -> Frame
 }
 
 // --- cmd/publish.rs ---
 use crate::{Connection, Db, Frame, Parse}
 use bytes::Bytes
+/// Posts a message to the given channel.
+///
+/// Send a message into a channel without any knowledge of individual consumers.
+/// Consumers may subscribe to channels in order to receive the messages.
+///
+/// Channel names have no relation to the key-value namespace. Publishing on a
+/// channel named "foo" has no relation to setting the "foo" key.
+#[derive(Debug)]
 struct Publish {
   channel: String
   message: Bytes
 }
 impl Publish {
-  fn new(channel: impl ToString, message: Bytes) -> Publish
-  fn parse_frames(parse: &mut Parse) -> crate::Result<Publish>
-  fn apply(self: Self, db: &Db, dst: &mut Connection) -> crate::Result<()>
-  fn into_frame(self: Self) -> Frame
+  /// Create a new `Publish` command which sends `message` on `channel`.
+fn new(channel: impl ToString, message: Bytes) -> Publish
+  /// Parse a `Publish` instance from a received frame.
+///
+/// The `Parse` argument provides a cursor-like API to read fields from the
+/// `Frame`. At this point, the entire frame has already been received from
+/// the socket.
+///
+/// The `PUBLISH` string has already been consumed.
+///
+/// # Returns
+///
+/// On success, the `Publish` value is returned. If the frame is malformed,
+/// `Err` is returned.
+///
+/// # Format
+///
+/// Expects an array frame containing three entries.
+///
+/// ```text
+/// PUBLISH channel message
+/// ```
+fn parse_frames(parse: &mut Parse) -> crate::Result<Publish>
+  /// Apply the `Publish` command to the specified `Db` instance.
+///
+/// The response is written to `dst`. This is called by the server in order
+/// to execute a received command.
+fn apply(self: Self, db: &Db, dst: &mut Connection) -> crate::Result<()>
+  /// Converts the command into an equivalent `Frame`.
+///
+/// This is called by the client when encoding a `Publish` command to send
+/// to the server.
+fn into_frame(self: Self) -> Frame
 }
 
 // --- cmd/set.rs ---
@@ -237,19 +772,68 @@ use crate::{Connection, Db, Frame}
 use bytes::Bytes
 use std::time::Duration
 use tracing::{debug, instrument}
+/// Set `key` to hold the string `value`.
+///
+/// If `key` already holds a value, it is overwritten, regardless of its type.
+/// Any previous time to live associated with the key is discarded on successful
+/// SET operation.
+///
+/// # Options
+///
+/// Currently, the following options are supported:
+///
+/// * EX `seconds` -- Set the specified expire time, in seconds.
+/// * PX `milliseconds` -- Set the specified expire time, in milliseconds.
+#[derive(Debug)]
 struct Set {
   key: String
   value: Bytes
   expire: Option<Duration>
 }
 impl Set {
-  fn new(key: impl ToString, value: Bytes, expire: Option<Duration>) -> Set
-  fn key(self: &Self) -> &str
-  fn value(self: &Self) -> &Bytes
-  fn expire(self: &Self) -> Option<Duration>
-  fn parse_frames(parse: &mut Parse) -> crate::Result<Set>
-  fn apply(self: Self, db: &Db, dst: &mut Connection) -> crate::Result<()>
-  fn into_frame(self: Self) -> Frame
+  /// Create a new `Set` command which sets `key` to `value`.
+///
+/// If `expire` is `Some`, the value should expire after the specified
+/// duration.
+fn new(key: impl ToString, value: Bytes, expire: Option<Duration>) -> Set
+  /// Get the key
+fn key(self: &Self) -> &str
+  /// Get the value
+fn value(self: &Self) -> &Bytes
+  /// Get the expire
+fn expire(self: &Self) -> Option<Duration>
+  /// Parse a `Set` instance from a received frame.
+///
+/// The `Parse` argument provides a cursor-like API to read fields from the
+/// `Frame`. At this point, the entire frame has already been received from
+/// the socket.
+///
+/// The `SET` string has already been consumed.
+///
+/// # Returns
+///
+/// Returns the `Set` value on success. If the frame is malformed, `Err` is
+/// returned.
+///
+/// # Format
+///
+/// Expects an array frame containing at least 3 entries.
+///
+/// ```text
+/// SET key value [EX seconds|PX milliseconds]
+/// ```
+fn parse_frames(parse: &mut Parse) -> crate::Result<Set>
+  /// Apply the `Set` command to the specified `Db` instance.
+///
+/// The response is written to `dst`. This is called by the server in order
+/// to execute a received command.
+#[instrument(skip(self, db, dst))]
+fn apply(self: Self, db: &Db, dst: &mut Connection) -> crate::Result<()>
+  /// Converts the command into an equivalent `Frame`.
+///
+/// This is called by the client when encoding a `Set` command to send to
+/// the server.
+fn into_frame(self: Self) -> Frame
 }
 
 // --- cmd/subscribe.rs ---
@@ -260,40 +844,136 @@ use std::pin::Pin
 use tokio::select
 use tokio::sync::broadcast
 use tokio_stream::{Stream, StreamExt, StreamMap}
+/// Subscribes the client to one or more channels.
+///
+/// Once the client enters the subscribed state, it is not supposed to issue any
+/// other commands, except for additional SUBSCRIBE, PSUBSCRIBE, UNSUBSCRIBE,
+/// PUNSUBSCRIBE, PING and QUIT commands.
+#[derive(Debug)]
 struct Subscribe {
   channels: Vec<String>
 }
+/// Unsubscribes the client from one or more channels.
+///
+/// When no channels are specified, the client is unsubscribed from all the
+/// previously subscribed channels.
+#[derive(Clone, Debug)]
 struct Unsubscribe {
   channels: Vec<String>
 }
+/// Stream of messages. The stream receives messages from the
+/// `broadcast::Receiver`. We use `stream!` to create a `Stream` that consumes
+/// messages. Because `stream!` values cannot be named, we box the stream using
+/// a trait object.
 type Messages = Pin<Box<dyn Stream<Item = Bytes> + Send>>
 impl Subscribe {
-  fn new(channels: Vec<String>) -> Subscribe
-  fn parse_frames(parse: &mut Parse) -> crate::Result<Subscribe>
-  fn apply(self: Self, db: &Db, dst: &mut Connection, shutdown: &mut Shutdown) -> crate::Result<()>
-  fn into_frame(self: Self) -> Frame
+  /// Creates a new `Subscribe` command to listen on the specified channels.
+fn new(channels: Vec<String>) -> Subscribe
+  /// Parse a `Subscribe` instance from a received frame.
+///
+/// The `Parse` argument provides a cursor-like API to read fields from the
+/// `Frame`. At this point, the entire frame has already been received from
+/// the socket.
+///
+/// The `SUBSCRIBE` string has already been consumed.
+///
+/// # Returns
+///
+/// On success, the `Subscribe` value is returned. If the frame is
+/// malformed, `Err` is returned.
+///
+/// # Format
+///
+/// Expects an array frame containing two or more entries.
+///
+/// ```text
+/// SUBSCRIBE channel [channel ...]
+/// ```
+fn parse_frames(parse: &mut Parse) -> crate::Result<Subscribe>
+  /// Apply the `Subscribe` command to the specified `Db` instance.
+///
+/// This function is the entry point and includes the initial list of
+/// channels to subscribe to. Additional `subscribe` and `unsubscribe`
+/// commands may be received from the client and the list of subscriptions
+/// are updated accordingly.
+///
+/// [here]: https://redis.io/topics/pubsub
+fn apply(self: Self, db: &Db, dst: &mut Connection, shutdown: &mut Shutdown) -> crate::Result<()>
+  /// Converts the command into an equivalent `Frame`.
+///
+/// This is called by the client when encoding a `Subscribe` command to send
+/// to the server.
+fn into_frame(self: Self) -> Frame
 }
 fn subscribe_to_channel(channel_name: String, subscriptions: &mut StreamMap<String, Messages>, db: &Db, dst: &mut Connection) -> crate::Result<()>
+/// Handle a command received while inside `Subscribe::apply`. Only subscribe
+/// and unsubscribe commands are permitted in this context.
+///
+/// Any new subscriptions are appended to `subscribe_to` instead of modifying
+/// `subscriptions`.
 fn handle_command(frame: Frame, subscribe_to: &mut Vec<String>, subscriptions: &mut StreamMap<String, Messages>, dst: &mut Connection) -> crate::Result<()>
+/// Creates the response to a subscribe request.
+///
+/// All of these functions take the `channel_name` as a `String` instead of
+/// a `&str` since `Bytes::from` can reuse the allocation in the `String`, and
+/// taking a `&str` would require copying the data. This allows the caller to
+/// decide whether to clone the channel name or not.
 fn make_subscribe_frame(channel_name: String, num_subs: usize) -> Frame
+/// Creates the response to an unsubcribe request.
 fn make_unsubscribe_frame(channel_name: String, num_subs: usize) -> Frame
+/// Creates a message informing the client about a new message on a channel that
+/// the client subscribes to.
 fn make_message_frame(channel_name: String, msg: Bytes) -> Frame
 impl Unsubscribe {
-  fn new(channels: &[String; _]) -> Unsubscribe
-  fn parse_frames(parse: &mut Parse) -> Result<Unsubscribe, ParseError>
-  fn into_frame(self: Self) -> Frame
+  /// Create a new `Unsubscribe` command with the given `channels`.
+fn new(channels: &[String; _]) -> Unsubscribe
+  /// Parse an `Unsubscribe` instance from a received frame.
+///
+/// The `Parse` argument provides a cursor-like API to read fields from the
+/// `Frame`. At this point, the entire frame has already been received from
+/// the socket.
+///
+/// The `UNSUBSCRIBE` string has already been consumed.
+///
+/// # Returns
+///
+/// On success, the `Unsubscribe` value is returned. If the frame is
+/// malformed, `Err` is returned.
+///
+/// # Format
+///
+/// Expects an array frame containing at least one entry.
+///
+/// ```text
+/// UNSUBSCRIBE [channel [channel ...]]
+/// ```
+fn parse_frames(parse: &mut Parse) -> Result<Unsubscribe, ParseError>
+  /// Converts the command into an equivalent `Frame`.
+///
+/// This is called by the client when encoding an `Unsubscribe` command to
+/// send to the server.
+fn into_frame(self: Self) -> Frame
 }
 
 // --- cmd/unknown.rs ---
 use crate::{Connection, Frame}
 use tracing::{debug, instrument}
+/// Represents an "unknown" command. This is not a real `Redis` command.
+#[derive(Debug)]
 struct Unknown {
   command_name: String
 }
 impl Unknown {
-  fn new(key: impl ToString) -> Unknown
-  fn get_name(self: &Self) -> &str
-  fn apply(self: Self, dst: &mut Connection) -> crate::Result<()>
+  /// Create a new `Unknown` command which responds to unknown commands
+/// issued by clients
+fn new(key: impl ToString) -> Unknown
+  /// Returns the command name
+fn get_name(self: &Self) -> &str
+  /// Responds to the client, indicating the command is not recognized.
+///
+/// This usually means the command is not yet implemented by `mini-redis`.
+#[instrument(skip(self, dst))]
+fn apply(self: Self, dst: &mut Connection) -> crate::Result<()>
 }
 
 // --- connection.rs ---
@@ -302,17 +982,57 @@ use bytes::{Buf, BytesMut}
 use std::io::{self, Cursor}
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufWriter}
 use tokio::net::TcpStream
+/// Send and receive `Frame` values from a remote peer.
+///
+/// When implementing networking protocols, a message on that protocol is
+/// often composed of several smaller messages known as frames. The purpose of
+/// `Connection` is to read and write frames on the underlying `TcpStream`.
+///
+/// To read frames, the `Connection` uses an internal buffer, which is filled
+/// up until there are enough bytes to create a full frame. Once this happens,
+/// the `Connection` creates the frame and returns it to the caller.
+///
+/// When sending frames, the frame is first encoded into the write buffer.
+/// The contents of the write buffer are then written to the socket.
+#[derive(Debug)]
 struct Connection {
   stream: BufWriter<TcpStream>
   buffer: BytesMut
 }
 impl Connection {
-  fn new(socket: TcpStream) -> Connection
-  fn read_frame(self: &mut Self) -> crate::Result<Option<Frame>>
-  fn parse_frame(self: &mut Self) -> crate::Result<Option<Frame>>
-  fn write_frame(self: &mut Self, frame: &Frame) -> io::Result<()>
-  fn write_value(self: &mut Self, frame: &Frame) -> io::Result<()>
-  fn write_decimal(self: &mut Self, val: u64) -> io::Result<()>
+  /// Create a new `Connection`, backed by `socket`. Read and write buffers
+/// are initialized.
+fn new(socket: TcpStream) -> Connection
+  /// Read a single `Frame` value from the underlying stream.
+///
+/// The function waits until it has retrieved enough data to parse a frame.
+/// Any data remaining in the read buffer after the frame has been parsed is
+/// kept there for the next call to `read_frame`.
+///
+/// # Returns
+///
+/// On success, the received frame is returned. If the `TcpStream`
+/// is closed in a way that doesn't break a frame in half, it returns
+/// `None`. Otherwise, an error is returned.
+fn read_frame(self: &mut Self) -> crate::Result<Option<Frame>>
+  /// Tries to parse a frame from the buffer. If the buffer contains enough
+/// data, the frame is returned and the data removed from the buffer. If not
+/// enough data has been buffered yet, `Ok(None)` is returned. If the
+/// buffered data does not represent a valid frame, `Err` is returned.
+fn parse_frame(self: &mut Self) -> crate::Result<Option<Frame>>
+  /// Write a single `Frame` value to the underlying stream.
+///
+/// The `Frame` value is written to the socket using the various `write_*`
+/// functions provided by `AsyncWrite`. Calling these functions directly on
+/// a `TcpStream` is **not** advised, as this will result in a large number of
+/// syscalls. However, it is fine to call these functions on a *buffered*
+/// write stream. The data will be written to the buffer. Once the buffer is
+/// full, it is flushed to the underlying socket.
+fn write_frame(self: &mut Self, frame: &Frame) -> io::Result<()>
+  /// Write a frame literal to the stream
+fn write_value(self: &mut Self, frame: &Frame) -> io::Result<()>
+  /// Write a decimal frame to the stream
+fn write_decimal(self: &mut Self, val: u64) -> io::Result<()>
 }
 
 // --- db.rs ---
@@ -322,57 +1042,115 @@ use bytes::Bytes
 use std::collections::{BTreeSet, HashMap}
 use std::sync::{Arc, Mutex}
 use tracing::debug
+/// A wrapper around a `Db` instance. This exists to allow orderly cleanup
+/// of the `Db` by signalling the background purge task to shut down when
+/// this struct is dropped.
+#[derive(Debug)]
 struct DbDropGuard {
   db: Db
 }
+/// Server state shared across all connections.
+///
+/// `Db` contains a `HashMap` storing the key/value data and all
+/// `broadcast::Sender` values for active pub/sub channels.
+///
+/// A `Db` instance is a handle to shared state. Cloning `Db` is shallow and
+/// only incurs an atomic ref count increment.
+///
+/// When a `Db` value is created, a background task is spawned. This task is
+/// used to expire values after the requested duration has elapsed. The task
+/// runs until all instances of `Db` are dropped, at which point the task
+/// terminates.
+#[derive(Debug, Clone)]
 struct Db {
   shared: Arc<Shared>
 }
+#[derive(Debug)]
 struct Shared {
   state: Mutex<State>
   background_task: Notify
 }
+#[derive(Debug)]
 struct State {
   entries: HashMap<String, Entry>
   pub_sub: HashMap<String, broadcast::Sender<Bytes>>
   expirations: BTreeSet<(Instant, String)>
   shutdown: bool
 }
+/// Entry in the key-value store
+#[derive(Debug)]
 struct Entry {
   data: Bytes
   expires_at: Option<Instant>
 }
 impl DbDropGuard {
-  fn new() -> DbDropGuard
-  fn db(self: &Self) -> Db
+  /// Create a new `DbDropGuard`, wrapping a `Db` instance. When this is dropped
+/// the `Db`'s purge task will be shut down.
+fn new() -> DbDropGuard
+  /// Get the shared database. Internally, this is an
+/// `Arc`, so a clone only increments the ref count.
+fn db(self: &Self) -> Db
 }
 impl Drop for DbDropGuard {
   fn drop(self: &mut Self)
 }
 impl Db {
-  fn new() -> Db
-  fn get(self: &Self, key: &str) -> Option<Bytes>
-  fn set(self: &Self, key: String, value: Bytes, expire: Option<Duration>)
-  fn subscribe(self: &Self, key: String) -> broadcast::Receiver<Bytes>
-  fn publish(self: &Self, key: &str, value: Bytes) -> usize
-  fn shutdown_purge_task(self: &Self)
+  /// Create a new, empty, `Db` instance. Allocates shared state and spawns a
+/// background task to manage key expiration.
+fn new() -> Db
+  /// Get the value associated with a key.
+///
+/// Returns `None` if there is no value associated with the key. This may be
+/// due to never having assigned a value to the key or a previously assigned
+/// value expired.
+fn get(self: &Self, key: &str) -> Option<Bytes>
+  /// Set the value associated with a key along with an optional expiration
+/// Duration.
+///
+/// If a value is already associated with the key, it is removed.
+fn set(self: &Self, key: String, value: Bytes, expire: Option<Duration>)
+  /// Returns a `Receiver` for the requested channel.
+///
+/// The returned `Receiver` is used to receive values broadcast by `PUBLISH`
+/// commands.
+fn subscribe(self: &Self, key: String) -> broadcast::Receiver<Bytes>
+  /// Publish a message to the channel. Returns the number of subscribers
+/// listening on the channel.
+fn publish(self: &Self, key: &str, value: Bytes) -> usize
+  /// Signals the purge background task to shut down. This is called by the
+/// `DbShutdown`s `Drop` implementation.
+fn shutdown_purge_task(self: &Self)
 }
 impl Shared {
-  fn purge_expired_keys(self: &Self) -> Option<Instant>
-  fn is_shutdown(self: &Self) -> bool
+  /// Purge all expired keys and return the `Instant` at which the **next**
+/// key will expire. The background task will sleep until this instant.
+fn purge_expired_keys(self: &Self) -> Option<Instant>
+  /// Returns `true` if the database is shutting down
+///
+/// The `shutdown` flag is set when all `Db` values have dropped, indicating
+/// that the shared state can no longer be accessed.
+fn is_shutdown(self: &Self) -> bool
 }
 impl State {
   fn next_expiration(self: &Self) -> Option<Instant>
 }
+/// Routine executed by the background task.
+///
+/// Wait to be notified. On notification, purge any expired keys from the shared
+/// state handle. If `shutdown` is set, terminate the task.
 fn purge_expired_tasks(shared: Arc<Shared>)
 
 // --- frame.rs ---
+//! Provides a type representing a Redis protocol frame as well as utilities for
+//! parsing frames from a byte array.
 use bytes::{Buf, Bytes}
 use std::convert::TryInto
 use std::fmt
 use std::io::Cursor
 use std::num::TryFromIntError
 use std::string::FromUtf8Error
+/// A frame in the Redis protocol.
+#[derive(Clone, Debug)]
 enum Frame {
   Simple
   Error
@@ -381,17 +1159,32 @@ enum Frame {
   Null
   Array
 }
+#[derive(Debug)]
 enum Error {
   Incomplete
   Other
 }
 impl Frame {
-  fn array() -> Frame
-  fn push_bulk(self: &mut Self, bytes: Bytes)
-  fn push_int(self: &mut Self, value: u64)
-  fn check(src: &mut Cursor<&[u8]>) -> Result<(), Error>
-  fn parse(src: &mut Cursor<&[u8]>) -> Result<Frame, Error>
-  fn to_error(self: &Self) -> crate::Error
+  /// Returns an empty array
+fn array() -> Frame
+  /// Push a "bulk" frame into the array. `self` must be an Array frame.
+///
+/// # Panics
+///
+/// panics if `self` is not an array
+fn push_bulk(self: &mut Self, bytes: Bytes)
+  /// Push an "integer" frame into the array. `self` must be an Array frame.
+///
+/// # Panics
+///
+/// panics if `self` is not an array
+fn push_int(self: &mut Self, value: u64)
+  /// Checks if an entire message can be decoded from `src`
+fn check(src: &mut Cursor<&[u8]>) -> Result<(), Error>
+  /// The message has already been validated with `check`.
+fn parse(src: &mut Cursor<&[u8]>) -> Result<Frame, Error>
+  /// Converts the frame to an "unexpected frame" error
+fn to_error(self: &Self) -> crate::Error
 }
 impl PartialEq<&str> for Frame {
   fn eq(self: &Self, other: &&str) -> bool
@@ -402,7 +1195,9 @@ impl fmt::Display for Frame {
 fn peek_u8(src: &mut Cursor<&[u8]>) -> Result<u8, Error>
 fn get_u8(src: &mut Cursor<&[u8]>) -> Result<u8, Error>
 fn skip(src: &mut Cursor<&[u8]>, n: usize) -> Result<(), Error>
+/// Read a new-line terminated decimal
 fn get_decimal(src: &mut Cursor<&[u8]>) -> Result<u64, Error>
+/// Find a line
 fn get_line(src: &mut Cursor<&'a [u8]>) -> Result<&'a [u8], Error>
 impl From<String> for Error {
   fn from(src: String) -> Error
@@ -423,14 +1218,40 @@ impl fmt::Display for Error {
 }
 
 // --- lib.rs ---
+//! A minimal (i.e. very incomplete) implementation of a Redis server and
+//! client.
+//!
+//! The purpose of this project is to provide a larger example of an
+//! asynchronous Rust project built with Tokio. Do not attempt to run this in
+//! production... seriously.
+//!
+//! # Layout
+//!
+//! The library is structured such that it can be used with guides. There are
+//! modules that are public that probably would not be public in a "real" redis
+//! client library.
+//!
+//! The major components are:
+//!
+//! * `server`: Redis server implementation. Includes a single `run` function
+//!   that takes a `TcpListener` and starts accepting redis client connections.
+//!
+//! * `clients/client`: an asynchronous Redis client implementation. Demonstrates how to
+//!   build clients with Tokio.
+//!
+//! * `cmd`: implementations of the supported Redis commands.
+//!
+//! * `frame`: represents a single Redis protocol frame. A frame is used as an
+//!   intermediate representation between a "command" and the byte
+//!   representation.
 mod clients;
-use pub use clients::{BlockingClient, BufferedClient, Client}
+use clients::{BlockingClient, BufferedClient, Client}
 mod cmd;
-use pub use cmd::Command
+use cmd::Command
 mod connection;
-use pub use connection::Connection
+use connection::Connection
 mod frame;
-use pub use frame::Frame
+use frame::Frame
 mod db;
 use db::Db
 use db::DbDropGuard
@@ -439,28 +1260,77 @@ use parse::{Parse, ParseError}
 mod server;
 mod shutdown;
 use shutdown::Shutdown
+/// Default port that a redis server listens on.
+///
+/// Used if no port is specified.
 const DEFAULT_PORT: u16
+/// Error returned by most functions.
+///
+/// When writing a real application, one might want to consider a specialized
+/// error handling crate or defining an error type as an `enum` of causes.
+/// However, for our example, using a boxed `std::error::Error` is sufficient.
+///
+/// For performance reasons, boxing is avoided in any hot path. For example, in
+/// `parse`, a custom error `enum` is defined. This is because the error is hit
+/// and handled during normal execution when a partial frame is received on a
+/// socket. `std::error::Error` is implemented for `parse::Error` which allows
+/// it to be converted to `Box<dyn std::error::Error>`.
 type Error = Box<dyn std::error::Error + Send + Sync>
+/// A specialized `Result` type for mini-redis operations.
+///
+/// This is defined as a convenience.
 type Result = std::result::Result<T, Error>
 
 // --- parse.rs ---
 use crate::Frame
 use bytes::Bytes
 use std::{fmt, str, vec}
+/// Utility for parsing a command
+///
+/// Commands are represented as array frames. Each entry in the frame is a
+/// "token". A `Parse` is initialized with the array frame and provides a
+/// cursor-like API. Each command struct includes a `parse_frame` method that
+/// uses a `Parse` to extract its fields.
+#[derive(Debug)]
 struct Parse {
   parts: vec::IntoIter<Frame>
 }
+/// Error encountered while parsing a frame.
+///
+/// Only `EndOfStream` errors are handled at runtime. All other errors result in
+/// the connection being terminated.
+#[derive(Debug)]
 enum ParseError {
   EndOfStream
   Other
 }
 impl Parse {
-  fn new(frame: Frame) -> Result<Parse, ParseError>
-  fn next(self: &mut Self) -> Result<Frame, ParseError>
-  fn next_string(self: &mut Self) -> Result<String, ParseError>
-  fn next_bytes(self: &mut Self) -> Result<Bytes, ParseError>
-  fn next_int(self: &mut Self) -> Result<u64, ParseError>
-  fn finish(self: &mut Self) -> Result<(), ParseError>
+  /// Create a new `Parse` to parse the contents of `frame`.
+///
+/// Returns `Err` if `frame` is not an array frame.
+fn new(frame: Frame) -> Result<Parse, ParseError>
+  /// Return the next entry. Array frames are arrays of frames, so the next
+/// entry is a frame.
+fn next(self: &mut Self) -> Result<Frame, ParseError>
+  /// Return the next entry as a string.
+///
+/// If the next entry cannot be represented as a String, then an error is returned.
+fn next_string(self: &mut Self) -> Result<String, ParseError>
+  /// Return the next entry as raw bytes.
+///
+/// If the next entry cannot be represented as raw bytes, an error is
+/// returned.
+fn next_bytes(self: &mut Self) -> Result<Bytes, ParseError>
+  /// Return the next entry as an integer.
+///
+/// This includes `Simple`, `Bulk`, and `Integer` frame types. `Simple` and
+/// `Bulk` frame types are parsed.
+///
+/// If the next entry cannot be represented as an integer, then an error is
+/// returned.
+fn next_int(self: &mut Self) -> Result<u64, ParseError>
+  /// Ensure there are no more entries in the array
+fn finish(self: &mut Self) -> Result<(), ParseError>
 }
 impl From<String> for ParseError {
   fn from(src: String) -> ParseError
@@ -475,6 +1345,10 @@ impl std::error::Error for ParseError {
 }
 
 // --- server.rs ---
+//! Minimal Redis server implementation
+//!
+//! Provides an async `run` function that listens for inbound connections,
+//! spawning a task per connection.
 use crate::{Command, Connection, Db, DbDropGuard, Shutdown}
 use std::future::Future
 use std::sync::Arc
@@ -482,6 +1356,9 @@ use tokio::net::{TcpListener, TcpStream}
 use tokio::sync::{broadcast, mpsc, Semaphore}
 use tokio::time::{self, Duration}
 use tracing::{debug, error, info, instrument}
+/// Server listener state. Created in the `run` call. It includes a `run` method
+/// which performs the TCP listening and initialization of per-connection state.
+#[derive(Debug)]
 struct Listener {
   db_holder: DbDropGuard
   listener: TcpListener
@@ -489,31 +1366,103 @@ struct Listener {
   notify_shutdown: broadcast::Sender<()>
   shutdown_complete_tx: mpsc::Sender<()>
 }
+/// Per-connection handler. Reads requests from `connection` and applies the
+/// commands to `db`.
+#[derive(Debug)]
 struct Handler {
   db: Db
   connection: Connection
   shutdown: Shutdown
   _shutdown_complete: mpsc::Sender<()>
 }
+/// Maximum number of concurrent connections the redis server will accept.
+///
+/// When this limit is reached, the server will stop accepting connections until
+/// an active connection terminates.
+///
+/// A real application will want to make this value configurable, but for this
+/// example, it is hard coded.
+///
+/// This is also set to a pretty low value to discourage using this in
+/// production (you'd think that all the disclaimers would make it obvious that
+/// this is not a serious project... but I thought that about mini-http as
+/// well).
 const MAX_CONNECTIONS: usize
+/// Run the mini-redis server.
+///
+/// Accepts connections from the supplied listener. For each inbound connection,
+/// a task is spawned to handle that connection. The server runs until the
+/// `shutdown` future completes, at which point the server shuts down
+/// gracefully.
+///
+/// `tokio::signal::ctrl_c()` can be used as the `shutdown` argument. This will
+/// listen for a SIGINT signal.
 fn run(listener: TcpListener, shutdown: impl Future)
 impl Listener {
-  fn run(self: &mut Self) -> crate::Result<()>
-  fn accept(self: &mut Self) -> crate::Result<TcpStream>
+  /// Run the server
+///
+/// Listen for inbound connections. For each inbound connection, spawn a
+/// task to process that connection.
+///
+/// # Errors
+///
+/// Returns `Err` if accepting returns an error. This can happen for a
+/// number reasons that resolve over time. For example, if the underlying
+/// operating system has reached an internal limit for max number of
+/// sockets, accept will fail.
+///
+/// The process is not able to detect when a transient error resolves
+/// itself. One strategy for handling this is to implement a back off
+/// strategy, which is what we do here.
+fn run(self: &mut Self) -> crate::Result<()>
+  /// Accept an inbound connection.
+///
+/// Errors are handled by backing off and retrying. An exponential backoff
+/// strategy is used. After the first failure, the task waits for 1 second.
+/// After the second failure, the task waits for 2 seconds. Each subsequent
+/// failure doubles the wait time. If accepting fails on the 6th try after
+/// waiting for 64 seconds, then this function returns with an error.
+fn accept(self: &mut Self) -> crate::Result<TcpStream>
 }
 impl Handler {
-  fn run(self: &mut Self) -> crate::Result<()>
+  /// Process a single connection.
+///
+/// Request frames are read from the socket and processed. Responses are
+/// written back to the socket.
+///
+/// Currently, pipelining is not implemented. Pipelining is the ability to
+/// process more than one request concurrently per connection without
+/// interleaving frames. See for more details:
+/// https://redis.io/topics/pipelining
+///
+/// When the shutdown signal is received, the connection is processed until
+/// it reaches a safe state, at which point it is terminated.
+#[instrument(skip(self))]
+fn run(self: &mut Self) -> crate::Result<()>
 }
 
 // --- shutdown.rs ---
 use tokio::sync::broadcast
+/// Listens for the server shutdown signal.
+///
+/// Shutdown is signalled using a `broadcast::Receiver`. Only a single value is
+/// ever sent. Once a value has been sent via the broadcast channel, the server
+/// should shutdown.
+///
+/// The `Shutdown` struct listens for the signal and tracks that the signal has
+/// been received. Callers may query for whether the shutdown signal has been
+/// received or not.
+#[derive(Debug)]
 struct Shutdown {
   is_shutdown: bool
   notify: broadcast::Receiver<()>
 }
 impl Shutdown {
-  fn new(notify: broadcast::Receiver<()>) -> Shutdown
-  fn is_shutdown(self: &Self) -> bool
-  fn recv(self: &mut Self)
+  /// Create a new `Shutdown` backed by the given `broadcast::Receiver`.
+fn new(notify: broadcast::Receiver<()>) -> Shutdown
+  /// Returns `true` if the shutdown signal has been received.
+fn is_shutdown(self: &Self) -> bool
+  /// Receive the shutdown notice, waiting if necessary.
+fn recv(self: &mut Self)
 }
 

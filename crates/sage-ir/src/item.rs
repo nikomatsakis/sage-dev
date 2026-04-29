@@ -1,7 +1,7 @@
 use crate::body::FunctionBody;
 use crate::name::Name;
 use crate::span::{SpanIndices, SpanTable};
-use crate::types::{FieldDef, Param, Path, TypeRef, VariantDef};
+use crate::types::{Attr, FieldDef, Param, Path, TypeRef, VariantDef};
 
 /// Thin enum over all item kinds. `Copy` because salsa tracked struct
 /// handles are just IDs.
@@ -26,6 +26,10 @@ pub enum Item<'db> {
 #[salsa::tracked]
 pub struct FunctionItem<'db> {
     pub name: Name<'db>,
+
+    #[tracked]
+    #[returns(ref)]
+    pub attrs: Vec<Attr<'db>>,
 
     #[tracked]
     #[returns(ref)]
@@ -59,6 +63,10 @@ pub struct StructItem<'db> {
 
     #[tracked]
     #[returns(ref)]
+    pub attrs: Vec<Attr<'db>>,
+
+    #[tracked]
+    #[returns(ref)]
     pub fields: Vec<FieldDef<'db>>,
 
     #[tracked]
@@ -73,6 +81,10 @@ pub struct StructItem<'db> {
 #[salsa::tracked]
 pub struct EnumItem<'db> {
     pub name: Name<'db>,
+
+    #[tracked]
+    #[returns(ref)]
+    pub attrs: Vec<Attr<'db>>,
 
     #[tracked]
     #[returns(ref)]
@@ -93,6 +105,10 @@ pub struct TraitItem<'db> {
 
     #[tracked]
     #[returns(ref)]
+    pub attrs: Vec<Attr<'db>>,
+
+    #[tracked]
+    #[returns(ref)]
     pub items: Vec<Item<'db>>,
 
     #[tracked]
@@ -106,6 +122,10 @@ pub struct TraitItem<'db> {
 
 #[salsa::tracked]
 pub struct ImplItem<'db> {
+    #[tracked]
+    #[returns(ref)]
+    pub attrs: Vec<Attr<'db>>,
+
     #[tracked]
     pub self_ty: TypeRef<'db>,
 
@@ -130,6 +150,10 @@ pub struct TypeAliasItem<'db> {
     pub name: Name<'db>,
 
     #[tracked]
+    #[returns(ref)]
+    pub attrs: Vec<Attr<'db>>,
+
+    #[tracked]
     pub ty: Option<TypeRef<'db>>,
 
     #[tracked]
@@ -146,6 +170,10 @@ pub struct ConstItem<'db> {
     pub name: Name<'db>,
 
     #[tracked]
+    #[returns(ref)]
+    pub attrs: Vec<Attr<'db>>,
+
+    #[tracked]
     pub ty: Option<TypeRef<'db>>,
 
     #[tracked]
@@ -160,6 +188,10 @@ pub struct ConstItem<'db> {
 #[salsa::tracked]
 pub struct StaticItem<'db> {
     pub name: Name<'db>,
+
+    #[tracked]
+    #[returns(ref)]
+    pub attrs: Vec<Attr<'db>>,
 
     #[tracked]
     pub ty: Option<TypeRef<'db>>,
@@ -180,6 +212,10 @@ pub struct StaticItem<'db> {
 pub struct ModItem<'db> {
     pub name: Name<'db>,
 
+    #[tracked]
+    #[returns(ref)]
+    pub attrs: Vec<Attr<'db>>,
+
     /// `None` for `mod foo;` (file-based module).
     #[tracked]
     #[returns(ref)]
@@ -196,6 +232,10 @@ pub struct ModItem<'db> {
 
 #[salsa::tracked]
 pub struct UseItem<'db> {
+    #[tracked]
+    #[returns(ref)]
+    pub attrs: Vec<Attr<'db>>,
+
     #[tracked]
     pub path: Path<'db>,
 
