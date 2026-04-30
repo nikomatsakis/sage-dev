@@ -59,6 +59,42 @@ fn parse(db: &dyn Database, file: SourceFile) -> ItemTree<'_> {
 - `#[salsa::tracked(lru = 128)]` — LRU cache eviction for long-running processes
 - `#[salsa::tracked(specify)]` — allow external specification for builtins
 
+## Tracked Methods — Methods on Salsa Structs
+
+**DO:** Use `#[salsa::tracked]` on both the impl block and the method.
+```rust
+// On a salsa::input (no 'db lifetime) — elide the db lifetime:
+#[salsa::tracked]
+impl MyInput {
+    #[salsa::tracked]
+    fn tracked_fn(self, db: &dyn Db) -> u32 {
+        self.field(db) * 2
+    }
+}
+
+// On a tracked/interned struct (has 'db) — tie db lifetime to 'db:
+#[salsa::tracked]
+impl<'db> Symbol<'db> {
+    #[salsa::tracked]
+    pub fn sig(self, db: &'db dyn Db) -> FnSig<'db> {
+        resolve_sig(db, self)
+    }
+}
+```
+
+Also works on trait impls:
+```rust
+#[salsa::tracked]
+impl<'db> MyTrait<'db> for MyStruct<'db> {
+    #[salsa::tracked]
+    fn my_method(db: &'db dyn Db, input: MyInput) -> Self::Output {
+        // ...
+    }
+}
+```
+
+**DON'T:** Forget `#[salsa::tracked]` on the impl block itself — both the impl and the method need the annotation.
+
 ## Tracked Structs — Intermediate Data
 
 **DO:** Create inside tracked functions only.
