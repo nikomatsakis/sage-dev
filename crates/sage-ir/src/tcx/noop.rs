@@ -1,0 +1,20 @@
+use crate::module::{CrateNum, DefIndex};
+
+use super::{RawChild, TcxDb};
+
+/// No-op implementation for tests without rustc.
+pub struct NoopTcxDb;
+
+impl TcxDb for NoopTcxDb {
+    fn extern_crate(&self, _name: &str) -> Option<CrateNum> {
+        None
+    }
+
+    fn module_children(&self, _crate_num: CrateNum, _def_index: DefIndex) -> Vec<RawChild> {
+        Vec::new()
+    }
+
+    fn is_builtin_derive(&self, _crate_num: CrateNum, _def_index: DefIndex) -> bool {
+        false
+    }
+}

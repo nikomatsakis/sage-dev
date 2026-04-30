@@ -1,7 +1,12 @@
 //! Core entry point: `run_sage_with` sets up the full sage pipeline
 //! and hands a live `SageContext` to a callback.
+//!
+//! Architecture: rustc runs on a spawned thread (providing `TyCtxt`).
+//! Salsa work runs on the caller's thread. The two communicate via channels.
+//! No unsafe code — the channel boundary copies all data into owned values.
 
 use std::path::Path;
+use std::sync::mpsc;
 
 use rustc_driver::{Callbacks, Compilation};
 use rustc_interface::interface;
@@ -11,6 +16,7 @@ use sage_ir::db::Database;
 use sage_ir::module::{Module, ModuleSource};
 use sage_ir::resolve::SourceRoot;
 use sage_ir::source::SourceFile;
+use sage_ir::tcx::TcxRequest;
 use salsa::Database as _;
 
 use crate::metadata::{self, WorkspaceInfo};
@@ -25,10 +31,10 @@ pub struct SageContext<'db> {
 
 /// Set up the full sage pipeline for a project and call `f` with a live
 /// `SageContext`. Handles: load_workspace, build rustc args, run_compiler,
-/// create RustcTcxDb + Database + root Module.
+/// create Database + root Module.
 ///
-/// The callback runs inside `after_expansion` — `TyCtxt` and the Database
-/// are both live for its duration.
+/// Rustc runs on a spawned thread (serving TyCtxt queries). Salsa work
+/// runs on the caller's thread. No unsafe code.
 pub fn run_sage_with<F, R>(project_dir: &Path, selected_packages: &[String], f: F) -> R
 where
     F: FnOnce(&SageContext<'_>) -> R + Send,
@@ -51,83 +57,93 @@ where
     let source_files = collect_source_files(&src_dir);
     let args = build_rustc_args(&ws);
 
-    // Channel to send the result back from the callback.
-    let mut result: Option<R> = None;
-    let result_ptr = &mut result as *mut Option<R>;
+    // Channel: main thread (salsa) → rustc thread (TyCtxt).
+    // Each request carries its own oneshot reply sender.
+    let (req_tx, req_rx) = mpsc::channel::<TcxRequest>();
 
-    struct Driver<F, R> {
-        f: Option<F>,
-        source_files: Vec<(String, String)>,
-        result_ptr: *mut Option<R>,
-    }
-
-    // SAFETY: result_ptr points to a local on the current thread's stack.
-    // The callback runs synchronously inside run_compiler on the same thread.
-    unsafe impl<F: Send, R: Send> Send for Driver<F, R> {}
-
-    impl<F, R> Callbacks for Driver<F, R>
-    where
-        F: FnOnce(&SageContext<'_>) -> R,
-    {
-        fn after_expansion<'tcx>(
-            &mut self,
-            _compiler: &interface::Compiler,
-            tcx: TyCtxt<'tcx>,
-        ) -> Compilation {
-            let tcx_db = RustcTcxDb::new(tcx);
-            // SAFETY: Database is dropped at the end of this function,
-            // before TyCtxt<'tcx> is invalidated.
-            let db = unsafe { Database::with_tcx(Box::new(tcx_db)) };
-
-            db.attach(|db| {
-                // Create SourceFile inputs
-                let mut files = Vec::new();
-                for (rel_path, text) in &self.source_files {
-                    files.push(SourceFile::new(db, rel_path.clone(), text.clone()));
-                }
-
-                let source_root = SourceRoot::new(db, files.clone());
-
-                let lib_file = files
-                    .iter()
-                    .find(|f| f.path(db) == "lib.rs")
-                    .or_else(|| files.iter().find(|f| f.path(db) == "main.rs"))
-                    .expect("no lib.rs or main.rs found");
-
-                let root = Module::new(
-                    db,
-                    ModuleSource::Local {
-                        file: *lib_file,
-                        parent: None,
-                    },
-                );
-
-                let ctx = SageContext {
-                    db,
-                    root,
-                    source_root,
-                };
-
-                let r = (self.f.take().unwrap())(&ctx);
-                // SAFETY: result_ptr is valid for the duration of run_compiler.
-                unsafe { *self.result_ptr = Some(r) };
+    std::thread::scope(|s| {
+        // Spawn rustc on a background thread — it serves TcxDb requests.
+        s.spawn(|| {
+            let mut driver = Driver {
+                req_rx: Some(req_rx),
+            };
+            let _ = rustc_driver::catch_fatal_errors(|| {
+                rustc_driver::run_compiler(&args, &mut driver);
             });
 
-            Compilation::Stop
-        }
-    }
+            struct Driver {
+                req_rx: Option<mpsc::Receiver<TcxRequest>>,
+            }
 
-    let mut driver = Driver {
-        f: Some(f),
-        source_files: source_files,
-        result_ptr: result_ptr,
-    };
+            impl Callbacks for Driver {
+                fn after_expansion<'tcx>(
+                    &mut self,
+                    _compiler: &interface::Compiler,
+                    tcx: TyCtxt<'tcx>,
+                ) -> Compilation {
+                    let tcx_db = RustcTcxDb::new(tcx);
 
-    let _ = rustc_driver::catch_fatal_errors(|| {
-        rustc_driver::run_compiler(&args, &mut driver);
-    });
+                    // Serve TcxDb requests until the main thread drops its sender.
+                    for req in self.req_rx.take().unwrap() {
+                        match req {
+                            TcxRequest::ExternCrate { name, reply } => {
+                                let _ = reply.send(tcx_db.extern_crate(&name));
+                            }
+                            TcxRequest::ModuleChildren {
+                                crate_num,
+                                def_index,
+                                reply,
+                            } => {
+                                let _ = reply.send(tcx_db.module_children(crate_num, def_index));
+                            }
+                            TcxRequest::IsBuiltinDerive {
+                                crate_num,
+                                def_index,
+                                reply,
+                            } => {
+                                let _ = reply.send(tcx_db.is_builtin_derive(crate_num, def_index));
+                            }
+                        }
+                    }
 
-    result.expect("after_expansion callback did not run")
+                    Compilation::Stop
+                }
+            }
+        });
+
+        // Main thread: run salsa work.
+        let db = Database::with_proxy(req_tx);
+        db.attach(|db| {
+            let mut files = Vec::new();
+            for (rel_path, text) in &source_files {
+                files.push(SourceFile::new(db, rel_path.clone(), text.clone()));
+            }
+
+            let source_root = SourceRoot::new(db, files.clone());
+
+            let lib_file = files
+                .iter()
+                .find(|f| f.path(db) == "lib.rs")
+                .or_else(|| files.iter().find(|f| f.path(db) == "main.rs"))
+                .expect("no lib.rs or main.rs found");
+
+            let root = Module::new(
+                db,
+                ModuleSource::Local {
+                    file: *lib_file,
+                    parent: None,
+                },
+            );
+
+            let ctx = SageContext {
+                db,
+                root,
+                source_root,
+            };
+
+            f(&ctx)
+        })
+    })
 }
 
 /// Build rustc args for the stub driver.

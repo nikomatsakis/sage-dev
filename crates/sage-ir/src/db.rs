@@ -1,29 +1,25 @@
 use crate::tcx::{NoopTcxDb, TcxDb};
 
 /// Salsa database for sage-ir.
-///
-/// The `tcx` field holds a lifetime-erased `TcxDb` trait object. When backed
-/// by `RustcTcxDb<'tcx>`, the real lifetime is `'tcx` — the database must
-/// not outlive the `after_expansion` callback. The `run_sage_with` entry
-/// point enforces this via a closure-scoped borrow.
 #[salsa::db]
 #[derive(Clone)]
 pub struct Database {
     storage: salsa::Storage<Self>,
-    /// Lifetime-erased TcxDb. See [`Database::with_tcx`] for construction.
-    tcx: std::sync::Arc<dyn TcxDb + Send + Sync>,
+    tcx: std::sync::Arc<dyn TcxDb>,
     query_log: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 impl Database {
-    /// Create a database with a `'static` TcxDb (e.g. `NoopTcxDb` for tests).
-    pub fn new(tcx: impl TcxDb + Send + Sync + 'static) -> Self {
+    pub fn new(tcx: impl TcxDb + 'static) -> Self {
         let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let log_clone = log.clone();
         Self {
             storage: salsa::Storage::new(Some(Box::new(move |event| {
                 if let salsa::EventKind::WillExecute { database_key } = event.kind {
-                    log_clone.lock().unwrap().push(format!("{database_key:?}"));
+                    log_clone
+                        .lock()
+                        .unwrap()
+                        .push(format!("  salsa: {database_key:?}"));
                 }
             }))),
             tcx: std::sync::Arc::new(tcx),
@@ -31,25 +27,21 @@ impl Database {
         }
     }
 
-    /// Create a database with a non-`'static` TcxDb by erasing its lifetime.
-    ///
-    /// # Safety
-    ///
-    /// The returned `Database` must not outlive `'tcx`. The caller must ensure
-    /// the database is dropped before the `TcxDb` source (e.g. `TyCtxt<'tcx>`)
-    /// is invalidated. The `run_sage_with` pattern enforces this.
-    pub unsafe fn with_tcx<'tcx>(tcx: Box<dyn TcxDb + Send + Sync + 'tcx>) -> Self {
+    /// Create a database with a `ProxyTcxDb`, sharing the query log.
+    pub fn with_proxy(req_tx: std::sync::mpsc::Sender<crate::tcx::TcxRequest>) -> Self {
         let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let log_clone = log.clone();
-        // SAFETY: caller guarantees Database won't outlive 'tcx.
-        let erased: Box<dyn TcxDb + Send + Sync + 'static> = unsafe { std::mem::transmute(tcx) };
+        let proxy = crate::tcx::ProxyTcxDb::new(req_tx, log.clone());
         Self {
             storage: salsa::Storage::new(Some(Box::new(move |event| {
                 if let salsa::EventKind::WillExecute { database_key } = event.kind {
-                    log_clone.lock().unwrap().push(format!("{database_key:?}"));
+                    log_clone
+                        .lock()
+                        .unwrap()
+                        .push(format!("  salsa: {database_key:?}"));
                 }
             }))),
-            tcx: std::sync::Arc::from(erased),
+            tcx: std::sync::Arc::new(proxy),
             query_log: log,
         }
     }
@@ -73,6 +65,10 @@ impl Default for Database {
 impl crate::Db for Database {
     fn tcx(&self) -> &dyn TcxDb {
         &*self.tcx
+    }
+
+    fn log_query(&self, entry: String) {
+        self.query_log.lock().unwrap().push(entry);
     }
 }
 

@@ -15,6 +15,7 @@ use crate::types::*;
 /// Parse a source file and return its top-level items.
 #[salsa::tracked(returns(ref))]
 pub fn file_item_tree<'db>(db: &'db dyn Db, file: SourceFile) -> Vec<Item<'db>> {
+    db.log_query(format!("file_item_tree(\"{}\")", file.path(db)));
     let text = file.text(db);
     let mut parser = tree_sitter::Parser::new();
     parser

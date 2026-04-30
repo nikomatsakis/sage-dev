@@ -12,12 +12,17 @@ use sage_stash::{Stash, Stashed};
 const GEN_SPAN: SpanIndices = SpanIndices { start: 0, end: 0 };
 
 /// Generate impl blocks for a builtin derive.
+#[salsa::tracked(returns(ref))]
 pub fn expand_builtin<'db>(
     db: &'db dyn Db,
     derive_name: Name<'db>,
     item: Item<'db>,
 ) -> Vec<ImplItem<'db>> {
     let name_text = derive_name.text(db);
+    let item_name = crate::resolve::item_name(db, item)
+        .map(|n| n.text(db).to_string())
+        .unwrap_or_else(|| "?".into());
+    db.log_query(format!("expand_builtin(\"{name_text}\", \"{item_name}\")"));
     match name_text.as_str() {
         "Debug" => expand_debug(db, item),
         "Clone" => expand_clone(db, item),

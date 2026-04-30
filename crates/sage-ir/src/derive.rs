@@ -59,7 +59,7 @@ pub fn expand_derives<'db>(
                         }
                     };
                     if db.tcx().is_builtin_derive(cn, di) {
-                        let impls = builtins::expand_builtin(db, derive_name, item);
+                        let impls = builtins::expand_builtin(db, derive_name, item).clone();
                         results.push(DeriveResult::Builtin { impls });
                     } else {
                         results.push(DeriveResult::ProcMacro { symbol });

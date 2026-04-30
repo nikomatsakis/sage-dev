@@ -5,7 +5,7 @@ use crate::types::{Attr, FieldDef, Param, Path, TypeRef, UseImport, VariantDef};
 
 /// Thin enum over all item kinds. `Copy` because salsa tracked struct
 /// handles are just IDs.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub enum Item<'db> {
     Function(FunctionItem<'db>),
     Struct(StructItem<'db>),
@@ -23,7 +23,7 @@ pub enum Item<'db> {
 
 // -- Function --
 
-#[salsa::tracked]
+#[salsa::tracked(debug)]
 pub struct FunctionItem<'db> {
     pub name: Name<'db>,
 
@@ -57,7 +57,7 @@ pub struct FunctionItem<'db> {
 
 // -- Struct --
 
-#[salsa::tracked]
+#[salsa::tracked(debug)]
 pub struct StructItem<'db> {
     pub name: Name<'db>,
 
@@ -78,7 +78,7 @@ pub struct StructItem<'db> {
 
 // -- Enum --
 
-#[salsa::tracked]
+#[salsa::tracked(debug)]
 pub struct EnumItem<'db> {
     pub name: Name<'db>,
 
@@ -99,7 +99,7 @@ pub struct EnumItem<'db> {
 
 // -- Trait --
 
-#[salsa::tracked]
+#[salsa::tracked(debug)]
 pub struct TraitItem<'db> {
     pub name: Name<'db>,
 
@@ -120,7 +120,7 @@ pub struct TraitItem<'db> {
 
 // -- Impl --
 
-#[salsa::tracked]
+#[salsa::tracked(debug)]
 pub struct ImplItem<'db> {
     #[tracked]
     #[returns(ref)]
@@ -145,7 +145,7 @@ pub struct ImplItem<'db> {
 
 // -- Type alias --
 
-#[salsa::tracked]
+#[salsa::tracked(debug)]
 pub struct TypeAliasItem<'db> {
     pub name: Name<'db>,
 
@@ -165,7 +165,7 @@ pub struct TypeAliasItem<'db> {
 
 // -- Const --
 
-#[salsa::tracked]
+#[salsa::tracked(debug)]
 pub struct ConstItem<'db> {
     pub name: Name<'db>,
 
@@ -185,7 +185,7 @@ pub struct ConstItem<'db> {
 
 // -- Static --
 
-#[salsa::tracked]
+#[salsa::tracked(debug)]
 pub struct StaticItem<'db> {
     pub name: Name<'db>,
 
@@ -208,7 +208,7 @@ pub struct StaticItem<'db> {
 
 // -- Mod --
 
-#[salsa::tracked]
+#[salsa::tracked(debug)]
 pub struct ModItem<'db> {
     pub name: Name<'db>,
 
@@ -231,7 +231,7 @@ pub struct ModItem<'db> {
 // -- Use --
 
 /// A use declaration, desugared into flat imports.
-#[salsa::tracked]
+#[salsa::tracked(debug)]
 pub struct UseGroup<'db> {
     #[tracked]
     #[returns(ref)]

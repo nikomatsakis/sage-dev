@@ -127,23 +127,24 @@ fn query_log_demand_driven_with_real_tcx() {
         let _items = module_items(sage.db, module);
 
         let log = sage.db.take_query_log();
-
-        // file_item_tree should fire for lib.rs, cmd/mod.rs, cmd/get.rs — exactly 3
-        let file_item_tree_count = log.lines().filter(|l| l.contains("file_item_tree")).count();
-        assert_eq!(
-            file_item_tree_count, 3,
-            "expected 3 file_item_tree calls, got {file_item_tree_count}:\n{log}"
-        );
-
-        // Should NOT contain file_item_tree for unrelated modules
-        assert!(
-            !log.contains("set.rs"),
-            "log should not contain set.rs:\n{log}"
-        );
-        assert!(
-            !log.contains("parse.rs"),
-            "log should not contain parse.rs:\n{log}"
-        );
+        expect![[r#"
+              salsa: definition(Id(1000))
+            definition("lib.rs", "cmd")
+              salsa: module_items(Id(800))
+            module_items("lib.rs")
+              salsa: file_item_tree(Id(10))
+            file_item_tree("lib.rs")
+              salsa: definition(Id(1001))
+            definition("cmd/mod.rs", "get")
+              salsa: module_items(Id(801))
+            module_items("cmd/mod.rs")
+              salsa: file_item_tree(Id(7))
+            file_item_tree("cmd/mod.rs")
+              salsa: module_items(Id(802))
+            module_items("cmd/get.rs")
+              salsa: file_item_tree(Id(6))
+            file_item_tree("cmd/get.rs")"#]]
+        .assert_eq(&log);
     });
 }
 
@@ -171,5 +172,93 @@ fn expand_no_derives() {
             };
             assert!(!has_derive, "expected no derive attributes on lib.rs items");
         }
+    });
+}
+
+#[test]
+fn expand_derives_cmd_get_full() {
+    run_sage_with(mini_redis_dir(), &[], |sage| {
+        // Clear log from setup
+        sage.db.take_query_log();
+
+        let module =
+            resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
+
+        let items = module_items(sage.db, module);
+        let get_struct = items
+            .iter()
+            .find(|item| matches!(item, Item::Struct(s) if s.name(sage.db).text(sage.db) == "Get"))
+            .expect("Get struct not found in cmd/get.rs");
+
+        let results = sage_ir::derive::expand_derives(
+            sage.db,
+            module,
+            sage.source_root,
+            sage.root,
+            *get_struct,
+        );
+
+        let mut out = String::new();
+        for result in &results {
+            match result {
+                sage_ir::derive::DeriveResult::Builtin { impls } => {
+                    for impl_item in impls {
+                        out.push_str(&format!("{impl_item}\n"));
+                    }
+                }
+                sage_ir::derive::DeriveResult::ProcMacro { symbol } => {
+                    match symbol.source(sage.db) {
+                        sage_ir::symbol::SymbolSource::External(cn, di) => {
+                            out.push_str(&format!("proc_macro: External({}, {})\n", cn.0, di.0));
+                        }
+                        sage_ir::symbol::SymbolSource::Local(_) => {
+                            out.push_str("proc_macro: Local\n");
+                        }
+                    }
+                }
+            }
+        }
+
+        expect![[r#"
+            impl ::std::fmt::Debug for Get {
+              fn fmt(self: &Self, f: ::std::fmt::Formatter) -> ::std::fmt::Result
+            }
+        "#]]
+        .assert_eq(&out);
+
+        // Verify demand-driven: only queries needed for this module + derive resolution
+        let log = sage.db.take_query_log();
+        expect![[r#"
+              salsa: definition(Id(1000))
+            definition("lib.rs", "cmd")
+              salsa: module_items(Id(800))
+            module_items("lib.rs")
+              salsa: file_item_tree(Id(10))
+            file_item_tree("lib.rs")
+              salsa: definition(Id(1001))
+            definition("cmd/mod.rs", "get")
+              salsa: module_items(Id(801))
+            module_items("cmd/mod.rs")
+              salsa: file_item_tree(Id(7))
+            file_item_tree("cmd/mod.rs")
+              salsa: module_items(Id(802))
+            module_items("cmd/get.rs")
+              salsa: file_item_tree(Id(6))
+            file_item_tree("cmd/get.rs")
+              salsa: module_use_imports(Id(802))
+            module_use_imports("cmd/get.rs")
+            tcx::extern_crate("Debug")
+            tcx::extern_crate("std")
+              salsa: definition(Id(1002))
+            definition(extern(1, 0), "prelude")
+            tcx::module_children(1, 0)
+              salsa: definition(Id(1003))
+            definition(extern(1, 3), "v1")
+            tcx::module_children(1, 3)
+            tcx::module_children(1, 4)
+            tcx::is_builtin_derive(2, 12719)
+              salsa: expand_builtin(Id(5c00))
+            expand_builtin("Debug", "Get")"#]]
+        .assert_eq(&log);
     });
 }

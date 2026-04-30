@@ -1,5 +1,5 @@
 /// Root input: one per file in the workspace.
-#[salsa::input]
+#[salsa::input(debug)]
 pub struct SourceFile {
     #[returns(ref)]
     pub path: String,

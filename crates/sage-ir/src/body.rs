@@ -8,19 +8,19 @@ use crate::types::{Mutability, Path, TokenTree, TypeRef};
 pub type FunctionBody<'db> = Stashed<Ptr<Body<'db>>>;
 
 /// The root of a function body.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct Body<'db> {
     pub root: Ptr<Expr<'db>>,
     pub span: SpanIndices,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct Expr<'db> {
     pub kind: ExprKind<'db>,
     pub span: SpanIndices,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub enum ExprKind<'db> {
     Literal(Literal),
     Path(Path<'db>),
@@ -53,21 +53,21 @@ pub enum ExprKind<'db> {
     Missing,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct ClosureParam<'db> {
     pub pat: Ptr<Pat<'db>>,
     pub ty: Option<TypeRef<'db>>,
     pub span: SpanIndices,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct FieldInit<'db> {
     pub name: Name<'db>,
     pub value: Ptr<Expr<'db>>,
     pub span: SpanIndices,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct MatchArm<'db> {
     pub pat: Ptr<Pat<'db>>,
     pub guard: Option<Ptr<Expr<'db>>>,
@@ -113,25 +113,25 @@ pub enum UnaryOp {
     Deref,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct Stmt<'db> {
     pub kind: StmtKind<'db>,
     pub span: SpanIndices,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub enum StmtKind<'db> {
     Let(Ptr<Pat<'db>>, Option<TypeRef<'db>>, Option<Ptr<Expr<'db>>>),
     Expr(Ptr<Expr<'db>>),
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct Pat<'db> {
     pub kind: PatKind<'db>,
     pub span: SpanIndices,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub enum PatKind<'db> {
     Wildcard,
     Bind(Name<'db>, Mutability),
@@ -146,7 +146,7 @@ pub enum PatKind<'db> {
     Missing,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct FieldPat<'db> {
     pub name: Name<'db>,
     pub pat: Ptr<Pat<'db>>,

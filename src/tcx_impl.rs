@@ -1,4 +1,8 @@
 //! `TcxDb` implementation backed by `TyCtxt<'tcx>`.
+//!
+//! `RustcTcxDb` is never sent across threads — it stays on the original
+//! `after_expansion` thread. The salsa thread communicates with it via
+//! channels (see `driver.rs`).
 
 use rustc_hir::def::DefKind;
 use rustc_hir::def::MacroKinds;
@@ -6,37 +10,23 @@ use rustc_hir::def_id::{CrateNum as RustcCrateNum, DefId};
 use rustc_hir::find_attr;
 use rustc_middle::ty::TyCtxt;
 
-use sage_ir::Db;
 use sage_ir::module::{CrateNum, DefIndex};
-use sage_ir::name::Name;
 use sage_ir::resolve::Namespace;
-use sage_ir::symbol::{Symbol, SymbolSource};
-use sage_ir::tcx::TcxDb;
+use sage_ir::tcx::RawChild;
 
 /// `TcxDb` backed by rustc's `TyCtxt`.
 ///
-/// # Safety
-///
-/// `TyCtxt<'tcx>` is `!Send + !Sync` (arena-allocated). We implement
-/// `Send + Sync` because the `Database` is only used single-threaded
-/// within the `after_expansion` callback. The `run_sage_with` pattern
-/// ensures no cross-thread access.
+/// Lives on the original thread only — never crosses thread boundaries.
 pub struct RustcTcxDb<'tcx> {
     tcx: TyCtxt<'tcx>,
 }
-
-// SAFETY: single-threaded use within after_expansion callback.
-unsafe impl Send for RustcTcxDb<'_> {}
-unsafe impl Sync for RustcTcxDb<'_> {}
 
 impl<'tcx> RustcTcxDb<'tcx> {
     pub fn new(tcx: TyCtxt<'tcx>) -> Self {
         Self { tcx }
     }
-}
 
-impl TcxDb for RustcTcxDb<'_> {
-    fn extern_crate(&self, name: &str) -> Option<CrateNum> {
+    pub fn extern_crate(&self, name: &str) -> Option<CrateNum> {
         for &cnum in self.tcx.crates(()) {
             if self.tcx.crate_name(cnum).as_str() == name {
                 return Some(CrateNum(cnum.as_u32()));
@@ -45,12 +35,7 @@ impl TcxDb for RustcTcxDb<'_> {
         None
     }
 
-    fn module_children<'db>(
-        &self,
-        db: &'db dyn Db,
-        crate_num: CrateNum,
-        def_index: DefIndex,
-    ) -> Vec<(Name<'db>, Symbol<'db>, Namespace)> {
+    pub fn module_children(&self, crate_num: CrateNum, def_index: DefIndex) -> Vec<RawChild> {
         assert!(
             crate_num.0 != 0,
             "TcxDb must not be called with LOCAL_CRATE"
@@ -66,26 +51,28 @@ impl TcxDb for RustcTcxDb<'_> {
             let Some(child_did) = child.res.opt_def_id() else {
                 continue;
             };
-            // Only pub items
             if !child.vis.is_public() {
                 continue;
             }
 
-            let child_name = child.ident.name.as_str();
-            let name = Name::new(db, child_name.to_owned());
+            let child_name = child.ident.name.as_str().to_owned();
             let cn = CrateNum(child_did.krate.as_u32());
             let di = DefIndex(child_did.index.as_u32());
-            let sym = Symbol::new(db, SymbolSource::External(cn, di));
-
             let kind = self.tcx.def_kind(child_did);
+
             for ns in namespaces_for_def_kind(kind) {
-                results.push((name, sym, ns));
+                results.push(RawChild {
+                    name: child_name.clone(),
+                    crate_num: cn,
+                    def_index: di,
+                    namespace: ns,
+                });
             }
         }
         results
     }
 
-    fn is_builtin_derive(&self, crate_num: CrateNum, def_index: DefIndex) -> bool {
+    pub fn is_builtin_derive(&self, crate_num: CrateNum, def_index: DefIndex) -> bool {
         assert!(
             crate_num.0 != 0,
             "TcxDb must not be called with LOCAL_CRATE"
@@ -114,7 +101,6 @@ impl TcxDb for RustcTcxDb<'_> {
 /// Map a `DefKind` to the namespace(s) it occupies.
 fn namespaces_for_def_kind(kind: DefKind) -> Vec<Namespace> {
     match kind {
-        // Type namespace
         DefKind::Mod
         | DefKind::Enum
         | DefKind::Trait
@@ -125,7 +111,6 @@ fn namespaces_for_def_kind(kind: DefKind) -> Vec<Namespace> {
         | DefKind::TyParam
         | DefKind::Union => vec![Namespace::Type],
 
-        // Value namespace
         DefKind::Fn
         | DefKind::AssocFn
         | DefKind::Const { .. }
@@ -135,19 +120,10 @@ fn namespaces_for_def_kind(kind: DefKind) -> Vec<Namespace> {
         | DefKind::AnonConst
         | DefKind::InlineConst => vec![Namespace::Value],
 
-        // Struct: type + value (constructor)
         DefKind::Struct => vec![Namespace::Type, Namespace::Value],
-
-        // Variant: type + value
         DefKind::Variant => vec![Namespace::Type, Namespace::Value],
-
-        // Ctor: value only
         DefKind::Ctor(..) => vec![Namespace::Value],
-
-        // Macros — all go to Macro namespace
         DefKind::Macro(_) => vec![Namespace::Macro],
-
-        // Other kinds — skip
         _ => Vec::new(),
     }
 }

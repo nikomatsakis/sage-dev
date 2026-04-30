@@ -17,4 +17,5 @@ pub mod types;
 #[salsa::db]
 pub trait Db: salsa::Database {
     fn tcx(&self) -> &dyn tcx::TcxDb;
+    fn log_query(&self, entry: String);
 }

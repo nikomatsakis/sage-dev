@@ -116,24 +116,24 @@ fn query_log_demand_driven() {
         let _items = module_items(db, module);
 
         let log = db.take_query_log();
-
-        // Count file_item_tree calls — should be exactly 3:
-        // lib.rs (to find mod cmd), cmd/mod.rs (to find mod get), cmd/get.rs (to read items)
-        let file_item_tree_count = log.lines().filter(|l| l.contains("file_item_tree")).count();
-        assert_eq!(
-            file_item_tree_count, 3,
-            "expected 3 file_item_tree calls, got {file_item_tree_count}:\n{log}"
-        );
-
-        // Should have definition and module_items calls
-        assert!(
-            log.contains("definition"),
-            "log should contain definition calls:\n{log}"
-        );
-        assert!(
-            log.contains("module_items"),
-            "log should contain module_items calls:\n{log}"
-        );
+        expect![[r#"
+              salsa: definition(Id(1000))
+            definition("lib.rs", "cmd")
+              salsa: module_items(Id(800))
+            module_items("lib.rs")
+              salsa: file_item_tree(Id(10))
+            file_item_tree("lib.rs")
+              salsa: definition(Id(1001))
+            definition("cmd/mod.rs", "get")
+              salsa: module_items(Id(801))
+            module_items("cmd/mod.rs")
+              salsa: file_item_tree(Id(7))
+            file_item_tree("cmd/mod.rs")
+              salsa: module_items(Id(802))
+            module_items("cmd/get.rs")
+              salsa: file_item_tree(Id(6))
+            file_item_tree("cmd/get.rs")"#]]
+        .assert_eq(&log);
     });
 }
 
@@ -171,12 +171,17 @@ fn resolve_no_cross_module_parsing() {
         let _items = module_items(db, module);
 
         let log = db.take_query_log();
-
-        // Should have file_item_tree for lib.rs and clients/mod.rs only
-        let file_item_tree_count = log.lines().filter(|l| l.contains("file_item_tree")).count();
-        assert_eq!(
-            file_item_tree_count, 2,
-            "expected 2 file_item_tree calls (lib.rs, clients/mod.rs), got {file_item_tree_count}:\n{log}"
-        );
+        expect![[r#"
+              salsa: definition(Id(1000))
+            definition("lib.rs", "clients")
+              salsa: module_items(Id(800))
+            module_items("lib.rs")
+              salsa: file_item_tree(Id(10))
+            file_item_tree("lib.rs")
+              salsa: module_items(Id(801))
+            module_items("clients/mod.rs")
+              salsa: file_item_tree(Id(5))
+            file_item_tree("clients/mod.rs")"#]]
+        .assert_eq(&log);
     });
 }

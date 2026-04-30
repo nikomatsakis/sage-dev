@@ -11,7 +11,7 @@ pub struct SpanIndices {
 /// One span table per top-level item. Editing one item's body doesn't
 /// affect other items' span tables. Semantic queries never read
 /// `byte_offsets`, so span changes don't invalidate them.
-#[salsa::tracked]
+#[salsa::tracked(debug)]
 pub struct SpanTable<'db> {
     #[tracked]
     pub file: SourceFile,

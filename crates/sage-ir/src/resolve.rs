@@ -45,7 +45,7 @@ pub enum ResolutionError {
 }
 
 /// A collection of source files in the workspace, keyed by relative path.
-#[salsa::input]
+#[salsa::input(debug)]
 pub struct SourceRoot {
     #[returns(ref)]
     pub files: Vec<SourceFile>,
@@ -53,8 +53,17 @@ pub struct SourceRoot {
 
 /// Items declared in a module (from file_item_tree for local,
 /// from TcxDb for external).
+/// Format a module for logging.
+fn module_label(db: &dyn Db, module: Module<'_>) -> String {
+    match module.source(db) {
+        ModuleSource::Local { file, .. } => format!("\"{}\"", file.path(db)),
+        ModuleSource::External(cn, di) => format!("extern({}, {})", cn.0, di.0),
+    }
+}
+
 #[salsa::tracked(returns(ref))]
 pub fn module_items<'db>(db: &'db dyn Db, module: Module<'db>) -> Vec<Item<'db>> {
+    db.log_query(format!("module_items({})", module_label(db, module)));
     match module.source(db) {
         ModuleSource::Local { file, .. } => file_item_tree(db, file).clone(),
         ModuleSource::External(..) => Vec::new(),
@@ -65,6 +74,7 @@ pub fn module_items<'db>(db: &'db dyn Db, module: Module<'db>) -> Vec<Item<'db>>
 /// empty for external).
 #[salsa::tracked(returns(ref))]
 pub fn module_use_imports<'db>(db: &'db dyn Db, module: Module<'db>) -> Vec<UseImport<'db>> {
+    db.log_query(format!("module_use_imports({})", module_label(db, module)));
     match module.source(db) {
         ModuleSource::Local { file, .. } => {
             let items = file_item_tree(db, file);
@@ -87,6 +97,11 @@ pub fn definition<'db>(
     module: Module<'db>,
     name: Name<'db>,
 ) -> Option<Symbol<'db>> {
+    db.log_query(format!(
+        "definition({}, \"{}\")",
+        module_label(db, module),
+        name.text(db)
+    ));
     match module.source(db) {
         ModuleSource::Local { .. } => {
             for item in module_items(db, module) {
@@ -97,11 +112,11 @@ pub fn definition<'db>(
             None
         }
         ModuleSource::External(crate_num, def_index) => {
-            let children = db.tcx().module_children(db, crate_num, def_index);
-            children
-                .into_iter()
-                .find(|(n, _, _)| *n == name)
-                .map(|(_, sym, _)| sym)
+            let raw = db.tcx().module_children(crate_num, def_index);
+            let name_text = name.text(db);
+            raw.into_iter()
+                .find(|c| c.name == *name_text)
+                .map(|c| Symbol::new(db, SymbolSource::External(c.crate_num, c.def_index)))
         }
     }
 }
@@ -321,11 +336,11 @@ fn resolve_in_std_prelude<'db>(
     let ModuleSource::External(cn, di) = v1_mod.source(db) else {
         return None;
     };
-    let children = db.tcx().module_children(db, cn, di);
-    children
-        .into_iter()
-        .find(|(n, _, child_ns)| *n == name && *child_ns == ns)
-        .map(|(_, sym, _)| sym)
+    let raw = db.tcx().module_children(cn, di);
+    let name_text = name.text(db);
+    raw.into_iter()
+        .find(|c| c.name == *name_text && c.namespace == ns)
+        .map(|c| Symbol::new(db, SymbolSource::External(c.crate_num, c.def_index)))
 }
 
 /// Resolve a use import's path to a Symbol.
