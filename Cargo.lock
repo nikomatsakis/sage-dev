@@ -463,6 +463,7 @@ name = "sage"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "expect-test",
  "sage-ir",
  "salsa",
  "serde",

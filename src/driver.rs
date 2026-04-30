@@ -1,7 +1,7 @@
 //! Core entry point: `run_sage_with` sets up the full sage pipeline
 //! and hands a live `SageContext` to a callback.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use rustc_driver::{Callbacks, Compilation};
 use rustc_interface::interface;

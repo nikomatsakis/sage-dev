@@ -3,8 +3,8 @@
 use rustc_hir::def::DefKind;
 use rustc_hir::def::MacroKinds;
 use rustc_hir::def_id::{CrateNum as RustcCrateNum, DefId};
+use rustc_hir::find_attr;
 use rustc_middle::ty::TyCtxt;
-use rustc_span::sym;
 
 use sage_ir::Db;
 use sage_ir::module::{CrateNum, DefIndex};
@@ -96,10 +96,17 @@ impl TcxDb for RustcTcxDb<'_> {
             index: rustc_hir::def_id::DefIndex::from_u32(def_index.0),
         };
 
-        #[allow(deprecated)] // has_attr is correct for raw symbol attrs like rustc_builtin_macro
+        #[allow(deprecated)]
         {
-            matches!(self.tcx.def_kind(def_id), DefKind::Macro(kinds) if kinds.contains(MacroKinds::DERIVE))
-                && self.tcx.has_attr(def_id, sym::rustc_builtin_macro)
+            let kind = self.tcx.def_kind(def_id);
+            let is_derive_macro =
+                matches!(kind, DefKind::Macro(kinds) if kinds.contains(MacroKinds::DERIVE));
+            let has_builtin_attr = find_attr!(
+                self.tcx,
+                def_id,
+                rustc_hir::attrs::AttributeKind::RustcBuiltinMacro { .. }
+            );
+            is_derive_macro && has_builtin_attr
         }
     }
 }

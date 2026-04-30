@@ -6,16 +6,10 @@ extern crate rustc_interface;
 extern crate rustc_middle;
 extern crate rustc_span;
 
-pub mod driver;
-mod metadata;
-pub mod tcx_impl;
-
-use std::path::Path;
-
 use clap::Parser;
 use sage_ir::resolve::{module_items, resolve_module_path};
 
-use crate::driver::run_sage_with;
+use sage::driver::run_sage_with;
 
 #[derive(clap::Parser)]
 #[command(name = "cargo")]

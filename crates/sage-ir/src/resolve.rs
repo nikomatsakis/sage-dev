@@ -283,7 +283,49 @@ pub fn resolve_name<'db>(
         ));
     }
 
+    // 5. Std prelude — implicit `use std::prelude::v1::*`
+    if let Some(sym) = resolve_in_std_prelude(db, name, ns) {
+        return Ok(sym);
+    }
+
     Err(ResolutionError::Unresolved)
+}
+
+/// Resolve a name in the std prelude (`std::prelude::v1`).
+///
+/// This is the implicit `use std::prelude::v1::*` that Rust injects at the
+/// crate root. We walk `std` → `prelude` → `v1` via TcxDb and search for
+/// the name among its children, filtering by namespace.
+fn resolve_in_std_prelude<'db>(
+    db: &'db dyn Db,
+    name: Name<'db>,
+    ns: Namespace,
+) -> Option<Symbol<'db>> {
+    let std_crate = db.tcx().extern_crate("std")?;
+    let std_root = Module::new(
+        db,
+        ModuleSource::External(std_crate, crate::module::DefIndex(0)),
+    );
+
+    // Walk std → prelude → v1
+    let prelude_name = Name::new(db, "prelude".to_owned());
+    let prelude_sym = definition(db, std_root, prelude_name)?;
+    let dummy_root = SourceRoot::new(db, Vec::new());
+    let prelude_mod = symbol_to_module(db, prelude_sym, dummy_root, std_root)?;
+
+    let v1_name = Name::new(db, "v1".to_owned());
+    let v1_sym = definition(db, prelude_mod, v1_name)?;
+    let v1_mod = symbol_to_module(db, v1_sym, dummy_root, prelude_mod)?;
+
+    // Search v1's children with namespace filtering
+    let ModuleSource::External(cn, di) = v1_mod.source(db) else {
+        return None;
+    };
+    let children = db.tcx().module_children(db, cn, di);
+    children
+        .into_iter()
+        .find(|(n, _, child_ns)| *n == name && *child_ns == ns)
+        .map(|(_, sym, _)| sym)
 }
 
 /// Resolve a use import's path to a Symbol.
