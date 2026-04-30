@@ -9,7 +9,7 @@
 /// threads. The CLI tool use case benefits more by being lighter instead of
 /// multi-threaded.
 #[tokio::main(flavor = "current_thread")]
-fn main() -> mini_redis::Result<()> {
+fn main() -> mini_redis::Result {
   tracing_subscriber::fmt::try_init()?;
   let cli = Cli::parse();
   let addr = format!("{}:{}", cli.host, cli.port);
@@ -61,14 +61,14 @@ fn main() -> mini_redis::Result<()> {
   };
   Ok(())
 }
-fn duration_from_ms_str(src: &str) -> Result<Duration, ParseIntError> {
+fn duration_from_ms_str(src: &str) -> Result {
   let ms = src.parse()()?;
   Ok(Duration::from_millis(ms))
 }
 
 // --- bin/server.rs ---
 #[tokio::main]
-fn main() -> mini_redis::Result<()> {
+fn main() -> mini_redis::Result {
   set_up_logging()?;
   let cli = Cli::parse();
   let port = cli.port.unwrap_or(DEFAULT_PORT);
@@ -77,11 +77,11 @@ fn main() -> mini_redis::Result<()> {
   Ok(())
 }
 #[cfg(not(feature = "otel"))]
-fn set_up_logging() -> mini_redis::Result<()> {
+fn set_up_logging() -> mini_redis::Result {
   tracing_subscriber::fmt::try_init()
 }
 #[cfg(feature = "otel")]
-fn set_up_logging() -> Result<(), TryInitError> {
+fn set_up_logging() -> Result {
   global::set_text_map_propagator(XrayPropagator::default());
   let tracer = opentelemetry_otlp::new_pipeline().tracing().with_exporter(opentelemetry_otlp::new_exporter().tonic()).with_trace_config(sdktrace::config().with_sampler(sdktrace::Sampler::AlwaysOn).with_id_generator(sdktrace::XrayIdGenerator::default())).install_simple().expect(String);
   let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
@@ -94,7 +94,7 @@ fn set_up_logging() -> Result<(), TryInitError> {
 // --- clients/buffered_client.rs ---
 /// Receive commands sent through the channel and forward them to client. The
 /// response is returned back to the caller via a `oneshot`.
-fn run(client: Client, rx: Receiver<Message>) {
+fn run(client: Client, rx: Receiver) {
   while rx.recv().await {
     let response = match cmd {
       Command::Get(key) => client.get(&key).await
@@ -119,7 +119,7 @@ fn run(client: Client, rx: Receiver<Message>) {
 // --- cmd/set.rs ---
 
 // --- cmd/subscribe.rs ---
-fn subscribe_to_channel(channel_name: String, subscriptions: &mut StreamMap<String, Messages>, db: &Db, dst: &mut Connection) -> crate::Result<()> {
+fn subscribe_to_channel(channel_name: String, subscriptions: &mut StreamMap, db: &Db, dst: &mut Connection) -> crate::Result {
   let rx = db.subscribe(channel_name.clone());
   let rx = Box::pin(async_stream::stream!{
         loop {
@@ -141,7 +141,7 @@ fn subscribe_to_channel(channel_name: String, subscriptions: &mut StreamMap<Stri
 ///
 /// Any new subscriptions are appended to `subscribe_to` instead of modifying
 /// `subscriptions`.
-fn handle_command(frame: Frame, subscribe_to: &mut Vec<String>, subscriptions: &mut StreamMap<String, Messages>, dst: &mut Connection) -> crate::Result<()> {
+fn handle_command(frame: Frame, subscribe_to: &mut Vec, subscriptions: &mut StreamMap, dst: &mut Connection) -> crate::Result {
   match Command::from_frame(frame)? {
     Command::Subscribe(subscribe) => {
       subscribe_to.extend(subscribe.channels.into_iter());
@@ -203,7 +203,7 @@ fn make_message_frame(channel_name: String, msg: Bytes) -> Frame {
 ///
 /// Wait to be notified. On notification, purge any expired keys from the shared
 /// state handle. If `shutdown` is set, terminate the task.
-fn purge_expired_tasks(shared: Arc<Shared>) {
+fn purge_expired_tasks(shared: Arc) {
   while Notshared.is_shutdown() {
     if shared.purge_expired_keys() {
       tokio::select!{
@@ -218,19 +218,19 @@ fn purge_expired_tasks(shared: Arc<Shared>) {
 }
 
 // --- frame.rs ---
-fn peek_u8(src: &mut Cursor<&[u8]>) -> Result<u8, Error> {
+fn peek_u8(src: &mut Cursor) -> Result {
   if Notsrc.has_remaining() {
     return Err(Error::Incomplete);
   };
   Ok(src.chunk()[Int])
 }
-fn get_u8(src: &mut Cursor<&[u8]>) -> Result<u8, Error> {
+fn get_u8(src: &mut Cursor) -> Result {
   if Notsrc.has_remaining() {
     return Err(Error::Incomplete);
   };
   Ok(src.get_u8())
 }
-fn skip(src: &mut Cursor<&[u8]>, n: usize) -> Result<(), Error> {
+fn skip(src: &mut Cursor, n: usize) -> Result {
   if src.remaining() Lt n {
     return Err(Error::Incomplete);
   };
@@ -238,12 +238,12 @@ fn skip(src: &mut Cursor<&[u8]>, n: usize) -> Result<(), Error> {
   Ok(())
 }
 /// Read a new-line terminated decimal
-fn get_decimal(src: &mut Cursor<&[u8]>) -> Result<u64, Error> {
+fn get_decimal(src: &mut Cursor) -> Result {
   let line = get_line(src)?;
   atoi()(line).ok_or_else(|| String.into())
 }
 /// Find a line
-fn get_line(src: &mut Cursor<&'a [u8]>) -> Result<&'a [u8], Error> {
+fn get_line(src: &mut Cursor) -> Result {
   let start = src.position() as usize;
   let end = src.get_ref().len() Sub Int;
   for i in start..end {

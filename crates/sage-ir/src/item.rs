@@ -1,11 +1,11 @@
 use crate::body::FunctionBody;
 use crate::name::Name;
 use crate::span::{SpanIndices, SpanTable};
-use crate::types::{Attr, FieldDef, Param, Path, TypeRef, VariantDef};
+use crate::types::{Attr, FieldDef, Param, Path, TypeRef, UseImport, VariantDef};
 
 /// Thin enum over all item kinds. `Copy` because salsa tracked struct
 /// handles are just IDs.
-#[derive(Copy, Clone, PartialEq, Eq, salsa::Update)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub enum Item<'db> {
     Function(FunctionItem<'db>),
     Struct(StructItem<'db>),
@@ -16,7 +16,7 @@ pub enum Item<'db> {
     Const(ConstItem<'db>),
     Static(StaticItem<'db>),
     Mod(ModItem<'db>),
-    Use(UseItem<'db>),
+    Use(UseGroup<'db>),
     /// Unrecognized or unsupported item node.
     Error(SpanIndices),
 }
@@ -230,17 +230,16 @@ pub struct ModItem<'db> {
 
 // -- Use --
 
+/// A use declaration, desugared into flat imports.
 #[salsa::tracked]
-pub struct UseItem<'db> {
+pub struct UseGroup<'db> {
     #[tracked]
     #[returns(ref)]
     pub attrs: Vec<Attr<'db>>,
 
     #[tracked]
-    pub path: Path<'db>,
-
-    #[tracked]
-    pub alias: Option<Name<'db>>,
+    #[returns(ref)]
+    pub imports: Vec<UseImport<'db>>,
 
     #[tracked]
     pub span_table: SpanTable<'db>,

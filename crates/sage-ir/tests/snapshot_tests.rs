@@ -49,8 +49,14 @@ fn mini_redis_signatures() {
         expect_file!["./snapshots/mini_redis_signatures.txt"].assert_eq(&out);
 
         // No error or missing nodes should appear in the output.
-        assert!(!out.contains("{error"), "signature output contains {{error}} nodes");
-        assert!(!out.contains("{missing}"), "signature output contains {{missing}} nodes");
+        assert!(
+            !out.contains("{error"),
+            "signature output contains {{error}} nodes"
+        );
+        assert!(
+            !out.contains("{missing}"),
+            "signature output contains {{missing}} nodes"
+        );
     });
 }
 
@@ -88,7 +94,13 @@ fn mini_redis_bodies() {
         expect_file!["./snapshots/mini_redis_bodies.txt"].assert_eq(&out);
 
         // No error or missing nodes should appear in the output.
-        assert!(!out.contains("{error"), "body output contains {{error}} nodes");
-        assert!(!out.contains("{missing}"), "body output contains {{missing}} nodes");
+        assert!(
+            !out.contains("{error"),
+            "body output contains {{error}} nodes"
+        );
+        assert!(
+            !out.contains("{missing}"),
+            "body output contains {{missing}} nodes"
+        );
     });
 }

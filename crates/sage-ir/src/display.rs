@@ -208,13 +208,35 @@ impl fmt::Display for ModItem<'_> {
 
 // -- Use --
 
-impl fmt::Display for UseItem<'_> {
+impl fmt::Display for UseGroup<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         with_db(|db| {
             write_attrs(f, self.attrs(db))?;
+            for (i, import) in self.imports(db).iter().enumerate() {
+                if i > 0 {
+                    writeln!(f)?;
+                }
+                fmt::Display::fmt(import, f)?;
+            }
+            Ok(())
+        })
+    }
+}
+
+impl fmt::Display for UseImport<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        with_db(|db| {
             write!(f, "use {}", self.path(db))?;
-            if let Some(alias) = self.alias(db) {
-                write!(f, " as {}", alias.text(db))?;
+            match self.kind(db) {
+                UseKind::Named(name) => {
+                    // Only show `as X` if the alias differs from the last path segment
+                    let segs = self.path(db).segments(db);
+                    if segs.last().map(|s| s.text(db)) != Some(name.text(db)) {
+                        write!(f, " as {}", name.text(db))?;
+                    }
+                }
+                UseKind::Glob => f.write_str("::*")?,
+                UseKind::Unnamed => f.write_str(" as _")?,
             }
             Ok(())
         })

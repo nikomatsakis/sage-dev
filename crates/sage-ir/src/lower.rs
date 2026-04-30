@@ -373,17 +373,151 @@ impl<'db> LowerCtx<'db> {
     fn lower_use(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> Item<'db> {
         let span = self.span(node);
         let span_table = self.make_span_table(node);
-        // The argument subtree of the use declaration (after `use` keyword).
-        // tree-sitter gives us the full node text including visibility.
-        let text = self.node_text(node);
-        let text = text
-            .trim_start_matches("pub(crate) ")
-            .trim_start_matches("pub ")
-            .trim_start_matches("use ")
-            .trim_end_matches(';')
-            .trim();
-        let path = Path::new(self.db, vec![Name::new(self.db, text.to_owned())], span);
-        Item::Use(UseItem::new(self.db, attrs, path, None, span_table, span))
+        let mut imports = Vec::new();
+        // The use tree is the first named child after visibility/`use` keyword.
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            match child.kind() {
+                "visibility_modifier" => {}
+                _ => {
+                    let mut prefix = Vec::new();
+                    self.flatten_use_tree(child, &mut prefix, &mut imports);
+                    break;
+                }
+            }
+        }
+        Item::Use(UseGroup::new(self.db, attrs, imports, span_table, span))
+    }
+
+    fn flatten_use_tree(
+        &self,
+        node: Node<'_>,
+        prefix: &mut Vec<Name<'db>>,
+        out: &mut Vec<UseImport<'db>>,
+    ) {
+        match node.kind() {
+            "scoped_use_list" => {
+                // `foo::bar::{A, B}` — extend prefix from "path" child, recurse into "list"
+                let saved = prefix.len();
+                if let Some(path_node) = node.child_by_field_name("path") {
+                    self.collect_path_segments(path_node, prefix);
+                }
+                if let Some(list) = node.child_by_field_name("list") {
+                    self.flatten_use_tree(list, prefix, out);
+                }
+                prefix.truncate(saved);
+            }
+            "use_list" => {
+                let mut cursor = node.walk();
+                for child in node.named_children(&mut cursor) {
+                    self.flatten_use_tree(child, prefix, out);
+                }
+            }
+            "use_as_clause" => {
+                // `foo::Bar as Baz` or `foo::Bar as _`
+                let mut path_segs = prefix.to_vec();
+                if let Some(path_node) = node.child_by_field_name("path") {
+                    self.collect_path_segments(path_node, &mut path_segs);
+                }
+                let alias_node = node.child_by_field_name("alias");
+                let alias_text = alias_node.map(|n| self.node_text(n));
+                let kind = match alias_text {
+                    Some("_") => UseKind::Unnamed,
+                    Some(t) => UseKind::Named(Name::new(self.db, t.to_owned())),
+                    None => {
+                        let last = path_segs
+                            .last()
+                            .copied()
+                            .unwrap_or_else(|| Name::new(self.db, "?".to_owned()));
+                        UseKind::Named(last)
+                    }
+                };
+                let path = Path::new(self.db, path_segs, self.span(node));
+                out.push(UseImport::new(self.db, path, kind, self.span(node)));
+            }
+            "use_wildcard" => {
+                // `foo::*` — the scoped part is in a child "path" if present
+                let mut path_segs = prefix.to_vec();
+                if let Some(path_node) = node.child_by_field_name("path") {
+                    self.collect_path_segments(path_node, &mut path_segs);
+                }
+                let path = Path::new(self.db, path_segs, self.span(node));
+                out.push(UseImport::new(
+                    self.db,
+                    path,
+                    UseKind::Glob,
+                    self.span(node),
+                ));
+            }
+            "scoped_identifier" => {
+                // `foo::Bar` as a leaf in a use tree
+                let mut path_segs = prefix.to_vec();
+                self.collect_path_segments(node, &mut path_segs);
+                let last = path_segs
+                    .last()
+                    .copied()
+                    .unwrap_or_else(|| Name::new(self.db, "?".to_owned()));
+                let path = Path::new(self.db, path_segs, self.span(node));
+                out.push(UseImport::new(
+                    self.db,
+                    path,
+                    UseKind::Named(last),
+                    self.span(node),
+                ));
+            }
+            "identifier" | "type_identifier" => {
+                let name = self.intern_name(node);
+                let mut path_segs = prefix.to_vec();
+                path_segs.push(name);
+                let path = Path::new(self.db, path_segs, self.span(node));
+                out.push(UseImport::new(
+                    self.db,
+                    path,
+                    UseKind::Named(name),
+                    self.span(node),
+                ));
+            }
+            "self" => {
+                // `use foo::{self}` → imports the module itself under its name
+                let path_segs = prefix.to_vec();
+                let alias = prefix
+                    .last()
+                    .copied()
+                    .unwrap_or_else(|| Name::new(self.db, "self".to_owned()));
+                let path = Path::new(self.db, path_segs, self.span(node));
+                out.push(UseImport::new(
+                    self.db,
+                    path,
+                    UseKind::Named(alias),
+                    self.span(node),
+                ));
+            }
+            "crate" | "super" => {
+                let name = Name::new(self.db, node.kind().to_owned());
+                let mut path_segs = prefix.to_vec();
+                path_segs.push(name);
+                let path = Path::new(self.db, path_segs, self.span(node));
+                out.push(UseImport::new(
+                    self.db,
+                    path,
+                    UseKind::Named(name),
+                    self.span(node),
+                ));
+            }
+            _ => {
+                // Fallback: treat as single identifier
+                let name = Name::new(self.db, self.node_text(node).to_owned());
+                let mut path_segs = prefix.to_vec();
+                path_segs.push(name);
+                let path = Path::new(self.db, path_segs, self.span(node));
+                out.push(UseImport::new(
+                    self.db,
+                    path,
+                    UseKind::Named(name),
+                    self.span(node),
+                ));
+            }
+        }
     }
 
     // -- Types -------------------------------------------------------------
@@ -452,14 +586,41 @@ impl<'db> LowerCtx<'db> {
     }
 
     fn lower_path(&self, node: Node<'_>) -> Path<'db> {
-        // For now, capture the full text as a single segment.
-        // A proper implementation would walk scoped_type_identifier etc.
-        let text = self.node_text(node);
-        Path::new(
-            self.db,
-            vec![Name::new(self.db, text.to_owned())],
-            self.span(node),
-        )
+        let mut segments = Vec::new();
+        self.collect_path_segments(node, &mut segments);
+        Path::new(self.db, segments, self.span(node))
+    }
+
+    fn collect_path_segments(&self, node: Node<'_>, out: &mut Vec<Name<'db>>) {
+        match node.kind() {
+            "scoped_identifier" | "scoped_type_identifier" => {
+                if let Some(prefix) = node.child_by_field_name("path") {
+                    self.collect_path_segments(prefix, out);
+                } else if node.child(0).is_some_and(|c| c.kind() == "::") {
+                    // Leading `::` — emit empty sentinel for absolute path
+                    out.push(Name::new(self.db, String::new()));
+                }
+                if let Some(name) = node.child_by_field_name("name") {
+                    out.push(self.intern_name(name));
+                }
+            }
+            "generic_type" => {
+                // Recurse into the type child, ignore type_arguments
+                if let Some(ty) = node.child_by_field_name("type") {
+                    self.collect_path_segments(ty, out);
+                }
+            }
+            "identifier" | "type_identifier" | "primitive_type" | "metavariable" => {
+                out.push(self.intern_name(node));
+            }
+            "self" => out.push(Name::new(self.db, "self".to_owned())),
+            "crate" => out.push(Name::new(self.db, "crate".to_owned())),
+            "super" => out.push(Name::new(self.db, "super".to_owned())),
+            _ => {
+                // Fallback: use full text as single segment
+                out.push(Name::new(self.db, self.node_text(node).to_owned()));
+            }
+        }
     }
 
     fn make_error_type(&self, node: Node<'_>) -> TypeRef<'db> {
@@ -524,11 +685,38 @@ impl<'db> BodyLowerCtx<'db> {
     }
 
     fn lower_path(&self, node: Node<'_>) -> Path<'db> {
-        Path::new(
-            self.db,
-            vec![Name::new(self.db, self.node_text(node).to_owned())],
-            self.span(node),
-        )
+        let mut segments = Vec::new();
+        self.collect_path_segments(node, &mut segments);
+        Path::new(self.db, segments, self.span(node))
+    }
+
+    fn collect_path_segments(&self, node: Node<'_>, out: &mut Vec<Name<'db>>) {
+        match node.kind() {
+            "scoped_identifier" | "scoped_type_identifier" => {
+                if let Some(prefix) = node.child_by_field_name("path") {
+                    self.collect_path_segments(prefix, out);
+                } else if node.child(0).is_some_and(|c| c.kind() == "::") {
+                    out.push(Name::new(self.db, String::new()));
+                }
+                if let Some(name) = node.child_by_field_name("name") {
+                    out.push(self.name(name));
+                }
+            }
+            "generic_type" => {
+                if let Some(ty) = node.child_by_field_name("type") {
+                    self.collect_path_segments(ty, out);
+                }
+            }
+            "identifier" | "type_identifier" | "primitive_type" | "metavariable" => {
+                out.push(self.name(node));
+            }
+            "self" => out.push(Name::new(self.db, "self".to_owned())),
+            "crate" => out.push(Name::new(self.db, "crate".to_owned())),
+            "super" => out.push(Name::new(self.db, "super".to_owned())),
+            _ => {
+                out.push(Name::new(self.db, self.node_text(node).to_owned()));
+            }
+        }
     }
 
     // -- Expressions -------------------------------------------------------
@@ -718,12 +906,6 @@ impl<'db> BodyLowerCtx<'db> {
                 let ty = node
                     .child_by_field_name("type")
                     .map(|n| {
-                        let text = self.node_text(n);
-                        Path::new(
-                            self.db,
-                            vec![Name::new(self.db, text.to_owned())],
-                            self.span(n),
-                        );
                         TypeRef::new(self.db, TypeRefKind::Path(self.lower_path(n)), self.span(n))
                     })
                     .unwrap_or_else(|| TypeRef::new(self.db, TypeRefKind::Error, self.span(node)));
@@ -871,18 +1053,9 @@ impl<'db> BodyLowerCtx<'db> {
             .child_by_field_name("pattern")
             .map(|n| self.lower_pat(n))
             .unwrap_or_else(|| self.missing_pat(node));
-        let ty = node.child_by_field_name("type").map(|n| {
-            let text = self.node_text(n);
-            TypeRef::new(
-                self.db,
-                TypeRefKind::Path(Path::new(
-                    self.db,
-                    vec![Name::new(self.db, text.to_owned())],
-                    self.span(n),
-                )),
-                self.span(n),
-            )
-        });
+        let ty = node
+            .child_by_field_name("type")
+            .map(|n| TypeRef::new(self.db, TypeRefKind::Path(self.lower_path(n)), self.span(n)));
         let init = node
             .child_by_field_name("value")
             .map(|n| self.lower_expr(n));

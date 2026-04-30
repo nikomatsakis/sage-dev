@@ -77,6 +77,26 @@ pub enum AttrKind {
     DocComment,
 }
 
+/// A single flattened use import (syntactic, not resolved).
+#[salsa::tracked]
+pub struct UseImport<'db> {
+    /// The full path as written, e.g. [foo, bar].
+    pub path: Path<'db>,
+    pub kind: UseKind<'db>,
+    pub span: SpanIndices,
+}
+
+/// What a use import brings into scope.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub enum UseKind<'db> {
+    /// `use foo::bar` or `use foo::bar as baz` — imports under the given name.
+    Named(Name<'db>),
+    /// `use foo::bar::*` — glob import.
+    Glob,
+    /// `use foo::Bar as _` — unnamed import.
+    Unnamed,
+}
+
 /// An attribute: `#[foo]`, `#[derive(Debug)]`, `/// doc comment`, etc.
 #[salsa::tracked]
 pub struct Attr<'db> {
