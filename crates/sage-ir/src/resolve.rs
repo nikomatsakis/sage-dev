@@ -100,8 +100,8 @@ pub fn definition<'db>(
             let children = db.tcx().module_children(db, crate_num, def_index);
             children
                 .into_iter()
-                .find(|(n, _)| *n == name)
-                .map(|(_, sym)| sym)
+                .find(|(n, _, _)| *n == name)
+                .map(|(_, sym, _)| sym)
         }
     }
 }
