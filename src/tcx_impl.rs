@@ -96,8 +96,11 @@ impl TcxDb for RustcTcxDb<'_> {
             index: rustc_hir::def_id::DefIndex::from_u32(def_index.0),
         };
 
-        matches!(self.tcx.def_kind(def_id), DefKind::Macro(kinds) if kinds.contains(MacroKinds::DERIVE))
-            && self.tcx.has_attr(def_id, sym::rustc_builtin_macro)
+        #[allow(deprecated)] // has_attr is correct for raw symbol attrs like rustc_builtin_macro
+        {
+            matches!(self.tcx.def_kind(def_id), DefKind::Macro(kinds) if kinds.contains(MacroKinds::DERIVE))
+                && self.tcx.has_attr(def_id, sym::rustc_builtin_macro)
+        }
     }
 }
 
