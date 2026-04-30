@@ -463,6 +463,7 @@ name = "sage"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "sage-ir",
  "serde",
  "serde_json",
  "tree-sitter",

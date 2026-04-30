@@ -7,6 +7,7 @@ extern crate rustc_middle;
 extern crate rustc_span;
 
 mod metadata;
+mod tcx_impl;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
