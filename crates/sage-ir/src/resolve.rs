@@ -12,10 +12,17 @@ use crate::types::{UseImport, UseKind};
 // ---------------------------------------------------------------------------
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum MacroKind {
+    Bang,
+    Attr,
+    Derive,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Namespace {
     Type,
     Value,
-    Macro,
+    Macro(MacroKind),
 }
 
 /// Whether an item lives in the given namespace.

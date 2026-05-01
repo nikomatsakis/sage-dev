@@ -4,7 +4,7 @@ use crate::Db;
 use crate::item::*;
 use crate::module::Module;
 use crate::name::Name;
-use crate::resolve::{Namespace, SourceRoot, resolve_name};
+use crate::resolve::{MacroKind, Namespace, SourceRoot, resolve_name};
 use crate::symbol::Symbol;
 use crate::types::{AttrKind, TokenTree};
 
@@ -47,7 +47,7 @@ pub fn expand_derives<'db>(
                 source_root,
                 crate_root,
                 derive_name,
-                Namespace::Macro,
+                Namespace::Macro(MacroKind::Derive),
             ) {
                 Ok(symbol) => {
                     let (cn, di) = match symbol.source(db) {

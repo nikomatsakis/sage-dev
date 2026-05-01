@@ -1051,21 +1051,26 @@ backed by `TyCtxt`.
    full expansion. Full expansion needs `expand_derives` to be a tracked
    function.
 
-5. **Macro sub-namespaces**: Plan said `Namespace::Macro(MacroKind)` with
+5. **Macro sub-namespaces**: ~~Plan said `Namespace::Macro(MacroKind)` with
    separate sub-namespaces. Reality: kept `Namespace::Macro` as a single
-   variant for simplicity. The namespace filtering in `resolve_in_std_prelude`
-   and `module_children` is sufficient to disambiguate.
+   variant for simplicity.~~ Fixed: `Namespace::Macro(MacroKind)` with
+   `Bang`/`Attr`/`Derive` variants, matching the original plan.
 
 ### Known gaps
 
-- `expand_builtin` creates tracked structs outside tracked functions.
-  Needs to be wrapped in a tracked function for full derive expansion
-  to work end-to-end.
-- Macro sub-namespaces (bang vs attr vs derive) are collapsed into a
-  single `Namespace::Macro`. Works for mini-redis but may need
-  refinement for crates with name collisions.
+- ~~`expand_builtin` creates tracked structs outside tracked functions.~~
+  Fixed: `expand_builtin` is now `#[salsa::tracked]` and full derive
+  expansion works end-to-end (verified by `expand_derives_cmd_get_full`
+  integration test).
+- ~~Macro sub-namespaces (bang vs attr vs derive) are collapsed into a
+  single `Namespace::Macro`.~~ Fixed: `Namespace::Macro(MacroKind)`
+  with `MacroKind::{Bang, Attr, Derive}`. `namespaces_for_def_kind`
+  decomposes rustc's `MacroKinds` bitflags into individual variants.
+  Derive resolution uses `Namespace::Macro(MacroKind::Derive)`.
 - `macro_rules!` scoping is module-scoped, not textual.
-- No workspace glob imports.
+- Glob imports work for file-based local modules and external modules,
+  but not for inline modules (`mod foo { ... }`) — `symbol_to_module`
+  returns `None` for inline modules.
 - No `#[path = "..."]` attributes on modules.
 - Derive helper attributes not resolved.
 

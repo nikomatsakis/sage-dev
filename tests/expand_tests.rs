@@ -93,7 +93,7 @@ fn expand_derives_cmd_get() {
             sage.source_root,
             sage.root,
             debug_name,
-            sage_ir::resolve::Namespace::Macro,
+            sage_ir::resolve::Namespace::Macro(sage_ir::resolve::MacroKind::Derive),
         );
 
         assert!(result.is_ok(), "failed to resolve Debug in macro namespace");

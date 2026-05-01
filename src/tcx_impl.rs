@@ -11,7 +11,7 @@ use rustc_hir::find_attr;
 use rustc_middle::ty::TyCtxt;
 
 use sage_ir::module::{CrateNum, DefIndex};
-use sage_ir::resolve::Namespace;
+use sage_ir::resolve::{MacroKind, Namespace};
 use sage_ir::tcx::RawChild;
 
 /// `TcxDb` backed by rustc's `TyCtxt`.
@@ -123,7 +123,19 @@ fn namespaces_for_def_kind(kind: DefKind) -> Vec<Namespace> {
         DefKind::Struct => vec![Namespace::Type, Namespace::Value],
         DefKind::Variant => vec![Namespace::Type, Namespace::Value],
         DefKind::Ctor(..) => vec![Namespace::Value],
-        DefKind::Macro(_) => vec![Namespace::Macro],
+        DefKind::Macro(kinds) => {
+            let mut ns = Vec::new();
+            if kinds.contains(MacroKinds::BANG) {
+                ns.push(Namespace::Macro(MacroKind::Bang));
+            }
+            if kinds.contains(MacroKinds::ATTR) {
+                ns.push(Namespace::Macro(MacroKind::Attr));
+            }
+            if kinds.contains(MacroKinds::DERIVE) {
+                ns.push(Namespace::Macro(MacroKind::Derive));
+            }
+            ns
+        }
         _ => Vec::new(),
     }
 }
