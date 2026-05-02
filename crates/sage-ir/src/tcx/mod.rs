@@ -30,4 +30,12 @@ pub trait TcxDb: Send + Sync {
 
     /// Human-readable path for an external definition, e.g. `"core::option::Option::Some"`.
     fn def_path(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<String>;
+
+    /// Expand a proc-macro derive. Returns the expanded source text.
+    fn expand_proc_macro_derive(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        item_source: &str,
+    ) -> Option<String>;
 }

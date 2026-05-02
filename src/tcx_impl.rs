@@ -104,6 +104,15 @@ impl<'tcx> RustcTcxDb<'tcx> {
         };
         Some(self.tcx.def_path_str(def_id))
     }
+
+    pub fn expand_proc_macro_derive(
+        &self,
+        _crate_num: CrateNum,
+        _def_index: DefIndex,
+        _item_source: &str,
+    ) -> Option<String> {
+        None // Stub — real implementation in Phase 3
+    }
 }
 
 /// Map a `DefKind` to the namespace(s) it occupies.

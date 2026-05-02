@@ -27,6 +27,12 @@ pub enum TcxRequest {
         def_index: DefIndex,
         reply: mpsc::Sender<Option<String>>,
     },
+    ExpandDerive {
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        item_source: String,
+        reply: mpsc::Sender<Option<String>>,
+    },
 }
 
 /// Channel-based `TcxDb` proxy. Sends requests to the thread that owns
@@ -97,6 +103,24 @@ impl TcxDb for ProxyTcxDb {
             .send(TcxRequest::DefPath {
                 crate_num,
                 def_index,
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn expand_proc_macro_derive(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        item_source: &str,
+    ) -> Option<String> {
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::ExpandDerive {
+                crate_num,
+                def_index,
+                item_source: item_source.to_owned(),
                 reply,
             })
             .expect("TyCtxt thread hung up");

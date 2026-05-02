@@ -21,4 +21,25 @@ impl TcxDb for NoopTcxDb {
     fn def_path(&self, _crate_num: CrateNum, _def_index: DefIndex) -> Option<String> {
         None
     }
+
+    fn expand_proc_macro_derive(
+        &self,
+        _crate_num: CrateNum,
+        _def_index: DefIndex,
+        _item_source: &str,
+    ) -> Option<String> {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn noop_expand_returns_none() {
+        let tcx = NoopTcxDb;
+        let result = tcx.expand_proc_macro_derive(CrateNum(1), DefIndex(0), "struct Foo;");
+        assert!(result.is_none());
+    }
 }

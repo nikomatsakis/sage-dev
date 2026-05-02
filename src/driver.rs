@@ -110,6 +110,18 @@ where
                             } => {
                                 let _ = reply.send(tcx_db.def_path(crate_num, def_index));
                             }
+                            TcxRequest::ExpandDerive {
+                                crate_num,
+                                def_index,
+                                item_source,
+                                reply,
+                            } => {
+                                let _ = reply.send(tcx_db.expand_proc_macro_derive(
+                                    crate_num,
+                                    def_index,
+                                    &item_source,
+                                ));
+                            }
                         }
                     }
 
