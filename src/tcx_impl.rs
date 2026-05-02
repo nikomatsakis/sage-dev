@@ -126,8 +126,19 @@ impl<'tcx> RustcTcxDb<'tcx> {
             index: RustcDefIndex::from_u32(def_index.0),
         };
 
+        // Only proc-macro crates can be loaded via load_macro_untracked.
+        let kind = self.tcx.def_kind(def_id);
+        if !matches!(kind, DefKind::Macro(kinds) if kinds.contains(MacroKinds::DERIVE)) {
+            return None;
+        }
+
         let cstore = CStore::from_tcx(self.tcx);
-        let loaded = cstore.load_macro_untracked(self.tcx, def_id);
+        // catch_unwind guards against ICEs in load_macro_untracked for
+        // re-exported macros whose DefId doesn't point to a proc-macro crate.
+        let loaded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            cstore.load_macro_untracked(self.tcx, def_id)
+        }))
+        .ok()?;
 
         use rustc_expand::base::SyntaxExtensionKind;
         use rustc_metadata::creader::LoadedMacro;

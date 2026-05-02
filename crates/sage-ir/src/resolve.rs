@@ -128,6 +128,26 @@ pub fn definition<'db>(
     }
 }
 
+/// Like `definition`, but filters by namespace for external modules.
+/// For local modules, behaves like `definition` (no namespace filter on items).
+pub fn definition_in_ns<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    name: Name<'db>,
+    ns: Namespace,
+) -> Option<Symbol<'db>> {
+    match module.source(db) {
+        ModuleSource::Local { .. } => definition(db, module, name),
+        ModuleSource::External(crate_num, def_index) => {
+            let raw = db.tcx().module_children(crate_num, def_index);
+            let name_text = name.text(db);
+            raw.into_iter()
+                .find(|c| c.name == *name_text && c.namespace == ns)
+                .map(|c| Symbol::new(db, SymbolSource::External(c.crate_num, c.def_index)))
+        }
+    }
+}
+
 /// Resolve a ModItem to its Module.
 ///
 /// For file-based modules (`mod foo;`), looks up `foo.rs` or `foo/mod.rs`

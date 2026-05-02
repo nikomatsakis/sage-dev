@@ -216,6 +216,11 @@ fn expand_derives_cmd_get_full() {
                         }
                     }
                 }
+                sage_ir::derive::DeriveResult::Expanded { items } => {
+                    for item in items {
+                        out.push_str(&format!("expanded: {item}\n"));
+                    }
+                }
             }
         }
 
@@ -338,5 +343,187 @@ fn expanded_output_is_parseable() {
             !tree.root_node().has_error(),
             "expanded output has parse errors:\n{expanded}"
         );
+    });
+}
+
+#[test]
+fn expand_derives_clap_parser() {
+    run_sage_with(mini_redis_dir(), &[], |sage| {
+        // bin/server.rs is not part of the module tree (it's a binary target),
+        // so we find it directly in the source root.
+        let server_file = sage
+            .source_root
+            .files(sage.db)
+            .iter()
+            .find(|f| f.path(sage.db) == "bin/server.rs")
+            .copied()
+            .expect("bin/server.rs not found");
+        let module = sage_ir::module::Module::new(
+            sage.db,
+            sage_ir::module::ModuleSource::Local {
+                file: server_file,
+                parent: None,
+            },
+        );
+        let items = module_items(sage.db, module);
+        let cli_struct = items
+            .iter()
+            .find(|i| matches!(i, Item::Struct(s) if s.name(sage.db).text(sage.db) == "Cli"))
+            .expect("Cli struct not found");
+
+        let results = sage_ir::derive::expand_derives(
+            sage.db,
+            module,
+            sage.source_root,
+            sage.root,
+            *cli_struct,
+        );
+
+        // Should have Parser (expanded) + Debug (builtin)
+        let has_builtin = results
+            .iter()
+            .any(|r| matches!(r, sage_ir::derive::DeriveResult::Builtin { .. }));
+        let has_expanded = results
+            .iter()
+            .any(|r| matches!(r, sage_ir::derive::DeriveResult::Expanded { .. }));
+        assert!(has_builtin, "should have builtin Debug derive");
+        assert!(has_expanded, "should have expanded Parser derive");
+
+        // No more ProcMacro stubs
+        let has_stub = results
+            .iter()
+            .any(|r| matches!(r, sage_ir::derive::DeriveResult::ProcMacro { .. }));
+        assert!(!has_stub, "should not have unexpanded ProcMacro stubs");
+    });
+}
+
+#[test]
+fn expanded_items_are_valid_ir() {
+    run_sage_with(mini_redis_dir(), &[], |sage| {
+        let server_file = sage
+            .source_root
+            .files(sage.db)
+            .iter()
+            .find(|f| f.path(sage.db) == "bin/server.rs")
+            .copied()
+            .expect("bin/server.rs not found");
+        let module = sage_ir::module::Module::new(
+            sage.db,
+            sage_ir::module::ModuleSource::Local {
+                file: server_file,
+                parent: None,
+            },
+        );
+        let items = module_items(sage.db, module);
+        let cli_struct = items
+            .iter()
+            .find(|i| matches!(i, Item::Struct(s) if s.name(sage.db).text(sage.db) == "Cli"))
+            .expect("Cli struct not found");
+
+        let results = sage_ir::derive::expand_derives(
+            sage.db,
+            module,
+            sage.source_root,
+            sage.root,
+            *cli_struct,
+        );
+
+        for result in &results {
+            if let sage_ir::derive::DeriveResult::Expanded { items } = result {
+                assert!(!items.is_empty(), "expanded items should not be empty");
+                for item in items {
+                    assert!(
+                        matches!(item, Item::Impl(_) | Item::Function(_) | Item::Const(_)),
+                        "unexpected expanded item kind: {item:?}",
+                    );
+                }
+            }
+        }
+    });
+}
+
+#[test]
+fn snapshot_expanded_clap_parser() {
+    run_sage_with(mini_redis_dir(), &[], |sage| {
+        let server_file = sage
+            .source_root
+            .files(sage.db)
+            .iter()
+            .find(|f| f.path(sage.db) == "bin/server.rs")
+            .copied()
+            .expect("bin/server.rs not found");
+        let module = sage_ir::module::Module::new(
+            sage.db,
+            sage_ir::module::ModuleSource::Local {
+                file: server_file,
+                parent: None,
+            },
+        );
+        let items = module_items(sage.db, module);
+        let cli_struct = items
+            .iter()
+            .find(|i| matches!(i, Item::Struct(s) if s.name(sage.db).text(sage.db) == "Cli"))
+            .expect("Cli struct not found");
+
+        let results = sage_ir::derive::expand_derives(
+            sage.db,
+            module,
+            sage.source_root,
+            sage.root,
+            *cli_struct,
+        );
+
+        let mut out = String::new();
+        for result in &results {
+            match result {
+                sage_ir::derive::DeriveResult::Builtin { impls } => {
+                    for impl_item in impls {
+                        out.push_str(&format!("builtin: {impl_item}\n"));
+                    }
+                }
+                sage_ir::derive::DeriveResult::Expanded { items } => {
+                    for item in items {
+                        out.push_str(&format!("expanded: {item}\n"));
+                    }
+                }
+                sage_ir::derive::DeriveResult::ProcMacro { symbol } => {
+                    out.push_str(&format!("unexpanded: {symbol:?}\n"));
+                }
+            }
+        }
+        expect![[r#"
+            expanded: #[# [automatically_derived]
+            #[# [allow(unused_qualifications ,)]
+            impl clap::Parser for Cli {
+            }
+            expanded: #[# [allow(dead_code , unreachable_code , unused_variables , unused_braces , unused_qualifications ,)]
+            #[# [allow(clippy :: style , clippy :: complexity , clippy :: pedantic , clippy :: restriction , clippy :: perf , clippy :: deprecated , clippy :: nursery , clippy :: cargo , clippy :: suspicious_else_formatting , clippy :: almost_swapped ,)]
+            #[# [automatically_derived]
+            impl clap::CommandFactory for Cli {
+              fn command() -> clap::Command
+              fn command_for_update() -> clap::Command
+            }
+            expanded: #[# [allow(dead_code , unreachable_code , unused_variables , unused_braces , unused_qualifications ,)]
+            #[# [allow(clippy :: style , clippy :: complexity , clippy :: pedantic , clippy :: restriction , clippy :: perf , clippy :: deprecated , clippy :: nursery , clippy :: cargo , clippy :: suspicious_else_formatting , clippy :: almost_swapped ,)]
+            #[# [automatically_derived]
+            impl clap::FromArgMatches for Cli {
+              fn from_arg_matches(__clap_arg_matches: &clap::ArgMatches) -> ::std::result::Result
+              fn from_arg_matches_mut(__clap_arg_matches: &mut clap::ArgMatches) -> ::std::result::Result
+              fn update_from_arg_matches(self: &mut Self, __clap_arg_matches: &clap::ArgMatches) -> ::std::result::Result
+              fn update_from_arg_matches_mut(self: &mut Self, __clap_arg_matches: &mut clap::ArgMatches) -> ::std::result::Result
+            }
+            expanded: #[# [allow(dead_code , unreachable_code , unused_variables , unused_braces , unused_qualifications ,)]
+            #[# [allow(clippy :: style , clippy :: complexity , clippy :: pedantic , clippy :: restriction , clippy :: perf , clippy :: deprecated , clippy :: nursery , clippy :: cargo , clippy :: suspicious_else_formatting , clippy :: almost_swapped ,)]
+            #[# [automatically_derived]
+            impl clap::Args for Cli {
+              fn group_id() -> Option
+              fn augment_args(__clap_app: clap::Command) -> clap::Command
+              fn augment_args_for_update(__clap_app: clap::Command) -> clap::Command
+            }
+            builtin: impl ::std::fmt::Debug for Cli {
+              fn fmt(self: &Self, f: ::std::fmt::Formatter) -> ::std::fmt::Result
+            }
+        "#]]
+        .assert_eq(&out);
     });
 }
