@@ -241,3 +241,103 @@ fn normalize_ext_crates(s: &str) -> String {
     let re = regex::Regex::new(r"<ext \d+:(\d+)>").unwrap();
     re.replace_all(s, "<ext N:$1>").to_string()
 }
+
+#[test]
+fn query_log_body_resolve_demand_driven() {
+    run_sage_with(mini_redis_dir(), &[], |sage| {
+        sage.db.take_query_log(); // clear setup log
+
+        let module =
+            resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
+        let method = find_method(sage.db, module, "Get", "apply");
+        let _resolved = resolve_body(sage.db, method, module, sage.source_root, sage.root);
+
+        let log = sage.db.take_query_log();
+        // Should NOT contain file_item_tree for cmd/set.rs — demand-driven
+        assert!(
+            !log.contains("cmd/set.rs"),
+            "demand-driven violation: resolved cmd/get but touched cmd/set.rs:\n{log}"
+        );
+        // Should contain file_item_tree for cmd/get.rs
+        assert!(
+            log.contains("cmd/get.rs"),
+            "expected cmd/get.rs in query log:\n{log}"
+        );
+    });
+}
+
+fn find_free_fn<'db>(
+    db: &'db dyn sage_ir::Db,
+    module: sage_ir::module::Module<'db>,
+    fn_name: &str,
+) -> sage_ir::item::FunctionItem<'db> {
+    let items = module_items(db, module);
+    for item in items {
+        if let Item::Function(f) = item {
+            if f.name(db).text(db) == fn_name {
+                return *f;
+            }
+        }
+    }
+    panic!("free fn {fn_name} not found");
+}
+
+#[test]
+fn display_resolved_body_get_key() {
+    run_sage_with(mini_redis_dir(), &[], |sage| {
+        let module =
+            resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
+        let method = find_method(sage.db, module, "Get", "key");
+        let resolved = resolve_body(sage.db, method, module, sage.source_root, sage.root);
+
+        let output = pretty_print_resolved(&resolved);
+        expect![[r#"
+            locals:
+              0: self
+            {
+              &<local:0>.key
+            }
+        "#]]
+        .assert_eq(&output);
+    });
+}
+
+#[test]
+fn display_resolved_body_get_into_frame() {
+    run_sage_with(mini_redis_dir(), &[], |sage| {
+        let module =
+            resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
+        let method = find_method(sage.db, module, "Get", "into_frame");
+        let resolved = resolve_body(sage.db, method, module, sage.source_root, sage.root);
+
+        let output = pretty_print_resolved(&resolved);
+        let output = normalize_ext_crates(&output);
+        expect![[r#"
+            locals:
+              0: self
+              1: frame
+            {
+              let <bind:1> = <unresolved>();
+              <local:1>.push_bulk(<unresolved>(String.as_bytes()));
+              <local:1>.push_bulk(<unresolved>(<local:0>.key.into_bytes()));
+              <local:1>
+            }
+        "#]]
+        .assert_eq(&output);
+    });
+}
+
+#[test]
+fn display_resolved_body_connection_read_frame() {
+    run_sage_with(mini_redis_dir(), &[], |sage| {
+        let module =
+            resolve_module_path(sage.db, sage.root, sage.source_root, &["connection"]).unwrap();
+        let method = find_method(sage.db, module, "Connection", "read_frame");
+        let resolved = resolve_body(sage.db, method, module, sage.source_root, sage.root);
+
+        let output = pretty_print_resolved(&resolved);
+        // Just verify it doesn't panic and produces output with locals
+        assert!(output.contains("locals:"));
+        assert!(output.contains("<local:0>")); // self
+    });
+}

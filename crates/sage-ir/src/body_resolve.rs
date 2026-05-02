@@ -392,6 +392,7 @@ impl<'db> BodyResolver<'db> {
 }
 
 /// Produce a resolved body for a function.
+#[salsa::tracked(returns(ref))]
 pub fn resolve_body<'db>(
     db: &'db dyn Db,
     function: FunctionItem<'db>,
