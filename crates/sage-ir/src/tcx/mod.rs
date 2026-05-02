@@ -27,4 +27,7 @@ pub trait TcxDb: Send + Sync {
     fn module_children(&self, crate_num: CrateNum, def_index: DefIndex) -> Vec<RawChild>;
 
     fn is_builtin_derive(&self, crate_num: CrateNum, def_index: DefIndex) -> bool;
+
+    /// Human-readable path for an external definition, e.g. `"core::option::Option::Some"`.
+    fn def_path(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<String>;
 }

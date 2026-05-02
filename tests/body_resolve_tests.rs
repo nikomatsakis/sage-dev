@@ -8,7 +8,6 @@ use sage_ir::body_resolve::resolve_body;
 use sage_ir::display::pretty_print_resolved;
 use sage_ir::item::Item;
 use sage_ir::resolve::{module_items, resolve_module_path};
-use sage_ir::resolved::Res;
 use sage_ir::types::TypeRefKind;
 
 use sage::driver::run_sage_with;
@@ -44,160 +43,29 @@ fn find_method<'db>(
     panic!("{type_name}::{method_name} not found");
 }
 
-#[test]
-fn resolve_body_get_parse_frames() {
-    run_sage_with(mini_redis_dir(), &[], |sage| {
-        let module =
-            resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
-        let method = find_method(sage.db, module, "Get", "parse_frames");
-        let resolved = resolve_body(sage.db, method, module, sage.source_root, sage.root);
-
-        let stash = resolved.stash();
-        let body = &stash[*resolved.root()];
-        let locals = &stash[body.locals];
-
-        // Param: parse
-        assert_eq!(locals[0].name.text(sage.db), "parse");
-        // Let binding: key
-        assert_eq!(locals[1].name.text(sage.db), "key");
-    });
+fn resolve_and_print(
+    sage: &sage::driver::SageContext<'_>,
+    module_path: &[&str],
+    type_name: &str,
+    method_name: &str,
+) -> String {
+    let module = resolve_module_path(sage.db, sage.root, sage.source_root, module_path).unwrap();
+    let method = find_method(sage.db, module, type_name, method_name);
+    let resolved = resolve_body(sage.db, method, module, sage.source_root, sage.root);
+    pretty_print_resolved(sage.db.tcx(), &resolved)
 }
 
 #[test]
-fn resolve_body_get_apply() {
+fn resolve_get_parse_frames() {
     run_sage_with(mini_redis_dir(), &[], |sage| {
-        let module =
-            resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
-        let method = find_method(sage.db, module, "Get", "apply");
-        let resolved = resolve_body(sage.db, method, module, sage.source_root, sage.root);
-
-        let stash = resolved.stash();
-        let body = &stash[*resolved.root()];
-        let locals = &stash[body.locals];
-
-        // Params: self, db, dst
-        assert_eq!(locals[0].name.text(sage.db), "self");
-        assert_eq!(locals[1].name.text(sage.db), "db");
-        assert_eq!(locals[2].name.text(sage.db), "dst");
-
-        // if-let binding: "value" from `if let Some(value) = ...`
-        assert!(locals.iter().any(|l| l.name.text(sage.db) == "value"));
-
-        // "response" from `let response = ...`
-        assert!(locals.iter().any(|l| l.name.text(sage.db) == "response"));
-    });
-}
-
-#[test]
-fn resolve_body_pattern_some_resolves() {
-    use sage_ir::resolved::{RExprKind, RPatKind};
-
-    run_sage_with(mini_redis_dir(), &[], |sage| {
-        let module =
-            resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
-        let method = find_method(sage.db, module, "Get", "apply");
-        let resolved = resolve_body(sage.db, method, module, sage.source_root, sage.root);
-
-        let stash = resolved.stash();
-        let body = &stash[*resolved.root()];
-        let root = &stash[body.root];
-
-        // The root is a block. Walk its stmts to find the IfLet.
-        let RExprKind::Block(stmts, _) = &root.kind else {
-            panic!("expected block at root");
-        };
-        // Find the let stmt whose init is the if-let
-        let mut found_some = false;
-        for stmt in &stash[*stmts] {
-            if let sage_ir::resolved::RStmtKind::Let(_, _, Some(init)) = &stmt.kind {
-                let init_expr = &stash[*init];
-                if let RExprKind::IfLet(pat, _, _, _) = &init_expr.kind {
-                    let pat_data = &stash[*pat];
-                    if let RPatKind::TupleStruct(res, _) = &pat_data.kind {
-                        // `Some(value)` should resolve to Res::Def (from std prelude)
-                        assert!(
-                            matches!(res, Res::Def(_)),
-                            "Some should resolve to Res::Def, got {:?}",
-                            res
-                        );
-                        found_some = true;
-                    }
-                }
-            }
-        }
-        assert!(
-            found_some,
-            "did not find TupleStruct(Some) pattern in if-let"
-        );
-    });
-}
-
-#[test]
-fn resolve_body_macro_calls() {
-    use sage_ir::resolved::{RExprKind, RStmtKind};
-    use sage_ir::symbol::SymbolSource;
-
-    run_sage_with(mini_redis_dir(), &[], |sage| {
-        let module =
-            resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
-        let method = find_method(sage.db, module, "Get", "apply");
-        let resolved = resolve_body(sage.db, method, module, sage.source_root, sage.root);
-
-        let stash = resolved.stash();
-        let body = &stash[*resolved.root()];
-        let root = &stash[body.root];
-
-        // Walk the block to find MacroCall nodes
-        let RExprKind::Block(stmts, _) = &root.kind else {
-            panic!("expected block at root");
-        };
-
-        let mut macro_res = Vec::new();
-        for stmt in &stash[*stmts] {
-            match &stmt.kind {
-                RStmtKind::Expr(e) => {
-                    if let RExprKind::MacroCall(res, _) = &stash[*e].kind {
-                        macro_res.push(*res);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        // `debug!(...)` should resolve to Res::Def pointing at tracing crate
-        assert!(
-            !macro_res.is_empty(),
-            "expected at least one macro call in Get::apply"
-        );
-        let debug_res = macro_res[0];
-        match debug_res {
-            Res::Def(sym) => match sym.source(sage.db) {
-                SymbolSource::External(_, _) => {} // expected: tracing::debug
-                other => panic!("expected external symbol for debug!, got {:?}", other),
-            },
-            other => panic!("debug! should resolve to Res::Def, got {:?}", other),
-        }
-    });
-}
-
-#[test]
-fn display_resolved_body_get_parse_frames() {
-    run_sage_with(mini_redis_dir(), &[], |sage| {
-        let module =
-            resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
-        let method = find_method(sage.db, module, "Get", "parse_frames");
-        let resolved = resolve_body(sage.db, method, module, sage.source_root, sage.root);
-
-        let output = pretty_print_resolved(&resolved);
-        // Normalize non-deterministic crate numbers (keep DefIndex stable)
-        let output = normalize_ext_crates(&output);
+        let output = resolve_and_print(sage, &["cmd", "get"], "Get", "parse_frames");
         expect![[r#"
             locals:
               0: parse
               1: key
             {
               let <bind:1> = <local:0>.next_string()?;
-              <ext N:40257>(<def Get> { key: <local:1> })
+              <ext std::prelude::v1::Ok>(<def Get> { key: <local:1> })
             }
         "#]]
         .assert_eq(&output);
@@ -205,15 +73,9 @@ fn display_resolved_body_get_parse_frames() {
 }
 
 #[test]
-fn display_resolved_body_get_apply() {
+fn resolve_get_apply() {
     run_sage_with(mini_redis_dir(), &[], |sage| {
-        let module =
-            resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
-        let method = find_method(sage.db, module, "Get", "apply");
-        let resolved = resolve_body(sage.db, method, module, sage.source_root, sage.root);
-
-        let output = pretty_print_resolved(&resolved);
-        let output = normalize_ext_crates(&output);
+        let output = resolve_and_print(sage, &["cmd", "get"], "Get", "apply");
         expect![[r#"
             locals:
               0: self
@@ -222,75 +84,24 @@ fn display_resolved_body_get_apply() {
               3: value
               4: response
             {
-              let <bind:4> = if let <ext N:39879>(<bind:3>) = <local:1>.get(&<local:0>.key) {
+              let <bind:4> = if let <ext std::prelude::v1::Some>(<bind:3>) = <local:1>.get(&<local:0>.key) {
                 <unresolved>(<local:3>)
               } else {
                 <unresolved>
               };
-              <ext N:34>!(?response);
+              <ext tracing::debug>!(?response);
               <local:2>.write_frame(&<local:4>).await?;
-              <ext N:40257>(())
+              <ext std::prelude::v1::Ok>(())
             }
         "#]]
         .assert_eq(&output);
     });
 }
 
-/// Normalize `<ext N:M>` patterns to replace non-deterministic crate numbers with `N`.
-fn normalize_ext_crates(s: &str) -> String {
-    let re = regex::Regex::new(r"<ext \d+:(\d+)>").unwrap();
-    re.replace_all(s, "<ext N:$1>").to_string()
-}
-
 #[test]
-fn query_log_body_resolve_demand_driven() {
+fn resolve_get_key() {
     run_sage_with(mini_redis_dir(), &[], |sage| {
-        sage.db.take_query_log(); // clear setup log
-
-        let module =
-            resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
-        let method = find_method(sage.db, module, "Get", "apply");
-        let _resolved = resolve_body(sage.db, method, module, sage.source_root, sage.root);
-
-        let log = sage.db.take_query_log();
-        // Should NOT contain file_item_tree for cmd/set.rs — demand-driven
-        assert!(
-            !log.contains("cmd/set.rs"),
-            "demand-driven violation: resolved cmd/get but touched cmd/set.rs:\n{log}"
-        );
-        // Should contain file_item_tree for cmd/get.rs
-        assert!(
-            log.contains("cmd/get.rs"),
-            "expected cmd/get.rs in query log:\n{log}"
-        );
-    });
-}
-
-fn find_free_fn<'db>(
-    db: &'db dyn sage_ir::Db,
-    module: sage_ir::module::Module<'db>,
-    fn_name: &str,
-) -> sage_ir::item::FunctionItem<'db> {
-    let items = module_items(db, module);
-    for item in items {
-        if let Item::Function(f) = item {
-            if f.name(db).text(db) == fn_name {
-                return *f;
-            }
-        }
-    }
-    panic!("free fn {fn_name} not found");
-}
-
-#[test]
-fn display_resolved_body_get_key() {
-    run_sage_with(mini_redis_dir(), &[], |sage| {
-        let module =
-            resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
-        let method = find_method(sage.db, module, "Get", "key");
-        let resolved = resolve_body(sage.db, method, module, sage.source_root, sage.root);
-
-        let output = pretty_print_resolved(&resolved);
+        let output = resolve_and_print(sage, &["cmd", "get"], "Get", "key");
         expect![[r#"
             locals:
               0: self
@@ -303,15 +114,9 @@ fn display_resolved_body_get_key() {
 }
 
 #[test]
-fn display_resolved_body_get_into_frame() {
+fn resolve_get_into_frame() {
     run_sage_with(mini_redis_dir(), &[], |sage| {
-        let module =
-            resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
-        let method = find_method(sage.db, module, "Get", "into_frame");
-        let resolved = resolve_body(sage.db, method, module, sage.source_root, sage.root);
-
-        let output = pretty_print_resolved(&resolved);
-        let output = normalize_ext_crates(&output);
+        let output = resolve_and_print(sage, &["cmd", "get"], "Get", "into_frame");
         expect![[r#"
             locals:
               0: self
@@ -328,16 +133,49 @@ fn display_resolved_body_get_into_frame() {
 }
 
 #[test]
-fn display_resolved_body_connection_read_frame() {
+fn resolve_connection_read_frame() {
     run_sage_with(mini_redis_dir(), &[], |sage| {
-        let module =
-            resolve_module_path(sage.db, sage.root, sage.source_root, &["connection"]).unwrap();
-        let method = find_method(sage.db, module, "Connection", "read_frame");
-        let resolved = resolve_body(sage.db, method, module, sage.source_root, sage.root);
+        let output = resolve_and_print(sage, &["connection"], "Connection", "read_frame");
+        expect![[r#"
+            locals:
+              0: self
+              1: frame
+            {
+              loop {
+                if let <ext std::prelude::v1::Some>(<bind:1>) = <local:0>.parse_frame()? {
+                  return <ext std::prelude::v1::Ok>(<ext std::prelude::v1::Some>(<local:1>));
+                };
+                if Int Eq <local:0>.stream.read_buf(&mut <local:0>.buffer).await? {
+                  if <local:0>.buffer.is_empty() {
+                    return <ext std::prelude::v1::Ok>(<ext std::prelude::v1::None>);
+                  } else {
+                    return <ext std::prelude::v1::Err>(String.into());
+                  };
+                };
+              };
+            }
+        "#]].assert_eq(&output);
+    });
+}
 
-        let output = pretty_print_resolved(&resolved);
-        // Just verify it doesn't panic and produces output with locals
-        assert!(output.contains("locals:"));
-        assert!(output.contains("<local:0>")); // self
+#[test]
+fn query_log_body_resolve_demand_driven() {
+    run_sage_with(mini_redis_dir(), &[], |sage| {
+        sage.db.take_query_log();
+
+        let module =
+            resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
+        let method = find_method(sage.db, module, "Get", "apply");
+        let _resolved = resolve_body(sage.db, method, module, sage.source_root, sage.root);
+
+        let log = sage.db.take_query_log();
+        assert!(
+            !log.contains("cmd/set.rs"),
+            "demand-driven violation: resolved cmd/get but touched cmd/set.rs:\n{log}"
+        );
+        assert!(
+            log.contains("cmd/get.rs"),
+            "expected cmd/get.rs in query log:\n{log}"
+        );
     });
 }

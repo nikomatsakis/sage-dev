@@ -96,6 +96,14 @@ impl<'tcx> RustcTcxDb<'tcx> {
             is_derive_macro && has_builtin_attr
         }
     }
+
+    pub fn def_path(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<String> {
+        let def_id = DefId {
+            krate: RustcCrateNum::from_u32(crate_num.0),
+            index: rustc_hir::def_id::DefIndex::from_u32(def_index.0),
+        };
+        Some(self.tcx.def_path_str(def_id))
+    }
 }
 
 /// Map a `DefKind` to the namespace(s) it occupies.

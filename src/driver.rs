@@ -103,6 +103,13 @@ where
                             } => {
                                 let _ = reply.send(tcx_db.is_builtin_derive(crate_num, def_index));
                             }
+                            TcxRequest::DefPath {
+                                crate_num,
+                                def_index,
+                                reply,
+                            } => {
+                                let _ = reply.send(tcx_db.def_path(crate_num, def_index));
+                            }
                         }
                     }
 

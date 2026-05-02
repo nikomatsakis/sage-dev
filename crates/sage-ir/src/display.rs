@@ -767,12 +767,37 @@ use sage_stash::StashData;
 use crate::resolved::*;
 use crate::symbol::SymbolSource;
 
+std::thread_local! {
+    static DISPLAY_TCX: std::cell::Cell<[usize; 2]> =
+        const { std::cell::Cell::new([0; 2]) };
+}
+
+fn set_display_tcx(tcx: &dyn crate::tcx::TcxDb) {
+    let fat: *const dyn crate::tcx::TcxDb = tcx;
+    // SAFETY: *const dyn Trait is two usizes (data + vtable)
+    let raw: [usize; 2] = unsafe { std::mem::transmute(fat) };
+    DISPLAY_TCX.set(raw);
+}
+
+fn clear_display_tcx() {
+    DISPLAY_TCX.set([0; 2]);
+}
+
+fn with_display_tcx<R>(f: impl FnOnce(&dyn crate::tcx::TcxDb) -> R) -> Option<R> {
+    let raw = DISPLAY_TCX.get();
+    if raw == [0; 2] {
+        return None;
+    }
+    // SAFETY: pointer is valid for the duration of pretty_print_resolved
+    let fat: *const dyn crate::tcx::TcxDb = unsafe { std::mem::transmute(raw) };
+    Some(f(unsafe { &*fat }))
+}
+
 /// Helper to format a Res.
 fn fmt_res(f: &mut fmt::Formatter<'_>, res: &Res<'_>) -> fmt::Result {
     with_db(|db| match res {
         Res::Def(sym) => match sym.source(db) {
             SymbolSource::Local(item) => {
-                // Use item_name logic inline since we only have &dyn salsa::Database
                 let name = match item {
                     Item::Function(func) => Some(func.name(db).text(db).to_string()),
                     Item::Struct(s) => Some(s.name(db).text(db).to_string()),
@@ -787,7 +812,13 @@ fn fmt_res(f: &mut fmt::Formatter<'_>, res: &Res<'_>) -> fmt::Result {
                 let name = name.unwrap_or_else(|| "?".to_string());
                 write!(f, "<def {name}>")
             }
-            SymbolSource::External(cn, di) => write!(f, "<ext {}:{}>", cn.0, di.0),
+            SymbolSource::External(cn, di) => {
+                let path = with_display_tcx(|tcx| tcx.def_path(cn, di)).flatten();
+                match path {
+                    Some(p) => write!(f, "<ext {p}>"),
+                    None => write!(f, "<ext {}:{}>", cn.0, di.0),
+                }
+            }
         },
         Res::Local(id) => write!(f, "<local:{}>", id.0),
         Res::Err => f.write_str("<unresolved>"),
@@ -796,7 +827,7 @@ fn fmt_res(f: &mut fmt::Formatter<'_>, res: &Res<'_>) -> fmt::Result {
 
 /// Pretty-print a resolved body to a string.
 /// The database must be attached before calling this.
-pub fn pretty_print_resolved(resolved: &ResolvedBody<'_>) -> String {
+pub fn pretty_print_resolved(tcx: &dyn crate::tcx::TcxDb, resolved: &ResolvedBody<'_>) -> String {
     struct Wrapper<'db>(&'db ResolvedBody<'db>);
     impl fmt::Display for Wrapper<'_> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -816,7 +847,11 @@ pub fn pretty_print_resolved(resolved: &ResolvedBody<'_>) -> String {
             writeln!(f)
         }
     }
-    format!("{}", Wrapper(resolved))
+    // SAFETY: we clear the pointer before returning, so it never outlives `tcx`
+    set_display_tcx(tcx);
+    let result = format!("{}", Wrapper(resolved));
+    clear_display_tcx();
+    result
 }
 
 impl<'db> PrettyPrint<'db> for RExpr<'db> {

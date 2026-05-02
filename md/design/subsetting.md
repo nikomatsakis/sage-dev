@@ -29,8 +29,9 @@ crate — just not for the proc-macro crate itself.
 
 ### No glob imports from workspace modules
 
-**What:** `use some_workspace_module::*` is not supported. Glob imports from
-external dependencies (`use std::collections::*`, `use serde::*`) work fine.
+**What:** `use some_workspace_module::*` is not supported for inline modules
+(`mod foo { ... }`). Glob imports from file-based workspace modules
+(`mod foo;` → `foo.rs`) and external dependencies work fine.
 
 **Why:** Glob imports between workspace modules are the primary source of
 fixed-point iteration in name resolution. Without them, every `use` import
@@ -41,17 +42,72 @@ B...
 
 Glob imports from external deps don't have this problem — the dep snapshot
 already has complete, fully-resolved module contents. Looking up `std::io::*`
-is a single query into the `TyCtxt` snapshot.
+is a single query into the `TyCtxt` snapshot. File-based workspace modules
+are similarly straightforward since their items are discovered via
+`file_item_tree`.
 
-**Impact:** Low. Glob imports between workspace modules are uncommon in
-practice. The most common glob pattern is `use MyEnum::*` inside a function
-body (enum variant shorthand) — this is a *local* glob, not a cross-module one,
-and sage can support it trivially. Cross-module globs like `use crate::types::*`
-are easy to rewrite as explicit imports.
+**Impact:** Low. Inline modules with glob imports are uncommon. The most common
+glob pattern is `use MyEnum::*` inside a function body (enum variant shorthand)
+— this is a *local* glob, not a cross-module one, and sage can support it
+trivially.
 
-**Future:** This restriction can be lifted incrementally. A simple iterative
-pass (not full fixed-point) handles the common case of non-cyclic glob chains.
-Full fixed-point is only needed for pathological cases (A globs B, B globs A).
+**Future:** This restriction can be lifted by implementing `symbol_to_module`
+for inline modules — creating a `Module` backed by the inline module's item
+list rather than a `SourceFile`.
+
+### No inline module resolution
+
+**What:** `mod foo { ... }` (inline modules) cannot be resolved as path
+targets. `mod foo;` (file-based modules) work fine.
+
+**Why:** `symbol_to_module` currently only handles file-based modules (looks up
+`foo.rs` or `foo/mod.rs`) and external modules. Inline modules would need a
+`ModuleSource` variant backed by the inline item list rather than a
+`SourceFile`.
+
+**Impact:** Low. Inline modules are uncommon in application code. Most modules
+use `mod foo;` with a separate file.
+
+### No `#[path = "..."]` on modules
+
+**What:** `#[path = "custom.rs"] mod foo;` is not supported. Module file
+resolution assumes conventional paths (`foo.rs` or `foo/mod.rs`).
+
+**Why:** Supporting `#[path]` requires parsing attributes on `mod` items during
+module resolution, before the module's contents are known. The current
+`resolve_mod` function only looks at the module name.
+
+**Impact:** Very low. `#[path]` is rare in practice — almost all Rust code uses
+conventional module paths.
+
+### No derive helper attributes
+
+**What:** Derive helper attributes introduced by proc-macro derives are not
+resolved. For example, `#[derive(Serialize)]` introduces `#[serde(...)]`
+helper attributes — sage does not recognize these.
+
+**Why:** Derive helper attributes require knowing which attributes a proc-macro
+derive registers, which means reading the proc-macro's registration metadata.
+This is a separate mechanism from derive expansion itself.
+
+**Impact:** Low for type checking — helper attributes affect the derive
+expansion output but don't change the type structure. Sage will report unknown
+attribute warnings on helper attributes.
+
+### `macro_rules!` scoping is module-scoped
+
+**What:** `macro_rules!` definitions are visible throughout their containing
+module, not just after the definition point. In real Rust, `macro_rules!` uses
+textual scoping — a macro is only visible to code that appears after it in the
+source file.
+
+**Why:** Textual scoping requires tracking source position during name
+resolution, which adds complexity to the resolution algorithm. Module-scoped
+visibility is simpler and correct for the vast majority of code.
+
+**Impact:** Very low. Code that depends on textual scoping (e.g., defining a
+macro between two items where only the second should see it) is extremely rare
+in practice.
 
 ## Supported features
 
@@ -65,6 +121,7 @@ Everything not listed above is intended to be supported, including:
 - Derive macros (from external crates)
 - Proc-macro attributes (from external crates), e.g. `#[tokio::test]`
 - `macro_rules!` definitions and invocations within the workspace
+  (module-scoped — see restriction above)
 - Module tree (`mod`, `pub use`, `pub(crate)`)
 - Type aliases, constants, statics
 - `cfg` attributes

@@ -17,4 +17,8 @@ impl TcxDb for NoopTcxDb {
     fn is_builtin_derive(&self, _crate_num: CrateNum, _def_index: DefIndex) -> bool {
         false
     }
+
+    fn def_path(&self, _crate_num: CrateNum, _def_index: DefIndex) -> Option<String> {
+        None
+    }
 }
