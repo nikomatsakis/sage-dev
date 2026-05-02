@@ -262,3 +262,81 @@ fn expand_derives_cmd_get_full() {
         .assert_eq(&log);
     });
 }
+
+#[test]
+fn expand_proc_macro_clap_parser() {
+    run_sage_with(mini_redis_dir(), &[], |sage| {
+        // Resolve clap crate
+        let clap_cn = sage.db.tcx().extern_crate("clap").expect("clap not found");
+
+        // Find the Parser derive's DefIndex by walking clap's children
+        let clap_root_children = sage
+            .db
+            .tcx()
+            .module_children(clap_cn, sage_ir::module::DefIndex(0));
+        let parser_child = clap_root_children
+            .iter()
+            .find(|c| {
+                c.name == "Parser"
+                    && matches!(
+                        c.namespace,
+                        sage_ir::resolve::Namespace::Macro(sage_ir::resolve::MacroKind::Derive)
+                    )
+            })
+            .expect("Parser derive not found in clap");
+
+        let source = r#"#[command(name = "test")]
+struct Cli {
+    #[arg(long)]
+    port: Option<u16>,
+}"#;
+
+        let expanded = sage.db.tcx().expand_proc_macro_derive(
+            parser_child.crate_num,
+            parser_child.def_index,
+            source,
+        );
+        assert!(expanded.is_some(), "Parser expansion should succeed");
+        let text = expanded.unwrap();
+        assert!(text.contains("impl"), "expanded output should contain impl");
+    });
+}
+
+#[test]
+fn expanded_output_is_parseable() {
+    run_sage_with(mini_redis_dir(), &[], |sage| {
+        let clap_cn = sage.db.tcx().extern_crate("clap").unwrap();
+        let children = sage
+            .db
+            .tcx()
+            .module_children(clap_cn, sage_ir::module::DefIndex(0));
+        let parser = children
+            .iter()
+            .find(|c| {
+                c.name == "Parser"
+                    && matches!(
+                        c.namespace,
+                        sage_ir::resolve::Namespace::Macro(sage_ir::resolve::MacroKind::Derive)
+                    )
+            })
+            .unwrap();
+
+        let source = "struct Simple { x: i32 }";
+        let expanded = sage
+            .db
+            .tcx()
+            .expand_proc_macro_derive(parser.crate_num, parser.def_index, source)
+            .unwrap();
+
+        // The expanded text should parse as valid Rust via tree-sitter
+        let mut parser_ts = tree_sitter::Parser::new();
+        parser_ts
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .unwrap();
+        let tree = parser_ts.parse(&expanded, None).unwrap();
+        assert!(
+            !tree.root_node().has_error(),
+            "expanded output has parse errors:\n{expanded}"
+        );
+    });
+}

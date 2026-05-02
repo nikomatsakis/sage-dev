@@ -4,15 +4,25 @@
 //! `after_expansion` thread. The salsa thread communicates with it via
 //! channels (see `driver.rs`).
 
+extern crate proc_macro;
+
+use std::sync::Arc;
+
+use rustc_expand::proc_macro::DeriveProcMacro;
 use rustc_hir::def::DefKind;
 use rustc_hir::def::MacroKinds;
 use rustc_hir::def_id::{CrateNum as RustcCrateNum, DefId};
 use rustc_hir::find_attr;
+use rustc_metadata::creader::CStore;
 use rustc_middle::ty::TyCtxt;
+use rustc_proc_macro::bridge::server::SAME_THREAD;
+use rustc_span::def_id::DefIndex as RustcDefIndex;
 
 use sage_ir::module::{CrateNum, DefIndex};
 use sage_ir::resolve::{MacroKind, Namespace};
 use sage_ir::tcx::RawChild;
+
+use crate::proc_macro_srv::SageServer;
 
 /// `TcxDb` backed by rustc's `TyCtxt`.
 ///
@@ -107,11 +117,42 @@ impl<'tcx> RustcTcxDb<'tcx> {
 
     pub fn expand_proc_macro_derive(
         &self,
-        _crate_num: CrateNum,
-        _def_index: DefIndex,
-        _item_source: &str,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        item_source: &str,
     ) -> Option<String> {
-        None // Stub — real implementation in Phase 3
+        let def_id = DefId {
+            krate: RustcCrateNum::from_u32(crate_num.0),
+            index: RustcDefIndex::from_u32(def_index.0),
+        };
+
+        let cstore = CStore::from_tcx(self.tcx);
+        let loaded = cstore.load_macro_untracked(self.tcx, def_id);
+
+        use rustc_expand::base::SyntaxExtensionKind;
+        use rustc_metadata::creader::LoadedMacro;
+        let LoadedMacro::ProcMacro(ext) = loaded else {
+            return None;
+        };
+        let SyntaxExtensionKind::Derive(ref arc) = ext.kind else {
+            return None;
+        };
+
+        // SAFETY: `load_macro_untracked` on a proc-macro crate always wraps
+        // `ProcMacro::CustomDerive { client }` in `Arc::new(DeriveProcMacro { client })`.
+        // `DeriveProcMacro` is a single-field struct and `Client` is `Copy`.
+        // `MultiItemModifier` doesn't extend `Any`, so we can't downcast.
+        let client = unsafe {
+            let ptr = Arc::as_ref(arc) as *const dyn rustc_expand::base::MultiItemModifier
+                as *const DeriveProcMacro;
+            (*ptr).client
+        };
+
+        let input: proc_macro2::TokenStream = item_source.parse().ok()?;
+        match client.run(&SAME_THREAD, SageServer::new(), input, false) {
+            Ok(output) => Some(output.to_string()),
+            Err(_) => None,
+        }
     }
 }
 

@@ -1,14 +1,16 @@
-//! `proc_macro::bridge::server::Server` implementation for sage.
+//! `rustc_proc_macro::bridge::server::Server` implementation for sage.
 //!
 //! Uses `proc_macro2` for token stream manipulation with a dummy `SageSpan`
 //! (unit struct) because `proc_macro2::Span` doesn't implement `Eq + Hash`.
-
-extern crate proc_macro;
+//!
+//! Note: we implement the `Server` trait from `rustc_proc_macro` (the compiler's
+//! internal copy of `proc_macro`), not the standard library's `proc_macro`.
+//! The `Client` stored in `DeriveProcMacro` uses `rustc_proc_macro` types.
 
 use std::ops::{Bound, Range};
 
-use proc_macro::Delimiter;
-use proc_macro::bridge::{
+use rustc_proc_macro::Delimiter;
+use rustc_proc_macro::bridge::{
     self, DelimSpan, Diagnostic, ExpnGlobals, Group, Ident, Literal, Punct, TokenTree,
     server::Server,
 };
@@ -64,7 +66,6 @@ fn bridge_to_pm2(tree: BridgeTokenTree) -> proc_macro2::TokenTree {
         TokenTree::Literal(lit) => {
             let text = literal_to_string(&lit);
             let ts: proc_macro2::TokenStream = text.parse().unwrap_or_default();
-            // A literal parses to a single token tree
             ts.into_iter()
                 .next()
                 .unwrap_or(proc_macro2::TokenTree::Literal(
@@ -161,7 +162,7 @@ fn parse_literal_string(s: &str) -> BridgeTokenTree {
         (LitKind::Char, &s[1..end - 1], end)
     } else if s.starts_with("br") {
         let hashes = s[2..].chars().take_while(|&c| c == '#').count();
-        let start = 3 + hashes; // br##"
+        let start = 3 + hashes;
         let end_pat = format!("\"{}", "#".repeat(hashes));
         let end = s[start..]
             .find(&end_pat)
@@ -193,7 +194,7 @@ fn parse_literal_string(s: &str) -> BridgeTokenTree {
         (LitKind::CStr, &s[2..end], end + 1)
     } else if s.starts_with('r') {
         let hashes = s[1..].chars().take_while(|&c| c == '#').count();
-        let start = 2 + hashes; // r##"
+        let start = 2 + hashes;
         let end_pat = format!("\"{}", "#".repeat(hashes));
         let end = s[start..]
             .find(&end_pat)
@@ -208,7 +209,6 @@ fn parse_literal_string(s: &str) -> BridgeTokenTree {
         let end = s[1..].rfind('"').map(|i| i + 1).unwrap_or(s.len());
         (LitKind::Str, &s[1..end], end + 1)
     } else if s.contains('.') || s.contains('e') || s.contains('E') {
-        // Float — find where the numeric part ends
         let suffix_start = find_numeric_suffix_start(s);
         (LitKind::Float, &s[..suffix_start], suffix_start)
     } else {
@@ -232,13 +232,11 @@ fn parse_literal_string(s: &str) -> BridgeTokenTree {
 
 /// Find where a numeric suffix starts (e.g. "42u32" → 2, "3.14f64" → 4).
 fn find_numeric_suffix_start(s: &str) -> usize {
-    // Walk from the end backwards past ASCII alpha/underscore suffix chars
     let bytes = s.as_bytes();
     let mut i = bytes.len();
     while i > 0 && (bytes[i - 1].is_ascii_alphabetic() || bytes[i - 1] == b'_') {
         i -= 1;
     }
-    // Don't consume the entire string as suffix
     if i == 0 { s.len() } else { i }
 }
 
@@ -265,8 +263,6 @@ impl Server for SageServer {
         f(symbol);
     }
 
-    // -- Env/tracking --
-
     fn injected_env_var(&mut self, _var: &str) -> Option<String> {
         None
     }
@@ -275,10 +271,7 @@ impl Server for SageServer {
 
     fn track_path(&mut self, _path: &str) {}
 
-    // -- Literals --
-
     fn literal_from_str(&mut self, s: &str) -> Result<Literal<SageSpan, String>, String> {
-        // Parse via proc_macro2, then convert back to bridge Literal
         let ts: proc_macro2::TokenStream = s
             .parse()
             .map_err(|e: proc_macro2::LexError| e.to_string())?;
@@ -295,13 +288,7 @@ impl Server for SageServer {
         }
     }
 
-    // -- Diagnostics --
-
-    fn emit_diagnostic(&mut self, _diagnostic: Diagnostic<SageSpan>) {
-        // No-op — ignore diagnostics from proc macros
-    }
-
-    // -- Token stream ops --
+    fn emit_diagnostic(&mut self, _diagnostic: Diagnostic<SageSpan>) {}
 
     fn ts_drop(&mut self, _stream: proc_macro2::TokenStream) {}
 
@@ -361,8 +348,6 @@ impl Server for SageServer {
     fn ts_into_trees(&mut self, stream: proc_macro2::TokenStream) -> Vec<BridgeTokenTree> {
         stream.into_iter().map(pm2_to_bridge).collect()
     }
-
-    // -- Spans (all dummy) --
 
     fn span_debug(&mut self, _span: SageSpan) -> String {
         "#0 bytes(0..0)".into()
@@ -433,10 +418,7 @@ impl Server for SageServer {
         SageSpan
     }
 
-    // -- Symbols --
-
     fn symbol_normalize_and_validate_ident(&mut self, string: &str) -> Result<String, ()> {
-        // Basic ident validation: must start with letter/underscore, rest alphanumeric/underscore
         let mut chars = string.chars();
         match chars.next() {
             Some(c) if c == '_' || c.is_alphabetic() => {}
