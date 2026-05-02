@@ -226,7 +226,7 @@ fn expand_derives_cmd_get_full() {
 
         expect![[r#"
             impl ::std::fmt::Debug for Get {
-              fn fmt(self: &Self, f: ::std::fmt::Formatter) -> ::std::fmt::Result
+              fn fmt(self: &Self, f: ::std::fmt::Formatter) -> ::std::fmt::Result {missing}
             }
         "#]]
         .assert_eq(&out);
@@ -439,6 +439,96 @@ fn expanded_items_are_valid_ir() {
                 }
             }
         }
+
+        // Snapshot the expanded IR items
+        let mut out = String::new();
+        for result in &results {
+            if let sage_ir::derive::DeriveResult::Expanded { items } = result {
+                for item in items {
+                    out.push_str(&format!("{item}\n"));
+                }
+            }
+        }
+        expect![[r#"
+            #[# [automatically_derived]
+            #[# [allow(unused_qualifications ,)]
+            impl clap::Parser for Cli {
+            }
+            #[# [allow(dead_code , unreachable_code , unused_variables , unused_braces , unused_qualifications ,)]
+            #[# [allow(clippy :: style , clippy :: complexity , clippy :: pedantic , clippy :: restriction , clippy :: perf , clippy :: deprecated , clippy :: nursery , clippy :: cargo , clippy :: suspicious_else_formatting , clippy :: almost_swapped ,)]
+            #[# [automatically_derived]
+            impl clap::CommandFactory for Cli {
+              fn command() -> clap::Command {
+              let __clap_app = clap::Command::new(String);
+              < Self as clap :: Args >::augment_args(__clap_app)
+            }
+              fn command_for_update() -> clap::Command {
+              let __clap_app = clap::Command::new(String);
+              < Self as clap :: Args >::augment_args_for_update(__clap_app)
+            }
+            }
+            #[# [allow(dead_code , unreachable_code , unused_variables , unused_braces , unused_qualifications ,)]
+            #[# [allow(clippy :: style , clippy :: complexity , clippy :: pedantic , clippy :: restriction , clippy :: perf , clippy :: deprecated , clippy :: nursery , clippy :: cargo , clippy :: suspicious_else_formatting , clippy :: almost_swapped ,)]
+            #[# [automatically_derived]
+            impl clap::FromArgMatches for Cli {
+              fn from_arg_matches(__clap_arg_matches: &clap::ArgMatches) -> ::std::result::Result {
+              Self::from_arg_matches_mut(&mut __clap_arg_matches.clone())
+            }
+              fn from_arg_matches_mut(__clap_arg_matches: &mut clap::ArgMatches) -> ::std::result::Result {
+              let v = Cli { port: __clap_arg_matches.remove_one()(String) };
+              ::std::result::Result::Ok(v)
+            }
+              fn update_from_arg_matches(self: &mut Self, __clap_arg_matches: &clap::ArgMatches) -> ::std::result::Result {
+              self.update_from_arg_matches_mut(&mut __clap_arg_matches.clone())
+            }
+              fn update_from_arg_matches_mut(self: &mut Self, __clap_arg_matches: &mut clap::ArgMatches) -> ::std::result::Result {
+              if __clap_arg_matches.contains_id(String) {
+                let port = &mut self.port;
+                Derefport = __clap_arg_matches.remove_one()(String)
+              };
+              ::std::result::Result::Ok(())
+            }
+            }
+            #[# [allow(dead_code , unreachable_code , unused_variables , unused_braces , unused_qualifications ,)]
+            #[# [allow(clippy :: style , clippy :: complexity , clippy :: pedantic , clippy :: restriction , clippy :: perf , clippy :: deprecated , clippy :: nursery , clippy :: cargo , clippy :: suspicious_else_formatting , clippy :: almost_swapped ,)]
+            #[# [automatically_derived]
+            impl clap::Args for Cli {
+              fn group_id() -> Option {
+              Some(clap::Id::from(String))
+            }
+              fn augment_args(__clap_app: clap::Command) -> clap::Command {
+              {
+                let __clap_app = __clap_app.group(clap::ArgGroup::new(String).multiple(Bool(true)).args({
+                  let members: [clap :: Id ; 1usize] = [clap::Id::from(String)];
+                  members
+                }));
+                let __clap_app = __clap_app.arg({
+                  let arg = clap::Arg::new(String).value_name(String).value_parser(clap::value_parser!(u16)).action(clap::ArgAction::Set);
+                  let arg = arg.long(String);
+                  let arg = arg;
+                  arg
+                });
+                __clap_app
+              };
+            }
+              fn augment_args_for_update(__clap_app: clap::Command) -> clap::Command {
+              {
+                let __clap_app = __clap_app.group(clap::ArgGroup::new(String).multiple(Bool(true)).args({
+                  let members: [clap :: Id ; 1usize] = [clap::Id::from(String)];
+                  members
+                }));
+                let __clap_app = __clap_app.arg({
+                  let arg = clap::Arg::new(String).value_name(String).value_parser(clap::value_parser!(u16)).action(clap::ArgAction::Set);
+                  let arg = arg.long(String);
+                  let arg = arg.required(Bool(false));
+                  arg
+                });
+                __clap_app
+              };
+            }
+            }
+        "#]]
+        .assert_eq(&out);
     });
 }
 
@@ -500,28 +590,77 @@ fn snapshot_expanded_clap_parser() {
             #[# [allow(clippy :: style , clippy :: complexity , clippy :: pedantic , clippy :: restriction , clippy :: perf , clippy :: deprecated , clippy :: nursery , clippy :: cargo , clippy :: suspicious_else_formatting , clippy :: almost_swapped ,)]
             #[# [automatically_derived]
             impl clap::CommandFactory for Cli {
-              fn command() -> clap::Command
-              fn command_for_update() -> clap::Command
+              fn command() -> clap::Command {
+              let __clap_app = clap::Command::new(String);
+              < Self as clap :: Args >::augment_args(__clap_app)
+            }
+              fn command_for_update() -> clap::Command {
+              let __clap_app = clap::Command::new(String);
+              < Self as clap :: Args >::augment_args_for_update(__clap_app)
+            }
             }
             expanded: #[# [allow(dead_code , unreachable_code , unused_variables , unused_braces , unused_qualifications ,)]
             #[# [allow(clippy :: style , clippy :: complexity , clippy :: pedantic , clippy :: restriction , clippy :: perf , clippy :: deprecated , clippy :: nursery , clippy :: cargo , clippy :: suspicious_else_formatting , clippy :: almost_swapped ,)]
             #[# [automatically_derived]
             impl clap::FromArgMatches for Cli {
-              fn from_arg_matches(__clap_arg_matches: &clap::ArgMatches) -> ::std::result::Result
-              fn from_arg_matches_mut(__clap_arg_matches: &mut clap::ArgMatches) -> ::std::result::Result
-              fn update_from_arg_matches(self: &mut Self, __clap_arg_matches: &clap::ArgMatches) -> ::std::result::Result
-              fn update_from_arg_matches_mut(self: &mut Self, __clap_arg_matches: &mut clap::ArgMatches) -> ::std::result::Result
+              fn from_arg_matches(__clap_arg_matches: &clap::ArgMatches) -> ::std::result::Result {
+              Self::from_arg_matches_mut(&mut __clap_arg_matches.clone())
+            }
+              fn from_arg_matches_mut(__clap_arg_matches: &mut clap::ArgMatches) -> ::std::result::Result {
+              let v = Cli { port: __clap_arg_matches.remove_one()(String) };
+              ::std::result::Result::Ok(v)
+            }
+              fn update_from_arg_matches(self: &mut Self, __clap_arg_matches: &clap::ArgMatches) -> ::std::result::Result {
+              self.update_from_arg_matches_mut(&mut __clap_arg_matches.clone())
+            }
+              fn update_from_arg_matches_mut(self: &mut Self, __clap_arg_matches: &mut clap::ArgMatches) -> ::std::result::Result {
+              if __clap_arg_matches.contains_id(String) {
+                let port = &mut self.port;
+                Derefport = __clap_arg_matches.remove_one()(String)
+              };
+              ::std::result::Result::Ok(())
+            }
             }
             expanded: #[# [allow(dead_code , unreachable_code , unused_variables , unused_braces , unused_qualifications ,)]
             #[# [allow(clippy :: style , clippy :: complexity , clippy :: pedantic , clippy :: restriction , clippy :: perf , clippy :: deprecated , clippy :: nursery , clippy :: cargo , clippy :: suspicious_else_formatting , clippy :: almost_swapped ,)]
             #[# [automatically_derived]
             impl clap::Args for Cli {
-              fn group_id() -> Option
-              fn augment_args(__clap_app: clap::Command) -> clap::Command
-              fn augment_args_for_update(__clap_app: clap::Command) -> clap::Command
+              fn group_id() -> Option {
+              Some(clap::Id::from(String))
+            }
+              fn augment_args(__clap_app: clap::Command) -> clap::Command {
+              {
+                let __clap_app = __clap_app.group(clap::ArgGroup::new(String).multiple(Bool(true)).args({
+                  let members: [clap :: Id ; 1usize] = [clap::Id::from(String)];
+                  members
+                }));
+                let __clap_app = __clap_app.arg({
+                  let arg = clap::Arg::new(String).value_name(String).value_parser(clap::value_parser!(u16)).action(clap::ArgAction::Set);
+                  let arg = arg.long(String);
+                  let arg = arg;
+                  arg
+                });
+                __clap_app
+              };
+            }
+              fn augment_args_for_update(__clap_app: clap::Command) -> clap::Command {
+              {
+                let __clap_app = __clap_app.group(clap::ArgGroup::new(String).multiple(Bool(true)).args({
+                  let members: [clap :: Id ; 1usize] = [clap::Id::from(String)];
+                  members
+                }));
+                let __clap_app = __clap_app.arg({
+                  let arg = clap::Arg::new(String).value_name(String).value_parser(clap::value_parser!(u16)).action(clap::ArgAction::Set);
+                  let arg = arg.long(String);
+                  let arg = arg.required(Bool(false));
+                  arg
+                });
+                __clap_app
+              };
+            }
             }
             builtin: impl ::std::fmt::Debug for Cli {
-              fn fmt(self: &Self, f: ::std::fmt::Formatter) -> ::std::fmt::Result
+              fn fmt(self: &Self, f: ::std::fmt::Formatter) -> ::std::fmt::Result {missing}
             }
         "#]]
         .assert_eq(&out);

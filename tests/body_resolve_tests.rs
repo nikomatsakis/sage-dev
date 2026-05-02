@@ -154,7 +154,8 @@ fn resolve_connection_read_frame() {
                 };
               };
             }
-        "#]].assert_eq(&output);
+        "#]]
+        .assert_eq(&output);
     });
 }
 

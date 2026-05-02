@@ -57,7 +57,12 @@ impl fmt::Display for FunctionItem<'_> {
             if let Some(ret) = self.ret_type(db) {
                 write!(f, " -> {ret}")?;
             }
-            Ok(())
+            f.write_str(" ")?;
+            let body = self.body(db);
+            let stash = body.stash();
+            let root = body.root();
+            let body_data = &stash[*root];
+            body_data.root.pretty(f, stash, 0)
         })
     }
 }

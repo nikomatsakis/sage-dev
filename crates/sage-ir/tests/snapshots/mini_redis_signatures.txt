@@ -50,8 +50,62 @@ enum Command {
 /// threads. The CLI tool use case benefits more by being lighter instead of
 /// multi-threaded.
 #[tokio::main(flavor = "current_thread")]
-fn main() -> mini_redis::Result
-fn duration_from_ms_str(src: &str) -> Result
+fn main() -> mini_redis::Result {
+  tracing_subscriber::fmt::try_init()?;
+  let cli = Cli::parse();
+  let addr = format!("{}:{}", cli.host, cli.port);
+  let client = Client::connect(&addr).await?;
+  match cli.command {
+    Command::Ping { msg: msg } => {
+      let value = client.ping(msg).await?;
+      if let Ok(string) = str::from_utf8(&value) {
+        println!("\"{string}\"");
+      } else {
+        println!("{value:?}");
+      };
+    }
+    Command::Get { key: key } => {
+      if let Some(value) = client.get(&key).await? {
+        if let Ok(string) = str::from_utf8(&value) {
+          println!("\"{string}\"");
+        } else {
+          println!("{value:?}");
+        };
+      } else {
+        println!("(nil)");
+      };
+    }
+    Command::Set { key: key, value: value, expires: None } => {
+      client.set(&key, value).await?;
+      println!("OK");
+    }
+    Command::Set { key: key, value: value, expires: Some(expires) } => {
+      client.set_expires(&key, value, expires).await?;
+      println!("OK");
+    }
+    Command::Publish { channel: channel, message: message } => {
+      client.publish(&channel, message).await?;
+      println!("Publish OK");
+    }
+    Command::Subscribe { channels: channels } => {
+      if channels.is_empty() {
+        return Err(String.into());
+      };
+      let subscriber = client.subscribe(channels).await?;
+      while let Some(msg) = subscriber.next_message().await? {
+        println!(
+                    "got message from the channel: {}; message = {:?}",
+                    msg.channel, msg.content
+                );
+      };
+    }
+  };
+  Ok(())
+}
+fn duration_from_ms_str(src: &str) -> Result {
+  let ms = src.parse()()?;
+  Ok(Duration::from_millis(ms))
+}
 
 // --- bin/server.rs ---
 //! mini-redis server.
@@ -79,16 +133,31 @@ use tracing_subscriber::util::SubscriberInitExt
 use tracing_subscriber::util::TryInitError
 use tracing_subscriber::EnvFilter
 #[tokio::main]
-fn main() -> mini_redis::Result
+fn main() -> mini_redis::Result {
+  set_up_logging()?;
+  let cli = Cli::parse();
+  let port = cli.port.unwrap_or(DEFAULT_PORT);
+  let listener = TcpListener::bind(&format!("127.0.0.1:{port}")).await?;
+  server::run(listener, signal::ctrl_c()).await;
+  Ok(())
+}
 #[derive(Parser, Debug)]
 #[command(name = "mini-redis-server", version, author, about = "A Redis server")]
 struct Cli {
   port: Option
 }
 #[cfg(not(feature = "otel"))]
-fn set_up_logging() -> mini_redis::Result
+fn set_up_logging() -> mini_redis::Result {
+  tracing_subscriber::fmt::try_init()
+}
 #[cfg(feature = "otel")]
-fn set_up_logging() -> Result
+fn set_up_logging() -> Result {
+  global::set_text_map_propagator(XrayPropagator::default());
+  let tracer = opentelemetry_otlp::new_pipeline().tracing().with_exporter(opentelemetry_otlp::new_exporter().tonic()).with_trace_config(sdktrace::config().with_sampler(sdktrace::Sampler::AlwaysOn).with_id_generator(sdktrace::XrayIdGenerator::default())).install_simple().expect(String);
+  let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+  let filter = EnvFilter::from_default_env();
+  tracing_subscriber::registry().with(opentelemetry).with(filter).with(fmt::Layer::default()).try_init()
+}
 
 // --- clients/blocking_client.rs ---
 //! Minimal blocking Redis client implementation
@@ -143,7 +212,11 @@ impl BlockingClient {
 /// };
 /// # drop(client);
 /// ```
-fn connect(addr: T) -> crate::Result
+fn connect(addr: T) -> crate::Result {
+  let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+  let inner = rt.block_on(crate::clients::Client::connect(addr))?;
+  Ok(BlockingClient { inner: inner, rt: rt })
+}
   /// Get the value of key.
 ///
 /// If the key does not exist the special value `None` is returned.
@@ -160,7 +233,9 @@ fn connect(addr: T) -> crate::Result
 /// let val = client.get("foo").unwrap();
 /// println!("Got = {val:?}");
 /// ```
-fn get(self: &mut Self, key: &str) -> crate::Result
+fn get(self: &mut Self, key: &str) -> crate::Result {
+  self.rt.block_on(self.inner.get(key))
+}
   /// Set `key` to hold the given `value`.
 ///
 /// The `value` is associated with `key` until it is overwritten by the next
@@ -184,7 +259,9 @@ fn get(self: &mut Self, key: &str) -> crate::Result
 /// let val = client.get("foo").unwrap().unwrap();
 /// assert_eq!(val, "bar");
 /// ```
-fn set(self: &mut Self, key: &str, value: Bytes) -> crate::Result
+fn set(self: &mut Self, key: &str, value: Bytes) -> crate::Result {
+  self.rt.block_on(self.inner.set(key, value))
+}
   /// Set `key` to hold the given `value`. The value expires after `expiration`
 ///
 /// The `value` is associated with `key` until one of the following:
@@ -222,7 +299,9 @@ fn set(self: &mut Self, key: &str, value: Bytes) -> crate::Result
 /// let val = client.get("foo").unwrap();
 /// assert!(val.is_none());
 /// ```
-fn set_expires(self: &mut Self, key: &str, value: Bytes, expiration: Duration) -> crate::Result
+fn set_expires(self: &mut Self, key: &str, value: Bytes, expiration: Duration) -> crate::Result {
+  self.rt.block_on(self.inner.set_expires(key, value, expiration))
+}
   /// Posts `message` to the given `channel`.
 ///
 /// Returns the number of subscribers currently listening on the channel.
@@ -241,7 +320,9 @@ fn set_expires(self: &mut Self, key: &str, value: Bytes, expiration: Duration) -
 /// let val = client.publish("foo", "bar".into()).unwrap();
 /// println!("Got = {val:?}");
 /// ```
-fn publish(self: &mut Self, channel: &str, message: Bytes) -> crate::Result
+fn publish(self: &mut Self, channel: &str, message: Bytes) -> crate::Result {
+  self.rt.block_on(self.inner.publish(channel, message))
+}
   /// Subscribes the client to the specified channels.
 ///
 /// Once a client issues a subscribe command, it may no longer issue any
@@ -250,27 +331,42 @@ fn publish(self: &mut Self, channel: &str, message: Bytes) -> crate::Result
 ///
 /// The `BlockingSubscriber` value is used to receive messages as well as
 /// manage the list of channels the client is subscribed to.
-fn subscribe(self: Self, channels: Vec) -> crate::Result
+fn subscribe(self: Self, channels: Vec) -> crate::Result {
+  let subscriber = self.rt.block_on(self.inner.subscribe(channels))?;
+  Ok(BlockingSubscriber { inner: subscriber, rt: self.rt })
+}
 }
 impl BlockingSubscriber {
   /// Returns the set of channels currently subscribed to.
-fn get_subscribed(self: &Self) -> &[String; _]
+fn get_subscribed(self: &Self) -> &[String; _] {
+  self.inner.get_subscribed()
+}
   /// Receive the next message published on a subscribed channel, waiting if
 /// necessary.
 ///
 /// `None` indicates the subscription has been terminated.
-fn next_message(self: &mut Self) -> crate::Result
+fn next_message(self: &mut Self) -> crate::Result {
+  self.rt.block_on(self.inner.next_message())
+}
   /// Convert the subscriber into an `Iterator` yielding new messages published
 /// on subscribed channels.
-fn into_iter(self: Self) -> impl Iterator<Item = crate::Result<Message>>
+fn into_iter(self: Self) -> impl Iterator<Item = crate::Result<Message>> {
+  SubscriberIterator { inner: self.inner, rt: self.rt }
+}
   /// Subscribe to a list of new channels
-fn subscribe(self: &mut Self, channels: &[String; _]) -> crate::Result
+fn subscribe(self: &mut Self, channels: &[String; _]) -> crate::Result {
+  self.rt.block_on(self.inner.subscribe(channels))
+}
   /// Unsubscribe to a list of new channels
-fn unsubscribe(self: &mut Self, channels: &[String; _]) -> crate::Result
+fn unsubscribe(self: &mut Self, channels: &[String; _]) -> crate::Result {
+  self.rt.block_on(self.inner.unsubscribe(channels))
+}
 }
 impl Iterator for SubscriberIterator {
   type Item = crate::Result
-  fn next(self: &mut Self) -> Option
+  fn next(self: &mut Self) -> Option {
+  self.rt.block_on(self.inner.next_message()).transpose()
+}
 }
 
 // --- clients/buffered_client.rs ---
@@ -289,7 +385,15 @@ enum Command {
 type Message = (Command, oneshot::Sender)
 /// Receive commands sent through the channel and forward them to client. The
 /// response is returned back to the caller via a `oneshot`.
-fn run(client: Client, rx: Receiver)
+fn run(client: Client, rx: Receiver) {
+  while let Some((cmd, tx)) = rx.recv().await {
+    let response = match cmd {
+      Command::Get(key) => client.get(&key).await
+      Command::Set(key, value) => client.set(&key, value).await.map(|| None)
+    };
+    let _ = tx.send(response);
+  };
+}
 #[derive(Clone)]
 struct BufferedClient {
   tx: Sender
@@ -311,17 +415,39 @@ impl BufferedClient {
 ///
 /// The returned `BufferedClient` handle may be cloned before passing the new handle to
 /// separate tasks.
-fn buffer(client: Client) -> BufferedClient
+fn buffer(client: Client) -> BufferedClient {
+  let (tx, rx) = channel(Int);
+  tokio::spawn({
+    run(client, rx).await
+  });
+  BufferedClient { tx: tx }
+}
   /// Get the value of a key.
 ///
 /// Same as `Client::get` but requests are **buffered** until the associated
 /// connection has the ability to send the request.
-fn get(self: &mut Self, key: &str) -> Result
+fn get(self: &mut Self, key: &str) -> Result {
+  let get = Command::Get(key.into());
+  let (tx, rx) = oneshot::channel();
+  self.tx.send((get, tx)).await?;
+  match rx.await {
+    Ok(res) => res
+    Err(err) => Err(err.into())
+  };
+}
   /// Set `key` to hold the given `value`.
 ///
 /// Same as `Client::set` but requests are **buffered** until the associated
 /// connection has the ability to send the request
-fn set(self: &mut Self, key: &str, value: Bytes) -> Result
+fn set(self: &mut Self, key: &str, value: Bytes) -> Result {
+  let set = Command::Set(key.into(), value);
+  let (tx, rx) = oneshot::channel();
+  self.tx.send((set, tx)).await?;
+  match rx.await {
+    Ok(res) => res.map(|| ())
+    Err(err) => Err(err.into())
+  };
+}
 }
 
 // --- clients/client.rs ---
@@ -393,7 +519,11 @@ impl Client {
 /// }
 /// ```
 ///
-fn connect(addr: T) -> crate::Result
+fn connect(addr: T) -> crate::Result {
+  let socket = TcpStream::connect(addr).await?;
+  let connection = Connection::new(socket);
+  Ok(Client { connection: connection })
+}
   /// Ping to the server.
 ///
 /// Returns PONG if no argument is provided, otherwise
@@ -417,7 +547,16 @@ fn connect(addr: T) -> crate::Result
 /// }
 /// ```
 #[instrument(skip(self))]
-fn ping(self: &mut Self, msg: Option) -> crate::Result
+fn ping(self: &mut Self, msg: Option) -> crate::Result {
+  let frame = Ping::new(msg).into_frame();
+  debug!(request = ?frame);
+  self.connection.write_frame(&frame).await?;
+  match self.read_response().await? {
+    Frame::Simple(value) => Ok(value.into())
+    Frame::Bulk(value) => Ok(value)
+    frame => Err(frame.to_error())
+  };
+}
   /// Get the value of key.
 ///
 /// If the key does not exist the special value `None` is returned.
@@ -438,7 +577,17 @@ fn ping(self: &mut Self, msg: Option) -> crate::Result
 /// }
 /// ```
 #[instrument(skip(self))]
-fn get(self: &mut Self, key: &str) -> crate::Result
+fn get(self: &mut Self, key: &str) -> crate::Result {
+  let frame = Get::new(key).into_frame();
+  debug!(request = ?frame);
+  self.connection.write_frame(&frame).await?;
+  match self.read_response().await? {
+    Frame::Simple(value) => Ok(Some(value.into()))
+    Frame::Bulk(value) => Ok(Some(value))
+    Frame::Null => Ok(None)
+    frame => Err(frame.to_error())
+  };
+}
   /// Set `key` to hold the given `value`.
 ///
 /// The `value` is associated with `key` until it is overwritten by the next
@@ -466,7 +615,9 @@ fn get(self: &mut Self, key: &str) -> crate::Result
 /// }
 /// ```
 #[instrument(skip(self))]
-fn set(self: &mut Self, key: &str, value: Bytes) -> crate::Result
+fn set(self: &mut Self, key: &str, value: Bytes) -> crate::Result {
+  self.set_cmd(Set::new(key, value, None)).await
+}
   /// Set `key` to hold the given `value`. The value expires after `expiration`
 ///
 /// The `value` is associated with `key` until one of the following:
@@ -508,9 +659,19 @@ fn set(self: &mut Self, key: &str, value: Bytes) -> crate::Result
 /// }
 /// ```
 #[instrument(skip(self))]
-fn set_expires(self: &mut Self, key: &str, value: Bytes, expiration: Duration) -> crate::Result
+fn set_expires(self: &mut Self, key: &str, value: Bytes, expiration: Duration) -> crate::Result {
+  self.set_cmd(Set::new(key, value, Some(expiration))).await
+}
   /// The core `SET` logic, used by both `set` and `set_expires.
-fn set_cmd(self: &mut Self, cmd: Set) -> crate::Result
+fn set_cmd(self: &mut Self, cmd: Set) -> crate::Result {
+  let frame = cmd.into_frame();
+  debug!(request = ?frame);
+  self.connection.write_frame(&frame).await?;
+  match self.read_response().await? {
+    Frame::Simple(response) => Ok(())
+    frame => Err(frame.to_error())
+  };
+}
   /// Posts `message` to the given `channel`.
 ///
 /// Returns the number of subscribers currently listening on the channel.
@@ -533,7 +694,15 @@ fn set_cmd(self: &mut Self, cmd: Set) -> crate::Result
 /// }
 /// ```
 #[instrument(skip(self))]
-fn publish(self: &mut Self, channel: &str, message: Bytes) -> crate::Result
+fn publish(self: &mut Self, channel: &str, message: Bytes) -> crate::Result {
+  let frame = Publish::new(channel, message).into_frame();
+  debug!(request = ?frame);
+  self.connection.write_frame(&frame).await?;
+  match self.read_response().await? {
+    Frame::Integer(response) => Ok(response)
+    frame => Err(frame.to_error())
+  };
+}
   /// Subscribes the client to the specified channels.
 ///
 /// Once a client issues a subscribe command, it may no longer issue any
@@ -542,22 +711,68 @@ fn publish(self: &mut Self, channel: &str, message: Bytes) -> crate::Result
 /// The `Subscriber` value is used to receive messages as well as manage the
 /// list of channels the client is subscribed to.
 #[instrument(skip(self))]
-fn subscribe(self: Self, channels: Vec) -> crate::Result
+fn subscribe(self: Self, channels: Vec) -> crate::Result {
+  self.subscribe_cmd(&channels).await?;
+  Ok(Subscriber { client: self, subscribed_channels: channels })
+}
   /// The core `SUBSCRIBE` logic, used by misc subscribe fns
-fn subscribe_cmd(self: &mut Self, channels: &[String; _]) -> crate::Result
+fn subscribe_cmd(self: &mut Self, channels: &[String; _]) -> crate::Result {
+  let frame = Subscribe::new(channels.to_vec()).into_frame();
+  debug!(request = ?frame);
+  self.connection.write_frame(&frame).await?;
+  for channel in channels {
+    let response = self.read_response().await?;
+    match response {
+      Frame::Array(&frame) => match frame.as_slice() {
+        {missing} => {
+        }
+        {missing} => return Err(response.to_error())
+      }
+      frame => return Err(frame.to_error())
+    };
+  };
+  Ok(())
+}
   /// Reads a response frame from the socket.
 ///
 /// If an `Error` frame is received, it is converted to `Err`.
-fn read_response(self: &mut Self) -> crate::Result
+fn read_response(self: &mut Self) -> crate::Result {
+  let response = self.connection.read_frame().await?;
+  debug!(?response);
+  match response {
+    Some(Frame::Error(msg)) => Err(msg.into())
+    Some(frame) => Ok(frame)
+    None => {
+      let err = Error::new(ErrorKind::ConnectionReset, String);
+      Err(err.into())
+    }
+  };
+}
 }
 impl Subscriber {
   /// Returns the set of channels currently subscribed to.
-fn get_subscribed(self: &Self) -> &[String; _]
+fn get_subscribed(self: &Self) -> &[String; _] {
+  &self.subscribed_channels
+}
   /// Receive the next message published on a subscribed channel, waiting if
 /// necessary.
 ///
 /// `None` indicates the subscription has been terminated.
-fn next_message(self: &mut Self) -> crate::Result
+fn next_message(self: &mut Self) -> crate::Result {
+  match self.client.connection.read_frame().await? {
+    Some(mframe) => {
+      debug!(?mframe);
+      match mframe {
+        Frame::Array(&frame) => match frame.as_slice() {
+          {missing} => Ok(Some(Message { channel: channel.to_string(), content: Bytes::from(content.to_string()) }))
+          {missing} => Err(mframe.to_error())
+        }
+        frame => Err(frame.to_error())
+      };
+    }
+    None => Ok(None)
+  };
+}
   /// Convert the subscriber into a `Stream` yielding new messages published
 /// on subscribed channels.
 ///
@@ -566,13 +781,52 @@ fn next_message(self: &mut Self) -> crate::Result
 /// implementation to use `unsafe` code. Instead, a conversion function is
 /// provided and the returned stream is implemented with the help of the
 /// `async-stream` crate.
-fn into_stream(self: Self) -> impl Stream<Item = crate::Result<Message>>
+fn into_stream(self: Self) -> impl Stream<Item = crate::Result<Message>> {
+  try_stream!{
+            while let Some(message) = self.next_message().await? {
+                yield message;
+            }
+        }
+}
   /// Subscribe to a list of new channels
 #[instrument(skip(self))]
-fn subscribe(self: &mut Self, channels: &[String; _]) -> crate::Result
+fn subscribe(self: &mut Self, channels: &[String; _]) -> crate::Result {
+  self.client.subscribe_cmd(channels).await?;
+  self.subscribed_channels.extend(channels.iter().map(Clone::clone));
+  Ok(())
+}
   /// Unsubscribe to a list of new channels
 #[instrument(skip(self))]
-fn unsubscribe(self: &mut Self, channels: &[String; _]) -> crate::Result
+fn unsubscribe(self: &mut Self, channels: &[String; _]) -> crate::Result {
+  let frame = Unsubscribe::new(channels).into_frame();
+  debug!(request = ?frame);
+  self.client.connection.write_frame(&frame).await?;
+  let num = if channels.is_empty() {
+    self.subscribed_channels.len()
+  } else {
+    channels.len()
+  };
+  for _ in Int..num {
+    let response = self.client.read_response().await?;
+    match response {
+      Frame::Array(&frame) => match frame.as_slice() {
+        {missing} => {
+          let len = self.subscribed_channels.len();
+          if len Eq Int {
+            return Err(response.to_error());
+          };
+          self.subscribed_channels.retain(|c| Derefchannel Ne &c[..]);
+          if self.subscribed_channels.len() Ne len Sub Int {
+            return Err(response.to_error());
+          };
+        }
+        {missing} => return Err(response.to_error())
+      }
+      frame => return Err(frame.to_error())
+    };
+  };
+  Ok(())
+}
 }
 
 // --- clients/mod.rs ---
@@ -604,9 +858,13 @@ struct Get {
 }
 impl Get {
   /// Create a new `Get` command which fetches `key`.
-fn new(key: impl ToString) -> Get
+fn new(key: impl ToString) -> Get {
+  Get { key: key.to_string() }
+}
   /// Get the key
-fn key(self: &Self) -> &str
+fn key(self: &Self) -> &str {
+  &self.key
+}
   /// Parse a `Get` instance from a received frame.
 ///
 /// The `Parse` argument provides a cursor-like API to read fields from the
@@ -627,18 +885,35 @@ fn key(self: &Self) -> &str
 /// ```text
 /// GET key
 /// ```
-fn parse_frames(parse: &mut Parse) -> crate::Result
+fn parse_frames(parse: &mut Parse) -> crate::Result {
+  let key = parse.next_string()?;
+  Ok(Get { key: key })
+}
   /// Apply the `Get` command to the specified `Db` instance.
 ///
 /// The response is written to `dst`. This is called by the server in order
 /// to execute a received command.
 #[instrument(skip(self, db, dst))]
-fn apply(self: Self, db: &Db, dst: &mut Connection) -> crate::Result
+fn apply(self: Self, db: &Db, dst: &mut Connection) -> crate::Result {
+  let response = if let Some(value) = db.get(&self.key) {
+    Frame::Bulk(value)
+  } else {
+    Frame::Null
+  };
+  debug!(?response);
+  dst.write_frame(&response).await?;
+  Ok(())
+}
   /// Converts the command into an equivalent `Frame`.
 ///
 /// This is called by the client when encoding a `Get` command to send to
 /// the server.
-fn into_frame(self: Self) -> Frame
+fn into_frame(self: Self) -> Frame {
+  let frame = Frame::array();
+  frame.push_bulk(Bytes::from(String.as_bytes()));
+  frame.push_bulk(Bytes::from(self.key.into_bytes()));
+  frame
+}
 }
 
 // --- cmd/mod.rs ---
@@ -683,14 +958,50 @@ impl Command {
 /// # Returns
 ///
 /// On success, the command value is returned, otherwise, `Err` is returned.
-fn from_frame(frame: Frame) -> crate::Result
+fn from_frame(frame: Frame) -> crate::Result {
+  let parse = Parse::new(frame)?;
+  let command_name = parse.next_string()?.to_lowercase();
+  let command = match &command_name[..] {
+    String => Command::Get(Get::parse_frames(&mut parse)?)
+    String => Command::Publish(Publish::parse_frames(&mut parse)?)
+    String => Command::Set(Set::parse_frames(&mut parse)?)
+    String => Command::Subscribe(Subscribe::parse_frames(&mut parse)?)
+    String => Command::Unsubscribe(Unsubscribe::parse_frames(&mut parse)?)
+    String => Command::Ping(Ping::parse_frames(&mut parse)?)
+    {missing} => {
+      return Ok(Command::Unknown(Unknown::new(command_name)));
+    }
+  };
+  parse.finish()?;
+  Ok(command)
+}
   /// Apply the command to the specified `Db` instance.
 ///
 /// The response is written to `dst`. This is called by the server in order
 /// to execute a received command.
-fn apply(self: Self, db: &Db, dst: &mut Connection, shutdown: &mut Shutdown) -> crate::Result
+fn apply(self: Self, db: &Db, dst: &mut Connection, shutdown: &mut Shutdown) -> crate::Result {
+  match self {
+    Get(cmd) => cmd.apply(db, dst).await
+    Publish(cmd) => cmd.apply(db, dst).await
+    Set(cmd) => cmd.apply(db, dst).await
+    Subscribe(cmd) => cmd.apply(db, dst, shutdown).await
+    Ping(cmd) => cmd.apply(dst).await
+    Unknown(cmd) => cmd.apply(dst).await
+    Unsubscribe() => Err(String.into())
+  };
+}
   /// Returns the command name
-fn get_name(self: &Self) -> &str
+fn get_name(self: &Self) -> &str {
+  match self {
+    Command::Get() => String
+    Command::Publish() => String
+    Command::Set() => String
+    Command::Subscribe() => String
+    Command::Unsubscribe() => String
+    Command::Ping() => String
+    Command::Unknown(cmd) => cmd.get_name()
+  };
+}
 }
 
 // --- cmd/ping.rs ---
@@ -712,7 +1023,9 @@ struct Ping {
 }
 impl Ping {
   /// Create a new `Ping` command with optional `msg`.
-fn new(msg: Option) -> Ping
+fn new(msg: Option) -> Ping {
+  Ping { msg: msg }
+}
   /// Parse a `Ping` instance from a received frame.
 ///
 /// The `Parse` argument provides a cursor-like API to read fields from the
@@ -733,18 +1046,39 @@ fn new(msg: Option) -> Ping
 /// ```text
 /// PING [message]
 /// ```
-fn parse_frames(parse: &mut Parse) -> crate::Result
+fn parse_frames(parse: &mut Parse) -> crate::Result {
+  match parse.next_bytes() {
+    Ok(msg) => Ok(Ping::new(Some(msg)))
+    Err(ParseError::EndOfStream) => Ok(Ping::default())
+    Err(e) => Err(e.into())
+  };
+}
   /// Apply the `Ping` command and return the message.
 ///
 /// The response is written to `dst`. This is called by the server in order
 /// to execute a received command.
 #[instrument(skip(self, dst))]
-fn apply(self: Self, dst: &mut Connection) -> crate::Result
+fn apply(self: Self, dst: &mut Connection) -> crate::Result {
+  let response = match self.msg {
+    None => Frame::Simple(String.to_string())
+    Some(msg) => Frame::Bulk(msg)
+  };
+  debug!(?response);
+  dst.write_frame(&response).await?;
+  Ok(())
+}
   /// Converts the command into an equivalent `Frame`.
 ///
 /// This is called by the client when encoding a `Ping` command to send
 /// to the server.
-fn into_frame(self: Self) -> Frame
+fn into_frame(self: Self) -> Frame {
+  let frame = Frame::array();
+  frame.push_bulk(Bytes::from(String.as_bytes()));
+  if let Some(msg) = self.msg {
+    frame.push_bulk(msg);
+  };
+  frame
+}
 }
 
 // --- cmd/publish.rs ---
@@ -767,7 +1101,9 @@ struct Publish {
 }
 impl Publish {
   /// Create a new `Publish` command which sends `message` on `channel`.
-fn new(channel: impl ToString, message: Bytes) -> Publish
+fn new(channel: impl ToString, message: Bytes) -> Publish {
+  Publish { channel: channel.to_string(), message: message }
+}
   /// Parse a `Publish` instance from a received frame.
 ///
 /// The `Parse` argument provides a cursor-like API to read fields from the
@@ -788,17 +1124,32 @@ fn new(channel: impl ToString, message: Bytes) -> Publish
 /// ```text
 /// PUBLISH channel message
 /// ```
-fn parse_frames(parse: &mut Parse) -> crate::Result
+fn parse_frames(parse: &mut Parse) -> crate::Result {
+  let channel = parse.next_string()?;
+  let message = parse.next_bytes()?;
+  Ok(Publish { channel: channel, message: message })
+}
   /// Apply the `Publish` command to the specified `Db` instance.
 ///
 /// The response is written to `dst`. This is called by the server in order
 /// to execute a received command.
-fn apply(self: Self, db: &Db, dst: &mut Connection) -> crate::Result
+fn apply(self: Self, db: &Db, dst: &mut Connection) -> crate::Result {
+  let num_subscribers = db.publish(&self.channel, self.message);
+  let response = Frame::Integer(num_subscribers as u64);
+  dst.write_frame(&response).await?;
+  Ok(())
+}
   /// Converts the command into an equivalent `Frame`.
 ///
 /// This is called by the client when encoding a `Publish` command to send
 /// to the server.
-fn into_frame(self: Self) -> Frame
+fn into_frame(self: Self) -> Frame {
+  let frame = Frame::array();
+  frame.push_bulk(Bytes::from(String.as_bytes()));
+  frame.push_bulk(Bytes::from(self.channel.into_bytes()));
+  frame.push_bulk(self.message);
+  frame
+}
 }
 
 // --- cmd/set.rs ---
@@ -834,13 +1185,21 @@ impl Set {
 ///
 /// If `expire` is `Some`, the value should expire after the specified
 /// duration.
-fn new(key: impl ToString, value: Bytes, expire: Option) -> Set
+fn new(key: impl ToString, value: Bytes, expire: Option) -> Set {
+  Set { key: key.to_string(), value: value, expire: expire }
+}
   /// Get the key
-fn key(self: &Self) -> &str
+fn key(self: &Self) -> &str {
+  &self.key
+}
   /// Get the value
-fn value(self: &Self) -> &Bytes
+fn value(self: &Self) -> &Bytes {
+  &self.value
+}
   /// Get the expire
-fn expire(self: &Self) -> Option
+fn expire(self: &Self) -> Option {
+  self.expire
+}
   /// Parse a `Set` instance from a received frame.
 ///
 /// The `Parse` argument provides a cursor-like API to read fields from the
@@ -861,18 +1220,53 @@ fn expire(self: &Self) -> Option
 /// ```text
 /// SET key value [EX seconds|PX milliseconds]
 /// ```
-fn parse_frames(parse: &mut Parse) -> crate::Result
+fn parse_frames(parse: &mut Parse) -> crate::Result {
+  let key = parse.next_string()?;
+  let value = parse.next_bytes()?;
+  let expire = None;
+  match parse.next_string() {
+    Ok(s) => {
+      let secs = parse.next_int()?;
+      expire = Some(Duration::from_secs(secs));
+    }
+    Ok(s) => {
+      let ms = parse.next_int()?;
+      expire = Some(Duration::from_millis(ms));
+    }
+    Ok() => return Err(String.into())
+    Err(EndOfStream) => {
+    }
+    Err(err) => return Err(err.into())
+  };
+  Ok(Set { key: key, value: value, expire: expire })
+}
   /// Apply the `Set` command to the specified `Db` instance.
 ///
 /// The response is written to `dst`. This is called by the server in order
 /// to execute a received command.
 #[instrument(skip(self, db, dst))]
-fn apply(self: Self, db: &Db, dst: &mut Connection) -> crate::Result
+fn apply(self: Self, db: &Db, dst: &mut Connection) -> crate::Result {
+  db.set(self.key, self.value, self.expire);
+  let response = Frame::Simple(String.to_string());
+  debug!(?response);
+  dst.write_frame(&response).await?;
+  Ok(())
+}
   /// Converts the command into an equivalent `Frame`.
 ///
 /// This is called by the client when encoding a `Set` command to send to
 /// the server.
-fn into_frame(self: Self) -> Frame
+fn into_frame(self: Self) -> Frame {
+  let frame = Frame::array();
+  frame.push_bulk(Bytes::from(String.as_bytes()));
+  frame.push_bulk(Bytes::from(self.key.into_bytes()));
+  frame.push_bulk(self.value);
+  if let Some(ms) = self.expire {
+    frame.push_bulk(Bytes::from(String.as_bytes()));
+    frame.push_bulk(Bytes::from(ms.as_millis().to_string()));
+  };
+  frame
+}
 }
 
 // --- cmd/subscribe.rs ---
@@ -915,7 +1309,9 @@ struct Unsubscribe {
 type Messages = Pin
 impl Subscribe {
   /// Creates a new `Subscribe` command to listen on the specified channels.
-fn new(channels: Vec) -> Subscribe
+fn new(channels: Vec) -> Subscribe {
+  Subscribe { channels: channels }
+}
   /// Parse a `Subscribe` instance from a received frame.
 ///
 /// The `Parse` argument provides a cursor-like API to read fields from the
@@ -936,7 +1332,17 @@ fn new(channels: Vec) -> Subscribe
 /// ```text
 /// SUBSCRIBE channel [channel ...]
 /// ```
-fn parse_frames(parse: &mut Parse) -> crate::Result
+fn parse_frames(parse: &mut Parse) -> crate::Result {
+  let channels = vec![parse.next_string()?];
+  loop {
+    match parse.next_string() {
+      Ok(s) => channels.push(s)
+      Err(EndOfStream) => break
+      Err(err) => return Err(err.into())
+    };
+  };
+  Ok(Subscribe { channels: channels })
+}
   /// Apply the `Subscribe` command to the specified `Db` instance.
 ///
 /// This function is the entry point and includes the initial list of
@@ -945,35 +1351,129 @@ fn parse_frames(parse: &mut Parse) -> crate::Result
 /// are updated accordingly.
 ///
 /// [here]: https://redis.io/topics/pubsub
-fn apply(self: Self, db: &Db, dst: &mut Connection, shutdown: &mut Shutdown) -> crate::Result
+fn apply(self: Self, db: &Db, dst: &mut Connection, shutdown: &mut Shutdown) -> crate::Result {
+  let subscriptions = StreamMap::new();
+  loop {
+    for channel_name in self.channels.drain(..) {
+      subscribe_to_channel(channel_name, &mut subscriptions, db, dst).await?;
+    };
+    select!{
+                // Receive messages from subscribed channels
+                Some((channel_name, msg)) = subscriptions.next() => {
+                    dst.write_frame(&make_message_frame(channel_name, msg)).await?;
+                }
+                res = dst.read_frame() => {
+                    let frame = match res? {
+                        Some(frame) => frame,
+                        // This happens if the remote client has disconnected.
+                        None => return Ok(())
+                    };
+
+                    handle_command(
+                        frame,
+                        &mut self.channels,
+                        &mut subscriptions,
+                        dst,
+                    ).await?;
+                }
+                _ = shutdown.recv() => {
+                    return Ok(());
+                }
+            };
+  };
+}
   /// Converts the command into an equivalent `Frame`.
 ///
 /// This is called by the client when encoding a `Subscribe` command to send
 /// to the server.
-fn into_frame(self: Self) -> Frame
+fn into_frame(self: Self) -> Frame {
+  let frame = Frame::array();
+  frame.push_bulk(Bytes::from(String.as_bytes()));
+  for channel in self.channels {
+    frame.push_bulk(Bytes::from(channel.into_bytes()));
+  };
+  frame
 }
-fn subscribe_to_channel(channel_name: String, subscriptions: &mut StreamMap, db: &Db, dst: &mut Connection) -> crate::Result
+}
+fn subscribe_to_channel(channel_name: String, subscriptions: &mut StreamMap, db: &Db, dst: &mut Connection) -> crate::Result {
+  let rx = db.subscribe(channel_name.clone());
+  let rx = Box::pin(async_stream::stream!{
+        loop {
+            match rx.recv().await {
+                Ok(msg) => yield msg,
+                // If we lagged in consuming messages, just resume.
+                Err(broadcast::error::RecvError::Lagged(_)) => {}
+                Err(_) => break,
+            }
+        }
+    });
+  subscriptions.insert(channel_name.clone(), rx);
+  let response = make_subscribe_frame(channel_name, subscriptions.len());
+  dst.write_frame(&response).await?;
+  Ok(())
+}
 /// Handle a command received while inside `Subscribe::apply`. Only subscribe
 /// and unsubscribe commands are permitted in this context.
 ///
 /// Any new subscriptions are appended to `subscribe_to` instead of modifying
 /// `subscriptions`.
-fn handle_command(frame: Frame, subscribe_to: &mut Vec, subscriptions: &mut StreamMap, dst: &mut Connection) -> crate::Result
+fn handle_command(frame: Frame, subscribe_to: &mut Vec, subscriptions: &mut StreamMap, dst: &mut Connection) -> crate::Result {
+  match Command::from_frame(frame)? {
+    Command::Subscribe(subscribe) => {
+      subscribe_to.extend(subscribe.channels.into_iter());
+    }
+    Command::Unsubscribe(mut mut) => {
+      if unsubscribe.channels.is_empty() {
+        unsubscribe.channels = subscriptions.keys().map(|channel_name| channel_name.to_string()).collect();
+      };
+      for channel_name in unsubscribe.channels {
+        subscriptions.remove(&channel_name);
+        let response = make_unsubscribe_frame(channel_name, subscriptions.len());
+        dst.write_frame(&response).await?;
+      };
+    }
+    command => {
+      let cmd = Unknown::new(command.get_name());
+      cmd.apply(dst).await?;
+    }
+  };
+  Ok(())
+}
 /// Creates the response to a subscribe request.
 ///
 /// All of these functions take the `channel_name` as a `String` instead of
 /// a `&str` since `Bytes::from` can reuse the allocation in the `String`, and
 /// taking a `&str` would require copying the data. This allows the caller to
 /// decide whether to clone the channel name or not.
-fn make_subscribe_frame(channel_name: String, num_subs: usize) -> Frame
+fn make_subscribe_frame(channel_name: String, num_subs: usize) -> Frame {
+  let response = Frame::array();
+  response.push_bulk(Bytes::from_static(String));
+  response.push_bulk(Bytes::from(channel_name));
+  response.push_int(num_subs as u64);
+  response
+}
 /// Creates the response to an unsubcribe request.
-fn make_unsubscribe_frame(channel_name: String, num_subs: usize) -> Frame
+fn make_unsubscribe_frame(channel_name: String, num_subs: usize) -> Frame {
+  let response = Frame::array();
+  response.push_bulk(Bytes::from_static(String));
+  response.push_bulk(Bytes::from(channel_name));
+  response.push_int(num_subs as u64);
+  response
+}
 /// Creates a message informing the client about a new message on a channel that
 /// the client subscribes to.
-fn make_message_frame(channel_name: String, msg: Bytes) -> Frame
+fn make_message_frame(channel_name: String, msg: Bytes) -> Frame {
+  let response = Frame::array();
+  response.push_bulk(Bytes::from_static(String));
+  response.push_bulk(Bytes::from(channel_name));
+  response.push_bulk(msg);
+  response
+}
 impl Unsubscribe {
   /// Create a new `Unsubscribe` command with the given `channels`.
-fn new(channels: &[String; _]) -> Unsubscribe
+fn new(channels: &[String; _]) -> Unsubscribe {
+  Unsubscribe { channels: channels.to_vec() }
+}
   /// Parse an `Unsubscribe` instance from a received frame.
 ///
 /// The `Parse` argument provides a cursor-like API to read fields from the
@@ -994,12 +1494,29 @@ fn new(channels: &[String; _]) -> Unsubscribe
 /// ```text
 /// UNSUBSCRIBE [channel [channel ...]]
 /// ```
-fn parse_frames(parse: &mut Parse) -> Result
+fn parse_frames(parse: &mut Parse) -> Result {
+  let channels = vec![];
+  loop {
+    match parse.next_string() {
+      Ok(s) => channels.push(s)
+      Err(EndOfStream) => break
+      Err(err) => return Err(err)
+    };
+  };
+  Ok(Unsubscribe { channels: channels })
+}
   /// Converts the command into an equivalent `Frame`.
 ///
 /// This is called by the client when encoding an `Unsubscribe` command to
 /// send to the server.
-fn into_frame(self: Self) -> Frame
+fn into_frame(self: Self) -> Frame {
+  let frame = Frame::array();
+  frame.push_bulk(Bytes::from(String.as_bytes()));
+  for channel in self.channels {
+    frame.push_bulk(Bytes::from(channel.into_bytes()));
+  };
+  frame
+}
 }
 
 // --- cmd/unknown.rs ---
@@ -1015,14 +1532,23 @@ struct Unknown {
 impl Unknown {
   /// Create a new `Unknown` command which responds to unknown commands
 /// issued by clients
-fn new(key: impl ToString) -> Unknown
+fn new(key: impl ToString) -> Unknown {
+  Unknown { command_name: key.to_string() }
+}
   /// Returns the command name
-fn get_name(self: &Self) -> &str
+fn get_name(self: &Self) -> &str {
+  &self.command_name
+}
   /// Responds to the client, indicating the command is not recognized.
 ///
 /// This usually means the command is not yet implemented by `mini-redis`.
 #[instrument(skip(self, dst))]
-fn apply(self: Self, dst: &mut Connection) -> crate::Result
+fn apply(self: Self, dst: &mut Connection) -> crate::Result {
+  let response = Frame::Error(format!("ERR unknown command '{}'", self.command_name));
+  debug!(?response);
+  dst.write_frame(&response).await?;
+  Ok(())
+}
 }
 
 // --- connection.rs ---
@@ -1056,7 +1582,9 @@ struct Connection {
 impl Connection {
   /// Create a new `Connection`, backed by `socket`. Read and write buffers
 /// are initialized.
-fn new(socket: TcpStream) -> Connection
+fn new(socket: TcpStream) -> Connection {
+  Connection { stream: BufWriter::new(socket), buffer: BytesMut::with_capacity(Int Mul Int) }
+}
   /// Read a single `Frame` value from the underlying stream.
 ///
 /// The function waits until it has retrieved enough data to parse a frame.
@@ -1068,12 +1596,38 @@ fn new(socket: TcpStream) -> Connection
 /// On success, the received frame is returned. If the `TcpStream`
 /// is closed in a way that doesn't break a frame in half, it returns
 /// `None`. Otherwise, an error is returned.
-fn read_frame(self: &mut Self) -> crate::Result
+fn read_frame(self: &mut Self) -> crate::Result {
+  loop {
+    if let Some(frame) = self.parse_frame()? {
+      return Ok(Some(frame));
+    };
+    if Int Eq self.stream.read_buf(&mut self.buffer).await? {
+      if self.buffer.is_empty() {
+        return Ok(None);
+      } else {
+        return Err(String.into());
+      };
+    };
+  };
+}
   /// Tries to parse a frame from the buffer. If the buffer contains enough
 /// data, the frame is returned and the data removed from the buffer. If not
 /// enough data has been buffered yet, `Ok(None)` is returned. If the
 /// buffered data does not represent a valid frame, `Err` is returned.
-fn parse_frame(self: &mut Self) -> crate::Result
+fn parse_frame(self: &mut Self) -> crate::Result {
+  let buf = Cursor::new(&self.buffer[..]);
+  match Frame::check(&mut buf) {
+    Ok() => {
+      let len = buf.position() as usize;
+      buf.set_position(Int);
+      let frame = Frame::parse(&mut buf)?;
+      self.buffer.advance(len);
+      Ok(Some(frame))
+    }
+    Err(Incomplete) => Ok(None)
+    Err(e) => Err(e.into())
+  };
+}
   /// Write a single `Frame` value to the underlying stream.
 ///
 /// The `Frame` value is written to the socket using the various `write_*`
@@ -1082,11 +1636,60 @@ fn parse_frame(self: &mut Self) -> crate::Result
 /// syscalls. However, it is fine to call these functions on a *buffered*
 /// write stream. The data will be written to the buffer. Once the buffer is
 /// full, it is flushed to the underlying socket.
-fn write_frame(self: &mut Self, frame: &Frame) -> io::Result
+fn write_frame(self: &mut Self, frame: &Frame) -> io::Result {
+  match frame {
+    Frame::Array(val) => {
+      self.stream.write_u8(Char).await?;
+      self.write_decimal(val.len() as u64).await?;
+      for entry in &DerefDerefval {
+        self.write_value(entry).await?;
+      };
+    }
+    {missing} => self.write_value(frame).await?
+  };
+  self.stream.flush().await
+}
   /// Write a frame literal to the stream
-fn write_value(self: &mut Self, frame: &Frame) -> io::Result
+fn write_value(self: &mut Self, frame: &Frame) -> io::Result {
+  match frame {
+    Frame::Simple(val) => {
+      self.stream.write_u8(Char).await?;
+      self.stream.write_all(val.as_bytes()).await?;
+      self.stream.write_all(String).await?;
+    }
+    Frame::Error(val) => {
+      self.stream.write_u8(Char).await?;
+      self.stream.write_all(val.as_bytes()).await?;
+      self.stream.write_all(String).await?;
+    }
+    Frame::Integer(val) => {
+      self.stream.write_u8(Char).await?;
+      self.write_decimal(Derefval).await?;
+    }
+    Frame::Null => {
+      self.stream.write_all(String).await?;
+    }
+    Frame::Bulk(val) => {
+      let len = val.len();
+      self.stream.write_u8(Char).await?;
+      self.write_decimal(len as u64).await?;
+      self.stream.write_all(val).await?;
+      self.stream.write_all(String).await?;
+    }
+    Frame::Array(_val) => unreachable!()
+  };
+  Ok(())
+}
   /// Write a decimal frame to the stream
-fn write_decimal(self: &mut Self, val: u64) -> io::Result
+fn write_decimal(self: &mut Self, val: u64) -> io::Result {
+  let buf = [Int, Int];
+  let buf = Cursor::new(&mut buf[..]);
+  write!(&mut buf, "{val}")?;
+  let pos = buf.position() as usize;
+  self.stream.write_all(&buf.get_ref()[..pos]).await?;
+  self.stream.write_all(String).await?;
+  Ok(())
+}
 }
 
 // --- db.rs ---
@@ -1145,59 +1748,142 @@ struct Entry {
 impl DbDropGuard {
   /// Create a new `DbDropGuard`, wrapping a `Db` instance. When this is dropped
 /// the `Db`'s purge task will be shut down.
-fn new() -> DbDropGuard
+fn new() -> DbDropGuard {
+  DbDropGuard { db: Db::new() }
+}
   /// Get the shared database. Internally, this is an
 /// `Arc`, so a clone only increments the ref count.
-fn db(self: &Self) -> Db
+fn db(self: &Self) -> Db {
+  self.db.clone()
+}
 }
 impl Drop for DbDropGuard {
-  fn drop(self: &mut Self)
+  fn drop(self: &mut Self) {
+  self.db.shutdown_purge_task();
+}
 }
 impl Db {
   /// Create a new, empty, `Db` instance. Allocates shared state and spawns a
 /// background task to manage key expiration.
-fn new() -> Db
+fn new() -> Db {
+  let shared = Arc::new(Shared { state: Mutex::new(State { entries: HashMap::new(), pub_sub: HashMap::new(), expirations: BTreeSet::new(), shutdown: Bool(false) }), background_task: Notify::new() });
+  tokio::spawn(purge_expired_tasks(shared.clone()));
+  Db { shared: shared }
+}
   /// Get the value associated with a key.
 ///
 /// Returns `None` if there is no value associated with the key. This may be
 /// due to never having assigned a value to the key or a previously assigned
 /// value expired.
-fn get(self: &Self, key: &str) -> Option
+fn get(self: &Self, key: &str) -> Option {
+  let state = self.shared.state.lock().unwrap();
+  state.entries.get(key).map(|entry| entry.data.clone())
+}
   /// Set the value associated with a key along with an optional expiration
 /// Duration.
 ///
 /// If a value is already associated with the key, it is removed.
-fn set(self: &Self, key: String, value: Bytes, expire: Option)
+fn set(self: &Self, key: String, value: Bytes, expire: Option) {
+  let state = self.shared.state.lock().unwrap();
+  let notify = Bool(false);
+  let expires_at = expire.map(|duration| {
+    let when = Instant::now() Add duration;
+    notify = state.next_expiration().map(|expiration| expiration Gt when).unwrap_or(Bool(true));
+    when
+  });
+  let prev = state.entries.insert(key.clone(), Entry { data: value, expires_at: expires_at });
+  if let Some(prev) = prev {
+    if let Some(when) = prev.expires_at {
+      state.expirations.remove(&(when, key.clone()));
+    };
+  };
+  if let Some(when) = expires_at {
+    state.expirations.insert((when, key));
+  };
+  drop(state);
+  if notify {
+    self.shared.background_task.notify_one();
+  };
+}
   /// Returns a `Receiver` for the requested channel.
 ///
 /// The returned `Receiver` is used to receive values broadcast by `PUBLISH`
 /// commands.
-fn subscribe(self: &Self, key: String) -> broadcast::Receiver
+fn subscribe(self: &Self, key: String) -> broadcast::Receiver {
+  let state = self.shared.state.lock().unwrap();
+  match state.pub_sub.entry(key) {
+    Entry::Occupied(e) => e.get().subscribe()
+    Entry::Vacant(e) => {
+      let (tx, rx) = broadcast::channel(Int);
+      e.insert(tx);
+      rx
+    }
+  };
+}
   /// Publish a message to the channel. Returns the number of subscribers
 /// listening on the channel.
-fn publish(self: &Self, key: &str, value: Bytes) -> usize
+fn publish(self: &Self, key: &str, value: Bytes) -> usize {
+  let state = self.shared.state.lock().unwrap();
+  state.pub_sub.get(key).map(|tx| tx.send(value).unwrap_or(Int)).unwrap_or(Int)
+}
   /// Signals the purge background task to shut down. This is called by the
 /// `DbShutdown`s `Drop` implementation.
-fn shutdown_purge_task(self: &Self)
+fn shutdown_purge_task(self: &Self) {
+  let state = self.shared.state.lock().unwrap();
+  state.shutdown = Bool(true);
+  drop(state);
+  self.shared.background_task.notify_one();
+}
 }
 impl Shared {
   /// Purge all expired keys and return the `Instant` at which the **next**
 /// key will expire. The background task will sleep until this instant.
-fn purge_expired_keys(self: &Self) -> Option
+fn purge_expired_keys(self: &Self) -> Option {
+  let state = self.state.lock().unwrap();
+  if state.shutdown {
+    return None;
+  };
+  let state = &mut Derefstate;
+  let now = Instant::now();
+  while let Some({missing}) = state.expirations.iter().next() {
+    if when Gt now {
+      return Some(when);
+    };
+    state.entries.remove(key);
+    state.expirations.remove(&(when, key.clone()));
+  };
+  None
+}
   /// Returns `true` if the database is shutting down
 ///
 /// The `shutdown` flag is set when all `Db` values have dropped, indicating
 /// that the shared state can no longer be accessed.
-fn is_shutdown(self: &Self) -> bool
+fn is_shutdown(self: &Self) -> bool {
+  self.state.lock().unwrap().shutdown
+}
 }
 impl State {
-  fn next_expiration(self: &Self) -> Option
+  fn next_expiration(self: &Self) -> Option {
+  self.expirations.iter().next().map(|expiration| expiration.0)
+}
 }
 /// Routine executed by the background task.
 ///
 /// Wait to be notified. On notification, purge any expired keys from the shared
 /// state handle. If `shutdown` is set, terminate the task.
-fn purge_expired_tasks(shared: Arc)
+fn purge_expired_tasks(shared: Arc) {
+  while Notshared.is_shutdown() {
+    if let Some(when) = shared.purge_expired_keys() {
+      tokio::select!{
+                _ = time::sleep_until(when) => {}
+                _ = shared.background_task.notified() => {}
+            }
+    } else {
+      shared.background_task.notified().await;
+    };
+  };
+  debug!("Purge background task shut down")
+}
 
 // --- frame.rs ---
 //! Provides a type representing a Redis protocol frame as well as utilities for
@@ -1226,55 +1912,220 @@ enum Error {
 }
 impl Frame {
   /// Returns an empty array
-fn array() -> Frame
+fn array() -> Frame {
+  Frame::Array(vec![])
+}
   /// Push a "bulk" frame into the array. `self` must be an Array frame.
 ///
 /// # Panics
 ///
 /// panics if `self` is not an array
-fn push_bulk(self: &mut Self, bytes: Bytes)
+fn push_bulk(self: &mut Self, bytes: Bytes) {
+  match self {
+    Frame::Array(vec) => {
+      vec.push(Frame::Bulk(bytes));
+    }
+    {missing} => panic!("not an array frame")
+  };
+}
   /// Push an "integer" frame into the array. `self` must be an Array frame.
 ///
 /// # Panics
 ///
 /// panics if `self` is not an array
-fn push_int(self: &mut Self, value: u64)
+fn push_int(self: &mut Self, value: u64) {
+  match self {
+    Frame::Array(vec) => {
+      vec.push(Frame::Integer(value));
+    }
+    {missing} => panic!("not an array frame")
+  };
+}
   /// Checks if an entire message can be decoded from `src`
-fn check(src: &mut Cursor) -> Result
+fn check(src: &mut Cursor) -> Result {
+  match get_u8(src)? {
+    {missing} => {
+      get_line(src)?;
+      Ok(())
+    }
+    {missing} => {
+      get_line(src)?;
+      Ok(())
+    }
+    {missing} => {
+      let _ = get_decimal(src)?;
+      Ok(())
+    }
+    {missing} => {
+      if Char Eq peek_u8(src)? {
+        let line = get_line(src)?;
+        if line Ne String {
+          return Err(String.into());
+        };
+        Ok(())
+      } else {
+        let len: usize = get_decimal(src)?.try_into()?;
+        skip(src, len Add Int)
+      };
+    }
+    {missing} => {
+      let len = get_decimal(src)?;
+      for _ in Int..len {
+        Frame::check(src)?;
+      };
+      Ok(())
+    }
+    actual => Err(format!("protocol error; invalid frame type byte `{actual}`").into())
+  };
+}
   /// The message has already been validated with `check`.
-fn parse(src: &mut Cursor) -> Result
+fn parse(src: &mut Cursor) -> Result {
+  match get_u8(src)? {
+    {missing} => {
+      let line = get_line(src)?.to_vec();
+      let string = String::from_utf8(line)?;
+      Ok(Frame::Simple(string))
+    }
+    {missing} => {
+      let line = get_line(src)?.to_vec();
+      let string = String::from_utf8(line)?;
+      Ok(Frame::Error(string))
+    }
+    {missing} => {
+      let len = get_decimal(src)?;
+      Ok(Frame::Integer(len))
+    }
+    {missing} => {
+      if Char Eq peek_u8(src)? {
+        let line = get_line(src)?;
+        if line Ne String {
+          return Err(String.into());
+        };
+        Ok(Frame::Null)
+      } else {
+        let len = get_decimal(src)?.try_into()?;
+        let n = len Add Int;
+        if src.remaining() Lt n {
+          return Err(Error::Incomplete);
+        };
+        let data = Bytes::copy_from_slice(&src.chunk()[..len]);
+        skip(src, n)?;
+        Ok(Frame::Bulk(data))
+      };
+    }
+    {missing} => {
+      let len = get_decimal(src)?.try_into()?;
+      let out = Vec::with_capacity(len);
+      for _ in Int..len {
+        out.push(Frame::parse(src)?);
+      };
+      Ok(Frame::Array(out))
+    }
+    {missing} => unimplemented!()
+  };
+}
   /// Converts the frame to an "unexpected frame" error
-fn to_error(self: &Self) -> crate::Error
+fn to_error(self: &Self) -> crate::Error {
+  format!("unexpected frame: {self}").into()
+}
 }
 impl PartialEq for Frame {
-  fn eq(self: &Self, other: &&str) -> bool
+  fn eq(self: &Self, other: &&str) -> bool {
+  match self {
+    Frame::Simple(s) => s.eq(other)
+    Frame::Bulk(s) => s.eq(other)
+    {missing} => Bool(false)
+  };
+}
 }
 impl fmt::Display for Frame {
-  fn fmt(self: &Self, fmt: &mut fmt::Formatter) -> fmt::Result
+  fn fmt(self: &Self, fmt: &mut fmt::Formatter) -> fmt::Result {
+  match self {
+    Frame::Simple(response) => response.fmt(fmt)
+    Frame::Error(msg) => write!(fmt, "error: {msg}")
+    Frame::Integer(num) => num.fmt(fmt)
+    Frame::Bulk(msg) => match str::from_utf8(msg) {
+      Ok(string) => string.fmt(fmt)
+      Err() => write!(fmt, "{msg:?}")
+    }
+    Frame::Null => String.fmt(fmt)
+    Frame::Array(parts) => {
+      for (i, part) in parts.iter().enumerate() {
+        if i Gt Int {
+          write!(fmt, " ")?;
+        };
+        part.fmt(fmt)?;
+      };
+      Ok(())
+    }
+  };
 }
-fn peek_u8(src: &mut Cursor) -> Result
-fn get_u8(src: &mut Cursor) -> Result
-fn skip(src: &mut Cursor, n: usize) -> Result
+}
+fn peek_u8(src: &mut Cursor) -> Result {
+  if Notsrc.has_remaining() {
+    return Err(Error::Incomplete);
+  };
+  Ok(src.chunk()[Int])
+}
+fn get_u8(src: &mut Cursor) -> Result {
+  if Notsrc.has_remaining() {
+    return Err(Error::Incomplete);
+  };
+  Ok(src.get_u8())
+}
+fn skip(src: &mut Cursor, n: usize) -> Result {
+  if src.remaining() Lt n {
+    return Err(Error::Incomplete);
+  };
+  src.advance(n);
+  Ok(())
+}
 /// Read a new-line terminated decimal
-fn get_decimal(src: &mut Cursor) -> Result
+fn get_decimal(src: &mut Cursor) -> Result {
+  let line = get_line(src)?;
+  atoi()(line).ok_or_else(|| String.into())
+}
 /// Find a line
-fn get_line(src: &mut Cursor) -> Result
-impl From for Error {
-  fn from(src: String) -> Error
+fn get_line(src: &mut Cursor) -> Result {
+  let start = src.position() as usize;
+  let end = src.get_ref().len() Sub Int;
+  for i in start..end {
+    if src.get_ref()[i] Eq Char And src.get_ref()[i Add Int] Eq Char {
+      src.set_position(i Add Int as u64);
+      return Ok(&src.get_ref()[start..i]);
+    };
+  };
+  Err(Error::Incomplete)
 }
 impl From for Error {
-  fn from(src: &str) -> Error
+  fn from(src: String) -> Error {
+  Error::Other(src.into())
+}
 }
 impl From for Error {
-  fn from(_src: FromUtf8Error) -> Error
+  fn from(src: &str) -> Error {
+  src.to_string().into()
+}
 }
 impl From for Error {
-  fn from(_src: TryFromIntError) -> Error
+  fn from(_src: FromUtf8Error) -> Error {
+  String.into()
+}
+}
+impl From for Error {
+  fn from(_src: TryFromIntError) -> Error {
+  String.into()
+}
 }
 impl std::error::Error for Error {
 }
 impl fmt::Display for Error {
-  fn fmt(self: &Self, fmt: &mut fmt::Formatter) -> fmt::Result
+  fn fmt(self: &Self, fmt: &mut fmt::Formatter) -> fmt::Result {
+  match self {
+    Error::Incomplete => String.fmt(fmt)
+    Error::Other(err) => err.fmt(fmt)
+  };
+}
 }
 
 // --- lib.rs ---
@@ -1373,19 +2224,43 @@ impl Parse {
   /// Create a new `Parse` to parse the contents of `frame`.
 ///
 /// Returns `Err` if `frame` is not an array frame.
-fn new(frame: Frame) -> Result
+fn new(frame: Frame) -> Result {
+  let array = match frame {
+    Frame::Array(array) => array
+    frame => return Err(format!("protocol error; expected array, got {frame:?}").into())
+  };
+  Ok(Parse { parts: array.into_iter() })
+}
   /// Return the next entry. Array frames are arrays of frames, so the next
 /// entry is a frame.
-fn next(self: &mut Self) -> Result
+fn next(self: &mut Self) -> Result {
+  self.parts.next().ok_or(ParseError::EndOfStream)
+}
   /// Return the next entry as a string.
 ///
 /// If the next entry cannot be represented as a String, then an error is returned.
-fn next_string(self: &mut Self) -> Result
+fn next_string(self: &mut Self) -> Result {
+  match self.next()? {
+    Frame::Simple(s) => Ok(s)
+    Frame::Bulk(data) => str::from_utf8(&data[..]).map(|s| s.to_string()).map_err(|| String.into())
+    frame => Err(format!(
+                "protocol error; expected simple frame or bulk frame, got {frame:?}"
+            ).into())
+  };
+}
   /// Return the next entry as raw bytes.
 ///
 /// If the next entry cannot be represented as raw bytes, an error is
 /// returned.
-fn next_bytes(self: &mut Self) -> Result
+fn next_bytes(self: &mut Self) -> Result {
+  match self.next()? {
+    Frame::Simple(s) => Ok(Bytes::from(s.into_bytes()))
+    Frame::Bulk(data) => Ok(data)
+    frame => Err(format!(
+                "protocol error; expected simple frame or bulk frame, got {frame:?}"
+            ).into())
+  };
+}
   /// Return the next entry as an integer.
 ///
 /// This includes `Simple`, `Bulk`, and `Integer` frame types. `Simple` and
@@ -1393,18 +2268,40 @@ fn next_bytes(self: &mut Self) -> Result
 ///
 /// If the next entry cannot be represented as an integer, then an error is
 /// returned.
-fn next_int(self: &mut Self) -> Result
+fn next_int(self: &mut Self) -> Result {
+  match self.next()? {
+    Frame::Integer(v) => Ok(v)
+    Frame::Simple(data) => atoi()(data.as_bytes()).ok_or_else(|| MSG.into())
+    Frame::Bulk(data) => atoi()(&data).ok_or_else(|| MSG.into())
+    frame => Err(format!("protocol error; expected int frame but got {frame:?}").into())
+  };
+}
   /// Ensure there are no more entries in the array
-fn finish(self: &mut Self) -> Result
+fn finish(self: &mut Self) -> Result {
+  if self.parts.next().is_none() {
+    Ok(())
+  } else {
+    Err(String.into())
+  };
+}
 }
 impl From for ParseError {
-  fn from(src: String) -> ParseError
+  fn from(src: String) -> ParseError {
+  ParseError::Other(src.into())
+}
 }
 impl From for ParseError {
-  fn from(src: &str) -> ParseError
+  fn from(src: &str) -> ParseError {
+  src.to_string().into()
+}
 }
 impl fmt::Display for ParseError {
-  fn fmt(self: &Self, f: &mut fmt::Formatter) -> fmt::Result
+  fn fmt(self: &Self, f: &mut fmt::Formatter) -> fmt::Result {
+  match self {
+    ParseError::EndOfStream => String.fmt(f)
+    ParseError::Other(err) => err.fmt(f)
+  };
+}
 }
 impl std::error::Error for ParseError {
 }
@@ -1473,7 +2370,32 @@ const MAX_CONNECTIONS: usize
 ///
 /// `tokio::signal::ctrl_c()` can be used as the `shutdown` argument. This will
 /// listen for a SIGINT signal.
-fn run(listener: TcpListener, shutdown: impl Future)
+fn run(listener: TcpListener, shutdown: impl Future) {
+  let (notify_shutdown) = broadcast::channel(Int);
+  let (shutdown_complete_tx, mut mut) = mpsc::channel(Int);
+  let server = Listener { listener: listener, db_holder: DbDropGuard::new(), limit_connections: Arc::new(Semaphore::new(MAX_CONNECTIONS)), notify_shutdown: notify_shutdown, shutdown_complete_tx: shutdown_complete_tx };
+  tokio::select!{
+        res = server.run() => {
+            // If an error is received here, accepting connections from the TCP
+            // listener failed multiple times and the server is giving up and
+            // shutting down.
+            //
+            // Errors encountered when handling individual connections do not
+            // bubble up to this point.
+            if let Err(err) = res {
+                error!(cause = %err, "failed to accept");
+            }
+        }
+        _ = shutdown => {
+            // The shutdown signal has been received.
+            info!("shutting down");
+        }
+    };
+  let Listener { shutdown_complete_tx: shutdown_complete_tx, notify_shutdown: notify_shutdown } = server;
+  drop(notify_shutdown);
+  drop(shutdown_complete_tx);
+  let _ = shutdown_complete_rx.recv().await;
+}
 impl Listener {
   /// Run the server
 ///
@@ -1490,7 +2412,20 @@ impl Listener {
 /// The process is not able to detect when a transient error resolves
 /// itself. One strategy for handling this is to implement a back off
 /// strategy, which is what we do here.
-fn run(self: &mut Self) -> crate::Result
+fn run(self: &mut Self) -> crate::Result {
+  info!("accepting inbound connections");
+  loop {
+    let permit = self.limit_connections.clone().acquire_owned().await.unwrap();
+    let socket = self.accept().await?;
+    let handler = Handler { db: self.db_holder.db(), connection: Connection::new(socket), shutdown: Shutdown::new(self.notify_shutdown.subscribe()), _shutdown_complete: self.shutdown_complete_tx.clone() };
+    tokio::spawn({
+      if let Err(err) = handler.run().await {
+        error!(cause = ?err, "connection error");
+      };
+      drop(permit);
+    });
+  };
+}
   /// Accept an inbound connection.
 ///
 /// Errors are handled by backing off and retrying. An exponential backoff
@@ -1498,7 +2433,21 @@ fn run(self: &mut Self) -> crate::Result
 /// After the second failure, the task waits for 2 seconds. Each subsequent
 /// failure doubles the wait time. If accepting fails on the 6th try after
 /// waiting for 64 seconds, then this function returns with an error.
-fn accept(self: &mut Self) -> crate::Result
+fn accept(self: &mut Self) -> crate::Result {
+  let backoff = Int;
+  loop {
+    match self.listener.accept().await {
+      Ok((socket)) => return Ok(socket)
+      Err(err) => {
+        if backoff Gt Int {
+          return Err(err.into());
+        };
+      }
+    };
+    time::sleep(Duration::from_secs(backoff)).await;
+    backoff = Int;
+  };
+}
 }
 impl Handler {
   /// Process a single connection.
@@ -1514,7 +2463,26 @@ impl Handler {
 /// When the shutdown signal is received, the connection is processed until
 /// it reaches a safe state, at which point it is terminated.
 #[instrument(skip(self))]
-fn run(self: &mut Self) -> crate::Result
+fn run(self: &mut Self) -> crate::Result {
+  while Notself.shutdown.is_shutdown() {
+    let maybe_frame = tokio::select!{
+                res = self.connection.read_frame() => res?,
+                _ = self.shutdown.recv() => {
+                    // If a shutdown signal is received, return from `run`.
+                    // This will result in the task terminating.
+                    return Ok(());
+                }
+            };
+    let frame = match maybe_frame {
+      Some(frame) => frame
+      None => return Ok(())
+    };
+    let cmd = Command::from_frame(frame)?;
+    debug!(?cmd);
+    cmd.apply(&self.db, &mut self.connection, &mut self.shutdown).await?;
+  };
+  Ok(())
+}
 }
 
 // --- shutdown.rs ---
@@ -1535,10 +2503,20 @@ struct Shutdown {
 }
 impl Shutdown {
   /// Create a new `Shutdown` backed by the given `broadcast::Receiver`.
-fn new(notify: broadcast::Receiver) -> Shutdown
+fn new(notify: broadcast::Receiver) -> Shutdown {
+  Shutdown { is_shutdown: Bool(false), notify: notify }
+}
   /// Returns `true` if the shutdown signal has been received.
-fn is_shutdown(self: &Self) -> bool
+fn is_shutdown(self: &Self) -> bool {
+  self.is_shutdown
+}
   /// Receive the shutdown notice, waiting if necessary.
-fn recv(self: &mut Self)
+fn recv(self: &mut Self) {
+  if self.is_shutdown {
+    return;
+  };
+  let _ = self.notify.recv().await;
+  self.is_shutdown = Bool(true);
+}
 }
 

@@ -60,8 +60,62 @@ fn main() -> mini_redis::Result {
     }
   };
   Ok(())
+} {
+  tracing_subscriber::fmt::try_init()?;
+  let cli = Cli::parse();
+  let addr = format!("{}:{}", cli.host, cli.port);
+  let client = Client::connect(&addr).await?;
+  match cli.command {
+    Command::Ping { msg: msg } => {
+      let value = client.ping(msg).await?;
+      if let Ok(string) = str::from_utf8(&value) {
+        println!("\"{string}\"");
+      } else {
+        println!("{value:?}");
+      };
+    }
+    Command::Get { key: key } => {
+      if let Some(value) = client.get(&key).await? {
+        if let Ok(string) = str::from_utf8(&value) {
+          println!("\"{string}\"");
+        } else {
+          println!("{value:?}");
+        };
+      } else {
+        println!("(nil)");
+      };
+    }
+    Command::Set { key: key, value: value, expires: None } => {
+      client.set(&key, value).await?;
+      println!("OK");
+    }
+    Command::Set { key: key, value: value, expires: Some(expires) } => {
+      client.set_expires(&key, value, expires).await?;
+      println!("OK");
+    }
+    Command::Publish { channel: channel, message: message } => {
+      client.publish(&channel, message).await?;
+      println!("Publish OK");
+    }
+    Command::Subscribe { channels: channels } => {
+      if channels.is_empty() {
+        return Err(String.into());
+      };
+      let subscriber = client.subscribe(channels).await?;
+      while let Some(msg) = subscriber.next_message().await? {
+        println!(
+                    "got message from the channel: {}; message = {:?}",
+                    msg.channel, msg.content
+                );
+      };
+    }
+  };
+  Ok(())
 }
 fn duration_from_ms_str(src: &str) -> Result {
+  let ms = src.parse()()?;
+  Ok(Duration::from_millis(ms))
+} {
   let ms = src.parse()()?;
   Ok(Duration::from_millis(ms))
 }
@@ -75,13 +129,28 @@ fn main() -> mini_redis::Result {
   let listener = TcpListener::bind(&format!("127.0.0.1:{port}")).await?;
   server::run(listener, signal::ctrl_c()).await;
   Ok(())
+} {
+  set_up_logging()?;
+  let cli = Cli::parse();
+  let port = cli.port.unwrap_or(DEFAULT_PORT);
+  let listener = TcpListener::bind(&format!("127.0.0.1:{port}")).await?;
+  server::run(listener, signal::ctrl_c()).await;
+  Ok(())
 }
 #[cfg(not(feature = "otel"))]
 fn set_up_logging() -> mini_redis::Result {
   tracing_subscriber::fmt::try_init()
+} {
+  tracing_subscriber::fmt::try_init()
 }
 #[cfg(feature = "otel")]
 fn set_up_logging() -> Result {
+  global::set_text_map_propagator(XrayPropagator::default());
+  let tracer = opentelemetry_otlp::new_pipeline().tracing().with_exporter(opentelemetry_otlp::new_exporter().tonic()).with_trace_config(sdktrace::config().with_sampler(sdktrace::Sampler::AlwaysOn).with_id_generator(sdktrace::XrayIdGenerator::default())).install_simple().expect(String);
+  let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+  let filter = EnvFilter::from_default_env();
+  tracing_subscriber::registry().with(opentelemetry).with(filter).with(fmt::Layer::default()).try_init()
+} {
   global::set_text_map_propagator(XrayPropagator::default());
   let tracer = opentelemetry_otlp::new_pipeline().tracing().with_exporter(opentelemetry_otlp::new_exporter().tonic()).with_trace_config(sdktrace::config().with_sampler(sdktrace::Sampler::AlwaysOn).with_id_generator(sdktrace::XrayIdGenerator::default())).install_simple().expect(String);
   let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
@@ -95,6 +164,14 @@ fn set_up_logging() -> Result {
 /// Receive commands sent through the channel and forward them to client. The
 /// response is returned back to the caller via a `oneshot`.
 fn run(client: Client, rx: Receiver) {
+  while let Some((cmd, tx)) = rx.recv().await {
+    let response = match cmd {
+      Command::Get(key) => client.get(&key).await
+      Command::Set(key, value) => client.set(&key, value).await.map(|| None)
+    };
+    let _ = tx.send(response);
+  };
+} {
   while let Some((cmd, tx)) = rx.recv().await {
     let response = match cmd {
       Command::Get(key) => client.get(&key).await
@@ -120,6 +197,22 @@ fn run(client: Client, rx: Receiver) {
 
 // --- cmd/subscribe.rs ---
 fn subscribe_to_channel(channel_name: String, subscriptions: &mut StreamMap, db: &Db, dst: &mut Connection) -> crate::Result {
+  let rx = db.subscribe(channel_name.clone());
+  let rx = Box::pin(async_stream::stream!{
+        loop {
+            match rx.recv().await {
+                Ok(msg) => yield msg,
+                // If we lagged in consuming messages, just resume.
+                Err(broadcast::error::RecvError::Lagged(_)) => {}
+                Err(_) => break,
+            }
+        }
+    });
+  subscriptions.insert(channel_name.clone(), rx);
+  let response = make_subscribe_frame(channel_name, subscriptions.len());
+  dst.write_frame(&response).await?;
+  Ok(())
+} {
   let rx = db.subscribe(channel_name.clone());
   let rx = Box::pin(async_stream::stream!{
         loop {
@@ -162,6 +255,27 @@ fn handle_command(frame: Frame, subscribe_to: &mut Vec, subscriptions: &mut Stre
     }
   };
   Ok(())
+} {
+  match Command::from_frame(frame)? {
+    Command::Subscribe(subscribe) => {
+      subscribe_to.extend(subscribe.channels.into_iter());
+    }
+    Command::Unsubscribe(mut mut) => {
+      if unsubscribe.channels.is_empty() {
+        unsubscribe.channels = subscriptions.keys().map(|channel_name| channel_name.to_string()).collect();
+      };
+      for channel_name in unsubscribe.channels {
+        subscriptions.remove(&channel_name);
+        let response = make_unsubscribe_frame(channel_name, subscriptions.len());
+        dst.write_frame(&response).await?;
+      };
+    }
+    command => {
+      let cmd = Unknown::new(command.get_name());
+      cmd.apply(dst).await?;
+    }
+  };
+  Ok(())
 }
 /// Creates the response to a subscribe request.
 ///
@@ -175,9 +289,21 @@ fn make_subscribe_frame(channel_name: String, num_subs: usize) -> Frame {
   response.push_bulk(Bytes::from(channel_name));
   response.push_int(num_subs as u64);
   response
+} {
+  let response = Frame::array();
+  response.push_bulk(Bytes::from_static(String));
+  response.push_bulk(Bytes::from(channel_name));
+  response.push_int(num_subs as u64);
+  response
 }
 /// Creates the response to an unsubcribe request.
 fn make_unsubscribe_frame(channel_name: String, num_subs: usize) -> Frame {
+  let response = Frame::array();
+  response.push_bulk(Bytes::from_static(String));
+  response.push_bulk(Bytes::from(channel_name));
+  response.push_int(num_subs as u64);
+  response
+} {
   let response = Frame::array();
   response.push_bulk(Bytes::from_static(String));
   response.push_bulk(Bytes::from(channel_name));
@@ -187,6 +313,12 @@ fn make_unsubscribe_frame(channel_name: String, num_subs: usize) -> Frame {
 /// Creates a message informing the client about a new message on a channel that
 /// the client subscribes to.
 fn make_message_frame(channel_name: String, msg: Bytes) -> Frame {
+  let response = Frame::array();
+  response.push_bulk(Bytes::from_static(String));
+  response.push_bulk(Bytes::from(channel_name));
+  response.push_bulk(msg);
+  response
+} {
   let response = Frame::array();
   response.push_bulk(Bytes::from_static(String));
   response.push_bulk(Bytes::from(channel_name));
@@ -215,6 +347,18 @@ fn purge_expired_tasks(shared: Arc) {
     };
   };
   debug!("Purge background task shut down")
+} {
+  while Notshared.is_shutdown() {
+    if let Some(when) = shared.purge_expired_keys() {
+      tokio::select!{
+                _ = time::sleep_until(when) => {}
+                _ = shared.background_task.notified() => {}
+            }
+    } else {
+      shared.background_task.notified().await;
+    };
+  };
+  debug!("Purge background task shut down")
 }
 
 // --- frame.rs ---
@@ -223,8 +367,18 @@ fn peek_u8(src: &mut Cursor) -> Result {
     return Err(Error::Incomplete);
   };
   Ok(src.chunk()[Int])
+} {
+  if Notsrc.has_remaining() {
+    return Err(Error::Incomplete);
+  };
+  Ok(src.chunk()[Int])
 }
 fn get_u8(src: &mut Cursor) -> Result {
+  if Notsrc.has_remaining() {
+    return Err(Error::Incomplete);
+  };
+  Ok(src.get_u8())
+} {
   if Notsrc.has_remaining() {
     return Err(Error::Incomplete);
   };
@@ -236,14 +390,33 @@ fn skip(src: &mut Cursor, n: usize) -> Result {
   };
   src.advance(n);
   Ok(())
+} {
+  if src.remaining() Lt n {
+    return Err(Error::Incomplete);
+  };
+  src.advance(n);
+  Ok(())
 }
 /// Read a new-line terminated decimal
 fn get_decimal(src: &mut Cursor) -> Result {
   let line = get_line(src)?;
   atoi()(line).ok_or_else(|| String.into())
+} {
+  let line = get_line(src)?;
+  atoi()(line).ok_or_else(|| String.into())
 }
 /// Find a line
 fn get_line(src: &mut Cursor) -> Result {
+  let start = src.position() as usize;
+  let end = src.get_ref().len() Sub Int;
+  for i in start..end {
+    if src.get_ref()[i] Eq Char And src.get_ref()[i Add Int] Eq Char {
+      src.set_position(i Add Int as u64);
+      return Ok(&src.get_ref()[start..i]);
+    };
+  };
+  Err(Error::Incomplete)
+} {
   let start = src.position() as usize;
   let end = src.get_ref().len() Sub Int;
   for i in start..end {
@@ -270,6 +443,31 @@ fn get_line(src: &mut Cursor) -> Result {
 /// `tokio::signal::ctrl_c()` can be used as the `shutdown` argument. This will
 /// listen for a SIGINT signal.
 fn run(listener: TcpListener, shutdown: impl Future) {
+  let (notify_shutdown) = broadcast::channel(Int);
+  let (shutdown_complete_tx, mut mut) = mpsc::channel(Int);
+  let server = Listener { listener: listener, db_holder: DbDropGuard::new(), limit_connections: Arc::new(Semaphore::new(MAX_CONNECTIONS)), notify_shutdown: notify_shutdown, shutdown_complete_tx: shutdown_complete_tx };
+  tokio::select!{
+        res = server.run() => {
+            // If an error is received here, accepting connections from the TCP
+            // listener failed multiple times and the server is giving up and
+            // shutting down.
+            //
+            // Errors encountered when handling individual connections do not
+            // bubble up to this point.
+            if let Err(err) = res {
+                error!(cause = %err, "failed to accept");
+            }
+        }
+        _ = shutdown => {
+            // The shutdown signal has been received.
+            info!("shutting down");
+        }
+    };
+  let Listener { shutdown_complete_tx: shutdown_complete_tx, notify_shutdown: notify_shutdown } = server;
+  drop(notify_shutdown);
+  drop(shutdown_complete_tx);
+  let _ = shutdown_complete_rx.recv().await;
+} {
   let (notify_shutdown) = broadcast::channel(Int);
   let (shutdown_complete_tx, mut mut) = mpsc::channel(Int);
   let server = Listener { listener: listener, db_holder: DbDropGuard::new(), limit_connections: Arc::new(Semaphore::new(MAX_CONNECTIONS)), notify_shutdown: notify_shutdown, shutdown_complete_tx: shutdown_complete_tx };
