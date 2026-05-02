@@ -6,6 +6,7 @@ use sage_ir::Db;
 use sage_ir::body_resolve::resolve_body;
 use sage_ir::item::Item;
 use sage_ir::resolve::{module_items, resolve_module_path};
+use sage_ir::resolved::Res;
 use sage_ir::types::TypeRefKind;
 
 use sage::driver::run_sage_with;
@@ -82,5 +83,49 @@ fn resolve_body_get_apply() {
 
         // "response" from `let response = ...`
         assert!(locals.iter().any(|l| l.name.text(sage.db) == "response"));
+    });
+}
+
+#[test]
+fn resolve_body_pattern_some_resolves() {
+    use sage_ir::resolved::{RExprKind, RPatKind};
+
+    run_sage_with(mini_redis_dir(), &[], |sage| {
+        let module =
+            resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
+        let method = find_method(sage.db, module, "Get", "apply");
+        let resolved = resolve_body(sage.db, method, module, sage.source_root, sage.root);
+
+        let stash = resolved.stash();
+        let body = &stash[*resolved.root()];
+        let root = &stash[body.root];
+
+        // The root is a block. Walk its stmts to find the IfLet.
+        let RExprKind::Block(stmts, _) = &root.kind else {
+            panic!("expected block at root");
+        };
+        // Find the let stmt whose init is the if-let
+        let mut found_some = false;
+        for stmt in &stash[*stmts] {
+            if let sage_ir::resolved::RStmtKind::Let(_, _, Some(init)) = &stmt.kind {
+                let init_expr = &stash[*init];
+                if let RExprKind::IfLet(pat, _, _, _) = &init_expr.kind {
+                    let pat_data = &stash[*pat];
+                    if let RPatKind::TupleStruct(res, _) = &pat_data.kind {
+                        // `Some(value)` should resolve to Res::Def (from std prelude)
+                        assert!(
+                            matches!(res, Res::Def(_)),
+                            "Some should resolve to Res::Def, got {:?}",
+                            res
+                        );
+                        found_some = true;
+                    }
+                }
+            }
+        }
+        assert!(
+            found_some,
+            "did not find TupleStruct(Some) pattern in if-let"
+        );
     });
 }
