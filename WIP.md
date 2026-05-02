@@ -136,9 +136,11 @@ pub trait TcxDb: Send + Sync {
     fn extern_crate(&self, name: &str) -> Option<CrateNum>;
     fn module_children(&self, crate_num: CrateNum, def_index: DefIndex) -> Vec<RawChild>;
     fn is_builtin_derive(&self, crate_num: CrateNum, def_index: DefIndex) -> bool;
+    fn def_path(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<String>;
 }
 // RawChild { name: String, crate_num, def_index, namespace }
 // Returns owned data — caller interns into salsa types.
+// def_path returns e.g. "std::prelude::v1::Ok" — used for display only.
 ```
 
 **Stash conventions** (`sage-stash`):
@@ -775,23 +777,23 @@ annotate paths with their resolution:
 - `Res::Def(symbol)` where `symbol.source(db)` is `Local(item)` →
   show the item's name: `<def Get>`, `<def parse_frames>`.
 - `Res::Def(symbol)` where `symbol.source(db)` is
-  `External(crate_num, def_index)` → show `<ext CrateNum:DefIndex>`,
-  e.g. `<ext 1:4523>`. We don't have the external name readily
-  available (TcxDb returns names only via `module_children`), so use
-  the numeric IDs. This is sufficient for snapshot tests — the IDs
-  are stable for a given dep build.
+  `External(crate_num, def_index)` → show `<ext path>` using
+  `TcxDb::def_path`, e.g. `<ext std::prelude::v1::Ok>`,
+  `<ext tracing::debug>`. Falls back to `<ext CrateNum:DefIndex>`
+  if no TcxDb is available (e.g. noop tests).
 - `Res::Local(id)` → show `<local:N>` where N is the LocalId index.
-  The variable name can be looked up from `RBody.locals[N].name` but
-  keeping the display terse is better for snapshots.
 - `Res::Err` → show `<unresolved>`.
 
 For `RPatKind::Bind(id, _)` → show `<bind:N>`.
 
 Example output for `Get::parse_frames()`:
 ```
-fn parse_frames(parse: &mut Parse) -> crate::Result<Get> {
+locals:
+  0: parse
+  1: key
+{
   let <bind:1> = <local:0>.next_string()?;
-  Ok(<def Get> { key: <local:1> })
+  <ext std::prelude::v1::Ok>(<def Get> { key: <local:1> })
 }
 ```
 
@@ -1284,22 +1286,17 @@ helpers" section with full code. It walks `module_items`, matches
 
 **Complete.** All 6 phases implemented and tested.
 
-### Commits
-- `phase 1: if-let/while-let lowering` — Added `IfLet`/`WhileLet` variants to `ExprKind`, updated `lower.rs` to detect `let_condition` nodes, added `PrettyPrint` impls, updated body snapshot.
-- `phase 2: resolved IR and body path resolution` — Created `resolved.rs` (all R-types), `body_resolve.rs` (BodyResolver with full walk, scope tracking, path resolution). Made `resolve_first_segment`, `symbol_to_module`, `item_in_namespace` `pub(crate)`.
-- `phase 3: pattern resolution` — Added test verifying `Some(value)` in if-let resolves to `Res::Def` from std prelude. (Pattern resolution was already implemented in Phase 2.)
-- `phase 4: macro path resolution` — Added test verifying `debug!()` resolves to external symbol from tracing crate. (Macro resolution was already wired in Phase 2.)
-- `phase 5: resolved body display` — Implemented `PrettyPrint` for all resolved body types, added `pretty_print_resolved` helper, added snapshot tests with normalized ext crate numbers.
-- `phase 6: salsa tracked resolve_body + full test suite` — Converted `resolve_body` to `#[salsa::tracked(returns(ref))]`, added query log test, added snapshot tests for `Get::key`, `Get::into_frame`, `Connection::read_frame`.
+### Post-plan improvements
+- **`TcxDb::def_path`:** Added `fn def_path(&self, CrateNum, DefIndex) -> Option<String>` to `TcxDb`, backed by `tcx.def_path_str(def_id)`. External symbols now display as `<ext std::prelude::v1::Ok>` instead of `<ext 2:40257>`. This made snapshot tests deterministic (removed `regex` dev dependency).
+- **Test cleanup:** Replaced manual tree-walking assertion tests with `expect_test` snapshots via `pretty_print_resolved`. Down from 10 tests to 6 focused snapshot + query-log tests.
 
 ### Deviations from plan
 - **Phases 2–4 merged in practice:** Phase 2 was more comprehensive than planned — it included all pattern resolution and macro path resolution. Phases 3 and 4 added targeted tests but no new implementation code.
-- **Snapshot normalization:** External crate numbers (`CrateNum`) are non-deterministic across rustc invocations. Added `regex` as a dev dependency to normalize `<ext N:DefIndex>` patterns in snapshot tests.
 - **Enum variant resolution:** `Frame::Bulk` and `Frame::Null` show as `<unresolved>` because enum variants aren't directly resolvable as value-namespace items through module-level resolution. This is expected — enum variant resolution requires type-qualified paths, which is deferred to typeck.
 - **`Bytes::from` in `into_frame`:** Shows as `<unresolved>` because `Bytes::from` is an associated function requiring impl-block lookup, which is explicitly deferred.
 
 ### Test summary
-- 10 body_resolve integration tests (resolve + display + query log)
+- 6 body_resolve integration tests (snapshot + query log)
 - 6 expand integration tests (existing)
 - 5 sage-ir expand tests (existing)
 - 2 snapshot tests (existing, updated for if-let/while-let)
