@@ -1,1309 +1,1306 @@
-# WIP: Name resolution and derive expansion
+# WIP: Body resolution — producing a resolved IR
 
-## First spike goal
+## Goal
 
-Given a module path like `mini_redis::cmd::get`:
+Given a function in a workspace crate, produce a **resolved body** —
+structurally identical to the syntactic body, but every path points at
+a `Symbol` or local variable ID instead of raw names. This is
+analogous to rustc's HIR: lexical name resolution is done, type-
+dependent resolution (methods, associated functions) is deferred.
 
-1. Resolve the path to its `SourceFile` via the module tree.
-2. Resolve all `use` imports in that module.
-3. Resolve derive attribute names to their definitions (builtin or
-   proc-macro).
-4. Expand builtin derives into `impl` blocks. Mark proc-macro derives
-   as opaque.
-5. Pretty-print the module with expanded impls.
+Target: resolve all paths in `Get::apply()`, `Get::parse_frames()`,
+`Connection::read_frame()`, and other mini-redis functions. Snapshot
+the resolved output and query log.
 
-All of this must be **on-demand** — only the salsa queries needed for
-the requested module should fire.
+## Codebase orientation
 
-### Integration tests
+### Crate structure
 
-Each test case produces **two snapshots** (checked with `expect-test`):
+- **`sage`** (root) — the `cargo-sage` binary. Contains `src/driver.rs`
+  (`run_sage_with`, `SageContext`), `src/tcx_impl.rs` (`RustcTcxDb`),
+  `src/metadata.rs` (workspace loading), `src/main.rs` (CLI).
+  Integration tests live in `tests/expand_tests.rs`.
+- **`sage-ir`** (`crates/sage-ir`) — the salsa-based IR. All tracked
+  structs, lowering, resolution, derive expansion. This is where the
+  new code goes.
+- **`sage-stash`** (`crates/sage-stash`) — type-erased `Copy`-only
+  storage with `Ptr<T>` and `Slice<T>` handles. Used for function
+  bodies.
 
-- **Expanded output** — the pretty-printed module with derive impls.
-- **Query log** — the list of salsa queries that fired. This is a
-  regression test for demand-driven behavior: if unrelated modules
-  appear in the log, something is wrong.
+### Key existing types (in `sage-ir`)
 
-Test cases to cover:
-
-- Module with builtin derives (e.g. `cmd::get` — `Debug`, `Clone`)
-- Module with proc-macro derives (e.g. clap's `Parser` — logged as
-  opaque)
-- Module with no derives (just use resolution)
-- Leaf module vs module that re-exports children
-
-## Design decisions
-
-### TyCtxt lifetime and TcxDb trait
-
-The entire `cargo sage` workflow runs inside the `after_expansion`
-callback. The salsa database and `TyCtxt` coexist for the duration.
-
-External crate metadata is accessed through a `TcxDb` trait that
-speaks sage IR types, keeping `sage-ir` rustc-free:
-
+**Database and traits** (`db.rs`, `lib.rs`):
 ```rust
-trait TcxDb {
-    fn extern_crate(&self, name: &str) -> Option<CrateNum>;
-    fn module_children<'db>(&self, db: &'db dyn Db, crate_num: CrateNum, def_index: DefIndex)
-        -> Vec<(Name<'db>, Symbol<'db>, Namespace)>;
-    fn is_builtin_derive(&self, crate_num: CrateNum, def_index: DefIndex) -> bool;
+#[salsa::db]
+pub trait Db: salsa::Database {
+    fn tcx(&self) -> &dyn tcx::TcxDb;
+    fn log_query(&self, entry: String);
+}
+
+// Database is 'static (salsa requires it). TcxDb is accessed via
+// Arc<dyn TcxDb>. The proxy sends requests to a rustc thread.
+pub struct Database {
+    storage: salsa::Storage<Self>,
+    tcx: Arc<dyn TcxDb>,
+    query_log: Arc<Mutex<Vec<String>>>,
 }
 ```
 
-The `Database` struct holds a `Box<dyn TcxDb + 'tcx>`, accessible via
-a method on the `Db` trait. `Database<'tcx>` carries the lifetime —
-no erasure. The impl lives in the `sage` binary crate and translates
-`TyCtxt` queries into sage types.
-
-- `extern_crate(name)` → returns `CrateNum`. The caller constructs
-  `Module` with `ModuleSource::External(crate_num, CRATE_DEF_INDEX)`.
-- `module_children(crate_num, def_index)` → returns sage
-  `(Name, Symbol, Namespace)` triples. Called by `definition()` for
-  external modules. Items that live in multiple namespaces (e.g. tuple
-  structs: type + value) produce multiple entries with distinct
-  `Symbol`s. Only `pub` items are returned — `TcxDb` is never used
-  for workspace-local crates. Asserts that `crate_num` is not
-  `LOCAL_CRATE` (0).
-- `is_builtin_derive(crate_num, def_index)` → used after resolution to
-  decide builtin vs proc-macro expansion. Checks both
-  `DefKind::Macro(MacroKind::Derive)` and `has_attr(rustc_builtin_macro)`
-  to avoid false positives on builtin bang macros. Asserts that
-  `crate_num` is not `LOCAL_CRATE` (0).
-
-### `module_children` implementation details
-
-Uses `child.res.opt_def_id()` — if `None` (primitives, non-macro
-attrs), skip. If `Some(def_id)`, map to `Symbol::External`. Re-exports
-are transparent: the `DefId` points at the original definition, and
-we don't track the re-export chain.
-
-### Module tree is on-demand
-
-Resolving `mini_redis::cmd::get` walks segment by segment:
-`definition(root, "cmd")` → resolve file → `definition(cmd, "get")`
-→ resolve file. Each step parses only the file it needs via
-`file_item_tree`. Sibling modules are not parsed.
-
-We cannot assume file paths match module names (`#[path = "..."]`
-exists), so we must parse each file on the way down to find its `mod`
-declarations.
-
-### Module vs ModItem
-
-`ModItem` is the syntactic node from lowering (`mod foo;` or
-`mod foo { ... }`). `Module` is the resolved concept — a module you
-can query for children, imports, etc. A tracked function maps
-`ModItem` → `Module`, resolving file-based modules to `SourceFile`s.
-The crate root is a `Module` constructed directly from the root
-`SourceFile` (no `ModItem`).
-
-### Symbol stays flat
-
-No sub-kinds in the interned struct. Namespace membership is derived
-from the underlying `Item`/`DefKind`, not stored on `Symbol`. Tracked
-methods (`sig`, `fields`, etc.) provide kind-specific data on demand.
-
-### Use desugaring is eager
-
-Use declarations are flattened into atomic `UseImport` entries during
-`file_item_tree` lowering. The CST walk is ~40 lines (recursive prefix
-accumulation) with no external dependencies, so there's no benefit to
-a separate lazy query. `UseItem` is replaced by `Vec<UseImport>` in
-the item tree.
-
-### Derive expansion result
-
-Derive resolution produces a uniform result:
-
+**Syntactic body** (`body.rs`) — lives in a `Stash`:
 ```rust
-enum DeriveResult<'db> {
-    Builtin { impls: Vec<ImplItem<'db>> },
-    ProcMacro { symbol: Symbol<'db> },  // opaque for now
-}
+pub type FunctionBody<'db> = Stashed<Ptr<Body<'db>>>;
+
+pub struct Body<'db> { pub root: Ptr<Expr<'db>>, pub span: SpanIndices }
+pub struct Expr<'db> { pub kind: ExprKind<'db>, pub span: SpanIndices }
+pub struct Stmt<'db> { pub kind: StmtKind<'db>, pub span: SpanIndices }
+pub struct Pat<'db>  { pub kind: PatKind<'db>,  pub span: SpanIndices }
+
+// All body types derive AllocStashData (from sage-stash-macros).
+// They must be Copy. They can contain salsa IDs (Name, Path, TypeRef)
+// which are Copy because salsa tracked struct handles are just IDs.
 ```
 
-Both go through the same name resolution and expansion path; they
-diverge at the expansion step. Builtins generate impl blocks directly.
-Proc-macros go through the same interface but return empty tokens for
-now (dylib invocation added later).
+Key `ExprKind` variants that contain paths (need resolution):
+- `Path(Path<'db>)` — value path expression
+- `StructLit(Path<'db>, Slice<FieldInit<'db>>)` — struct literal
+- `MacroCall(Path<'db>, TokenTree<'db>)` — macro invocation
+- `MethodCall(Ptr<Expr>, Name<'db>, Slice<Expr>)` — stays unresolved
+- `Field(Ptr<Expr>, Name<'db>)` — stays unresolved
 
-### Query logging
+Key `PatKind` variants that contain paths:
+- `Bind(Name<'db>, Mutability)` — introduces a local variable
+- `Path(Path<'db>)` — enum variant or constant
+- `Struct(Path<'db>, Slice<FieldPat<'db>>)` — struct pattern
+- `TupleStruct(Path<'db>, Slice<Pat<'db>>)` — tuple struct pattern
 
-Override `salsa::Database::salsa_event()` on the database to capture
-query names with key arguments. Integration tests snapshot the log
-to verify demand-driven behavior. No dependency edges — just names.
+**Items** (`item.rs`):
+```rust
+enum Item<'db> {
+    Function(FunctionItem<'db>), Struct(StructItem<'db>),
+    Enum(EnumItem<'db>), Trait(TraitItem<'db>), Impl(ImplItem<'db>),
+    TypeAlias(..), Const(..), Static(..), Mod(ModItem<'db>),
+    Use(UseGroup<'db>), Error(SpanIndices),
+}
+// FunctionItem has: name, attrs, params, ret_type, is_async,
+// is_unsafe, body (FunctionBody), span_table, span.
+// body is a tracked field — changes to it don't invalidate
+// queries that only read params/ret_type.
+```
 
-## New types
+**Module-level resolution** (`resolve.rs`):
+```rust
+// Existing queries:
+fn module_items(db, module) -> Vec<Item>
+fn module_use_imports(db, module) -> Vec<UseImport>
+fn definition(db, module, name) -> Option<Symbol>
+fn resolve_mod(db, parent, mod_item, source_root) -> Option<Module>
+fn resolve_module_path(db, root, source_root, segments) -> Option<Module>
 
-### Module
+// Name resolution (not a salsa tracked fn — takes too many params):
+fn resolve_name(db, module, source_root, crate_root, name, ns)
+    -> Result<Symbol, ResolutionError>
 
+// Use path resolution:
+fn resolve_use_path(db, current_module, source_root, crate_root, import)
+    -> Result<Symbol, ResolutionError>
+
+// First-segment resolution (crate/self/super/bare → module):
+fn resolve_first_segment(db, current_module, source_root, crate_root, segments)
+    -> Result<(Module, &[Name]), ResolutionError>
+```
+
+**Important:** `resolve_name` resolves a *single name* in a module's
+scope. It checks: declared items → named use imports → glob imports →
+extern prelude → std prelude. It does NOT handle multi-segment paths.
+For multi-segment paths in bodies, we need to resolve the first
+segment (possibly a local variable or module-level item), then walk
+remaining segments via `definition()`.
+
+**Symbols and modules** (`symbol.rs`, `module.rs`):
 ```rust
 #[salsa::interned]
-struct Module<'db> {
-    source: ModuleSource<'db>,
-}
+pub struct Symbol<'db> { pub source: SymbolSource<'db> }
+enum SymbolSource<'db> { Local(Item<'db>), External(CrateNum, DefIndex) }
 
+#[salsa::interned]
+pub struct Module<'db> { pub source: ModuleSource<'db> }
 enum ModuleSource<'db> {
     Local { file: SourceFile, parent: Option<Module<'db>> },
     External(CrateNum, DefIndex),
 }
 ```
 
-### Symbol
+**TcxDb** (`tcx/mod.rs`) — external crate metadata interface:
+```rust
+pub trait TcxDb: Send + Sync {
+    fn extern_crate(&self, name: &str) -> Option<CrateNum>;
+    fn module_children(&self, crate_num: CrateNum, def_index: DefIndex) -> Vec<RawChild>;
+    fn is_builtin_derive(&self, crate_num: CrateNum, def_index: DefIndex) -> bool;
+}
+// RawChild { name: String, crate_num, def_index, namespace }
+// Returns owned data — caller interns into salsa types.
+```
+
+**Stash conventions** (`sage-stash`):
+- Types in a Stash must be `Copy` and derive `AllocStashData`.
+- `Ptr<T>` is a handle to one value. `Slice<T>` is a handle to a
+  contiguous array. Both are `Copy`.
+- `Stashed<Ptr<T>>` pairs a `Stash` with a root pointer. It implements
+  `PartialEq` via byte comparison of the stash buffer — if the bytes
+  are identical, salsa skips downstream invalidation.
+- Salsa IDs (`Name<'db>`, `Path<'db>`, `TypeRef<'db>`, `Symbol<'db>`)
+  are `Copy` and can be stored in stash types directly.
+
+**Display conventions** (`display.rs`):
+- Item-level types use `impl fmt::Display` with `salsa::with_attached_database`.
+- Body types use a `PrettyPrint` trait: `fn pretty(&self, f, stash, indent)`.
+  This is needed because stash types require the `&Stash` to dereference
+  `Ptr`/`Slice` handles.
+- The database must be attached (`db.attach(|| ...)`) for Display impls
+  to access salsa data.
+
+**Existing integration tests** (`tests/expand_tests.rs`):
+- Tests call `run_sage_with(mini_redis_dir(), &[], |sage| { ... })`.
+- `sage` is a `SageContext { db, root, source_root }`.
+- Tests use `expect![[...]]` (from `expect-test`) for inline snapshots.
+- Tests run the full pipeline: workspace loading, dep building,
+  `rustc_driver`, `RustcTcxDb`, salsa Database.
+
+## Design: Resolved IR
+
+The resolved IR mirrors the syntactic body 1:1. Same expression
+variants, same statement kinds, same pattern kinds. The only
+difference: where the syntactic IR has `Path`, the resolved IR has
+`Res`, and where it has `Bind(Name)`, the resolved IR has
+`Bind(LocalId)`.
+
+### New types
+
+**File:** new `crates/sage-ir/src/resolved.rs`
 
 ```rust
-#[salsa::interned]
-struct Symbol<'db> {
-    source: SymbolSource<'db>,
+/// What a path resolved to.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Res<'db> {
+    /// A module-level or external definition.
+    Def(Symbol<'db>),
+    /// A local variable (param, let binding, for variable, closure param).
+    Local(LocalId),
+    /// Couldn't resolve (diagnostic emitted).
+    Err,
 }
 
-enum SymbolSource<'db> {
-    Local(Item<'db>),
-    External(CrateNum, DefIndex),
+/// Identifies a local variable within a function body.
+/// Index into RBody.locals.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct LocalId(pub u32);
+
+/// Metadata about a local variable.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct LocalVar<'db> {
+    pub name: Name<'db>,
+    pub span: SpanIndices,
 }
 ```
 
-### ExternPrelude
+`Res`, `LocalId`, and `LocalVar` must implement `AllocStashData`
+(they live in the resolved body's Stash). They must also implement
+`StashDirect` (from `sage-stash` — defined in `sage-stash/src/lib.rs`
+at the `pub trait StashDirect: Copy {}` line) since they contain no
+`Ptr`/`Slice` handles — their `StashEq`/`StashHash` can use plain
+`Eq`/`Hash`. Implement with `impl StashDirect for Res<'_> {}` etc.
+
+`Symbol<'db>` is a salsa interned struct (just a `Copy` ID), so it
+can be stored in stash types directly. The `AllocStashData` derive
+macro already works with salsa interned types — the existing
+`body.rs` types (`Expr`, `Pat`, `Stmt`) contain `Name<'db>`,
+`Path<'db>`, `TypeRef<'db>` (all salsa tracked/interned) and derive
+`AllocStashData` without issue.
+
+### Resolved body structure
 
 ```rust
-/// Stored as a side table on the database, not a salsa input.
-struct ExternPrelude {
-    crates: HashMap<String, CrateNum>,
-}
-```
-
-## Module tree
-
-The `definition(db, module, name)` query scans a module's
-`file_item_tree` for an item with the given name. It does not recurse
-into child modules.
-
-For external crates, the module tree is implicit — `module_children`
-on `TyCtxt` gives children on demand.
-
-## Name resolution algorithm
-
-```
-resolve(name, namespace, scope) -> Result<Symbol, ResolutionError>
-
-1. Walk outward: block → function → module → crate root
-2. At each scope:
-   a. Check declared items + explicit use imports in target namespace
-   b. Exactly one → Ok(symbol)
-   c. Multiple → Err(Ambiguity)
-   d. Zero → check glob imports, search their targets
-   e. Glob: one match → Ok. Multiple → Err(Ambiguity).
-   f. Glob + outer-scope candidate → Err(Ambiguity)
-3. After crate root: check extern prelude
-4. Then: check std prelude (known set of names)
-5. Nothing → Err(Unresolved)
-```
-
-### Use imports
-
-Two prerequisite fixes in the lowering pass:
-
-1. **Path segments** — `lower_path()` currently produces single-segment
-   paths with the full text (e.g. `"std::collections::HashMap"` as one
-   segment). Fix to walk `scoped_identifier` nodes and produce proper
-   multi-segment `Vec<Name>`. This affects all paths (type refs, trait
-   paths, etc.), not just use statements.
-
-2. **Use desugaring** — replace the current `UseItem` lowering (which
-   produces a single `Path` + optional alias) with a recursive CST walk
-   that produces flat `UseImport` entries. The `UseItem` type is
-   removed; `file_item_tree` produces `Vec<UseImport>` directly.
-
-The relevant tree-sitter node kinds for use declarations:
-
-- `scoped_identifier` — `foo::Bar`
-- `scoped_use_list` — `foo::{A, B}`, prefix + `use_list`
-- `use_as_clause` — `foo::Bar as Baz`
-- `use_wildcard` — `foo::*`
-- `use_list` — `{A, B, C}` (can nest)
-- `self` / `crate` / `super` — distinct node kinds (not `identifier`)
-
-A `use` declaration desugars into one or more `UseImport` entries
-(purely syntactic — no path resolution yet):
-
-```rust
-/// A single flattened use import (syntactic, not resolved).
-#[salsa::tracked]
-struct UseImport<'db> {
-    /// The full path as written, e.g. [foo, bar].
-    path: Path<'db>,
-    kind: UseKind<'db>,
-}
-
-enum UseKind<'db> {
-    Named(Name<'db>),  // use foo::bar / use foo::bar as baz
-    Glob,              // use foo::bar::*
-    Unnamed,           // use foo::Bar as _
-}
-```
-
-`use foo::bar` is `{ path: [foo, bar], kind: Named("bar") }` — the
-alias always defaults to the last segment. `use foo::{self, Bar}`
-normalizes `self` to `{ path: [foo], kind: Named("foo") }` — trailing
-`self` never appears in the output.
-
-Resolution of the path happens on demand during name resolution — if
-we're resolving name `X`, we walk the `UseImport` whose alias is `X`
-but don't touch unrelated imports.
-
-Desugaring examples:
-
-```
-use bytes::Bytes;
-  → { path: [bytes, Bytes], alias: Bytes }
-
-use crate::{Connection, Frame};
-  → { path: [crate, Connection], alias: Connection }
-  → { path: [crate, Frame], alias: Frame }
-
-use crate::cmd::{Get, Ping};
-  → { path: [crate, cmd, Get], alias: Get }
-  → { path: [crate, cmd, Ping], alias: Ping }
-
-use tokio::time::{self, Duration};
-  → { path: [tokio, time], alias: time }
-  → { path: [tokio, time, Duration], alias: Duration }
-
-use std::io::{self, Cursor};
-  → { path: [std, io], alias: io }
-  → { path: [std, io, Cursor], alias: Cursor }
-
-use foo::Bar as Baz;
-  → { path: [foo, Bar], alias: Baz }
-
-use std::collections::*;
-  → { path: [std, collections], is_glob: true }
-
-use self::inner::Thing;
-  → { path: [self, inner, Thing], alias: Thing }
-
-use super::other::Stuff;
-  → { path: [super, other, Stuff], alias: Stuff }
-```
-
-#### First-segment resolution (edition 2018+)
-
-In `use` paths, the first segment resolves against:
-
-- `crate` → workspace crate root module
-- `self` → current module
-- `super` → parent module
-- bare identifier → checked against the **current module's items first**,
-  then the **extern prelude**. Local items shadow the extern prelude.
-  (Use `::foo` to force extern prelude lookup.)
-
-So `use foo::Bar` inside `mod outer` resolves `foo` as a child of
-`outer`, not the crate root. This is the current module's items, not
-the crate root's items. To reach the crate root, use `use crate::...`.
-
-#### `self` in brace syntax
-
-`use foo::{self, Bar}` imports the module `foo` itself (as `foo`) plus
-`foo::Bar`. Note: `self` in this position only imports from the **type
-namespace** — it won't import a function with the same name.
-
-#### Resolution precedence tests
-
-These should be included in the test suite to verify first-segment
-resolution behavior.
-
-```rust
-// TEST: local module shadows extern crate
-// Expected: resolves to local mod serde, not extern crate serde
-mod serde {
-    pub fn hello() {}
-}
-use serde::hello; // OK — resolves to local mod
-```
-
-```rust
-// TEST: use resolves against current module, not crate root
-// Expected: `use inner::Thing` works in outer (inner is a child)
-mod outer {
-    pub mod inner {
-        pub struct Thing;
-    }
-    use inner::Thing; // OK — inner is a child of outer
-}
-```
-
-```rust
-// TEST: use does NOT resolve siblings
-// Expected: error — inner is not a child of sibling
-mod outer {
-    pub mod inner {
-        pub struct Thing;
-    }
-    mod sibling {
-        use inner::Thing; // ERROR: unresolved import
-    }
-}
-```
-
-```rust
-// TEST: glob import shadows extern prelude
-// Expected: resolves to glob-imported serde, not extern crate
-mod stuff {
-    pub mod serde {
-        pub fn hello() {}
-    }
-}
-use stuff::*;
-use serde::hello; // OK — glob-imported serde shadows extern crate
-```
-
-```rust
-// TEST: explicit use import shadows extern prelude
-// Expected: resolves to use-imported serde, not extern crate
-mod stuff {
-    pub mod serde {
-        pub fn hello() {}
-    }
-}
-use stuff::serde;
-use serde::hello; // OK — use-imported serde shadows extern crate
-```
-
-```rust
-// TEST: ::prefix forces extern prelude
-// Expected: resolves to extern crate std, not local mod std
-mod std {
-    pub mod collections {
-        pub struct MyHashMap;
-    }
-}
-use ::std::collections::HashMap; // OK — extern crate std
-use std::collections::MyHashMap; // OK — local mod std
-```
-
-```rust
-// TEST: macro_rules! and derive macro coexist with same name
-// Expected: #[derive(Debug)] resolves to the derive macro,
-//           Debug!() resolves to the macro_rules! macro
-use std::prelude::v1::Debug;
-
-macro_rules! Debug { () => { 0 } }
-
-#[derive(Debug)]
-struct Foo { }
-
-fn main() {
-    println!("{}", Debug!());
-}
-```
-
-### Namespaces
-
-Three namespaces: type, value, macro. The macro namespace is further
-subdivided by `MacroKind` (bang, attr, derive) — these are effectively
-separate sub-namespaces. A `macro_rules! Debug` and `#[derive(Debug)]`
-can coexist with the same name; Rust disambiguates by usage context.
-
-```rust
-enum Namespace {
-    Type,
-    Value,
-    Macro(MacroKind),
-}
-
-enum MacroKind {
-    Bang,
-    Attr,
-    Derive,
-}
-```
-
-`module_children` can return multiple entries for the same name in
-different macro sub-namespaces. Resolution filters by the specific
-`MacroKind` needed: `#[derive(X)]` resolves with
-`Namespace::Macro(MacroKind::Derive)`, `X!()` resolves with
-`Namespace::Macro(MacroKind::Bang)`.
-
-A single `use` can import into all namespaces (including all macro
-sub-namespaces). For derive resolution we need
-`Macro(MacroKind::Derive)`, but the infrastructure tracks all of them.
-
-### Prelude
-
-The std prelude is a known set of names. We inject them as if there's
-an implicit `use std::prelude::v1::*` at the crate root. Since this is
-a glob from an external crate, it's resolved via the dep snapshot —
-query `module_children` on `std::prelude::v1`.
-
-### Subsetting restrictions (unchanged)
-
-- `macro_rules!` definitions are registered in the module scope for
-  name resolution (`Namespace::Macro(MacroKind::Bang)`) but expansion
-  is not implemented — attempting to expand one is an error
-- `macro_rules!` scoping is treated as module-scoped (visible
-  throughout the module) rather than textual (visible only after the
-  definition point). Known gap — incorrect for edge cases but fine
-  for mini-redis
-- No workspace glob imports
-- No proc-macro crates defined in workspace
-- No `#[path = "..."]` attributes on modules
-- Derive helper attributes not resolved (noted as gap)
-- Time-traveling ambiguities from macro-introduced names ignored
-- Name resolution cycles panic (default salsa behavior); fixpoint
-  resolution deferred
-
-## Derive resolution
-
-Given `#[derive(Foo)]` on an item:
-
-1. Resolve `Foo` in the macro namespace using the algorithm above
-2. Result is a `Symbol` pointing to either:
-   - A builtin derive (`Debug`, `Clone`, `Default`, etc.)
-   - A proc-macro derive from an external crate (`Parser`, `Subcommand`)
-
-### Builtin derives
-
-`Debug`, `Clone`, `Default`, etc. are resolved through the std prelude
-like any other name — query `module_children` on `std::prelude::v1`
-to discover what's available. The `Symbol` for these will have
-`SymbolSource::External` pointing at their `DefId` in the dep snapshot.
-We detect them as builtins by checking the `DefId` (e.g.,
-`tcx.is_builtin_derive(def_id)` or similar).
-
-### Proc-macro derives
-
-`Parser`, `Subcommand` (clap) — the `Symbol` points at a proc-macro
-`DefId`. Expansion means calling the compiled dylib.
-
-## Expansion
-
-### Builtin derives
-
-Generate the impl directly in our IR. We know the struct fields, we
-know what `Debug`/`Clone`/`Default` impls look like. Hardcoded for
-the spike; follows the same `DeriveResult` interface as proc-macros.
-
-### Proc-macro derives
-
-Full plumbing in place: resolution identifies the proc-macro `Symbol`,
-expansion is called through the same interface as builtins. For the
-initial spike the proc-macro expander returns empty tokens — the dylib
-invocation is easy to add on top once builtins are working.
-
-mini-redis uses `Parser` and `Subcommand` from clap in
-`src/bin/cli.rs` and `src/bin/server.rs`, which exercises this path.
-
-## Implementation plan
-
-### Step 1: Fix path lowering
-
-**Files:** `crates/sage-ir/src/lower.rs`
-
-Both `lower_path` functions (item-level at L454 and body-level at L526)
-currently stuff the full node text into a single `Name`. Fix to walk
-`scoped_identifier` / `scoped_type_identifier` nodes and produce
-multi-segment `Vec<Name>`.
-
-```rust
-// crates/sage-ir/src/lower.rs — replace both lower_path impls
-
-impl<'db> LowerCtx<'db> {
-    fn lower_path(&self, node: Node<'_>) -> Path<'db> {
-        let mut segments = Vec::new();
-        self.collect_path_segments(node, &mut segments);
-        Path::new(self.db, segments, self.span(node))
-    }
-
-    fn collect_path_segments(&self, node: Node<'_>, out: &mut Vec<Name<'db>>) {
-        // Recurse into scoped_identifier / scoped_type_identifier:
-        //   node.child_by_field_name("path") → prefix
-        //   node.child_by_field_name("name") → last segment
-        // Base cases: identifier, type_identifier, self, crate, super,
-        //   primitive_type, metavariable
-        // generic_type: recurse into the type child, ignore type_arguments
-        ...
-    }
-}
-```
-
-**Test:** Update `mini_redis_signatures.txt` snapshot. Paths like
-`crate::Result<Get>` should now show as `[crate, Result]` (with
-generics handled separately) instead of a single blob.
-
----
-
-### Step 2: Use flattening
-
-**Files:** `crates/sage-ir/src/lower.rs`, `crates/sage-ir/src/item.rs`,
-`crates/sage-ir/src/types.rs`, `crates/sage-ir/src/display.rs`
-
-Define `UseImport` and `UseKind` in `types.rs`:
-
-```rust
-#[salsa::tracked]
-pub struct UseImport<'db> {
-    pub path: Path<'db>,
-    pub kind: UseKind<'db>,
+pub type ResolvedBody<'db> = Stashed<Ptr<RBody<'db>>>;
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub struct RBody<'db> {
+    pub root: Ptr<RExpr<'db>>,
+    /// All local variables in this body. Indexed by LocalId.
+    pub locals: Slice<LocalVar<'db>>,
     pub span: SpanIndices,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, salsa::Update)]
-pub enum UseKind<'db> {
-    Named(Name<'db>),
-    Glob,
-    Unnamed,
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub struct RExpr<'db> {
+    pub kind: RExprKind<'db>,
+    pub span: SpanIndices,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub enum RExprKind<'db> {
+    Literal(Literal),
+    Path(Res<'db>),
+    Block(Slice<RStmt<'db>>, Option<Ptr<RExpr<'db>>>),
+    Call(Ptr<RExpr<'db>>, Slice<RExpr<'db>>),
+    MethodCall(Ptr<RExpr<'db>>, Name<'db>, Slice<RExpr<'db>>),
+    Field(Ptr<RExpr<'db>>, Name<'db>),
+    Binary(Ptr<RExpr<'db>>, BinaryOp, Ptr<RExpr<'db>>),
+    Unary(UnaryOp, Ptr<RExpr<'db>>),
+    Ref(Ptr<RExpr<'db>>, Mutability),
+    If(Ptr<RExpr<'db>>, Ptr<RExpr<'db>>, Option<Ptr<RExpr<'db>>>),
+    Match(Ptr<RExpr<'db>>, Slice<RMatchArm<'db>>),
+    Loop(Ptr<RExpr<'db>>),
+    While(Ptr<RExpr<'db>>, Ptr<RExpr<'db>>),
+    For(Ptr<RPat<'db>>, Ptr<RExpr<'db>>, Ptr<RExpr<'db>>),
+    Break(Option<Ptr<RExpr<'db>>>),
+    Continue,
+    Return(Option<Ptr<RExpr<'db>>>),
+    Assign(Ptr<RExpr<'db>>, Ptr<RExpr<'db>>),
+    Await(Ptr<RExpr<'db>>),
+    Try(Ptr<RExpr<'db>>),
+    Closure(Slice<RClosureParam<'db>>, Ptr<RExpr<'db>>),
+    Tuple(Slice<RExpr<'db>>),
+    Array(Slice<RExpr<'db>>),
+    Index(Ptr<RExpr<'db>>, Ptr<RExpr<'db>>),
+    Cast(Ptr<RExpr<'db>>, TypeRef<'db>),
+    StructLit(Res<'db>, Slice<RFieldInit<'db>>),
+    Range(Option<Ptr<RExpr<'db>>>, Option<Ptr<RExpr<'db>>>),
+    MacroCall(Res<'db>, TokenTree<'db>),
+    Missing,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub struct RStmt<'db> {
+    pub kind: RStmtKind<'db>,
+    pub span: SpanIndices,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub enum RStmtKind<'db> {
+    Let(Ptr<RPat<'db>>, Option<TypeRef<'db>>, Option<Ptr<RExpr<'db>>>),
+    Expr(Ptr<RExpr<'db>>),
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub struct RPat<'db> {
+    pub kind: RPatKind<'db>,
+    pub span: SpanIndices,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub enum RPatKind<'db> {
+    Wildcard,
+    Bind(LocalId, Mutability),
+    Path(Res<'db>),
+    Tuple(Slice<RPat<'db>>),
+    Struct(Res<'db>, Slice<RFieldPat<'db>>),
+    TupleStruct(Res<'db>, Slice<RPat<'db>>),
+    Ref(Ptr<RPat<'db>>, Mutability),
+    Literal(Literal),
+    Or(Slice<RPat<'db>>),
+    Rest,
+    Missing,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub struct RFieldInit<'db> {
+    pub name: Name<'db>,
+    pub value: Ptr<RExpr<'db>>,
+    pub span: SpanIndices,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub struct RFieldPat<'db> {
+    pub name: Name<'db>,
+    pub pat: Ptr<RPat<'db>>,
+    pub span: SpanIndices,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub struct RMatchArm<'db> {
+    pub pat: Ptr<RPat<'db>>,
+    pub guard: Option<Ptr<RExpr<'db>>>,
+    pub body: Ptr<RExpr<'db>>,
+    pub span: SpanIndices,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub struct RClosureParam<'db> {
+    pub pat: Ptr<RPat<'db>>,
+    pub ty: Option<TypeRef<'db>>,
+    pub span: SpanIndices,
 }
 ```
 
-Replace `UseItem` in `item.rs`. Change `Item::Use(UseItem)` to carry
-the flattened imports — either `Item::Use(Vec<UseImport>)` or remove
-`Use` from `Item` and have `file_item_tree` return uses separately.
+### What changes from the syntactic body
 
-Replace `lower_use` with a recursive walk:
+| Syntactic | Resolved | Notes |
+|---|---|---|
+| `ExprKind::Path(Path)` | `RExprKind::Path(Res)` | Resolved to def or local |
+| `ExprKind::StructLit(Path, ..)` | `RExprKind::StructLit(Res, ..)` | Type path resolved |
+| `ExprKind::MacroCall(Path, ..)` | `RExprKind::MacroCall(Res, ..)` | Macro path resolved |
+| `ExprKind::MethodCall(..)` | `RExprKind::MethodCall(..)` | **Unchanged** — needs types |
+| `ExprKind::Field(..)` | `RExprKind::Field(..)` | **Unchanged** — needs types |
+| `PatKind::Bind(Name, ..)` | `RPatKind::Bind(LocalId, ..)` | Name → local variable ID |
+| `PatKind::Path(Path)` | `RPatKind::Path(Res)` | Resolved |
+| `PatKind::Struct(Path, ..)` | `RPatKind::Struct(Res, ..)` | Resolved |
+| `PatKind::TupleStruct(Path, ..)` | `RPatKind::TupleStruct(Res, ..)` | Resolved |
+
+Everything else (literals, operators, blocks, control flow) passes
+through structurally unchanged — just recursively rebuilt in the
+output stash.
+
+### What stays unresolved (deferred to typeck)
+
+- **Method calls** — `receiver.method(args)`. Method name preserved.
+- **Field accesses** — `expr.field`. Field name preserved.
+- **Associated functions** — `Type::func()`. The type path is resolved
+  but which `impl` block provides `func` is unknown. There is no
+  impl-block lookup infrastructure yet.
+- **Operator overloads** — `a + b` stays as `Binary(a, Add, b)`.
+- **Type references in bodies** — `let x: Foo`, `x as Bar`. The
+  `TypeRef` passes through unchanged (still contains unresolved
+  `Path`). Type path resolution is typeck's job.
+
+## Scope model
+
+```
+resolve_in_body(name, ns, scope_stack) -> Res
+
+1. Walk the scope stack innermost → outermost:
+   a. Block scope: let bindings visible from their definition point
+   b. Closure scope: closure params
+   c. Function scope: function params
+2. After exhausting local scopes: delegate to module-level
+   resolve_name(module, name, ns)
+```
+
+Local scopes only apply to single-segment paths in the value
+namespace. Multi-segment paths (`foo::bar`) and type-namespace paths
+always go directly to module-level resolution.
+
+### Path resolution algorithm for bodies
+
+Given a path with segments `[s0, s1, ..., sN]` in a body context:
+
+**Single-segment value path** (`[name]` in value namespace):
+1. Check local scopes → `Res::Local(id)`
+2. Check module items → `Res::Def(symbol)`
+3. Check use imports → resolve the import path → `Res::Def(symbol)`
+4. Check glob imports → `Res::Def(symbol)`
+5. Check extern prelude → `Res::Def(symbol)`
+6. Check std prelude → `Res::Def(symbol)`
+7. → `Res::Err`
+
+This reuses `resolve_name(db, module, source_root, crate_root, name, ns)`
+from `resolve.rs` for steps 2–6.
+
+**Multi-segment path** (`[s0, s1, ..., sN]`):
+1. Resolve `s0`:
+   - `crate` → crate root module
+   - `self` → current module
+   - `super` → parent module
+   - bare identifier → check module items, then extern prelude
+     (same as `resolve_first_segment` in `resolve.rs`)
+2. Walk `s1..sN-1` via `definition(db, module, segment)`, converting
+   each `Symbol` to a `Module` via `symbol_to_module`.
+3. Resolve `sN` via `definition(db, module, sN)` → `Res::Def(symbol)`.
+
+This reuses `resolve_first_segment` and `definition` from `resolve.rs`.
+
+**Struct literal path** (`Path` in `StructLit`):
+Resolve in type namespace. Same multi-segment algorithm but the final
+segment uses `Namespace::Type`.
+
+**Macro call path** (`Path` in `MacroCall`):
+Resolve in `Namespace::Macro(MacroKind::Bang)`. Same multi-segment
+algorithm.
+
+**Pattern paths** (`Path` in `PatKind::Path/Struct/TupleStruct`):
+- `PatKind::Path` → value namespace (constants, enum variants)
+- `PatKind::Struct` → type namespace
+- `PatKind::TupleStruct` → value namespace (tuple struct constructors)
+
+## Macro handling
+
+Macro calls in the resolved IR keep their `Res` (pointing at the
+macro's `Symbol`) and their raw `TokenTree`. **No expansion happens
+during resolution** — the macro path is resolved, but the tokens are
+opaque.
+
+This is sufficient because:
+- Builtin macros (`format!`, `println!`, `vec!`, `panic!`, etc.) don't
+  introduce new name bindings into the enclosing scope.
+- Their arguments are mostly format strings (not path expressions).
+- Expansion is a separate future concern.
+
+mini-redis macro usage:
+
+| Macro | Source | Count | Resolution target |
+|---|---|---|---|
+| `format!` | builtin | 8 | `Res::Def(core::format)` |
+| `println!` | builtin | 5 | `Res::Def(std::println)` |
+| `panic!` | builtin | 3 | `Res::Def(core::panic)` |
+| `vec!` | builtin | 3 | `Res::Def(std::vec)` |
+| `assert!` / `assert_eq!` | builtin | 4 | `Res::Def(core::assert)` |
+| `write!` | builtin | 1 | `Res::Def(core::write)` |
+| `unreachable!` | builtin | 1 | `Res::Def(core::unreachable)` |
+| `unimplemented!` | builtin | 1 | `Res::Def(core::unimplemented)` |
+| `debug!` / `info!` / `error!` | tracing | ~10 | `Res::Def(tracing::debug)` etc. |
+| `tokio::select!` | tokio | 3 | `Res::Def(tokio::select)` |
+| `async_stream::stream!` | async-stream | 1 | `Res::Def(async_stream::stream)` |
+
+All of these resolve through the existing `resolve_name` with
+`Namespace::Macro(MacroKind::Bang)`. The std prelude and extern
+prelude already handle the lookup.
+
+## BodyResolver implementation
+
+### Core struct
+
+**File:** new `crates/sage-ir/src/body_resolve.rs`
 
 ```rust
-impl<'db> LowerCtx<'db> {
-    fn lower_use(&mut self, node: Node<'_>) -> Vec<UseImport<'db>> {
-        let mut imports = Vec::new();
-        let mut prefix = Vec::new();
-        // node's child (after visibility) is the use tree root
-        self.flatten_use_tree(node.child(...)?, &mut prefix, &mut imports);
-        imports
+struct BodyResolver<'db> {
+    db: &'db dyn Db,
+    module: Module<'db>,
+    source_root: SourceRoot,
+    crate_root: Module<'db>,
+    /// The syntactic body's stash (for reading input).
+    src_stash: &'db Stash,
+    /// Output stash for the resolved body.
+    out: Stash,
+    /// Local variable table — indexed by LocalId.
+    locals: Vec<LocalVar<'db>>,
+    /// Scope stack. Each frame holds (Name, LocalId) pairs.
+    scopes: Vec<Vec<(Name<'db>, LocalId)>>,
+}
+```
+
+### Walk structure
+
+The resolver reads from `src_stash` (the syntactic body) and writes
+to `out` (the resolved body). For each syntactic node, it allocates
+the resolved counterpart in `out`.
+
+```rust
+impl<'db> BodyResolver<'db> {
+    /// Resolve an expression. Returns a Ptr into the output stash.
+    fn resolve_expr(&mut self, expr: &Expr<'db>) -> Ptr<RExpr<'db>> {
+        let kind = match &expr.kind {
+            ExprKind::Path(path) => {
+                let res = self.resolve_value_path(*path);
+                RExprKind::Path(res)
+            }
+            ExprKind::StructLit(path, fields) => {
+                let res = self.resolve_type_path(*path);
+                let rfields = /* resolve each field's value expr */;
+                RExprKind::StructLit(res, rfields)
+            }
+            ExprKind::MacroCall(path, tt) => {
+                let res = self.resolve_macro_path(*path);
+                RExprKind::MacroCall(res, *tt)
+            }
+            ExprKind::Block(stmts, tail) => {
+                self.push_scope();
+                let rstmts = /* resolve each stmt, let-bindings add to scope */;
+                let rtail = tail.map(|t| self.resolve_expr(&self.src_stash[t]));
+                self.pop_scope();
+                RExprKind::Block(rstmts, rtail)
+            }
+            // MethodCall, Field — pass through with recursive resolve
+            // of sub-expressions, but name stays as Name.
+            // All other variants — recursively resolve sub-expressions.
+            ...
+        };
+        self.out.alloc(RExpr { kind, span: expr.span })
     }
 
-    fn flatten_use_tree(
-        &self,
-        node: Node<'_>,
-        prefix: &mut Vec<Name<'db>>,
-        out: &mut Vec<UseImport<'db>>,
-    ) {
-        // Match on node.kind():
-        //   "identifier" | "self" | "crate" | "super" →
-        //       leaf: push Named(name), path = prefix + [name]
-        //   "scoped_identifier" →
-        //       leaf: collect_path_segments into prefix, emit Named(last)
-        //   "use_as_clause" →
-        //       path from child "path", alias from child "alias"
-        //       if alias is "_" → Unnamed, else Named(alias)
-        //   "use_wildcard" →
-        //       path = prefix (from scoped part), kind = Glob
-        //   "scoped_use_list" →
-        //       extend prefix from child "path", recurse into "list"
-        //   "use_list" →
-        //       iterate children, recurse each with current prefix
-        //   "self" as trailing in use_list →
-        //       emit Named(last segment of prefix), path = prefix
-        ...
+    /// Resolve a statement.
+    fn resolve_stmt(&mut self, stmt: &Stmt<'db>) -> RStmt<'db> {
+        match &stmt.kind {
+            StmtKind::Let(pat, ty, init) => {
+                // Resolve init FIRST (before pattern bindings are visible).
+                let rinit = init.map(|e| self.resolve_expr(&self.src_stash[e]));
+                // Then resolve pattern (introduces bindings).
+                let rpat = self.resolve_pat(&self.src_stash[*pat]);
+                RStmt {
+                    kind: RStmtKind::Let(rpat, *ty, rinit),
+                    span: stmt.span,
+                }
+            }
+            StmtKind::Expr(e) => RStmt {
+                kind: RStmtKind::Expr(self.resolve_expr(&self.src_stash[*e])),
+                span: stmt.span,
+            },
+        }
+    }
+
+    /// Resolve a pattern. Introduces bindings into the current scope.
+    fn resolve_pat(&mut self, pat: &Pat<'db>) -> Ptr<RPat<'db>> {
+        let kind = match &pat.kind {
+            PatKind::Bind(name, mutability) => {
+                let id = self.add_binding(*name, pat.span);
+                RPatKind::Bind(id, *mutability)
+            }
+            PatKind::Path(path) => {
+                let res = self.resolve_value_path(*path);
+                RPatKind::Path(res)
+            }
+            PatKind::Struct(path, fields) => {
+                let res = self.resolve_type_path(*path);
+                let rfields = /* resolve each field pat */;
+                RPatKind::Struct(res, rfields)
+            }
+            PatKind::TupleStruct(path, pats) => {
+                let res = self.resolve_value_path(*path);
+                let rpats = /* resolve each sub-pattern */;
+                RPatKind::TupleStruct(res, rpats)
+            }
+            // Tuple, Ref, Or, Literal, Wildcard, Rest, Missing —
+            // recurse into sub-patterns, no path resolution needed.
+            ...
+        };
+        self.out.alloc(RPat { kind, span: pat.span })
     }
 }
 ```
 
-**Test:** Update `mini_redis_signatures.txt`. Use statements should
-display as atomic imports, e.g.:
-```
-use crate::Connection
-use crate::Db
-use bytes::Bytes
-```
-
----
-
-### Step 3: New types — `Module`, `Symbol`, `CrateNum`, `DefIndex`
-
-**Files:** new `crates/sage-ir/src/module.rs`,
-new `crates/sage-ir/src/symbol.rs`, update `lib.rs`
+### Scope operations
 
 ```rust
-// crates/sage-ir/src/module.rs
+impl<'db> BodyResolver<'db> {
+    fn push_scope(&mut self) {
+        self.scopes.push(Vec::new());
+    }
 
-/// Opaque crate number (matches rustc's CrateNum).
-#[derive(Copy, Clone, PartialEq, Eq, Hash, salsa::Update)]
-pub struct CrateNum(pub u32);
+    fn pop_scope(&mut self) {
+        self.scopes.pop();
+    }
 
-/// Opaque definition index within a crate.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, salsa::Update)]
-pub struct DefIndex(pub u32);
+    fn add_binding(&mut self, name: Name<'db>, span: SpanIndices) -> LocalId {
+        let id = LocalId(self.locals.len() as u32);
+        self.locals.push(LocalVar { name, span });
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.push((name, id));
+        }
+        id
+    }
 
-#[salsa::interned]
-pub struct Module<'db> {
-    pub source: ModuleSource<'db>,
-}
-
-#[derive(Clone, PartialEq, Eq, Hash, salsa::Update)]
-pub enum ModuleSource<'db> {
-    /// Workspace module backed by a source file.
-    Local {
-        file: SourceFile,
-        parent: Option<Module<'db>>,
-    },
-    /// External crate module, queryable via TcxDb.
-    External(CrateNum, DefIndex),
-}
-```
-
-```rust
-// crates/sage-ir/src/symbol.rs
-
-#[salsa::interned]
-pub struct Symbol<'db> {
-    pub source: SymbolSource<'db>,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Hash, salsa::Update)]
-pub enum SymbolSource<'db> {
-    Local(Item<'db>),
-    External(CrateNum, DefIndex),
+    fn lookup_local(&self, name: Name<'db>) -> Option<LocalId> {
+        // Walk scopes innermost → outermost.
+        for scope in self.scopes.iter().rev() {
+            // Walk bindings in reverse (last binding with this name wins).
+            for (n, id) in scope.iter().rev() {
+                if *n == name {
+                    return Some(*id);
+                }
+            }
+        }
+        None
+    }
 }
 ```
 
-**Test:** Types compile. No behavioral tests yet.
-
----
-
-### Step 4: `TcxDb` trait
-
-**Files:** new `crates/sage-ir/src/tcx.rs`, update `db.rs`
+### Path resolution methods
 
 ```rust
-// crates/sage-ir/src/tcx.rs
+impl<'db> BodyResolver<'db> {
+    /// Resolve a path in value namespace (expressions, value patterns).
+    fn resolve_value_path(&mut self, path: Path<'db>) -> Res<'db> {
+        self.resolve_path(path, Namespace::Value)
+    }
 
-pub trait TcxDb {
-    /// Look up an external crate by name.
-    fn extern_crate(&self, name: &str) -> Option<CrateNum>;
+    /// Resolve a path in type namespace (struct literals, struct patterns).
+    fn resolve_type_path(&mut self, path: Path<'db>) -> Res<'db> {
+        self.resolve_path(path, Namespace::Type)
+    }
 
-    /// List the children of an external module.
-    /// Items in multiple namespaces (e.g. tuple structs) produce
-    /// multiple entries with distinct Symbols.
-    /// Only returns pub items. Asserts crate_num != LOCAL_CRATE.
-    fn module_children<'db>(
-        &self,
-        db: &'db dyn Db,
-        crate_num: CrateNum,
-        def_index: DefIndex,
-    ) -> Vec<(Name<'db>, Symbol<'db>, Namespace)>;
+    /// Resolve a path in macro namespace.
+    fn resolve_macro_path(&mut self, path: Path<'db>) -> Res<'db> {
+        self.resolve_path(path, Namespace::Macro(MacroKind::Bang))
+    }
 
-    /// Is this external def a builtin derive macro?
-    /// Checks DefKind::Macro(MacroKind::Derive) AND
-    /// has_attr(rustc_builtin_macro). Asserts crate_num != LOCAL_CRATE.
-    fn is_builtin_derive(
-        &self,
-        crate_num: CrateNum,
-        def_index: DefIndex,
-    ) -> bool;
+    fn resolve_path(&mut self, path: Path<'db>, ns: Namespace) -> Res<'db> {
+        let segments = path.segments(self.db);
+        if segments.is_empty() {
+            return Res::Err;
+        }
+
+        // Single-segment value path: check locals first.
+        if segments.len() == 1 && ns == Namespace::Value {
+            if let Some(id) = self.lookup_local(segments[0]) {
+                return Res::Local(id);
+            }
+        }
+
+        // Single-segment: delegate to module-level resolve_name.
+        if segments.len() == 1 {
+            return match resolve_name(
+                self.db, self.module, self.source_root,
+                self.crate_root, segments[0], ns,
+            ) {
+                Ok(sym) => Res::Def(sym),
+                Err(_) => Res::Err,
+            };
+        }
+
+        // Multi-segment: resolve first segment, walk the rest.
+        match resolve_first_segment(
+            self.db, self.module, self.source_root,
+            self.crate_root, segments,
+        ) {
+            Ok((module, rest)) => {
+                let mut current = module;
+                for (i, seg) in rest.iter().enumerate() {
+                    match definition(self.db, current, *seg) {
+                        Some(sym) => {
+                            if i < rest.len() - 1 {
+                                // Intermediate: must be a module.
+                                match symbol_to_module(
+                                    self.db, sym, self.source_root, current,
+                                ) {
+                                    Some(m) => current = m,
+                                    None => return Res::Err,
+                                }
+                            } else {
+                                return Res::Def(sym);
+                            }
+                        }
+                        None => return Res::Err,
+                    }
+                }
+                // rest was empty — the first segment resolved to a module.
+                // This is unusual in a body context but valid.
+                Res::Err
+            }
+            Err(_) => Res::Err,
+        }
+    }
 }
 ```
 
-Add `TcxDb` access to the database:
+**Note:** `resolve_first_segment` and `symbol_to_module` are currently
+**private** functions in `resolve.rs`. They need to be made `pub(crate)`
+so `body_resolve.rs` can call them. This is Step 2 in the
+implementation plan.
+
+### Entry point
 
 ```rust
-// crates/sage-ir/src/db.rs
-
-#[salsa::db]
-pub trait Db: salsa::Database {
-    fn tcx(&self) -> &dyn TcxDb;
-}
-
-pub struct Database<'tcx> {
-    storage: salsa::Storage<Self>,
-    tcx: Box<dyn TcxDb + 'tcx>,
-}
-```
-
-For tests without rustc, provide a `NoopTcxDb` that returns empty
-results for everything.
-
-**Test:** Existing tests still pass with `NoopTcxDb`.
-
----
-
-### Step 5: Module resolution queries
-
-**Files:** new `crates/sage-ir/src/resolve.rs`
-
-```rust
-// crates/sage-ir/src/resolve.rs
-
-/// Items declared in a module (from file_item_tree for local,
-/// from TcxDb for external).
+/// Produce a resolved body for a function.
+/// This is the salsa tracked function — cached and incremental.
 #[salsa::tracked(returns(ref))]
-pub fn module_items<'db>(
+pub fn resolve_body<'db>(
     db: &'db dyn Db,
+    function: FunctionItem<'db>,
     module: Module<'db>,
-) -> Vec<Item<'db>>;
+    source_root: SourceRoot,
+    crate_root: Module<'db>,
+) -> ResolvedBody<'db> {
+    let body = function.body(db);
+    let src_stash = body.stash();
+    let root = &src_stash[*body.root()];
 
-/// Use imports in a module (from file_item_tree for local,
-/// empty for external — external modules don't have use statements).
-#[salsa::tracked(returns(ref))]
-pub fn module_use_imports<'db>(
-    db: &'db dyn Db,
-    module: Module<'db>,
-) -> Vec<UseImport<'db>>;
+    let mut resolver = BodyResolver {
+        db,
+        module,
+        source_root,
+        crate_root,
+        src_stash,
+        out: Stash::new(),
+        locals: Vec::new(),
+        scopes: Vec::new(),
+    };
 
-/// Find a direct child definition by name.
-/// For local modules: scan module_items.
-/// For external modules: call tcx.module_children.
-#[salsa::tracked]
-pub fn definition<'db>(
-    db: &'db dyn Db,
-    module: Module<'db>,
-    name: Name<'db>,
-) -> Option<Symbol<'db>>;
-
-/// Resolve a ModItem to its Module — find the SourceFile for
-/// `mod foo;` declarations.
-#[salsa::tracked]
-pub fn resolve_mod<'db>(
-    db: &'db dyn Db,
-    parent: Module<'db>,
-    mod_item: ModItem<'db>,
-) -> Module<'db>;
-// Looks for foo.rs or foo/mod.rs relative to parent's file.
-
-/// Resolve a module path like ["mini_redis", "cmd", "get"] to a Module.
-/// Walks segment by segment using definition() + resolve_mod().
-pub fn resolve_module_path<'db>(
-    db: &'db dyn Db,
-    root: Module<'db>,
-    path: &[&str],
-) -> Result<Module<'db>, ResolutionError>;
-```
-
-**Test:** `resolve_module_path(root, ["cmd", "get"])` on mini-redis
-returns a `Module` whose `SourceFile` is `src/cmd/get.rs`.
-
----
-
-### Step 6: Name resolution
-
-**Files:** `crates/sage-ir/src/resolve.rs` (extend)
-
-```rust
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum Namespace {
-    Type,
-    Value,
-    Macro,
-}
-
-#[derive(Debug)]
-pub enum ResolutionError {
-    Unresolved,
-    Ambiguous,
-}
-
-/// Resolve a name in a module's scope.
-/// 1. Check declared items matching namespace
-/// 2. Check named use imports — resolve matching import's path on demand
-/// 3. Check glob imports — resolve each glob's target module, search children
-/// 4. Check parent module (if any)
-/// 5. Check extern prelude (via tcx.extern_crate)
-/// 6. Check std prelude (implicit glob of std::prelude::v1)
-#[salsa::tracked]
-pub fn resolve_name<'db>(
-    db: &'db dyn Db,
-    module: Module<'db>,
-    name: Name<'db>,
-    namespace: Namespace,
-) -> Result<Symbol<'db>, ResolutionError>;
-
-/// Resolve a use import's path segment by segment.
-/// First segment: crate → root, self → current, super → parent,
-///   bare → current module items then extern prelude.
-/// Remaining segments: definition(module, segment) for each.
-#[salsa::tracked]
-pub fn resolve_use_path<'db>(
-    db: &'db dyn Db,
-    module: Module<'db>,
-    import: UseImport<'db>,
-) -> Result<Symbol<'db>, ResolutionError>;
-```
-
-**Test:** In `cmd/get.rs`, resolve `Connection` → follows
-`use crate::{Connection, ...}` → finds `Connection` in crate root.
-Resolve `Bytes` → follows `use bytes::Bytes` → extern prelude →
-`bytes` crate → `Bytes` symbol.
-
----
-
-### Step 7: Derive resolution
-
-**Files:** new `crates/sage-ir/src/derive.rs`
-
-```rust
-// crates/sage-ir/src/derive.rs
-
-pub enum DeriveResult<'db> {
-    Builtin { impls: Vec<ImplItem<'db>> },
-    ProcMacro { symbol: Symbol<'db> },
-}
-
-/// Resolve and expand all derives on an item.
-#[salsa::tracked(returns(ref))]
-pub fn expand_derives<'db>(
-    db: &'db dyn Db,
-    module: Module<'db>,
-    item: Item<'db>,
-) -> Vec<DeriveResult<'db>>;
-// 1. Read item's attrs, find #[derive(...)] attributes
-// 2. Parse the token tree to extract individual derive names
-// 3. For each name: resolve_name(module, name, Namespace::Macro)
-// 4. Check tcx.is_builtin_derive(symbol) → expand or return ProcMacro
-
-/// Extract individual derive names from a #[derive(A, B, C)] attribute.
-fn parse_derive_args<'db>(
-    db: &'db dyn Db,
-    attr: Attr<'db>,
-) -> Vec<Name<'db>>;
-// Split the TokenTree text on commas, trim whitespace, intern each name.
-```
-
-**Test:** On `Get` struct in `cmd/get.rs`, `expand_derives` returns
-`[DeriveResult::Builtin { impls: [impl Debug for Get { ... }] }]`.
-
----
-
-### Step 8: Builtin derive expansion
-
-**Files:** new `crates/sage-ir/src/derive/builtins.rs`
-
-```rust
-// crates/sage-ir/src/derive/builtins.rs
-
-/// Generate an impl block for a builtin derive.
-pub fn expand_builtin<'db>(
-    db: &'db dyn Db,
-    derive_name: Name<'db>,
-    item: Item<'db>,
-) -> ImplItem<'db>;
-// Match on derive_name text:
-//   "Debug"   → generate impl Debug with fmt method
-//   "Clone"   → generate impl Clone with clone method
-//   "Default" → generate impl Default with default method
-//   "Copy", "Eq", "Hash", "PartialEq" → marker or delegate impls
-// Each reads the item's fields/variants to produce the body.
-
-/// Proc-macro stub — returns empty impl.
-pub fn expand_proc_macro_stub<'db>(
-    db: &'db dyn Db,
-    symbol: Symbol<'db>,
-    item: Item<'db>,
-) -> Vec<ImplItem<'db>>;
-// Returns empty vec for now. Interface is ready for dylib call.
-```
-
-**Test:** Expand `Debug` on `Get { key: String }` → produces
-`impl Debug for Get` with a `fmt` method that writes `"Get"` and
-formats `key`.
-
----
-
-### Step 9: Query logging
-
-**Files:** `crates/sage-ir/src/db.rs`
-
-```rust
-// crates/sage-ir/src/db.rs
-
-impl Database<'_> {
-    pub fn take_query_log(&self) -> String {
-        // Drain the log, format as one query name per line.
-        ...
+    // Push function params as the outermost scope.
+    resolver.push_scope();
+    for param in function.params(db) {
+        // Params with name: None (e.g. `_: Foo`) still get a LocalId
+        // but are not added to the scope (they can't be referenced).
+        if let Some(name) = param.name(db) {
+            resolver.add_binding(name, param.span(db));
+        }
     }
-}
 
-#[salsa::db]
-impl salsa::Database for Database<'_> {
-    fn salsa_event(&self, event: &dyn Fn() -> salsa::Event) {
-        let event = event();
-        // Filter for WillExecute events (actual query executions).
-        // Format: "query_name(key_debug_string)"
-        // Push to an internal RefCell<Vec<String>>.
-        ...
-    }
+    let resolved_root = resolver.resolve_expr(&src_stash[root.root]);
+
+    // Build the locals slice in the output stash.
+    let locals = resolver.out.alloc_slice(&resolver.locals);
+
+    let rbody = resolver.out.alloc(RBody {
+        root: resolved_root,
+        locals,
+        span: root.span,
+    });
+
+    resolver.pop_scope();
+    Stashed::new(resolver.out, rbody)
 }
 ```
 
-**Test:** Run `resolve_module_path(root, ["cmd", "get"])`, check that
-the query log contains `file_item_tree` for `lib.rs`, `cmd/mod.rs`,
-`cmd/get.rs` and does NOT contain `file_item_tree` for `cmd/set.rs`.
+### Error handling policy
+
+- **Unresolved path** → `Res::Err`. Don't panic. The snapshot tests
+  will show `<unresolved>` which makes gaps visible.
+- **Malformed AST** (e.g. `ExprKind::Missing`) → pass through as
+  `RExprKind::Missing`. Don't panic.
+- **Empty path segments** → `Res::Err`.
+- **`symbol_to_module` returns `None`** for intermediate path segment
+  → `Res::Err` (the path can't be fully resolved).
+
+No panics during resolution. Every error case produces `Res::Err` or
+the `Missing` variant. This ensures the resolver always produces
+output, even on incomplete or broken code.
+
+### Scope push/pop points (complete list)
+
+| Syntactic node | Scope action |
+|---|---|
+| Function entry | Push scope with params |
+| `ExprKind::Block` | Push scope before stmts, pop after |
+| `StmtKind::Let` | Resolve init expr first, then resolve pattern (adds bindings to current block scope) |
+| `ExprKind::Closure` | Push scope with closure params, resolve body, pop |
+| `ExprKind::For(pat, iter, body)` | Resolve iter, push scope, resolve pat (adds bindings), resolve body, pop |
+| `ExprKind::Match` arm | Push scope, resolve arm pattern (adds bindings), resolve guard, resolve body, pop |
+| `ExprKind::IfLet(pat, scrutinee, then, else)` | Resolve scrutinee, push scope, resolve pat (adds bindings), resolve then, pop scope. Resolve else (if any) in a separate scope without the pattern bindings. |
+| `ExprKind::WhileLet(pat, scrutinee, body)` | Resolve scrutinee, push scope, resolve pat (adds bindings), resolve body, pop scope. |
+
+## Display for resolved bodies
+
+Implement `PrettyPrint` for all resolved body types (matching the
+existing pattern in `display.rs`). The resolved body display should
+annotate paths with their resolution:
+
+- `Res::Def(symbol)` where `symbol.source(db)` is `Local(item)` →
+  show the item's name: `<def Get>`, `<def parse_frames>`.
+- `Res::Def(symbol)` where `symbol.source(db)` is
+  `External(crate_num, def_index)` → show `<ext CrateNum:DefIndex>`,
+  e.g. `<ext 1:4523>`. We don't have the external name readily
+  available (TcxDb returns names only via `module_children`), so use
+  the numeric IDs. This is sufficient for snapshot tests — the IDs
+  are stable for a given dep build.
+- `Res::Local(id)` → show `<local:N>` where N is the LocalId index.
+  The variable name can be looked up from `RBody.locals[N].name` but
+  keeping the display terse is better for snapshots.
+- `Res::Err` → show `<unresolved>`.
+
+For `RPatKind::Bind(id, _)` → show `<bind:N>`.
+
+Example output for `Get::parse_frames()`:
+```
+fn parse_frames(parse: &mut Parse) -> crate::Result<Get> {
+  let <bind:1> = <local:0>.next_string()?;
+  Ok(<def Get> { key: <local:1> })
+}
+```
+
+The `PrettyPrint` impls go in `display.rs` alongside the existing
+body display code. They follow the same pattern: take `&self`,
+`&mut Formatter`, `&Stash`, `indent`.
+
+## Implementation plan
+
+### Process
+
+Each phase follows TDD style:
+
+1. **Write tests first.** Add integration tests (or unit tests where
+   noted) that exercise the phase's functionality. Run them — they
+   must fail (compile errors count as failure).
+2. **Implement.** Write the minimum code to make the tests pass.
+3. **Verify.** All tests pass (new and existing).
+4. **Commit.** One commit per phase with a descriptive message, e.g.
+   `phase 1: if-let/while-let lowering`.
+
+### Test helpers
+
+Integration tests live in `tests/body_resolve_tests.rs` (root `sage`
+crate). They use `run_sage_with` on mini-redis with real TcxDb.
+
+Helper to find a method inside an impl block:
+
+```rust
+fn find_method<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    type_name: &str,
+    method_name: &str,
+) -> FunctionItem<'db> {
+    let items = module_items(db, module);
+    for item in items {
+        if let Item::Impl(impl_item) = item {
+            // impl_item.self_ty(db) is a TypeRef. Check if its kind
+            // is TypeRefKind::Path and the path's last segment matches
+            // type_name. Example:
+            //   let TypeRefKind::Path(path) = impl_item.self_ty(db).kind(db);
+            //   path.segments(db).last().map(|n| n.text(db)) == Some(type_name)
+            for sub_item in impl_item.items(db) {
+                if let Item::Function(f) = sub_item {
+                    if f.name(db).text(db) == method_name {
+                        return *f;
+                    }
+                }
+            }
+        }
+    }
+    panic!("{type_name}::{method_name} not found");
+}
+```
+
+The `resolve_body` call needs `module`, `source_root`, and
+`crate_root` — all available from `SageContext`:
+```rust
+let resolved = resolve_body(sage.db, method, module, sage.source_root, sage.root);
+```
 
 ---
 
-### Step 10: Integration tests
+### Phase 1: `if let` / `while let` lowering
 
-**Files:** `crates/sage-ir/tests/expand_tests.rs`
+**Goal:** Fix the lowering so `if let` and `while let` preserve their
+patterns. This is a prerequisite for body resolution.
+
+**Files:** `crates/sage-ir/src/body.rs`, `crates/sage-ir/src/lower.rs`,
+`crates/sage-ir/src/display.rs`
+
+**Test first:** Write an integration test that resolves `cmd::get`,
+finds `Get::apply()`, dumps its body (using existing
+`dump_function_body`), and snapshots the output. The snapshot should
+show `if let` with the pattern — currently it won't (the pattern is
+lost). This test fails before the fix.
 
 ```rust
 #[test]
-fn expand_cmd_get() {
-    let db = setup_mini_redis();  // creates Database with NoopTcxDb,
-                                  // loads all source files as SourceFile inputs
-    let root_module = ...;        // Module::Local for lib.rs
-    let module = resolve_module_path(&db, root_module, &["cmd", "get"]).unwrap();
-
-    // Expanded output
-    let output = pretty_print_expanded(&db, module);
-    expect_file!["./snapshots/expand_cmd_get.txt"].assert_eq(&output);
-
-    // Query log
-    let log = db.take_query_log();
-    expect_file!["./snapshots/expand_cmd_get_queries.txt"].assert_eq(&log);
+fn lower_if_let_preserves_pattern() {
+    run_sage_with(mini_redis_dir(), &[], |sage| {
+        let module = resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
+        let method = find_method(sage.db, module, "Get", "apply");
+        // Dump the syntactic body and snapshot it.
+        // Verify the output contains IfLet with a pattern, not If with the pattern lost.
+        let mut out = String::new();
+        // use dump_function_body or PrettyPrint on the body
+        ...
+        expect![[...]].assert_eq(&out);
+    });
 }
 ```
 
-Note: tests using `NoopTcxDb` can only resolve workspace-local names.
-For full resolution (extern crates), we need the rustc-backed impl.
-The first integration tests will verify module tree walking and
-builtin derive expansion on items that don't depend on external type
-resolution for their derives.
+**Implement:**
+1. Add `IfLet` and `WhileLet` variants to `ExprKind` in `body.rs`.
+2. Update `lower_if` (~line 1069 in `lower.rs`): check if condition
+   node kind is `"let_condition"`, extract `pattern` and `value`
+   fields, emit `IfLet`.
+3. Update while-expression lowering (~line 830): same check, emit
+   `WhileLet`.
+4. Add `PrettyPrint` impls for the new variants in `display.rs`.
+
+**Verify:** New test passes. All existing tests still pass.
+
+**Commit:** `phase 1: if-let/while-let lowering`
 
 ---
 
-### Step 11: CLI wiring
+### Phase 2: Resolved IR + body walk + path resolution
 
-**Files:** `src/main.rs`
+**Goal:** The big phase. Define the resolved IR types, build the
+body resolver, implement local variable resolution AND module-level
+path resolution. This is merged because none of the intermediate
+steps produce meaningful testable output on their own.
+
+**Files:**
+- New `crates/sage-ir/src/resolved.rs` — all R-types
+- New `crates/sage-ir/src/body_resolve.rs` — BodyResolver + resolve_body
+- `crates/sage-ir/src/resolve.rs` — make helpers `pub(crate)`
+- `crates/sage-ir/src/lib.rs` — add new modules
+
+**Test first:** Write an integration test that resolves
+`Get::parse_frames()` body and checks resolution results. This test
+won't compile initially (types and functions don't exist yet).
 
 ```rust
-#[derive(clap::Subcommand)]
-enum CargoCmd {
-    Sage {
-        #[arg(short, long = "package", value_name = "CRATE")]
-        p: Vec<String>,
-        /// Expand a specific module and print the result.
-        #[arg(long, value_name = "PATH")]
-        module: Option<String>,
-    },
+#[test]
+fn resolve_body_get_parse_frames() {
+    run_sage_with(mini_redis_dir(), &[], |sage| {
+        let module = resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
+        let method = find_method(sage.db, module, "Get", "parse_frames");
+        let resolved = resolve_body(sage.db, method, module, sage.source_root, sage.root);
+
+        // Check that locals table has the right entries:
+        // LocalId(0) = "parse" (param)
+        // LocalId(1) = "key" (let binding)
+        let stash = resolved.stash();
+        let body = &stash[*resolved.root()];
+        let locals = &stash[body.locals];
+        assert_eq!(locals[0].name.text(sage.db), "parse");
+        assert_eq!(locals[1].name.text(sage.db), "key");
+
+        // Check specific resolutions:
+        // - "Get" in struct literal → Res::Def (local struct)
+        // - "Ok" → Res::Def (std prelude)
+        // - "parse" reference → Res::Local(LocalId(0))
+        // - "key" reference → Res::Local(LocalId(1))
+        // Exact assertions depend on the tree structure; snapshot
+        // the full resolved body once display is working (phase 5).
+    });
 }
 ```
 
-Inside `after_expansion`: if `--module` is set, construct the salsa
-`Database` with a real `TcxDb` impl backed by `TyCtxt`, resolve the
-module path, expand derives, pretty-print, and print the query log.
+**Implement:**
+1. Define all types in `resolved.rs` (from "Resolved body structure"
+   section). Derive `AllocStashData`, implement `StashDirect`.
+2. Make `resolve_first_segment`, `symbol_to_module`, `item_in_namespace`
+   `pub(crate)` in `resolve.rs`.
+3. Build `BodyResolver` in `body_resolve.rs` with the full walk,
+   scope tracking, local resolution, and module-level path resolution.
+   Implement `resolve_body` as a plain function (not salsa tracked).
 
-## Open questions
+**Verify:** Test passes — locals are correct, module-level paths
+resolve.
 
-- Proc-macro dylib invocation: reuse rustc's loaded dylibs from
-  `after_expansion`, or load ourselves? (plumbing in place, actual
-  call is next after builtins work)
-- Exact `salsa_event` filtering — which event kinds to log, how to
-  format key arguments for stable snapshots
+**Commit:** `phase 2: resolved IR and body path resolution`
+
+---
+
+### Phase 3: Pattern resolution
+
+**Goal:** Resolve paths inside patterns (`PatKind::Path`,
+`PatKind::Struct`, `PatKind::TupleStruct`) and introduce bindings
+from `if let` / `match` patterns.
+
+**Test first:** Write an integration test for `Get::apply()` which
+uses `if let Some(value) = db.get(&self.key)`:
+
+```rust
+#[test]
+fn resolve_body_get_apply() {
+    run_sage_with(mini_redis_dir(), &[], |sage| {
+        let module = resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
+        let method = find_method(sage.db, module, "Get", "apply");
+        let resolved = resolve_body(sage.db, method, module, sage.source_root, sage.root);
+
+        let stash = resolved.stash();
+        let body = &stash[*resolved.root()];
+        let locals = &stash[body.locals];
+
+        // Params: self, db, dst
+        assert_eq!(locals[0].name.text(sage.db), "self");
+        assert_eq!(locals[1].name.text(sage.db), "db");
+        assert_eq!(locals[2].name.text(sage.db), "dst");
+
+        // if-let binding: "value" from `if let Some(value) = ...`
+        // Should be LocalId(3) — introduced by the IfLet pattern.
+        assert!(locals.iter().any(|l| l.name.text(sage.db) == "value"));
+
+        // "response" from `let response = ...`
+        assert!(locals.iter().any(|l| l.name.text(sage.db) == "response"));
+
+        // "Some" in the if-let pattern should resolve to Res::Def
+        // (from std prelude). Exact assertion depends on tree walk;
+        // snapshot test in phase 5 will cover this fully.
+    });
+}
+```
+
+**Implement:** Complete `resolve_pat` for all `PatKind` variants.
+Wire `IfLet` and `WhileLet` scope handling (resolve scrutinee, push
+scope, resolve pattern, resolve then-branch, pop scope).
+
+**Verify:** Test passes — `value` binding appears in locals, `Some`
+resolves.
+
+**Commit:** `phase 3: pattern resolution`
+
+---
+
+### Phase 4: Macro path resolution
+
+**Goal:** Resolve macro call paths in `Namespace::Macro(MacroKind::Bang)`.
+
+**Test first:**
+
+```rust
+#[test]
+fn resolve_body_macro_calls() {
+    run_sage_with(mini_redis_dir(), &[], |sage| {
+        let module = resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
+        let method = find_method(sage.db, module, "Get", "apply");
+        let resolved = resolve_body(sage.db, method, module, sage.source_root, sage.root);
+
+        // Walk the resolved body to find MacroCall nodes.
+        // The `debug!(...)` call should have Res::Def pointing at
+        // an external symbol (tracing crate), not Res::Err.
+        // Helper: walk_find_macro_calls(resolved) -> Vec<Res>
+        // Assert at least one is Res::Def with External source.
+    });
+}
+```
+
+**Implement:** Wire `resolve_macro_path` in the `MacroCall` arm of
+`resolve_expr`. Uses existing `resolve_name` with
+`Namespace::Macro(MacroKind::Bang)`.
+
+**Verify:** Test passes — `debug!` resolves to tracing symbol.
+
+**Commit:** `phase 4: macro path resolution`
+
+---
+
+### Phase 5: Display
+
+**Goal:** Readable snapshot output for resolved bodies.
+
+**Test first:** Write snapshot tests that pretty-print resolved bodies:
+
+```rust
+#[test]
+fn display_resolved_body_get_parse_frames() {
+    run_sage_with(mini_redis_dir(), &[], |sage| {
+        let module = resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
+        let method = find_method(sage.db, module, "Get", "parse_frames");
+        let resolved = resolve_body(sage.db, method, module, sage.source_root, sage.root);
+
+        let output = pretty_print_resolved(sage.db, &resolved);
+        expect![[r#"
+            ...expected output with <local:0>, <def Get>, etc...
+        "#]].assert_eq(&output);
+    });
+}
+```
+
+This test won't compile until `PrettyPrint` impls exist for R-types.
+
+**Implement:** Add `PrettyPrint` impls for all resolved body types
+in `display.rs`. Add a `pretty_print_resolved` helper function.
+
+Display format:
+- `Res::Def(symbol)` local → `<def ItemName>`
+- `Res::Def(symbol)` external → `<ext CrateNum:DefIndex>`
+- `Res::Local(id)` → `<local:N>`
+- `Res::Err` → `<unresolved>`
+- `RPatKind::Bind(id, _)` → `<bind:N>`
+
+**Verify:** Snapshot tests pass with readable output.
+
+**Commit:** `phase 5: resolved body display`
+
+---
+
+### Phase 6: Salsa tracked function + full test suite
+
+**Goal:** Make `resolve_body` incremental and add comprehensive
+snapshot tests for all target functions.
+
+**Test first:** Add query log test and remaining function tests:
+
+```rust
+#[test]
+fn query_log_body_resolve_demand_driven() {
+    run_sage_with(mini_redis_dir(), &[], |sage| {
+        sage.db.take_query_log(); // clear setup log
+
+        let module = resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
+        let method = find_method(sage.db, module, "Get", "apply");
+        let _resolved = resolve_body(sage.db, method, module, sage.source_root, sage.root);
+
+        let log = sage.db.take_query_log();
+        // Should NOT contain file_item_tree for cmd/set.rs
+        assert!(!log.contains("cmd/set.rs"), "demand-driven violation:\n{log}");
+    });
+}
+
+#[test]
+fn resolve_body_get_key() { /* trivial: &self.key */ }
+
+#[test]
+fn resolve_body_get_into_frame() { /* associated fn calls, method chains */ }
+
+#[test]
+fn resolve_body_connection_new() { /* struct literal with nested calls */ }
+```
+
+**Implement:** Convert `resolve_body` to
+`#[salsa::tracked(returns(ref))]`. Add all remaining snapshot tests.
+
+**Verify:** All tests pass. Query log confirms demand-driven behavior.
+
+**Commit:** `phase 6: salsa tracked resolve_body + full test suite`
+
+## Subsetting restrictions (body resolution)
+
+In addition to the existing restrictions in `md/design/subsetting.md`:
+
+- **Method resolution is deferred.** `receiver.method(args)` preserves
+  the method name. Resolving to a specific `impl` method requires
+  type inference.
+- **Field access resolution is deferred.** `expr.field` preserves the
+  field name.
+- **Associated function resolution is partial.** `Type::func()` — the
+  type path is resolved, but which `impl` block provides `func` is
+  not determined. No impl-block lookup exists yet.
+- **Macro calls are not expanded.** The macro path is resolved to a
+  `Symbol`, but the token tree is not expanded. Paths inside macro
+  arguments are not resolved.
+- **Type references in bodies are not resolved.** `TypeRef` passes
+  through unchanged.
+- **Closure captures not tracked.**
+- **Or-patterns:** each alternative must introduce the same bindings.
+  For this phase, we resolve each alternative independently and don't
+  verify consistency (rustc does this check, we defer it).
+
+## Key lowering details (from `lower.rs`)
+
+These affect how the resolver handles certain constructs:
+
+**`self` in methods:** Lowered as a regular `Param` with
+`name: Some(Name("self"))` and type `&Self` or `Self`. The resolver
+treats it like any other param — it gets `LocalId(0)` and is found
+via `lookup_local`.
+
+**`if let`:** The `let_condition` node is currently lowered by
+extracting just the inner expression (the RHS of `let`). So
+`if let Some(x) = expr` becomes `If(expr, then, else)` — **the
+pattern is lost**. Fix (Step 0 in the implementation plan): add
+`ExprKind::IfLet(pat, scrutinee, then, else)` variant to `body.rs`
+(this variant does **not** exist yet) and update `lower_if` in
+`lower.rs` to detect `let_condition` and emit `IfLet` instead of
+`If`. This is a prerequisite for body resolution (needed for
+`Get::apply()`).
+
+Tree-sitter node structure for the fix:
+- `if_expression` has field `condition` which can be `_expression`,
+  `let_chain`, or `let_condition`.
+- `let_condition` has fields: `pattern` (_pattern) and `value`
+  (_expression).
+- Current `lower_if` (line ~1069 in `lower.rs`) calls
+  `node.child_by_field_name("condition")` and lowers it as a generic
+  expression. The fix: check if the condition node's kind is
+  `"let_condition"`, and if so, extract `pattern` and `value`
+  separately:
+  ```rust
+  let cond_node = node.child_by_field_name("condition").unwrap();
+  if cond_node.kind() == "let_condition" {
+      let pat = cond_node.child_by_field_name("pattern")
+          .map(|n| self.lower_pat(n))...;
+      let scrutinee = cond_node.child_by_field_name("value")
+          .map(|n| self.lower_expr(n))...;
+      ExprKind::IfLet(pat, scrutinee, then, else_)
+  } else {
+      ExprKind::If(cond, then, else_)
+  }
+  ```
+- `let_chain` (for `if let A = x && let B = y`) is out of scope —
+  treat as `Missing` for now.
+
+**`while let`:** Same issue — pattern is lost. Fix (also Step 0):
+add `ExprKind::WhileLet(pat, scrutinee, body)` (does **not** exist
+yet). Same approach: check if `while_expression`'s condition is
+`"let_condition"`, extract pattern and value separately. The
+`while_expression` node (line ~830 in `lower.rs`) has the same
+`condition` field that can be `_expression`, `let_chain`, or
+`let_condition`.
+
+**Macro calls:** Lowered as `ExprKind::MacroCall(path, token_tree)`.
+The path is a regular `Path` (multi-segment for `tokio::select!`).
+The token tree is the raw text inside the delimiters.
+
+## Open questions — resolved
+
+1. **Const/static initializers:** Deferred. `resolve_body` takes
+   `FunctionItem` only for this phase. Const/static initializers are
+   trivial in mini-redis. Easy to add later by accepting `Item`.
+
+2. **Error reporting:** `Res::Err` in the output is sufficient. No
+   separate diagnostic collection. Snapshot tests show every
+   `<unresolved>` which catches regressions. Diagnostic messages
+   added later when we build a real error-reporting pipeline.
+
+3. **`if let` lowering fix:** Add `ExprKind::IfLet` variant (not
+   desugar to `Match`). `if let` has different temporary lifetime
+   semantics than `match` — keeping it as a distinct node preserves
+   that distinction for later phases. Same for `while let` →
+   `ExprKind::WhileLet`.
+
+   ```rust
+   // New variants in ExprKind (body.rs):
+   IfLet(Ptr<Pat<'db>>, Ptr<Expr<'db>>, Ptr<Expr<'db>>, Option<Ptr<Expr<'db>>>),
+   //     pattern        scrutinee       then-branch     else-branch
+   WhileLet(Ptr<Pat<'db>>, Ptr<Expr<'db>>, Ptr<Expr<'db>>),
+   //       pattern        scrutinee       body
+   ```
+
+   Corresponding resolved variants:
+   ```rust
+   // New variants in RExprKind (resolved.rs):
+   IfLet(Ptr<RPat<'db>>, Ptr<RExpr<'db>>, Ptr<RExpr<'db>>, Option<Ptr<RExpr<'db>>>),
+   WhileLet(Ptr<RPat<'db>>, Ptr<RExpr<'db>>, Ptr<RExpr<'db>>),
+   ```
+
+   The resolver handles these by: resolve scrutinee, push scope,
+   resolve pattern (introduces bindings), resolve then-branch/body,
+   pop scope. Else-branch (if any) gets its own scope without the
+   pattern bindings.
+
+## FAQ — common questions from review
+
+**Q: Do `resolve_first_segment` and `symbol_to_module` exist?**
+Yes. They are private functions in `crates/sage-ir/src/resolve.rs`.
+Phase 2 makes them `pub(crate)`. Their signatures are shown in the
+"BodyResolver implementation → Path resolution methods" section.
+
+**Q: Where are `CrateNum`, `DefIndex`, `Symbol`, `Module` defined?**
+All in `crates/sage-ir/src/module.rs` and `symbol.rs`. Documented in
+the "Codebase orientation → Key existing types" section under
+"Symbols and modules."
+
+**Q: Where is `RawChild` and how does `TcxDb` work?**
+`RawChild` is in `crates/sage-ir/src/tcx/mod.rs`. The `TcxDb` trait
+and its channel-based proxy are documented in the "Codebase
+orientation → Key existing types" section under "TcxDb."
+
+**Q: Does `AllocStashData` work with salsa interned types like `Symbol<'db>`?**
+Yes. The existing `body.rs` types (`Expr`, `Pat`, `Stmt`) already
+derive `AllocStashData` and contain salsa interned types (`Name<'db>`,
+`Path<'db>`, `TypeRef<'db>`). `Symbol<'db>` is the same kind of type.
+
+**Q: Does `StashDirect` exist?**
+Yes. Defined in `crates/sage-stash/src/lib.rs` as
+`pub trait StashDirect: Copy {}`. Blanket impls provide `StashEq`,
+`StashHash`, `StashOrd` for any `StashDirect + Eq/Hash/Ord` type.
+
+**Q: How does `resolve_name` work? What's its exact signature?**
+Shown in the "Codebase orientation" section. It's a plain function
+(not salsa tracked) in `resolve.rs`:
+`fn resolve_name(db, module, source_root, crate_root, name, ns) -> Result<Symbol, ResolutionError>`.
+It checks: declared items → named use imports → glob imports → extern
+prelude → std prelude.
+
+**Q: How do I find a method inside an impl block for tests?**
+The `find_method` helper is shown in the "Implementation plan → Test
+helpers" section with full code. It walks `module_items`, matches
+`Item::Impl`, checks `self_ty` path, then searches the impl's items.
 
 ## Implementation status
 
-Steps 1–10 and Steps A–C are implemented. The full pipeline is working:
-module tree, use desugaring, name resolution (including std prelude),
-derive resolution, builtin expansion, query logging, and real TcxDb
-backed by `TyCtxt`.
+**Complete.** All 6 phases implemented and tested.
 
-### Completed
-
-- **Steps 1–10**: sage-ir crate with module tree, use desugaring,
-  name resolution, derive expansion, builtin expansion, query logging.
-  Integration tests verify demand-driven module resolution on mini-redis
-  with `NoopTcxDb`.
-
-- **Step A**: Database lifetime refactor. Salsa requires `Database: 'static`
-  (via `Any` bound), so `Database<'tcx>` is not possible. Instead, used
-  unsafe lifetime erasure via `Database::with_tcx()`. Safety enforced by
-  the `run_sage_with` callback pattern (Database dropped before `'tcx`
-  ends).
-
-- **Step B**: `TcxDb::module_children` returns `Vec<(Name, Symbol, Namespace)>`.
-  Added `Send + Sync` supertrait bounds to `TcxDb`.
-
-- **Step C**: `RustcTcxDb<'tcx>` in `src/tcx_impl.rs`. Implements
-  `extern_crate`, `module_children`, `is_builtin_derive`. Uses
-  `MacroKinds` bitflags (not `MacroKind` enum) for `DefKind::Macro`
-  matching. `DefKind::Const` and `AssocConst` are struct variants in
-  nightly-2026-03-15.
-
-- **Driver**: `run_sage_with(project_dir, packages, |ctx| { ... })` in
-  `src/driver.rs`. Handles full pipeline: load workspace, build deps,
-  run_compiler, create Database with RustcTcxDb, construct root Module.
-  CLI and tests both use it.
-
-- **Integration tests**: 5 tests in `tests/expand_tests.rs` using real
-  TcxDb pointed at `test-fixtures/mini-redis`.
+### Commits
+- `phase 1: if-let/while-let lowering` — Added `IfLet`/`WhileLet` variants to `ExprKind`, updated `lower.rs` to detect `let_condition` nodes, added `PrettyPrint` impls, updated body snapshot.
+- `phase 2: resolved IR and body path resolution` — Created `resolved.rs` (all R-types), `body_resolve.rs` (BodyResolver with full walk, scope tracking, path resolution). Made `resolve_first_segment`, `symbol_to_module`, `item_in_namespace` `pub(crate)`.
+- `phase 3: pattern resolution` — Added test verifying `Some(value)` in if-let resolves to `Res::Def` from std prelude. (Pattern resolution was already implemented in Phase 2.)
+- `phase 4: macro path resolution` — Added test verifying `debug!()` resolves to external symbol from tracing crate. (Macro resolution was already wired in Phase 2.)
+- `phase 5: resolved body display` — Implemented `PrettyPrint` for all resolved body types, added `pretty_print_resolved` helper, added snapshot tests with normalized ext crate numbers.
+- `phase 6: salsa tracked resolve_body + full test suite` — Converted `resolve_body` to `#[salsa::tracked(returns(ref))]`, added query log test, added snapshot tests for `Get::key`, `Get::into_frame`, `Connection::read_frame`.
 
 ### Deviations from plan
+- **Phases 2–4 merged in practice:** Phase 2 was more comprehensive than planned — it included all pattern resolution and macro path resolution. Phases 3 and 4 added targeted tests but no new implementation code.
+- **Snapshot normalization:** External crate numbers (`CrateNum`) are non-deterministic across rustc invocations. Added `regex` as a dev dependency to normalize `<ext N:DefIndex>` patterns in snapshot tests.
+- **Enum variant resolution:** `Frame::Bulk` and `Frame::Null` show as `<unresolved>` because enum variants aren't directly resolvable as value-namespace items through module-level resolution. This is expected — enum variant resolution requires type-qualified paths, which is deferred to typeck.
+- **`Bytes::from` in `into_frame`:** Shows as `<unresolved>` because `Bytes::from` is an associated function requiring impl-block lookup, which is explicitly deferred.
 
-1. **Database lifetime**: Plan said `Database<'tcx>` with no erasure.
-   Reality: salsa's `Any` bound requires `'static`. Used unsafe
-   `transmute` to erase the lifetime, with safety enforced by the
-   closure-scoped borrow in `run_sage_with`.
-
-2. **`is_builtin_derive`**: Plan said `has_attr(sym::rustc_builtin_macro)`.
-   Reality: in nightly-2026-03-15, `rustc_builtin_macro` is a parsed
-   attribute (`AttributeKind::RustcBuiltinMacro`), not a raw symbol.
-   Used `find_attr!(RustcBuiltinMacro { .. })` instead.
-
-3. **Std prelude resolution**: Plan said "resolve through the std prelude
-   like any other name". Reality: needed namespace-aware filtering because
-   `Debug` exists in both type namespace (the trait) and macro namespace
-   (the derive macro). Added `resolve_in_std_prelude(db, name, ns)` that
-   walks `std::prelude::v1` and filters by namespace.
-
-4. **Derive expansion tests**: Plan said snapshot expanded impls. Reality:
-   `expand_builtin` creates tracked structs (`Path`, `ImplItem`, etc.)
-   outside tracked functions, which panics in salsa. Integration tests
-   verify derive resolution (name → symbol → is_builtin_derive) without
-   full expansion. Full expansion needs `expand_derives` to be a tracked
-   function.
-
-5. **Macro sub-namespaces**: ~~Plan said `Namespace::Macro(MacroKind)` with
-   separate sub-namespaces. Reality: kept `Namespace::Macro` as a single
-   variant for simplicity.~~ Fixed: `Namespace::Macro(MacroKind)` with
-   `Bang`/`Attr`/`Derive` variants, matching the original plan.
-
-### Known gaps
-
-- ~~`expand_builtin` creates tracked structs outside tracked functions.~~
-  Fixed: `expand_builtin` is now `#[salsa::tracked]` and full derive
-  expansion works end-to-end (verified by `expand_derives_cmd_get_full`
-  integration test).
-- ~~Macro sub-namespaces (bang vs attr vs derive) are collapsed into a
-  single `Namespace::Macro`.~~ Fixed: `Namespace::Macro(MacroKind)`
-  with `MacroKind::{Bang, Attr, Derive}`. `namespaces_for_def_kind`
-  decomposes rustc's `MacroKinds` bitflags into individual variants.
-  Derive resolution uses `Namespace::Macro(MacroKind::Derive)`.
-- `macro_rules!` scoping is module-scoped, not textual.
-- Glob imports work for file-based local modules and external modules,
-  but not for inline modules (`mod foo { ... }`) — `symbol_to_module`
-  returns `None` for inline modules.
-- No `#[path = "..."]` attributes on modules.
-- Derive helper attributes not resolved.
-
-## Next: Real TcxDb implementation
-
-### Step A: Refactor `Database` to carry `'tcx` lifetime
-
-**Files:** `crates/sage-ir/src/db.rs`, `crates/sage-ir/src/tcx.rs`,
-all files that construct or reference `Database`
-
-The current `Database` uses `Arc<dyn TcxDb + Send + Sync>` which
-requires `'static`. `RustcTcxDb<'tcx>` holds `TyCtxt<'tcx>` (arena-
-allocated, can't outlive the `after_expansion` callback), so `Database`
-must carry the lifetime.
-
-Change:
-- `Database` → `Database<'tcx>`
-- `TcxDb` trait object storage: `Arc<dyn TcxDb + Send + Sync>` →
-  `Box<dyn TcxDb + 'tcx>` (no need for `Arc`/`Send`/`Sync` — single-
-  threaded within the callback)
-- Update `Db` trait impl, all test helpers that create `Database`
-  (they pass `NoopTcxDb` which is `'static`, so `Database<'static>`
-  works fine for tests)
-
-This is a mechanical refactor — no behavioral changes, just lifetime
-propagation. All existing tests should pass unchanged.
-
----
-
-### Step B: Update `TcxDb` trait to return `Namespace`
-
-**Files:** `crates/sage-ir/src/tcx.rs`, `crates/sage-ir/src/db.rs`
-
-Update `module_children` signature from `Vec<(Name, Symbol)>` to
-`Vec<(Name, Symbol, Namespace)>`. Update `NoopTcxDb` accordingly.
-
----
-
-### Step C: Build `RustcTcxDb`
-
-### Goal
-
-Build the `TcxDb` impl in the `sage` binary crate (`src/`) so that
-derive expansion tests produce actual output. This unblocks the
-expand-and-snapshot tests from the original plan.
-
-### Where it lives
-
-`src/tcx_impl.rs` — implements `sage_ir::tcx::TcxDb` backed by
-`TyCtxt<'tcx>`. Lives in the binary crate because it depends on
-rustc internals (behind `rustc_private`).
-
-### What it needs to do
-
-```rust
-struct RustcTcxDb<'tcx> {
-    tcx: TyCtxt<'tcx>,
-}
-
-impl TcxDb for RustcTcxDb<'_> {
-    fn extern_crate(&self, name: &str) -> Option<CrateNum> {
-        // Walk tcx.crates(()) to find a crate whose name matches.
-        // Map rustc's CrateNum to our CrateNum(u32) via .as_u32().
-    }
-
-    fn module_children(&self, db, crate_num, def_index)
-        -> Vec<(Name, Symbol, Namespace)> {
-        assert!(crate_num.0 != 0, "TcxDb must not be called with LOCAL_CRATE");
-        // Use tcx.module_children(DefId { krate, index })
-        // For each child:
-        //   child.res.opt_def_id() — if None, skip (primitives etc.)
-        //   Filter to pub visibility only.
-        //   Re-exports are transparent: use the resolved DefId directly.
-        //   Items in multiple namespaces (e.g. tuple structs) emit
-        //   multiple entries with distinct Symbols.
-        //   Map each child's DefId → sage Symbol::External.
-        //   Map each child's name → sage Name.
-        //   Derive namespace from DefKind.
-    }
-
-    fn is_builtin_derive(&self, crate_num, def_index) -> bool {
-        assert!(crate_num.0 != 0, "TcxDb must not be called with LOCAL_CRATE");
-        let def_id = DefId { krate: crate_num.into(), index: def_index.into() };
-        matches!(self.tcx.def_kind(def_id), DefKind::Macro(MacroKind::Derive))
-            && self.tcx.has_attr(def_id, sym::rustc_builtin_macro)
-    }
-}
-```
-
-### How it gets wired in
-
-The core entry point is `run_sage_with`, which does all setup and
-hands a live context to a callback:
-
-```rust
-// src/driver.rs (or src/lib.rs)
-
-/// Everything needed to query sage inside after_expansion.
-pub struct SageContext<'db> {
-    pub db: &'db Database<'tcx>,
-    pub root: Module<'db>,
-    // ...
-}
-
-/// Set up the full sage pipeline for a project and call f with
-/// a live SageContext. Handles: load_workspace, build rustc args,
-/// run_compiler, create RustcTcxDb + Database + root Module.
-pub fn run_sage_with<F, R>(project_dir: &Path, f: F) -> R
-where
-    F: FnOnce(&SageContext) -> R,
-{
-    let ws = metadata::load_workspace(project_dir, &[]);
-    // build args, run_compiler, inside after_expansion:
-    //   create RustcTcxDb { tcx }, Database::new(tcx_db)
-    //   construct root Module from workspace source files
-    //   call f(&sage_ctx)
-}
-```
-
-CLI commands are thin wrappers:
-
-```rust
-// src/main.rs
-
-fn main() {
-    let args = Cargo::parse();
-    run_sage_with(&cwd, |sage| {
-        // dispatch on subcommand: check, expand --module, etc.
-    });
-}
-```
-
-Tests call `run_sage_with` directly:
-
-```rust
-// tests/expand_tests.rs
-
-#[test]
-fn expand_cmd_get() {
-    run_sage_with(Path::new("test-fixtures/mini-redis"), |sage| {
-        let module = sage.resolve_module_path(&["cmd", "get"]).unwrap();
-        let output = sage.pretty_print_expanded(module);
-        expect_file!["./snapshots/expand_cmd_get.txt"].assert_eq(&output);
-    });
-}
-```
-
-### Integration test plan
-
-Tests live as normal integration tests in the `sage` binary crate
-(`tests/expand_tests.rs`). Each `#[test]` calls `run_sage_with`
-pointed at `test-fixtures/mini-redis`, which does the full setup
-(load workspace, build deps, run_compiler, create Database with
-real RustcTcxDb) and hands a `SageContext` to the test closure.
-
-Prerequisite: mini-redis deps must already be built (`cargo check`
-with the pinned nightly). `load_workspace` handles this automatically
-via `cargo build --message-format=json`.
-
-```rust
-#[test]
-fn expand_cmd_get() {
-    run_sage_with(Path::new("test-fixtures/mini-redis"), |sage| {
-        let module = sage.resolve_module_path(&["cmd", "get"]).unwrap();
-        let output = sage.pretty_print_expanded(module);
-        expect_file!["./snapshots/expand_cmd_get.txt"].assert_eq(&output);
-        let log = sage.take_query_log();
-        expect_file!["./snapshots/expand_cmd_get_queries.txt"].assert_eq(&log);
-    });
-}
-```
-
-Test cases:
-
-1. **`expand_cmd_get`** — resolve `cmd::get`, expand `#[derive(Debug)]`
-   on `Get`. Snapshot the expanded impl and the query log. Verify
-   `file_item_tree` only fires for `lib.rs`, `cmd/mod.rs`, `cmd/get.rs`.
-
-2. **`expand_cmd_set`** — `Set` has `#[derive(Debug)]` too. Verify
-   independent expansion (no cross-module queries from step 1).
-
-3. **`expand_bin_cli`** — `cli.rs` uses `#[derive(Parser, Subcommand)]`
-   from clap. These should resolve as `DeriveResult::ProcMacro`.
-   Verify the symbol points at clap's proc-macro DefId.
-
-4. **`expand_no_derives`** — a module with no derives (e.g. `parse.rs`).
-   Verify `expand_derives` returns empty and no macro-namespace
-   resolution queries fire.
-
-### Key rustc APIs to use
-
-- `tcx.crates(())` — iterator over all loaded crates
-- `tcx.crate_name(crate_num)` — get crate name as `Symbol`
-- `tcx.module_children(def_id)` — children of a module
-- `ModChild { ident, res, vis, .. }` — each child entry
-- `child.res.opt_def_id()` — get DefId, skip None (primitives etc.)
-- `tcx.def_kind(def_id)` — get DefKind for namespace derivation
-- `Res::Def(DefKind::Macro(MacroKind::Derive), def_id)` — derive macros
-- `tcx.has_attr(def_id, sym::rustc_builtin_macro)` — builtin check
-
-### Design decisions log (TcxDb implementation)
-
-Decided during design review 2026-04-30, updated during implementation:
-
-1. **Lifetime**: Database stays `'static` (salsa `Any` bound). Unsafe
-   lifetime erasure via `Database::with_tcx()`. Safety enforced by
-   `run_sage_with` callback pattern.
-2. **Re-exports**: transparent — `opt_def_id()` gives resolved DefId,
-   no re-export chain tracking
-3. **`is_builtin_derive`**: checks `DefKind::Macro(DERIVE)` AND
-   `find_attr!(RustcBuiltinMacro { .. })`. The `has_attr` approach
-   doesn't work because attrs are parsed in nightly-2026-03-15.
-4. **`LOCAL_CRATE` guard**: assert in `module_children` and
-   `is_builtin_derive` — hitting it means a bug in resolution
-5. **Integration tests**: normal `cargo test` with `run_compiler()`
-   inside each `#[test]`
-6. **Test args**: reuse `load_workspace()` pointed at
-   `test-fixtures/mini-redis`, shared `build_rustc_args()` helper
-7. **Visibility**: `module_children` returns only `pub` items
-8. **Namespace in return**: `(Name, Symbol, Namespace)` triples
-9. **Multi-namespace items**: multiple entries with distinct Symbols
-   (e.g. tuple struct → one Type entry, one Value entry)
-10. **Macro namespace**: single `Namespace::Macro` (no sub-namespaces
-    for bang/attr/derive yet). Sufficient for current use cases.
-11. **`macro_rules!`**: registered in module scope for name resolution
-    (`Macro`), expansion not implemented (errors)
-12. **`macro_rules!` scoping**: treated as module-scoped, not textual
-    (known gap)
-13. **Entry point**: `run_sage_with(project_dir, packages, |sage| { ... })`
-    is the core — does all setup, hands a `SageContext` to the
-    callback. CLI commands and tests both use it.
-14. **Send+Sync on TcxDb**: `TcxDb: Send + Sync` supertrait. `RustcTcxDb`
-    uses unsafe `Send + Sync` impls because `TyCtxt` is `!Send` but
-    we only use single-threaded within `after_expansion`.
-15. **Std prelude**: `resolve_in_std_prelude(db, name, ns)` walks
-    `std::prelude::v1` via TcxDb with namespace filtering.
+### Test summary
+- 10 body_resolve integration tests (resolve + display + query log)
+- 6 expand integration tests (existing)
+- 5 sage-ir expand tests (existing)
+- 2 snapshot tests (existing, updated for if-let/while-let)
+- 26 sage-stash tests (existing)
