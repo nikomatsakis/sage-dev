@@ -125,3 +125,46 @@ Everything not listed above is intended to be supported, including:
 - Module tree (`mod`, `pub use`, `pub(crate)`)
 - Type aliases, constants, statics
 - `cfg` attributes
+
+## Body resolution restrictions
+
+These are limitations of the current body resolver (`body_resolve.rs`),
+not fundamental design choices. They'll be lifted as type inference and
+impl resolution are added.
+
+### Method calls stay unresolved
+
+`receiver.method(args)` preserves the method `Name` but doesn't resolve
+which impl provides it. Requires type inference to know the receiver type.
+
+### Field access stays unresolved
+
+`expr.field` preserves the field `Name`. Resolving to a specific struct
+field requires knowing the expression's type.
+
+### Enum variants need type-qualified paths
+
+`Frame::Bulk` shows as `<unresolved>` because enum variants aren't
+directly in the module's value namespace — they're children of the enum
+type. Resolving `Type::Variant` requires looking up the type first, then
+searching its variants. Not yet implemented.
+
+### Associated functions need impl lookup
+
+`Type::func()` — the type path resolves, but which `impl` block provides
+`func` is unknown. No impl-block search infrastructure exists yet.
+
+### Macro calls are not expanded
+
+Macro paths are resolved to their definition (`<ext tracing::debug>`),
+but the token tree is opaque. Paths inside macro arguments are not
+resolved. `macro_rules!` expansion is the next major feature needed.
+
+### Type references in bodies pass through
+
+`TypeRef` in let-bindings and casts passes through unchanged. Type path
+resolution is deferred to type checking.
+
+### Closure captures not tracked
+
+The resolver doesn't track which variables a closure captures.
