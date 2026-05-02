@@ -129,3 +129,51 @@ fn resolve_body_pattern_some_resolves() {
         );
     });
 }
+
+#[test]
+fn resolve_body_macro_calls() {
+    use sage_ir::resolved::{RExprKind, RStmtKind};
+    use sage_ir::symbol::SymbolSource;
+
+    run_sage_with(mini_redis_dir(), &[], |sage| {
+        let module =
+            resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
+        let method = find_method(sage.db, module, "Get", "apply");
+        let resolved = resolve_body(sage.db, method, module, sage.source_root, sage.root);
+
+        let stash = resolved.stash();
+        let body = &stash[*resolved.root()];
+        let root = &stash[body.root];
+
+        // Walk the block to find MacroCall nodes
+        let RExprKind::Block(stmts, _) = &root.kind else {
+            panic!("expected block at root");
+        };
+
+        let mut macro_res = Vec::new();
+        for stmt in &stash[*stmts] {
+            match &stmt.kind {
+                RStmtKind::Expr(e) => {
+                    if let RExprKind::MacroCall(res, _) = &stash[*e].kind {
+                        macro_res.push(*res);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // `debug!(...)` should resolve to Res::Def pointing at tracing crate
+        assert!(
+            !macro_res.is_empty(),
+            "expected at least one macro call in Get::apply"
+        );
+        let debug_res = macro_res[0];
+        match debug_res {
+            Res::Def(sym) => match sym.source(sage.db) {
+                SymbolSource::External(_, _) => {} // expected: tracing::debug
+                other => panic!("expected external symbol for debug!, got {:?}", other),
+            },
+            other => panic!("debug! should resolve to Res::Def, got {:?}", other),
+        }
+    });
+}
