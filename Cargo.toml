@@ -30,3 +30,4 @@ tree-sitter-rust = "0.24"
 
 [dev-dependencies]
 expect-test = "1.5.1"
+regex = "1.12.3"

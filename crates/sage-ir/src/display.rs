@@ -759,3 +759,404 @@ impl<'db> PrettyPrint<'db> for ClosureParam<'db> {
 }
 
 use sage_stash::StashData;
+
+// ===========================================================================
+// PrettyPrint — resolved body types
+// ===========================================================================
+
+use crate::resolved::*;
+use crate::symbol::SymbolSource;
+
+/// Helper to format a Res.
+fn fmt_res(f: &mut fmt::Formatter<'_>, res: &Res<'_>) -> fmt::Result {
+    with_db(|db| match res {
+        Res::Def(sym) => match sym.source(db) {
+            SymbolSource::Local(item) => {
+                // Use item_name logic inline since we only have &dyn salsa::Database
+                let name = match item {
+                    Item::Function(func) => Some(func.name(db).text(db).to_string()),
+                    Item::Struct(s) => Some(s.name(db).text(db).to_string()),
+                    Item::Enum(e) => Some(e.name(db).text(db).to_string()),
+                    Item::Trait(t) => Some(t.name(db).text(db).to_string()),
+                    Item::TypeAlias(t) => Some(t.name(db).text(db).to_string()),
+                    Item::Const(c) => Some(c.name(db).text(db).to_string()),
+                    Item::Static(s) => Some(s.name(db).text(db).to_string()),
+                    Item::Mod(m) => Some(m.name(db).text(db).to_string()),
+                    _ => None,
+                };
+                let name = name.unwrap_or_else(|| "?".to_string());
+                write!(f, "<def {name}>")
+            }
+            SymbolSource::External(cn, di) => write!(f, "<ext {}:{}>", cn.0, di.0),
+        },
+        Res::Local(id) => write!(f, "<local:{}>", id.0),
+        Res::Err => f.write_str("<unresolved>"),
+    })
+}
+
+/// Pretty-print a resolved body to a string.
+/// The database must be attached before calling this.
+pub fn pretty_print_resolved(resolved: &ResolvedBody<'_>) -> String {
+    struct Wrapper<'db>(&'db ResolvedBody<'db>);
+    impl fmt::Display for Wrapper<'_> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            let stash = self.0.stash();
+            let body = &stash[*self.0.root()];
+            let root = &stash[body.root];
+
+            // Print locals table
+            let locals = &stash[body.locals];
+            writeln!(f, "locals:")?;
+            for (i, local) in locals.iter().enumerate() {
+                with_db(|db| writeln!(f, "  {i}: {}", local.name.text(db)))?;
+            }
+
+            // Print body
+            root.pretty(f, stash, 0)?;
+            writeln!(f)
+        }
+    }
+    format!("{}", Wrapper(resolved))
+}
+
+impl<'db> PrettyPrint<'db> for RExpr<'db> {
+    fn pretty(&self, f: &mut fmt::Formatter<'_>, s: &Stash, indent: usize) -> fmt::Result {
+        self.kind.pretty(f, s, indent)
+    }
+}
+
+impl<'db> PrettyPrint<'db> for RExprKind<'db> {
+    fn pretty(&self, f: &mut fmt::Formatter<'_>, s: &Stash, indent: usize) -> fmt::Result {
+        match self {
+            RExprKind::Block(stmts, tail) => {
+                writeln!(f, "{{")?;
+                for stmt in &s[*stmts] {
+                    stmt.pretty(f, s, indent + 1)?;
+                }
+                if let Some(tail) = tail {
+                    pad(f, indent + 1)?;
+                    tail.pretty(f, s, indent + 1)?;
+                    writeln!(f)?;
+                }
+                pad(f, indent)?;
+                f.write_str("}")
+            }
+            RExprKind::Literal(lit) => write!(f, "{lit:?}"),
+            RExprKind::Path(res) => fmt_res(f, res),
+            RExprKind::Call(func, args) => {
+                func.pretty(f, s, indent)?;
+                f.write_str("(")?;
+                for (i, arg) in s[*args].iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    arg.pretty(f, s, indent)?;
+                }
+                f.write_str(")")
+            }
+            RExprKind::MethodCall(obj, name, args) => with_db(|db| {
+                obj.pretty(f, s, indent)?;
+                write!(f, ".{}", name.text(db))?;
+                f.write_str("(")?;
+                for (i, arg) in s[*args].iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    arg.pretty(f, s, indent)?;
+                }
+                f.write_str(")")
+            }),
+            RExprKind::Field(obj, name) => with_db(|db| {
+                obj.pretty(f, s, indent)?;
+                write!(f, ".{}", name.text(db))
+            }),
+            RExprKind::Binary(lhs, op, rhs) => {
+                lhs.pretty(f, s, indent)?;
+                write!(f, " {op:?} ")?;
+                rhs.pretty(f, s, indent)
+            }
+            RExprKind::Unary(op, operand) => {
+                write!(f, "{op:?}")?;
+                operand.pretty(f, s, indent)
+            }
+            RExprKind::Ref(inner, m) => {
+                match m {
+                    Mutability::Shared => f.write_str("&")?,
+                    Mutability::Mut => f.write_str("&mut ")?,
+                }
+                inner.pretty(f, s, indent)
+            }
+            RExprKind::If(cond, then, else_) => {
+                f.write_str("if ")?;
+                cond.pretty(f, s, indent)?;
+                f.write_str(" ")?;
+                then.pretty(f, s, indent)?;
+                if let Some(e) = else_ {
+                    f.write_str(" else ")?;
+                    e.pretty(f, s, indent)?;
+                }
+                Ok(())
+            }
+            RExprKind::IfLet(pat, scrutinee, then, else_) => {
+                f.write_str("if let ")?;
+                pat.pretty(f, s, indent)?;
+                f.write_str(" = ")?;
+                scrutinee.pretty(f, s, indent)?;
+                f.write_str(" ")?;
+                then.pretty(f, s, indent)?;
+                if let Some(e) = else_ {
+                    f.write_str(" else ")?;
+                    e.pretty(f, s, indent)?;
+                }
+                Ok(())
+            }
+            RExprKind::Match(scrutinee, arms) => {
+                f.write_str("match ")?;
+                scrutinee.pretty(f, s, indent)?;
+                writeln!(f, " {{")?;
+                for arm in &s[*arms] {
+                    arm.pretty(f, s, indent + 1)?;
+                }
+                pad(f, indent)?;
+                f.write_str("}")
+            }
+            RExprKind::Loop(body) => {
+                f.write_str("loop ")?;
+                body.pretty(f, s, indent)
+            }
+            RExprKind::While(cond, body) => {
+                f.write_str("while ")?;
+                cond.pretty(f, s, indent)?;
+                f.write_str(" ")?;
+                body.pretty(f, s, indent)
+            }
+            RExprKind::WhileLet(pat, scrutinee, body) => {
+                f.write_str("while let ")?;
+                pat.pretty(f, s, indent)?;
+                f.write_str(" = ")?;
+                scrutinee.pretty(f, s, indent)?;
+                f.write_str(" ")?;
+                body.pretty(f, s, indent)
+            }
+            RExprKind::For(pat, iter, body) => {
+                f.write_str("for ")?;
+                pat.pretty(f, s, indent)?;
+                f.write_str(" in ")?;
+                iter.pretty(f, s, indent)?;
+                f.write_str(" ")?;
+                body.pretty(f, s, indent)
+            }
+            RExprKind::Break(val) => {
+                f.write_str("break")?;
+                if let Some(v) = val {
+                    f.write_str(" ")?;
+                    v.pretty(f, s, indent)?;
+                }
+                Ok(())
+            }
+            RExprKind::Continue => f.write_str("continue"),
+            RExprKind::Return(val) => {
+                f.write_str("return")?;
+                if let Some(v) = val {
+                    f.write_str(" ")?;
+                    v.pretty(f, s, indent)?;
+                }
+                Ok(())
+            }
+            RExprKind::Assign(lhs, rhs) => {
+                lhs.pretty(f, s, indent)?;
+                f.write_str(" = ")?;
+                rhs.pretty(f, s, indent)
+            }
+            RExprKind::Await(inner) => {
+                inner.pretty(f, s, indent)?;
+                f.write_str(".await")
+            }
+            RExprKind::Try(inner) => {
+                inner.pretty(f, s, indent)?;
+                f.write_str("?")
+            }
+            RExprKind::Closure(params, body) => {
+                f.write_str("|")?;
+                for (i, p) in s[*params].iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    p.pretty(f, s, indent)?;
+                }
+                f.write_str("| ")?;
+                body.pretty(f, s, indent)
+            }
+            RExprKind::Tuple(elems) => {
+                f.write_str("(")?;
+                for (i, e) in s[*elems].iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    e.pretty(f, s, indent)?;
+                }
+                f.write_str(")")
+            }
+            RExprKind::Array(elems) => {
+                f.write_str("[")?;
+                for (i, e) in s[*elems].iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    e.pretty(f, s, indent)?;
+                }
+                f.write_str("]")
+            }
+            RExprKind::Index(obj, idx) => {
+                obj.pretty(f, s, indent)?;
+                f.write_str("[")?;
+                idx.pretty(f, s, indent)?;
+                f.write_str("]")
+            }
+            RExprKind::Cast(expr, ty) => {
+                expr.pretty(f, s, indent)?;
+                write!(f, " as {ty}")
+            }
+            RExprKind::StructLit(res, fields) => with_db(|db| {
+                fmt_res(f, res)?;
+                f.write_str(" {")?;
+                for (i, fi) in s[*fields].iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(",")?;
+                    }
+                    write!(f, " {}: ", fi.name.text(db))?;
+                    fi.value.pretty(f, s, indent)?;
+                }
+                f.write_str(" }")
+            }),
+            RExprKind::Range(lo, hi) => {
+                if let Some(lo) = lo {
+                    lo.pretty(f, s, indent)?;
+                }
+                f.write_str("..")?;
+                if let Some(hi) = hi {
+                    hi.pretty(f, s, indent)?;
+                }
+                Ok(())
+            }
+            RExprKind::MacroCall(res, args) => with_db(|db| {
+                fmt_res(f, res)?;
+                write!(f, "!{}", args.text(db))
+            }),
+            RExprKind::Missing => f.write_str("{missing}"),
+        }
+    }
+}
+
+impl<'db> PrettyPrint<'db> for RStmt<'db> {
+    fn pretty(&self, f: &mut fmt::Formatter<'_>, s: &Stash, indent: usize) -> fmt::Result {
+        pad(f, indent)?;
+        match &self.kind {
+            RStmtKind::Let(pat, ty, init) => {
+                f.write_str("let ")?;
+                pat.pretty(f, s, indent)?;
+                if let Some(ty) = ty {
+                    write!(f, ": {ty}")?;
+                }
+                if let Some(init) = init {
+                    f.write_str(" = ")?;
+                    init.pretty(f, s, indent)?;
+                }
+                writeln!(f, ";")
+            }
+            RStmtKind::Expr(expr) => {
+                expr.pretty(f, s, indent)?;
+                writeln!(f, ";")
+            }
+        }
+    }
+}
+
+impl<'db> PrettyPrint<'db> for RPat<'db> {
+    fn pretty(&self, f: &mut fmt::Formatter<'_>, s: &Stash, indent: usize) -> fmt::Result {
+        self.kind.pretty(f, s, indent)
+    }
+}
+
+impl<'db> PrettyPrint<'db> for RPatKind<'db> {
+    fn pretty(&self, f: &mut fmt::Formatter<'_>, s: &Stash, indent: usize) -> fmt::Result {
+        match self {
+            RPatKind::Wildcard => f.write_str("_"),
+            RPatKind::Bind(id, m) => {
+                if matches!(m, Mutability::Mut) {
+                    f.write_str("mut ")?;
+                }
+                write!(f, "<bind:{}>", id.0)
+            }
+            RPatKind::Path(res) => fmt_res(f, res),
+            RPatKind::Tuple(pats) => {
+                f.write_str("(")?;
+                for (i, p) in s[*pats].iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    p.pretty(f, s, indent)?;
+                }
+                f.write_str(")")
+            }
+            RPatKind::Struct(res, fields) => with_db(|db| {
+                fmt_res(f, res)?;
+                f.write_str(" {")?;
+                for (i, fp) in s[*fields].iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(",")?;
+                    }
+                    write!(f, " {}: ", fp.name.text(db))?;
+                    fp.pat.pretty(f, s, indent)?;
+                }
+                f.write_str(" }")
+            }),
+            RPatKind::TupleStruct(res, pats) => {
+                fmt_res(f, res)?;
+                f.write_str("(")?;
+                for (i, p) in s[*pats].iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    p.pretty(f, s, indent)?;
+                }
+                f.write_str(")")
+            }
+            RPatKind::Ref(inner, m) => {
+                match m {
+                    Mutability::Shared => f.write_str("&")?,
+                    Mutability::Mut => f.write_str("&mut ")?,
+                }
+                inner.pretty(f, s, indent)
+            }
+            RPatKind::Literal(lit) => write!(f, "{lit:?}"),
+            RPatKind::Or(pats) => {
+                for (i, p) in s[*pats].iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(" | ")?;
+                    }
+                    p.pretty(f, s, indent)?;
+                }
+                Ok(())
+            }
+            RPatKind::Rest => f.write_str(".."),
+            RPatKind::Missing => f.write_str("{missing}"),
+        }
+    }
+}
+
+impl<'db> PrettyPrint<'db> for RMatchArm<'db> {
+    fn pretty(&self, f: &mut fmt::Formatter<'_>, s: &Stash, indent: usize) -> fmt::Result {
+        pad(f, indent)?;
+        self.pat.pretty(f, s, indent)?;
+        f.write_str(" => ")?;
+        self.body.pretty(f, s, indent)?;
+        writeln!(f)
+    }
+}
+
+impl<'db> PrettyPrint<'db> for RClosureParam<'db> {
+    fn pretty(&self, f: &mut fmt::Formatter<'_>, s: &Stash, indent: usize) -> fmt::Result {
+        self.pat.pretty(f, s, indent)
+    }
+}

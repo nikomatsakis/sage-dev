@@ -2,8 +2,10 @@
 
 use std::path::Path;
 
+use expect_test::expect;
 use sage_ir::Db;
 use sage_ir::body_resolve::resolve_body;
+use sage_ir::display::pretty_print_resolved;
 use sage_ir::item::Item;
 use sage_ir::resolve::{module_items, resolve_module_path};
 use sage_ir::resolved::Res;
@@ -176,4 +178,66 @@ fn resolve_body_macro_calls() {
             other => panic!("debug! should resolve to Res::Def, got {:?}", other),
         }
     });
+}
+
+#[test]
+fn display_resolved_body_get_parse_frames() {
+    run_sage_with(mini_redis_dir(), &[], |sage| {
+        let module =
+            resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
+        let method = find_method(sage.db, module, "Get", "parse_frames");
+        let resolved = resolve_body(sage.db, method, module, sage.source_root, sage.root);
+
+        let output = pretty_print_resolved(&resolved);
+        // Normalize non-deterministic crate numbers (keep DefIndex stable)
+        let output = normalize_ext_crates(&output);
+        expect![[r#"
+            locals:
+              0: parse
+              1: key
+            {
+              let <bind:1> = <local:0>.next_string()?;
+              <ext N:40257>(<def Get> { key: <local:1> })
+            }
+        "#]]
+        .assert_eq(&output);
+    });
+}
+
+#[test]
+fn display_resolved_body_get_apply() {
+    run_sage_with(mini_redis_dir(), &[], |sage| {
+        let module =
+            resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
+        let method = find_method(sage.db, module, "Get", "apply");
+        let resolved = resolve_body(sage.db, method, module, sage.source_root, sage.root);
+
+        let output = pretty_print_resolved(&resolved);
+        let output = normalize_ext_crates(&output);
+        expect![[r#"
+            locals:
+              0: self
+              1: db
+              2: dst
+              3: value
+              4: response
+            {
+              let <bind:4> = if let <ext N:39879>(<bind:3>) = <local:1>.get(&<local:0>.key) {
+                <unresolved>(<local:3>)
+              } else {
+                <unresolved>
+              };
+              <ext N:34>!(?response);
+              <local:2>.write_frame(&<local:4>).await?;
+              <ext N:40257>(())
+            }
+        "#]]
+        .assert_eq(&output);
+    });
+}
+
+/// Normalize `<ext N:M>` patterns to replace non-deterministic crate numbers with `N`.
+fn normalize_ext_crates(s: &str) -> String {
+    let re = regex::Regex::new(r"<ext \d+:(\d+)>").unwrap();
+    re.replace_all(s, "<ext N:$1>").to_string()
 }
