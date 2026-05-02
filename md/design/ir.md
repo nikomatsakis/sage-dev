@@ -105,6 +105,7 @@ Multi-segment paths use `resolve_first_segment` (handles `crate`/`self`/
 ## Display (`display.rs`)
 
 Item types use `impl Display` with `salsa::with_attached_database`.
+`FunctionItem::Display` prints the signature and body together.
 Body types use a `PrettyPrint` trait (needs `&Stash` to deref handles).
 
 Resolved body display uses `pretty_print_resolved(tcx, resolved)` which

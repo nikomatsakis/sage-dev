@@ -160,6 +160,12 @@ Macro paths are resolved to their definition (`<ext tracing::debug>`),
 but the token tree is opaque. Paths inside macro arguments are not
 resolved. `macro_rules!` expansion is the next major feature needed.
 
+**Exception:** Derive macros from external crates ARE expanded. Builtin
+derives (`Debug`, `Clone`, etc.) produce synthetic IR. Proc-macro
+derives (e.g., `Parser`, `Subcommand`) are invoked via
+`proc_macro::bridge` and the expanded source is lowered through
+tree-sitter into `Vec<Item>`. See `derive.rs` and `proc_macro_srv.rs`.
+
 ### Type references in bodies pass through
 
 `TypeRef` in let-bindings and casts passes through unchanged. Type path
