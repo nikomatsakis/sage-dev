@@ -1,4 +1,5 @@
 pub mod body;
+pub mod body_resolve;
 pub mod db;
 pub mod derive;
 pub mod display;
@@ -7,6 +8,7 @@ pub mod lower;
 pub mod module;
 pub mod name;
 pub mod resolve;
+pub mod resolved;
 pub mod source;
 pub mod span;
 pub mod symbol;

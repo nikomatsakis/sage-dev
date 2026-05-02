@@ -26,7 +26,7 @@ pub enum Namespace {
 }
 
 /// Whether an item lives in the given namespace.
-fn item_in_namespace(_db: &dyn Db, item: Item<'_>, ns: Namespace) -> bool {
+pub(crate) fn item_in_namespace(_db: &dyn Db, item: Item<'_>, ns: Namespace) -> bool {
     match (item, ns) {
         (
             Item::Struct(_) | Item::Enum(_) | Item::Trait(_) | Item::TypeAlias(_) | Item::Mod(_),
@@ -422,7 +422,7 @@ fn resolve_use_path_to_module<'db>(
 
 /// Resolve the first segment of a use path.
 /// Returns (module to search in, remaining segments).
-fn resolve_first_segment<'db>(
+pub(crate) fn resolve_first_segment<'db>(
     db: &'db dyn Db,
     current_module: Module<'db>,
     source_root: SourceRoot,
@@ -486,7 +486,7 @@ fn resolve_first_segment<'db>(
 }
 
 /// Try to convert a Symbol into a Module (for walking into child segments).
-fn symbol_to_module<'db>(
+pub(crate) fn symbol_to_module<'db>(
     db: &'db dyn Db,
     sym: Symbol<'db>,
     source_root: SourceRoot,
