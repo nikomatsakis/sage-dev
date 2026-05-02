@@ -17,15 +17,15 @@ fn main() -> mini_redis::Result {
   match cli.command {
     Command::Ping { msg: msg } => {
       let value = client.ping(msg).await?;
-      if str::from_utf8(&value) {
+      if let Ok(string) = str::from_utf8(&value) {
         println!("\"{string}\"");
       } else {
         println!("{value:?}");
       };
     }
     Command::Get { key: key } => {
-      if client.get(&key).await? {
-        if str::from_utf8(&value) {
+      if let Some(value) = client.get(&key).await? {
+        if let Ok(string) = str::from_utf8(&value) {
           println!("\"{string}\"");
         } else {
           println!("{value:?}");
@@ -51,7 +51,7 @@ fn main() -> mini_redis::Result {
         return Err(String.into());
       };
       let subscriber = client.subscribe(channels).await?;
-      while subscriber.next_message().await? {
+      while let Some(msg) = subscriber.next_message().await? {
         println!(
                     "got message from the channel: {}; message = {:?}",
                     msg.channel, msg.content
@@ -95,7 +95,7 @@ fn set_up_logging() -> Result {
 /// Receive commands sent through the channel and forward them to client. The
 /// response is returned back to the caller via a `oneshot`.
 fn run(client: Client, rx: Receiver) {
-  while rx.recv().await {
+  while let Some((cmd, tx)) = rx.recv().await {
     let response = match cmd {
       Command::Get(key) => client.get(&key).await
       Command::Set(key, value) => client.set(&key, value).await.map(|| None)
@@ -205,7 +205,7 @@ fn make_message_frame(channel_name: String, msg: Bytes) -> Frame {
 /// state handle. If `shutdown` is set, terminate the task.
 fn purge_expired_tasks(shared: Arc) {
   while Notshared.is_shutdown() {
-    if shared.purge_expired_keys() {
+    if let Some(when) = shared.purge_expired_keys() {
       tokio::select!{
                 _ = time::sleep_until(when) => {}
                 _ = shared.background_task.notified() => {}

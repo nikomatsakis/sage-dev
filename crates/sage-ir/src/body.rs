@@ -50,6 +50,13 @@ pub enum ExprKind<'db> {
     StructLit(Path<'db>, Slice<FieldInit<'db>>),
     Range(Option<Ptr<Expr<'db>>>, Option<Ptr<Expr<'db>>>),
     MacroCall(Path<'db>, TokenTree<'db>),
+    IfLet(
+        Ptr<Pat<'db>>,
+        Ptr<Expr<'db>>,
+        Ptr<Expr<'db>>,
+        Option<Ptr<Expr<'db>>>,
+    ),
+    WhileLet(Ptr<Pat<'db>>, Ptr<Expr<'db>>, Ptr<Expr<'db>>),
     Missing,
 }
 

@@ -613,6 +613,27 @@ impl<'db> PrettyPrint<'db> for ExprKind<'db> {
                 Ok(())
             }
             ExprKind::MacroCall(path, args) => with_db(|db| write!(f, "{path}!{}", args.text(db))),
+            ExprKind::IfLet(pat, scrutinee, then, else_) => {
+                f.write_str("if let ")?;
+                pat.pretty(f, s, indent)?;
+                f.write_str(" = ")?;
+                scrutinee.pretty(f, s, indent)?;
+                f.write_str(" ")?;
+                then.pretty(f, s, indent)?;
+                if let Some(e) = else_ {
+                    f.write_str(" else ")?;
+                    e.pretty(f, s, indent)?;
+                }
+                Ok(())
+            }
+            ExprKind::WhileLet(pat, scrutinee, body) => {
+                f.write_str("while let ")?;
+                pat.pretty(f, s, indent)?;
+                f.write_str(" = ")?;
+                scrutinee.pretty(f, s, indent)?;
+                f.write_str(" ")?;
+                body.pretty(f, s, indent)
+            }
             ExprKind::Missing => f.write_str("{missing}"),
         }
     }

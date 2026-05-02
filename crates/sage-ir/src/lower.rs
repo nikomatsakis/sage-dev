@@ -828,12 +828,30 @@ impl<'db> BodyLowerCtx<'db> {
                 ExprKind::Loop(body)
             }
             "while_expression" => {
-                let cond = node
-                    .child_by_field_name("condition")
-                    .map(|n| self.lower_expr(n))
-                    .unwrap_or_else(|| self.missing_expr(node));
+                let cond_node = node.child_by_field_name("condition");
                 let body = node
                     .child_by_field_name("body")
+                    .map(|n| self.lower_expr(n))
+                    .unwrap_or_else(|| self.missing_expr(node));
+
+                if let Some(cond) = cond_node {
+                    if cond.kind() == "let_condition" {
+                        let pat = cond
+                            .child_by_field_name("pattern")
+                            .map(|n| self.lower_pat(n))
+                            .unwrap_or_else(|| self.missing_pat(cond));
+                        let scrutinee = cond
+                            .child_by_field_name("value")
+                            .map(|n| self.lower_expr(n))
+                            .unwrap_or_else(|| self.missing_expr(cond));
+                        return self.stash.alloc(Expr {
+                            kind: ExprKind::WhileLet(pat, scrutinee, body),
+                            span,
+                        });
+                    }
+                }
+
+                let cond = cond_node
                     .map(|n| self.lower_expr(n))
                     .unwrap_or_else(|| self.missing_expr(node));
                 ExprKind::While(cond, body)
@@ -1068,10 +1086,7 @@ impl<'db> BodyLowerCtx<'db> {
 
     fn lower_if(&mut self, node: Node<'_>) -> Ptr<Expr<'db>> {
         let span = self.span(node);
-        let cond = node
-            .child_by_field_name("condition")
-            .map(|n| self.lower_expr(n))
-            .unwrap_or_else(|| self.missing_expr(node));
+        let cond_node = node.child_by_field_name("condition");
         let then = node
             .child_by_field_name("consequence")
             .map(|n| self.lower_expr(n))
@@ -1080,6 +1095,27 @@ impl<'db> BodyLowerCtx<'db> {
             .child_by_field_name("alternative")
             .and_then(|n| n.named_child(0))
             .map(|n| self.lower_expr(n));
+
+        if let Some(cond) = cond_node {
+            if cond.kind() == "let_condition" {
+                let pat = cond
+                    .child_by_field_name("pattern")
+                    .map(|n| self.lower_pat(n))
+                    .unwrap_or_else(|| self.missing_pat(cond));
+                let scrutinee = cond
+                    .child_by_field_name("value")
+                    .map(|n| self.lower_expr(n))
+                    .unwrap_or_else(|| self.missing_expr(cond));
+                return self.stash.alloc(Expr {
+                    kind: ExprKind::IfLet(pat, scrutinee, then, else_),
+                    span,
+                });
+            }
+        }
+
+        let cond = cond_node
+            .map(|n| self.lower_expr(n))
+            .unwrap_or_else(|| self.missing_expr(node));
         self.stash.alloc(Expr {
             kind: ExprKind::If(cond, then, else_),
             span,
