@@ -1,733 +1,728 @@
-# WIP: Proc-macro derive expansion
+# WIP: Macro-expansion-aware name resolution
 
-## Goal
+## Status
 
-Actually invoke proc-macro derive dylibs (e.g. clap's `Parser`,
-`Subcommand`) and feed the expanded source back into sage's IR.
-Currently, proc-macro derives are resolved to their `Symbol` but
-never called — `DeriveResult::ProcMacro { symbol }` is a stub.
+*Under discussion.* Do not edit code until we've finalized the plan.
 
-Target: expand `#[derive(Parser)]` and `#[derive(Subcommand)]` on
-mini-redis's CLI structs, lower the output into `Vec<Item>`, and
-snapshot the result.
+## Tenets
 
-## Background: how rustc invokes proc macros
+* **On demand**: do the least work needed to complete the given task.
+* **Opinionated**: we don't have to accept all of Rust; we can require it be used in particular ways.
+* **Sound**: any program that works on sage would also work on rustc (potentially after subsetting).
 
-Proc-macro crates are compiled to dylibs. At load time, rustc reads
-a static array of `proc_macro::bridge::client::ProcMacro` entries
-from the dylib. Each entry contains a `Client` — essentially a
-function pointer into the dylib:
+## Overview
+
+The core idea is computing a **Minimal Expanded Members map (MEM-map)** for each module. The MEM-map contains exactly the macro expansions needed to resolve all names — no more. Builtin derives that only produce `impl` blocks (no new named entities) are recorded but not expanded. In the future, annotations on macros could declare their exported names, further reducing expansion work.
+
+`module_memmap` replaces `module_items` as the single source of truth for "what's in this module."
+
+## MEM-map structure
+
+The MEM-map is a tree with four kinds of entries:
+
+* **Named members**: any Rust item with a name (struct, enum, trait, fn, mod, const, etc.). Includes *redirects* from `use` statements (e.g., `use foo::bar` creates a named member `bar` that redirects to `foo::bar`). Also includes `macro_rules!` definitions, treated as module-scoped (no textual ordering — see FAQ).
+
+* **Macro uses**: result from macro invocations like `foo::bar!()`. Two varieties:
+  * *Unexpanded*: resolved to a macro definition but not expanded (we already know it produces no new names — e.g., builtin derives).
+  * *Expanded*: the macro was expanded and its output forms a **subtree** of additional members underneath this node. The tree structure is critical for detecting ambiguities (see "Time-travel detection").
+
+* **Glob stems**: from `use foo::bar::*` or the implicit prelude. Record the source module; its MEM-map is consulted lazily during resolution.
+
+* **Anonymous items**: `impl` blocks, `extern` blocks, and any other items that don't introduce a name into the module namespace. Not relevant for name resolution, but tracked here so the MEM-map is the single source of truth for "everything in this module." Downstream queries (method resolution, trait solving) consume these.
+
+### Concrete data model
 
 ```rust
-// proc_macro::bridge::client (in the standard library)
-#[repr(C)]
-pub struct Client<I, O> {
-    handle_counters: &'static HandleCounters,
-    run: extern "C" fn(BridgeConfig<'_>) -> Buffer,
-    _marker: PhantomData<fn(I) -> O>,
+#[salsa::tracked(debug)]
+pub struct ModuleMemmap<'db> {
+    #[returns(ref)]
+    pub entries: Vec<MemmapEntry<'db>>,
 }
-// Client is Copy, Send, Sync, 'static.
-```
 
-To invoke a derive, you call `client.run(strategy, server, input, false)`
-where:
-- `strategy` controls threading (`SAME_THREAD` or `CROSS_THREAD`)
-- `server` implements `proc_macro::bridge::server::Server` — the
-  bridge callbacks for token/span/symbol operations
-- `input` is the item's token stream (the struct/enum source)
-
-The `Server` trait has ~30 methods but most are trivial for our use
-case. The proc-macro dylib calls back through the bridge to create
-tokens, look up spans, and emit diagnostics. It never touches the
-resolver or type system.
-
-## Architecture
-
-```
-Salsa thread                          Rustc thread
-───────────                           ───────────
-expand_derives()
-  → tcx.expand_proc_macro_derive(     TcxRequest::ExpandDerive
-       crate_num, def_index,            → CStore::load_macro_untracked(def_id)
-       item_source_text)                → unsafe: extract Client from DeriveProcMacro
-                                        → client.run(&SAME_THREAD, SageServer, input)
-                                        → output.to_string()
-  ← expanded source text              ← reply.send(expanded_text)
-  → tree-sitter lower → Vec<Item>
-```
-
-Expansion happens on the rustc thread because the `Client` is buried
-inside `Arc<dyn MultiItemModifier>` with no `Any` downcast support.
-We use one small `unsafe` pointer cast to extract it.
-
-Future optimization: if we add a public accessor to `CStore` for the
-raw `Client`, expansion can move to the salsa side (or a thread pool)
-since `Client` is `Copy + Send + 'static`.
-
-## The unsafe
-
-`CStore::load_macro_untracked` returns:
-```
-LoadedMacro::ProcMacro(SyntaxExtension {
-    kind: SyntaxExtensionKind::Derive(Arc<dyn MultiItemModifier>),
-    ...
-})
-```
-
-The concrete type behind the `Arc` is `DeriveProcMacro`:
-```rust
-// rustc_expand::proc_macro (public struct, public field)
-pub struct DeriveProcMacro {
-    pub client: Client<TokenStream, TokenStream>,
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub enum MemmapEntry<'db> {
+    Named(NamedMember<'db>),
+    MacroUse(MacroUse<'db>),
+    Glob(GlobStem<'db>),
+    Anon(Item<'db>),
 }
-```
 
-`MultiItemModifier` doesn't extend `Any`, so we can't downcast
-through the trait. Instead:
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub struct NamedMember<'db> {
+    pub name: Name<'db>,
+    pub ns: Namespace,
+    pub kind: NamedMemberKind<'db>,
+}
 
-```rust
-let ptr = Arc::as_ref(&arc) as *const dyn MultiItemModifier
-                              as *const DeriveProcMacro;
-let client = unsafe { (*ptr).client }; // Client is Copy
-```
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub enum NamedMemberKind<'db> {
+    Item(Item<'db>),              // struct, enum, fn, mod, const, etc.
+    Redirect { target: Path<'db> }, // from `use foo::bar` or `use foo::bar as baz`
+    MacroDef(MacroDef<'db>),      // macro_rules! definition
+}
 
-This is sound because:
-1. We only do this when `SyntaxExtensionKind::Derive` came from
-   `load_macro_untracked` on a proc-macro crate
-2. `load_proc_macro` in `rustc_metadata` always wraps
-   `ProcMacro::CustomDerive { client }` in
-   `Arc::new(DeriveProcMacro { client })`
-3. `DeriveProcMacro` is a single-field struct, `Client` is `Copy`
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub struct MacroUse<'db> {
+    pub path: Path<'db>,
+    pub state: MacroUseState<'db>,
+}
 
-## SageServer — our `Server` implementation
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub enum MacroUseState<'db> {
+    Unresolved,
+    Unexpanded(MacroDef<'db>),           // resolved but known to produce no names
+    Expanded(Vec<MemmapEntry<'db>>),     // subtree of expanded items (recursive)
+    Error,                                // path resolved to non-macro
+}
 
-Lives in `src/proc_macro_srv.rs`. Uses `proc_macro2` for token stream
-manipulation but wraps `Span` because `proc_macro2::Span` doesn't
-implement `Eq + Hash` (required by the `Server` trait).
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub struct GlobStem<'db> {
+    pub source_module: Module<'db>,      // lazily consulted during resolution
+}
 
-```rust
-struct SageServer;
-
-/// Dummy span — we don't track span info through proc-macro expansion.
-/// Must be Copy + Eq + Hash as required by Server trait.
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
-struct SageSpan;
-
-impl Server for SageServer {
-    type TokenStream = proc_macro2::TokenStream;
-    type Span = SageSpan;
-    type Symbol = String;
-    // ...
+#[salsa::tracked(debug)]
+pub struct MacroDef<'db> {
+    pub name: Name<'db>,
+    #[returns(ref)]
+    pub body_tokens: String,             // raw token text of `() => { ... }` body
+    pub span: SpanIndices,
 }
 ```
 
-We use a unit struct `SageSpan` instead of `proc_macro2::Span`
-because the `Server` trait requires `Span: Copy + Eq + Hash` and
-`proc_macro2::Span` only implements `Copy` (no `Eq` or `Hash`).
-This is fine — we don't need real span tracking through proc-macro
-expansion. All spans in the expanded output will be dummy values
-anyway.
+The tree structure is recursive: `MacroUseState::Expanded` contains a `Vec<MemmapEntry>` which can itself contain further `MacroUse` entries (for macros produced by expansion). This naturally represents arbitrary nesting depth.
 
-This means the `TokenTree` conversion between bridge types and
-`proc_macro2` types must strip/inject spans at the boundary:
-- Bridge → `proc_macro2`: ignore the `SageSpan`, use
-  `proc_macro2::Span::call_site()` when constructing tokens
-- `proc_macro2` → bridge: use `SageSpan` for all span fields
+Entries are ordered deterministically: CST order for root-level items, expansion output order for subtrees. Since expansion is deterministic (same macro + same input = same output), the vec is stable across fixpoint iterations, and `Eq` comparison works directly.
 
-### Method implementation strategy
+### How `resolve_name` maps onto the MEM-map (post-convergence)
 
-The `Server` trait has 3 inherent methods plus ~30 from `with_api!`:
+The current `resolve_name` has 5 steps: declared items → named imports → globs → extern prelude → std prelude. In the new design:
 
-| Category | Methods | Implementation |
-|---|---|---|
-| Globals | `globals` | Return `SageSpan` for def_site, call_site, mixed_site |
-| Symbols (inherent) | `intern_symbol`, `with_symbol_string` | `String` — intern is `.to_owned()`, lookup is `f(s)` |
-| Token stream ops | `ts_from_str`, `ts_to_string`, `ts_clone`, `ts_is_empty`, `ts_from_token_tree`, `ts_concat_trees`, `ts_concat_streams`, `ts_into_trees`, `ts_drop` | Delegate to `proc_macro2` with span conversion at boundary |
-| Literals | `literal_from_str` | Parse with `proc_macro2`, convert to bridge `Literal` |
-| Spans | `span_debug`, `span_parent`, `span_source`, `span_byte_range`, `span_start`, `span_end`, `span_line`, `span_column`, `span_file`, `span_local_file`, `span_join`, `span_subspan`, `span_resolved_at`, `span_source_text`, `span_save_span`, `span_recover_proc_macro_span` | Dummy values — `SageSpan`, `None`, `0`, `""` |
-| Symbols (from api) | `symbol_normalize_and_validate_ident` | Check `syn::parse_str::<syn::Ident>(s)` or basic ident validation |
-| Env/tracking | `injected_env_var`, `track_env_var`, `track_path` | No-op / `None` |
-| Diagnostics | `emit_diagnostic` | Ignore (eprintln in debug builds) |
-| Expansion | `ts_expand_expr` | `Err(())` — not supported |
+1. **Non-glob lookup**: walk the MEM-map tree recursively, collecting all `NamedMember` entries with matching name+namespace (from root and all expanded subtrees).
+2. **Glob lookup**: for each `GlobStem`, compute `module_memmap(source_module)` and search for the name there.
+3. **Priority**: non-glob beats glob. Multiple non-globs → `Ambiguous`. Zero non-globs + multiple globs → `Ambiguous`. Exactly one match → return it.
+4. **Extern prelude**: if nothing found, check `tcx.extern_crate(name)`.
+5. **Std prelude**: if still nothing, check `std::prelude::v1::*`.
 
-The core work is the `TokenTree` conversion between bridge types and
-`proc_macro2` types. Both have the same four variants (Group, Ident,
-Punct, Literal), so the mapping is mechanical. The bridge `TokenTree`
-is generic over `(TokenStream, Span, Symbol)`:
+Extern prelude beats std prelude (matching rustc). This is a simplification of the current code — steps 1+2 (declared items + named imports) collapse into a single MEM-map walk, since both explicit items and use-redirects are `NamedMember` entries.
 
+### How `resolve_memmap_path` differs (during fixpoint)
+
+`resolve_memmap_path` is used inside `module_memmap` for resolving macro paths. Key differences from `resolve_name`:
+- Returns `Vec<Symbol>` (multiple results), not `Result<Symbol, Error>`.
+- Within the **same parent** (same subtree level), non-glob shadows glob (just like post-convergence). This means a CST-level named item always shadows a CST-level glob for the same name.
+- Across **different subtrees** (e.g., a root-level glob vs a macro-expanded non-glob from a sibling expansion), items coexist — no shadowing. All candidates are returned.
+- This is why time-travel is only an error when the non-glob comes from a *different* macro expansion. If the non-glob was always in the CST (same parent as the glob), it shadows normally and there's no ambiguity.
+
+### Glob laziness
+
+Glob stems are *recorded* in the MEM-map but their contents are NOT inlined. The provisional MEM-map contains `GlobStem { source_module }` entries. When `resolve_memmap_path` searches for a name:
+1. First check all `NamedMember` entries (walking the full tree).
+2. If not found (or to collect all candidates), for each `GlobStem`, call `module_memmap(source_module)` and search *that* MEM-map.
+
+Glob contents are never copied into the current module's MEM-map — they're resolved on-the-fly during lookup. The MEM-map itself only grows by adding named members and macro expansions.
+
+### CST lowering changes
+
+Currently `lower_item` maps `"macro_invocation"` and `"macro_rules_definition"` (tree-sitter node kinds) to `Item::Error`. For the MEM-map:
+
+- `module_memmap` reads the CST directly (via tree-sitter, same as `file_item_tree`) and produces `MemmapEntry` values. It does NOT go through the `Item` enum for macro-related nodes.
+- `"macro_rules_definition"` → `MemmapEntry::Named(NamedMember { kind: MacroDef(...) })`
+- `"macro_invocation"` at item level → `MemmapEntry::MacroUse(MacroUse { state: Unresolved })`
+- All other items → lowered via existing `lower_item` logic, wrapped as `MemmapEntry::Named` or `MemmapEntry::Anon`
+
+The existing `Item` enum and `file_item_tree` can remain for body resolution (which doesn't need macro expansion). `module_memmap` is the new entry point for module-level queries.
+
+## Key queries
+
+### `module_memmap(module)` — the fixpoint
+
+A `#[salsa::fixpoint]` tracked function. Computes the full MEM-map for a module.
+
+**Initial/fallback value**: the empty set (required by salsa for cycle recovery).
+
+**Algorithm**:
+1. Seed from the CST: named items, use-redirects, glob stems, and unresolved macro uses.
+2. For each unresolved macro use, call `resolve_memmap_path` to resolve the macro path:
+   - If it resolves to one or more macro definitions → expand against all of them (see "Multiple candidates" below). Add expanded items as a subtree under this macro use node.
+   - If it resolves to something that isn't a macro → mark as error.
+   - If it resolves to nothing → leave unresolved (may resolve on next iteration).
+3. Salsa re-executes until the result stabilizes.
+
+Cross-module cycles (A globs from B, B globs from A) are handled automatically by salsa's cycle recovery — each module's MEM-map grows monotonically until convergence.
+
+**Depth limit**: 128 per expansion chain (same as rustc's recursion limit). If `outer!()` → `inner!()` → `deeper!()`, that's depth 3. If any single chain exceeds 128, emit an error and stop expanding that chain.
+
+### `expand_macro(macro_def, macro_input)` — leaf query
+
+A tracked function that runs macro expansion. Deterministic, does not read any MEM-map, does not participate in the fixpoint. `MacroDef` is a tracked struct created during CST lowering (stable across fixpoint iterations).
+
+**Initial implementation**: only supports `macro_rules!` with a single no-argument arm:
 ```rust
-// proc_macro::bridge (generic over Server types)
-enum TokenTree<TokenStream, Span, Symbol> {
-    Group { delimiter: Delimiter, stream: Option<TokenStream>, span: DelimSpan<Span> },
-    Ident { sym: Symbol, is_raw: bool, span: Span },
-    Punct { ch: u8, joint: bool, span: Span },
-    Literal { kind: LitKind, symbol: Symbol, suffix: Option<Symbol>, span: Span },
+macro_rules! $name {
+    () => { $tokens }
 }
 ```
+Expansion = take `$tokens` and parse as items. No metavariables, no repetition.
 
-Note: the bridge `Literal` uses `LitKind` + `symbol` (the text) +
-optional `suffix`, not a parsed value. This differs from
-`proc_macro2::Literal` which is opaque. For bridge→proc_macro2
-conversion, we reconstruct the literal text from kind+symbol+suffix
-and parse it. For proc_macro2→bridge, we format the literal to string
-and decompose it.
+### `resolve_name(module, name)` — public API
 
-## TcxDb changes
+Used *after* the MEM-map has converged. Reads `module_memmap`, flattens the tree, and applies final priority rules:
 
-### New trait method
+1. Non-glob (explicit items, use-redirects, macro-expanded items) — highest
+2. Glob imports
+3. Extern prelude
+4. Std prelude — lowest
 
-```rust
-// crates/sage-ir/src/tcx/mod.rs
-pub trait TcxDb: Send + Sync {
-    // ... existing methods ...
+Two non-globs with the same name in the same namespace = conflict (reported by validation).
 
-    /// Expand a proc-macro derive. Returns the expanded source text.
-    fn expand_proc_macro_derive(
-        &self,
-        crate_num: CrateNum,
-        def_index: DefIndex,
-        item_source: &str,
-    ) -> Option<String>;
-}
-```
+### `memmap_errors(module)` — validation
 
-### New request variant
+A tracked function that inspects the converged MEM-map and returns `Vec<MemmapError>`:
+- **Time-travel violations**: a glob-resolved name now has a non-glob entry from a sibling expansion that would have taken priority.
+- **Duplicate non-glob names**: two non-glob items with the same name in the same namespace.
+- **Ambiguous macro resolution**: a macro invocation resolved to multiple candidates (multiple expansions stored).
+- **Unresolved macros**: macro paths that never resolved after convergence.
 
-```rust
-// crates/sage-ir/src/tcx/proxy.rs
-enum TcxRequest {
-    // ... existing variants ...
-    ExpandDerive {
-        crate_num: CrateNum,
-        def_index: DefIndex,
-        item_source: String,
-        reply: mpsc::Sender<Option<String>>,
-    },
-}
-```
+`module_memmap` itself is pure — it just grows the set. All error logic lives here.
 
-### RustcTcxDb implementation
+## Monotonicity invariant
 
-```rust
-// src/tcx_impl.rs
-fn expand_proc_macro_derive(&self, cn, di, item_source) -> Option<String> {
-    let def_id = make_def_id(cn, di);
-    let cstore = CStore::from_tcx(self.tcx);
-    let loaded = cstore.load_macro_untracked(self.tcx, def_id);
-    let LoadedMacro::ProcMacro(ext) = loaded else { return None };
-    let SyntaxExtensionKind::Derive(ref arc) = ext.kind else { return None };
+The MEM-map only grows, never shrinks. This is what makes `#[salsa::fixpoint]` sound.
 
-    // SAFETY: see "The unsafe" section above
-    let client = unsafe {
-        let ptr = Arc::as_ref(arc) as *const dyn MultiItemModifier
-                                    as *const DeriveProcMacro;
-        (*ptr).client
-    };
+If a macro path resolves via a glob on iteration N, but iteration N+1 introduces a non-glob with the same name (from a sibling expansion), we do NOT replace the glob resolution. We keep *both* expansions and report an ambiguity error in validation. The set always grows.
 
-    let input: proc_macro2::TokenStream = item_source.parse().ok()?;
-    let server = SageServer::new();
-    match client.run(&SAME_THREAD, server, input, false) {
-        Ok(output) => Some(output.to_string()),
-        Err(_panic) => None,
-    }
-}
-```
+## Multiple candidates
 
-## Integration with derive.rs
+When `resolve_memmap_path` returns multiple results for a macro's path, we create **multiple `MacroUse` entries** for the same invocation — one per candidate, each expanded independently. Validation reports an error if a macro invocation site has more than one corresponding `MacroUse` entry. This is analogous to how multiple items with the same name coexist and produce a conflict — we record everything, validate after convergence.
 
-Currently `expand_derives` returns `DeriveResult::ProcMacro { symbol }`
-for non-builtin derives. The change:
+## Time-travel detection
 
-```rust
-DeriveResult::ProcMacro { symbol } => {
-    let (cn, di) = match symbol.source(db) {
-        SymbolSource::External(cn, di) => (cn, di),
-        _ => continue,
-    };
-    // Get the item's source text from the SourceFile
-    let item_source = extract_item_source(db, item);
-    if let Some(expanded) = db.tcx().expand_proc_macro_derive(cn, di, &item_source) {
-        // Lower expanded text through tree-sitter
-        let expanded_items = lower_expanded_source(db, &expanded);
-        results.push(DeriveResult::Expanded { items: expanded_items });
-    }
-}
-```
+A macro path might resolve via a glob early in the fixpoint, but then a later expansion introduces a non-glob name that *should* have taken priority. Example: `baz::n!()` resolves `baz` via `use foo::*`, but `bar::m!()` expands to produce `mod baz` (non-glob).
 
-`extract_item_source` gets the source text for the struct/enum from
-its `SpanTable` and `SpanIndices`:
+The tree structure (expanded items as subnodes of their macro invocation) enables detecting these after convergence: check whether any glob-resolved name now has a non-glob entry from a sibling/later expansion.
 
-```rust
-fn extract_item_source(db: &dyn Db, item: Item<'_>) -> Option<String> {
-    let (span_table, span) = match item {
-        Item::Struct(s) => (s.span_table(db), s.span(db)),
-        Item::Enum(e) => (e.span_table(db), e.span(db)),
-        _ => return None,
-    };
-    let file = span_table.file(db);
-    let text = file.text(db);
-    Some(text[span.start as usize..span.end as usize].to_owned())
-}
-```
-
-Note: rustc strips the `#[derive(...)]` attribute before passing the
-item to the proc-macro. Our `span` covers the full item including
-attributes. For v1, we pass the full text — most proc-macros ignore
-the derive attribute. If a proc-macro misbehaves, we can strip
-`#[derive(...)]` from the text before passing it.
-
-`lower_expanded_source` takes the expanded text (which is valid Rust
-source — impl blocks, function definitions, etc.), creates a
-temporary `SourceFile`, and runs it through `file_item_tree` to get
-`Vec<Item>`. The expanded items are synthetic (generated spans, no
-real file), similar to how builtin derive expansion already works in
-`derive/builtins.rs`.
-
-## mini-redis proc-macro derives
-
-| Derive | Crate | File | Struct |
-|---|---|---|---|
-| `Parser` | clap | `src/bin/server.rs` | `Cli` |
-| `Parser` | clap | `src/bin/cli.rs` | `Cli` |
-| `Subcommand` | clap | `src/bin/cli.rs` | `Command` |
-
-All other derives in mini-redis are builtins (`Debug`, `Clone`,
-`Default`) — already handled.
-
-## Implementation plan
-
-Each phase follows TDD: write failing tests first, then implement
-until they pass. Tests are listed with their exact assertions.
-
-### Process
-
-1. **Write tests first.** Copy the test code from the phase into the
-   appropriate test file. Run them — they must fail (compile errors
-   count as failure).
-2. **Implement.** Write the minimum code to make the tests pass.
-3. **Verify.** All tests pass (new and existing).
-4. **Update WIP.md.** After each phase:
-   - Mark the phase as complete in the "Implementation status" section
-     at the bottom.
-   - If the implementation deviated from the plan (different function
-     signatures, extra types needed, tests changed, etc.), document
-     the deviation under "Deviations from plan" with a brief
-     explanation of what changed and why.
-   - If new questions or issues surfaced, add them to the FAQ or
-     note them under "Open issues".
-5. **Commit.** One commit per phase with the message shown.
-
-### Phase 1: SageServer — bridge TokenTree conversion
-
-**Goal:** Implement the `Server` trait with `proc_macro2` types.
-The hardest part is converting between bridge `TokenTree` and
-`proc_macro2::TokenTree`. Get this right first in isolation.
-
-**Files:** new `src/proc_macro_srv.rs`, `src/lib.rs` (add module)
-
-**Test 1.1 — token stream round-trip** (unit test in `proc_macro_srv.rs`):
-```rust
-#[test]
-fn ts_round_trip() {
-    let mut srv = SageServer::new();
-    let ts = srv.ts_from_str("struct Foo { x: i32 }").unwrap();
-    let s = srv.ts_to_string(&ts);
-    assert!(!s.is_empty());
-    // Parse back — should not error
-    let ts2 = srv.ts_from_str(&s).unwrap();
-    assert_eq!(srv.ts_to_string(&ts), srv.ts_to_string(&ts2));
-}
-```
-
-**Test 1.2 — tree conversion round-trip** (unit test):
-```rust
-#[test]
-fn tree_round_trip() {
-    let mut srv = SageServer::new();
-    let ts = srv.ts_from_str("fn foo(x: u32) -> bool { true }").unwrap();
-    let trees = srv.ts_into_trees(ts.clone());
-    assert!(!trees.is_empty());
-    let ts2 = srv.ts_concat_trees(None, trees);
-    assert_eq!(srv.ts_to_string(&ts), srv.ts_to_string(&ts2));
-}
-```
-
-**Test 1.3 — empty stream** (unit test):
-```rust
-#[test]
-fn empty_stream() {
-    let mut srv = SageServer::new();
-    let ts: proc_macro2::TokenStream = Default::default();
-    assert!(srv.ts_is_empty(&ts));
-    assert!(srv.ts_into_trees(ts).is_empty());
-}
-```
-
-**Test 1.4 — symbol interning** (unit test):
-```rust
-#[test]
-fn symbols() {
-    let s = SageServer::intern_symbol("foo");
-    assert_eq!(s, "foo");
-    SageServer::with_symbol_string(&s, |text| assert_eq!(text, "foo"));
-}
-```
-
-**Test 1.5 — concat streams** (unit test):
-```rust
-#[test]
-fn concat_streams() {
-    let mut srv = SageServer::new();
-    let a = srv.ts_from_str("struct A;").unwrap();
-    let b = srv.ts_from_str("struct B;").unwrap();
-    let combined = srv.ts_concat_streams(Some(a), vec![b]);
-    let text = srv.ts_to_string(&combined);
-    assert!(text.contains("A"));
-    assert!(text.contains("B"));
-}
-```
-
-**Implement:**
-1. Define `SageSpan` (unit struct, derive `Copy, Clone, PartialEq, Eq, Hash`)
-2. Define `SageServer` struct (empty — no state needed)
-3. Implement bridge `TokenTree<TS, SageSpan, String>` → `proc_macro2::TokenTree`
-4. Implement `proc_macro2::TokenTree` → bridge `TokenTree<TS, SageSpan, String>`
-5. Implement all `Server` trait methods (see method table above)
-
-**Verify:** All 5 tests pass.
-
-**Commit:** `phase 1: SageServer proc-macro bridge implementation`
-
----
-
-### Phase 2: TcxDb wiring
-
-**Goal:** Add `expand_proc_macro_derive` to the `TcxDb` trait and
-wire it through proxy/noop/driver. No actual expansion yet — just
-the plumbing. Everything compiles, existing tests pass.
-
-**Files:** `crates/sage-ir/src/tcx/mod.rs`, `proxy.rs`, `noop.rs`,
-`src/driver.rs`
-
-**Test 2.1 — noop returns None** (unit test in sage-ir):
-```rust
-#[test]
-fn noop_expand_returns_none() {
-    let tcx = NoopTcxDb;
-    let result = tcx.expand_proc_macro_derive(
-        CrateNum(1), DefIndex(0), "struct Foo;",
-    );
-    assert!(result.is_none());
-}
-```
-
-**Implement:**
-1. Add `fn expand_proc_macro_derive(&self, crate_num: CrateNum, def_index: DefIndex, item_source: &str) -> Option<String>` to `TcxDb` trait
-2. Add `ExpandDerive { crate_num, def_index, item_source: String, reply: Sender<Option<String>> }` to `TcxRequest`
-3. Implement in `ProxyTcxDb` (send/recv pattern, matching existing methods)
-4. Implement in `NoopTcxDb` (return `None`)
-5. Handle `ExpandDerive` in `driver.rs` dispatch loop — call `tcx_db.expand_proc_macro_derive(...)` and send reply
-6. Add stub `expand_proc_macro_derive` to `RustcTcxDb` that returns `None` (real impl in phase 3)
-
-**Verify:** Test 2.1 passes. All existing tests pass. `cargo build` succeeds.
-
-**Commit:** `phase 2: TcxDb expand_proc_macro_derive wiring`
-
----
-
-### Phase 3: RustcTcxDb — actual proc-macro invocation
-
-**Goal:** Implement the unsafe `Client` extraction and actual
-proc-macro invocation on the rustc thread. After this phase, calling
-`tcx.expand_proc_macro_derive(cn, di, source)` with a valid
-proc-macro DefId actually runs the dylib and returns expanded code.
-
-**Files:** `src/tcx_impl.rs`
-
-**Test 3.1 — expand clap Parser derive** (integration test in `tests/expand_tests.rs`):
-```rust
-#[test]
-fn expand_proc_macro_clap_parser() {
-    run_sage_with(mini_redis_dir(), &[], |sage| {
-        // Resolve clap crate
-        let clap_cn = sage.db.tcx().extern_crate("clap").expect("clap not found");
-
-        // Find the Parser derive's DefIndex by walking clap's children
-        // looking for a Derive-namespace item named "Parser"
-        let clap_root_children = sage.db.tcx().module_children(clap_cn, DefIndex(0));
-        let parser_child = clap_root_children.iter()
-            .find(|c| c.name == "Parser" && matches!(c.namespace, Namespace::Macro(MacroKind::Derive)))
-            .expect("Parser derive not found in clap");
-
-        let source = r#"#[command(name = "test")]
-struct Cli {
-    #[arg(long)]
-    port: Option<u16>,
-}"#;
-
-        let expanded = sage.db.tcx().expand_proc_macro_derive(
-            parser_child.crate_num, parser_child.def_index, source,
-        );
-        assert!(expanded.is_some(), "Parser expansion should succeed");
-        let text = expanded.unwrap();
-        assert!(text.contains("impl"), "expanded output should contain impl");
-    });
-}
-```
-
-**Test 3.2 — expansion returns valid Rust source** (integration test):
-```rust
-#[test]
-fn expanded_output_is_parseable() {
-    run_sage_with(mini_redis_dir(), &[], |sage| {
-        // Same setup as 3.1 to get clap Parser
-        let clap_cn = sage.db.tcx().extern_crate("clap").unwrap();
-        let children = sage.db.tcx().module_children(clap_cn, DefIndex(0));
-        let parser = children.iter()
-            .find(|c| c.name == "Parser" && matches!(c.namespace, Namespace::Macro(MacroKind::Derive)))
-            .unwrap();
-
-        let source = "struct Simple { x: i32 }";
-        let expanded = sage.db.tcx().expand_proc_macro_derive(
-            parser.crate_num, parser.def_index, source,
-        ).unwrap();
-
-        // The expanded text should parse as valid Rust via tree-sitter
-        let mut parser_ts = tree_sitter::Parser::new();
-        parser_ts.set_language(&tree_sitter_rust::LANGUAGE.into()).unwrap();
-        let tree = parser_ts.parse(&expanded, None).unwrap();
-        assert!(!tree.root_node().has_error(), "expanded output has parse errors:\n{expanded}");
-    });
-}
-```
-
-**Implement:**
-1. Replace the stub `expand_proc_macro_derive` in `RustcTcxDb` with real implementation
-2. `CStore::from_tcx(self.tcx)` → `cstore.load_macro_untracked(self.tcx, def_id)`
-3. Match `LoadedMacro::ProcMacro(ext)` → `SyntaxExtensionKind::Derive(ref arc)`
-4. Unsafe: extract `Client` via pointer cast from `Arc<dyn MultiItemModifier>`
-5. Parse `item_source` into `proc_macro2::TokenStream`
-6. Call `client.run(&SAME_THREAD, SageServer::new(), input, false)`
-7. Return `Ok(output) → Some(output.to_string())`, `Err(_) → None`
-
-**Verify:** Tests 3.1 and 3.2 pass.
-
-**Commit:** `phase 3: proc-macro derive invocation via Client bridge`
-
----
-
-### Phase 4: Integration with derive.rs
-
-**Goal:** Wire proc-macro expansion into the existing `expand_derives`
-flow. Expanded text gets lowered through tree-sitter into `Vec<Item>`.
-The `DeriveResult::ProcMacro` stub becomes `DeriveResult::Expanded`.
-
-**Files:** `crates/sage-ir/src/derive.rs`, `tests/expand_tests.rs`
-
-**Test 4.1 — expand_derives returns expanded items for Parser** (integration test):
-```rust
-#[test]
-fn expand_derives_clap_parser() {
-    run_sage_with(mini_redis_dir(), &[], |sage| {
-        let module = resolve_module_path(
-            sage.db, sage.root, sage.source_root, &["bin", "server"],
-        ).unwrap();
-        let items = module_items(sage.db, module);
-        let cli_struct = items.iter()
-            .find(|i| matches!(i, Item::Struct(s) if s.name(sage.db).text(sage.db) == "Cli"))
-            .expect("Cli struct not found");
-
-        let results = expand_derives(
-            sage.db, module, sage.source_root, sage.root, *cli_struct,
-        );
-
-        // Should have Debug (builtin) + Parser (now expanded, not stub)
-        let has_builtin = results.iter().any(|r| matches!(r, DeriveResult::Builtin { .. }));
-        let has_expanded = results.iter().any(|r| matches!(r, DeriveResult::Expanded { .. }));
-        assert!(has_builtin, "should have builtin Debug derive");
-        assert!(has_expanded, "should have expanded Parser derive");
-
-        // No more ProcMacro stubs
-        let has_stub = results.iter().any(|r| matches!(r, DeriveResult::ProcMacro { .. }));
-        assert!(!has_stub, "should not have unexpanded ProcMacro stubs");
-    });
-}
-```
-
-**Test 4.2 — expanded items lower to valid IR** (integration test):
-```rust
-#[test]
-fn expanded_items_are_valid_ir() {
-    run_sage_with(mini_redis_dir(), &[], |sage| {
-        let module = resolve_module_path(
-            sage.db, sage.root, sage.source_root, &["bin", "server"],
-        ).unwrap();
-        let items = module_items(sage.db, module);
-        let cli_struct = items.iter()
-            .find(|i| matches!(i, Item::Struct(s) if s.name(sage.db).text(sage.db) == "Cli"))
-            .expect("Cli struct not found");
-
-        let results = expand_derives(
-            sage.db, module, sage.source_root, sage.root, *cli_struct,
-        );
-
-        for result in &results {
-            if let DeriveResult::Expanded { items } = result {
-                assert!(!items.is_empty(), "expanded items should not be empty");
-                for item in items {
-                    // Expanded derive output should be impl blocks
-                    assert!(
-                        matches!(item, Item::Impl(_) | Item::Function(_) | Item::Const(_)),
-                        "unexpected expanded item kind: {:?}", item,
-                    );
-                }
-            }
-        }
-    });
-}
-```
-
-**Test 4.3 — snapshot expanded output** (integration test):
-```rust
-#[test]
-fn snapshot_expanded_clap_parser() {
-    run_sage_with(mini_redis_dir(), &[], |sage| {
-        let module = resolve_module_path(
-            sage.db, sage.root, sage.source_root, &["bin", "server"],
-        ).unwrap();
-        let items = module_items(sage.db, module);
-        let cli_struct = items.iter()
-            .find(|i| matches!(i, Item::Struct(s) if s.name(sage.db).text(sage.db) == "Cli"))
-            .expect("Cli struct not found");
-
-        let results = expand_derives(
-            sage.db, module, sage.source_root, sage.root, *cli_struct,
-        );
-
-        let mut out = String::new();
-        for result in &results {
-            match result {
-                DeriveResult::Builtin { impls } => {
-                    for impl_item in impls {
-                        out.push_str(&format!("builtin: {impl_item}\n"));
-                    }
-                }
-                DeriveResult::Expanded { items } => {
-                    for item in items {
-                        out.push_str(&format!("expanded: {item}\n"));
-                    }
-                }
-                DeriveResult::ProcMacro { symbol } => {
-                    out.push_str(&format!("unexpanded: {symbol}\n"));
-                }
-            }
-        }
-        expect![[r#"
-            ...snapshot filled on first run...
-        "#]].assert_eq(&out);
-    });
-}
-```
-
-**Implement:**
-1. Add `DeriveResult::Expanded { items: Vec<Item<'db>> }` variant
-2. `extract_item_source(db, item) -> Option<String>` — get source text
-   from `SpanTable` → `SourceFile` → byte slice
-3. `lower_expanded_source(db, text) -> Vec<Item>` — create temporary
-   `SourceFile`, run tree-sitter parse + `file_item_tree`-style lowering
-4. In `expand_derives`: when a non-builtin external derive is found,
-   call `db.tcx().expand_proc_macro_derive(cn, di, &source)`, lower
-   the result, produce `DeriveResult::Expanded`
-5. Update existing `expand_derives_cmd_get_full` test (it currently
-   expects `DeriveResult::ProcMacro` — cmd/get only has builtins so
-   it should be unaffected, but verify)
-
-**Verify:** Tests 4.1, 4.2, 4.3 pass. All existing tests pass.
-
-**Commit:** `phase 4: end-to-end proc-macro derive expansion`
-
-## Dependencies
-
-Add to root `sage` `Cargo.toml`:
-```toml
-proc-macro2 = "1"
-```
-
-## FAQ
-
-**Q: Is `CStore::from_tcx` accessible from outside `rustc_metadata`?**
-Yes. It's `pub` on `CStore` in `rustc_metadata::creader`. It
-downcasts `tcx.untracked().cstore` via `as_any()`. Sage can call it
-from `tcx_impl.rs` since we link `rustc_metadata` through
-`rustc_private`.
-
-**Q: Is the concrete type behind `SyntaxExtensionKind::Derive(Arc<...>)`
-always `DeriveProcMacro`?**
-Yes, for proc-macro crates. `load_proc_macro` in
-`rustc_metadata::rmeta::decoder` matches `ProcMacro::CustomDerive`
-and always wraps it in `Arc::new(DeriveProcMacro { client })`. There
-is no other code path that produces `SyntaxExtensionKind::Derive` for
-external proc-macro crates. (Builtin derives go through a different
-path and are already handled by sage.)
-
-**Q: What does the proc-macro receive as input?**
-The item source text (struct/enum definition) as a `TokenStream`.
-Rustc strips the `#[derive(...)]` attribute before passing it. Other
-attributes (e.g. `#[clap(...)]`, `#[serde(...)]`) are preserved.
-
-**Q: Does sage handle binary targets (`src/bin/*.rs`)?**
-Yes. `collect_source_files` in `driver.rs` recursively collects all
-`.rs` files under the crate's `src/` directory, including `src/bin/`.
-The mini-redis clap derives are in `src/bin/server.rs` and
-`src/bin/cli.rs`.
-
-**Q: Why not use `proc_macro2::Span` as the `Server::Span` type?**
-`proc_macro2::Span` implements `Copy` but not `Eq` or `Hash`. The
-`Server` trait requires `Span: 'static + Copy + Eq + Hash`. We use a
-unit struct `SageSpan` instead — we don't need real span tracking
-through proc-macro expansion.
-
-**Q: Why not extract the `Client` and send it to the salsa thread?**
-`Client` is `Copy + Send + 'static` and could theoretically be sent
-across threads. But it's buried inside `Arc<dyn MultiItemModifier>`
-with no `Any` downcast support. The only way to extract it is the
-unsafe pointer cast, which we do on the rustc thread. Moving
-expansion to the salsa side (or a thread pool) is a future
-optimization that would require either the same unsafe or a small
-rustc patch to expose the `Client` publicly.
-
-**Q: Can a proc-macro panic? What happens?**
-`client.run()` returns `Result<TokenStream, PanicMessage>`. If the
-proc-macro panics, we get `Err` and return `None` from
-`expand_proc_macro_derive`. The derive is silently skipped. Error
-reporting can be added later.
+**Resolution**: hard error (matching rustc's E0659). Silently letting non-glob win would violate soundness — the program's meaning would depend on expansion order, and rustc rejects it.
 
 ## What's NOT in scope
 
-- **Attribute macros** (`#[tokio::main]`, `#[tokio::test]`) — different
-  `Client` signature, transforms the item rather than appending
-- **Bang proc-macros** — different `Client` signature
-- **Parallelism** — `SAME_THREAD` on the rustc thread for now
-- **Error reporting** — `emit_diagnostic` is no-op; panicking
-  proc-macros return `None`
-- **Incremental** — no caching of expansion results yet (salsa
-  tracked function can be added later)
-- **Helper attributes** — `#[serde(...)]`, `#[clap(...)]` are not
-  resolved; they pass through as regular attributes
+- **Complex `macro_rules!` patterns** — metavariables, repetition, multiple arms
+- **Proc-macro bang expansion** — needs TcxDb integration
+- **Attribute macros** (`#[tokio::main]`) — transforms items, different problem
+- **Hygiene** — macro hygiene / span contexts
+- **Body-level macro expansion** — `vec![]`, `format!()` inside function bodies
+- **`macro_rules!` textual scoping** — sage treats all `macro_rules!` as module-scoped (see FAQ)
+
+## Test cases
+
+Tests are grouped by category. Each test uses only no-arg `macro_rules!` (the initial supported form). Cross-crate tests note where external crate behavior is assumed.
+
+### Precedence / shadowing
+
+#### Test P1: Named import beats glob
+
+```rust
+mod a { pub struct Foo; }
+mod b { pub struct Foo; }
+use a::*;
+use b::Foo;  // named import
+fn main() { let _ = Foo; }
+```
+**Expected**: OK — `Foo` resolves to `b::Foo`. Named import (non-glob) beats glob.
+
+#### Test P2: Macro-expanded item beats glob
+
+```rust
+mod foo {
+    pub mod bar {
+        macro_rules! m { () => { mod baz { pub(crate) struct Test(pub bool); } } }
+        pub(crate) use m;
+    }
+    pub mod baz { pub(crate) struct Test(pub u32); }
+}
+use foo::*;
+bar::m!();
+fn main() { baz::Test(true); }
+```
+**Expected**: OK — `baz::Test` resolves to the macro-expanded `Test(bool)`. Non-glob beats glob.
+
+#### Test P3: Glob beats extern prelude
+
+```rust
+// Assume extern crate `log` exists with a module `log::Level`
+mod mylog { pub struct Level; }
+use mylog::*;
+fn main() { let _ = Level; }
+```
+**Expected**: OK — `Level` resolves to `mylog::Level` via glob, not to anything from extern prelude. Glob has higher priority than extern prelude.
+
+#### Test P4: Glob beats std prelude
+
+```rust
+mod custom { pub struct Option; }
+use custom::*;
+fn main() { let _ = Option; }
+```
+**Expected**: OK — `Option` resolves to `custom::Option` via glob, not `std::option::Option` from the std prelude.
+
+#### Test P5: Two globs, same name — ambiguity
+
+```rust
+mod a { pub struct Foo; }
+mod b { pub struct Foo; }
+use a::*;
+use b::*;
+fn main() { let _ = Foo; }
+```
+**Expected**: ERROR — ambiguous, two glob-imported `Foo`.
+
+#### Test P6: Named import + macro-expanded item, same name — error
+
+```rust
+mod other { pub struct Foo; }
+use other::Foo;
+macro_rules! m { () => { struct Foo; } }
+m!();
+```
+**Expected**: ERROR — two non-glob items with the same name (`Foo`). Named import and macro-expanded item are both non-glob.
+
+#### Test P7: Explicit item + named import, same name — error
+
+```rust
+mod other { pub struct Foo; }
+use other::Foo;
+struct Foo;
+```
+**Expected**: ERROR — two non-glob items with the same name.
+
+### Path resolution variants
+
+#### Test R1: `self::` path for macro resolution
+
+```rust
+macro_rules! m { () => { struct Foo; } }
+self::m!();
+fn main() { let _ = Foo; }
+```
+**Expected**: OK — `self::m` resolves to `m` in the current module.
+
+#### Test R2: `crate::` path for macro resolution
+
+```rust
+mod inner {
+    macro_rules! m { () => { struct Foo; } }
+    pub(crate) use m;
+    crate::inner::m!();
+}
+```
+**Expected**: OK — `crate::inner::m` resolves via absolute path from crate root.
+
+#### Test R3: `super::` path for macro resolution
+
+```rust
+macro_rules! m { () => { struct Foo; } }
+pub(crate) use m;
+mod child {
+    super::m!();
+    fn test() { let _ = Foo; }
+}
+```
+**Expected**: OK — `super::m` resolves to `m` in the parent module. `Foo` is visible in `child`'s MEM-map.
+
+#### Test R4: Bare identifier resolves to local module before extern crate
+
+```rust
+// Assume extern crate `foo` exists
+mod foo {
+    macro_rules! m { () => { struct Local; } }
+    pub(crate) use m;
+}
+foo::m!();
+fn main() { let _ = Local; }
+```
+**Expected**: OK — `foo` resolves to the local module, not the extern crate. Flexi-lookup checks local MEM-map first.
+
+#### Test R5: Bare identifier falls through to extern prelude
+
+```rust
+// Assume extern crate `serde` exists with `serde::m` macro
+// (cross-crate, resolved via TcxDb)
+serde::m!();
+```
+**Expected**: OK — `serde` not found locally, falls through to extern prelude, resolves to the extern crate.
+
+#### Test R6: Multi-segment path through nested modules
+
+```rust
+mod a {
+    pub mod b {
+        macro_rules! m { () => { struct Deep; } }
+        pub(crate) use m;
+    }
+}
+a::b::m!();
+fn main() { let _ = Deep; }
+```
+**Expected**: OK — path traverses `a` → `b` → `m`, each step computing `module_memmap` on the intermediate module.
+
+#### Test R7: Path through a use-redirect
+
+```rust
+mod inner {
+    macro_rules! m { () => { struct Foo; } }
+    pub(crate) use m;
+}
+use inner::m as make_foo;
+make_foo!();
+fn main() { let _ = Foo; }
+```
+**Expected**: OK — `make_foo` is a named member (redirect) that points to `inner::m`. Resolves to the `MacroDef`.
+
+#### Test R8: `self::x` vs `x` when extern crate `x` exists
+
+```rust
+// Assume extern crate `x` exists
+mod x {
+    macro_rules! m { () => { struct Local; } }
+    pub(crate) use m;
+}
+self::x::m!();  // unambiguously local
+fn main() { let _ = Local; }
+```
+**Expected**: OK — `self::x` always refers to the local module, never the extern crate. Contrast with bare `x::m!()` which would also prefer local but *could* fall through to extern prelude if no local `x` existed.
+
+### Macro expansion interactions
+
+#### Test M1: Macro expands to a `use` redirect
+
+```rust
+mod source { pub struct Widget; }
+macro_rules! m { () => { use source::Widget; } }
+m!();
+fn main() { let _ = Widget; }
+```
+**Expected**: OK — `m!()` expands to a use-redirect. `Widget` is a named member (redirect) in the expansion subtree, visible as non-glob.
+
+#### Test M2: Macro expands to a glob import
+
+```rust
+mod source { pub struct Widget; pub struct Gadget; }
+macro_rules! m { () => { use source::*; } }
+m!();
+fn main() { let _ = Widget; let _ = Gadget; }
+```
+**Expected**: OK — `m!()` expands to a glob stem in its subtree. `Widget` and `Gadget` are resolvable via that glob.
+
+#### Test M3: Macro expands to a `mod` declaration
+
+```rust
+macro_rules! m { () => { mod inner { pub struct Foo; } } }
+m!();
+fn main() { let _ = inner::Foo; }
+```
+**Expected**: OK — `m!()` expands to a module. `inner` is a named member in the expansion subtree. `inner::Foo` resolves by computing `module_memmap(inner)`.
+
+#### Test M4: Macro expands to `macro_rules!` + re-export (chained)
+
+```rust
+macro_rules! m { () => { macro_rules! n { () => { struct X; } } pub(crate) use n; } }
+m!();
+n!();
+fn main() { let _ = X; }
+```
+**Expected**: OK — `m!()` defines `n` and re-exports it. `n` is visible in the MEM-map. `n!()` resolves and expands to `struct X`.
+
+#### Test M5: Macro expansion produces only `impl` (anonymous)
+
+```rust
+struct Foo;
+macro_rules! m { () => { impl Foo { fn bar() {} } } }
+m!();
+```
+**Expected**: OK — `m!()` expands to an anonymous item (`impl`). No new names in the module namespace. The `impl` is recorded as `MemmapEntry::Anon`.
+
+#### Test M6: Empty macro expansion
+
+```rust
+macro_rules! m { () => {} }
+m!();
+```
+**Expected**: OK — `m!()` expands to nothing. The `MacroUse` has `Expanded(vec![])`. No error.
+
+#### Test M7: Same macro invoked multiple times
+
+```rust
+macro_rules! m { () => { struct Foo; } }
+m!();
+m!();
+```
+**Expected**: ERROR — two non-glob items named `Foo` (one from each expansion). Same as Test 5.
+
+#### Test M8: Macro expansion in child module, accessed from parent
+
+```rust
+mod child {
+    macro_rules! m { () => { pub struct Foo; } }
+    pub(crate) use m;
+    m!();
+}
+fn main() { let _ = child::Foo; }
+```
+**Expected**: OK — `child::Foo` resolves by computing `module_memmap(child)`, which expands `m!()` and produces `Foo`.
+
+### Time-travel / ambiguity
+
+#### Test T1: Classic time-travel (E0659)
+
+```rust
+mod foo {
+    pub mod bar {
+        macro_rules! m { () => { mod baz { pub(crate) struct X; } } }
+        pub(crate) use m;
+    }
+    pub mod baz { pub(crate) struct X; }
+}
+use foo::*;
+bar::m!();
+fn main() { let _ = baz::X; }
+```
+**Expected**: ERROR — `baz` is ambiguous. Glob-imported `foo::baz` vs macro-expanded `baz` from `bar::m!()`. Time-travel violation.
+
+#### Test T2: Macro expansion introduces glob that would change earlier resolution
+
+```rust
+mod source { pub struct Conflict; }
+macro_rules! m { () => { use source::*; } }
+struct Conflict;
+m!();
+fn main() { let _ = Conflict; }
+```
+**Expected**: OK — `Conflict` resolves to the explicit `struct Conflict` (non-glob). The glob from `m!()`'s expansion doesn't shadow it. No time-travel because the explicit item was always there.
+
+#### Test T3: Multiple macro candidates — ambiguous resolution
+
+```rust
+mod a {
+    macro_rules! m { () => { struct FromA; } }
+    pub(crate) use m;
+}
+mod b {
+    macro_rules! m { () => { struct FromB; } }
+    pub(crate) use m;
+}
+use a::*;
+use b::*;
+m!();
+```
+**Expected**: ERROR — `m` resolves to two candidates (from two globs). Both are expanded, validation reports ambiguous macro resolution.
+
+#### Test T4: Cross-module fixpoint convergence
+
+```rust
+mod a {
+    pub use super::b::*;
+    macro_rules! ma { () => { pub struct FromA; } }
+    pub(crate) use ma;
+    ma!();
+}
+mod b {
+    pub use super::a::*;
+    macro_rules! mb { () => { pub struct FromB; } }
+    pub(crate) use mb;
+    mb!();
+}
+fn main() {
+    let _ = a::FromB;  // visible via a's glob from b
+    let _ = b::FromA;  // visible via b's glob from a
+}
+```
+**Expected**: OK — mutual glob imports. `module_memmap(a)` depends on `module_memmap(b)` and vice versa. Salsa fixpoint converges both. `FromA` is visible in `b` via glob, `FromB` is visible in `a` via glob.
+
+### Cross-crate
+
+#### Test C1: Macro from external crate via explicit path
+
+```rust
+// Assume extern crate `helpers` has:
+//   pub macro_rules! make_thing { () => { struct Thing; } }
+//   (re-exported at crate root)
+helpers::make_thing!();
+fn main() { let _ = Thing; }
+```
+**Expected**: OK — `helpers` resolves via extern prelude. `make_thing` found in `helpers`'s module children (via TcxDb). Expansion produces `struct Thing`.
+
+#### Test C2: Glob from external crate brings macro into scope
+
+```rust
+// Assume extern crate `helpers` re-exports macro `make_thing`
+use helpers::*;
+make_thing!();
+fn main() { let _ = Thing; }
+```
+**Expected**: OK — glob from external crate. `make_thing` found via glob lookup into `helpers`'s module (TcxDb). Resolves and expands.
+
+#### Test C3: Local module shadows extern crate name
+
+```rust
+// Assume extern crate `foo` exists
+mod foo {
+    macro_rules! m { () => { struct Local; } }
+    pub(crate) use m;
+}
+foo::m!();
+fn main() { let _ = Local; }
+```
+**Expected**: OK — `foo` resolves to local module (flexi-lookup finds it in MEM-map before checking extern prelude). Same as Test R4.
+
+### Edge cases
+
+#### Test E1: Unresolved macro path — error
+
+```rust
+nonexistent::m!();
+```
+**Expected**: ERROR — macro path `nonexistent::m` never resolves. After convergence, `memmap_errors` reports unresolved macro.
+
+#### Test E2: Macro path resolves to non-macro — error
+
+```rust
+mod foo { pub struct NotAMacro; }
+foo::NotAMacro!();
+```
+**Expected**: ERROR — `foo::NotAMacro` resolves to a struct, not a macro. `MacroUseState::Error`.
+
+#### Test E3: Depth limit exceeded
+
+```rust
+macro_rules! m { () => { m!(); } }
+m!();
+```
+**Expected**: ERROR — infinite recursion. Hits depth limit (128). Reports error, stops expanding.
+
+#### Test E4: Macro expansion in different namespace — no conflict with same-name item
+
+```rust
+macro_rules! m { () => { const foo: u32 = 1; } }
+m!();
+mod foo {}
+```
+**Expected**: OK — `const foo` in ValueNS, `mod foo` in TypeNS. No conflict.
+
+#### Test E5: Glob shadowed by named import — laziness
+
+```rust
+mod big_module { pub struct Unused1; pub struct Unused2; /* ... many items ... */ }
+mod small { pub struct Foo; }
+use big_module::*;
+use small::Foo;
+fn main() { let _ = Foo; }
+```
+**Expected**: OK — `Foo` resolves to `small::Foo` (named import). Ideally, `module_memmap(big_module)` is NOT computed because the glob is shadowed for this name. (Laziness optimization — may not be observable in correctness tests, but important for performance.)
+
+#### Test E6: Use redirect chain
+
+```rust
+mod a {
+    macro_rules! m { () => { struct Foo; } }
+    pub(crate) use m;
+}
+mod b { pub use super::a::m; }
+mod c { pub use super::b::m; }
+c::m!();
+fn main() { let _ = Foo; }
+```
+**Expected**: OK — `c::m` → redirect to `b::m` → redirect to `a::m` → `MacroDef`. Resolves through chain of redirects.
+
+#### Test E7: Macro and non-macro with same name in different namespaces
+
+```rust
+macro_rules! foo { () => { struct Expanded; } }
+fn foo() {}
+foo!();
+fn main() { let _ = Expanded; }
+```
+**Expected**: OK — `macro_rules! foo` is in MacroNS, `fn foo` is in ValueNS. No conflict. `foo!()` resolves to the macro.
+
+## FAQ
+
+**Q: Does sage handle `macro_rules!` textual scoping?**
+No. All `macro_rules!` definitions are module-scoped, visible everywhere in the module. This is an opinionated simplification — programs relying on ordering would behave differently. Revisit later if needed.
+
+**Q: Where do `impl` blocks from builtin derives go?**
+In the MEM-map as anonymous items. Builtin derives are recorded as unexpanded macro uses (since they produce no new *names*), but when downstream queries need `impl` blocks, they expand those markers on demand and collect the anonymous items.
+
+**Q: What about attribute macros (`#[tokio::main]`)?**
+Out of scope. They transform items rather than producing new ones — different problem.
+
+**Q: How deep does recursive expansion go?**
+Depth limit 128 (same as rustc). Exceeded → error.
+
+## Implementation plan
+
+### Phase 1: MEM-map data model and basic resolution
+
+**Goal**: Implement `module_memmap` as the single source of truth, replacing `module_items`. CST-seeded named members, use-redirects, and glob stems. Rewrite `resolve_name` to query the MEM-map. No macro expansion yet — invocations recorded but unresolved.
+
+1. Define `ModuleMemmap` tracked struct (named members, macro uses, glob stems)
+2. Implement `module_memmap` seeding from CST
+3. Rewrite `resolve_name` to read from `module_memmap`
+4. Remove/deprecate `module_items` as a public query
+5. Existing tests pass
+
+### Phase 2: Macro expansion in the fixpoint
+
+**Goal**: Add `MacroDef` in CST lowering, trivial `expand_macro`, wire `module_memmap` to resolve and expand. Add `#[salsa::fixpoint]`.
+
+1. Create `MacroDef` tracked struct during CST lowering
+2. Implement `expand_macro(macro_def, macro_input)` for no-arg case
+3. In `module_memmap`, resolve macro paths via `resolve_memmap_path`, call `expand_macro`, add results as subtree
+4. Add `#[salsa::fixpoint]` with empty-set fallback
+5. Handle depth limit
+
+**Tests**: 2, 3, 4, 8
+
+### Phase 3: Validation query
+
+**Goal**: `memmap_errors(module)` inspects the converged MEM-map and returns `Vec<MemmapError>`.
+
+1. Time-travel violations
+2. Duplicate non-glob names
+3. Ambiguous macro resolution (multiple expansions)
+4. Unresolved macros
+
+**Tests**: 5, 6, 11
 
 ## Implementation status
 
-- [x] Phase 1: SageServer
-- [x] Phase 2: TcxDb wiring
-- [x] Phase 3: RustcTcxDb proc-macro invocation
-- [x] Phase 4: Integration with derive.rs
+- [x] Phase 1: MEM-map data model and basic resolution
+- [ ] Phase 2: Macro expansion in the fixpoint
+- [ ] Phase 3: Validation query
 
 ### Deviations from plan
 
-(Phase 1: Added `#![feature(proc_macro_internals)]` to `src/lib.rs` — required to access `proc_macro::bridge` types. No other deviations.)
-(Phase 3: SageServer implements `rustc_proc_macro::bridge::server::Server` instead of `proc_macro::bridge::server::Server`. The `Client` in `DeriveProcMacro` uses `rustc_proc_macro` (the compiler's internal copy), not the standard library's `proc_macro`. Both traits have the same shape but are different crate instances. Added `extern crate rustc_proc_macro`, `rustc_metadata`, and `rustc_expand` to `lib.rs`.)
-(Phase 4: Major deviation — `definition()` for external modules returns the first child matching a name, without namespace filtering. When clap re-exports `Parser` as both a trait (Type ns, from `clap_builder`) and a derive macro (Macro ns, from `clap_derive`), the first match is the trait. Added `definition_in_ns()` for namespace-aware lookup. Also added `catch_unwind` guard in `expand_proc_macro_derive` to handle ICEs from `load_macro_untracked` when called with non-proc-macro DefIds. The `try_expand_proc_macro` function falls back to searching known crate names when the direct DefId doesn't work. Tests use `SourceRoot.files()` to find `bin/server.rs` directly since binary targets aren't in the module tree.)
+1. **Glob stems resolved eagerly during seeding**: The WIP design says `module_memmap` stores `GlobStem { source_module }`. To resolve the glob path to a module, `module_memmap` needs `source_root` and `crate_root` parameters (not in the original design). Added these as tracked function parameters. This is compatible with Phase 2's fixpoint design since the fixpoint function will also need these for macro path resolution.
+
+2. **`use_wildcard` glob path lowering fix**: tree-sitter-rust 0.24 doesn't use a field name for the path child of `use_wildcard` nodes. Fixed `flatten_use_tree` to find the path by node kind instead of `child_by_field_name("path")`.
+
+3. **Namespace handling for redirects**: Use-redirects are stored with `ns: Namespace::Type` but match any namespace during resolution (since the target's namespace isn't known at seeding time). Items use `member.ns == ns` for exact namespace matching. Results are deduplicated by Symbol identity to avoid false ambiguities (e.g., a struct appearing in both Type and Value namespaces).
+
+4. **`module_items` and `module_use_imports` retained**: These queries are still used by `definition()`, `find_method()` in tests, and the derive expansion system. They were not removed/deprecated in Phase 1 to minimize blast radius. `resolve_name` is the only function that switched to `module_memmap`.
 
 ### Open issues
 
-(None yet — document any issues that surface during implementation.)
+(None.)
+
+---
+
+## Rejected alternatives
+
+<details>
+<summary>Older design: module_expanded_items (no fixpoint)</summary>
+
+An earlier design used a `module_expanded_items` query that broke the cycle by restricting macro path resolution to only read raw `module_items` (not expanded items). This avoided the need for a fixpoint but meant macro-expanded items could never be used to resolve other macro paths — a limitation the MEM-map design removes.
+
+Key differences:
+- Old: macro path resolution cannot see expanded items (cycle broken by restriction)
+- New: macro path resolution sees the full provisional MEM-map (cycle broken by salsa fixpoint convergence)
+
+The old design also separated derive expansion from item-level macro expansion into different phases. The MEM-map design unifies them.
+</details>

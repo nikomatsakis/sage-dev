@@ -5,6 +5,7 @@ pub mod derive;
 pub mod display;
 pub mod item;
 pub mod lower;
+pub mod memmap;
 pub mod module;
 pub mod name;
 pub mod resolve;

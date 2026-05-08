@@ -250,8 +250,7 @@ fn expand_derives_cmd_get_full() {
             module_items("cmd/get.rs")
               salsa: file_item_tree(Id(6))
             file_item_tree("cmd/get.rs")
-              salsa: module_use_imports(Id(802))
-            module_use_imports("cmd/get.rs")
+              salsa: module_memmap(Id(5c00))
             tcx::extern_crate("Debug")
             tcx::extern_crate("std")
               salsa: definition(Id(1002))
@@ -262,7 +261,7 @@ fn expand_derives_cmd_get_full() {
             tcx::module_children(1, 3)
             tcx::module_children(1, 4)
             tcx::is_builtin_derive(2, 12719)
-              salsa: expand_builtin(Id(5c00))
+              salsa: expand_builtin(Id(6400))
             expand_builtin("Debug", "Get")"#]]
         .assert_eq(&log);
     });

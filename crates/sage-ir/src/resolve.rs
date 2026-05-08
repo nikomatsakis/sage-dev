@@ -5,7 +5,7 @@ use crate::module::{Module, ModuleSource};
 use crate::name::Name;
 use crate::source::SourceFile;
 use crate::symbol::{Symbol, SymbolSource};
-use crate::types::{UseImport, UseKind};
+use crate::types::{Path, UseImport};
 
 // ---------------------------------------------------------------------------
 // Namespace
@@ -257,12 +257,16 @@ fn parent_dir_for(path: &str) -> String {
 // Name resolution
 // ---------------------------------------------------------------------------
 
-/// Resolve a name in a module's scope.
+/// Resolve a name in a module's scope using the MEM-map.
 ///
-/// 1. Check declared items matching namespace
-/// 2. Check named use imports — resolve matching import's path on demand
-/// 3. Check glob imports — resolve each glob's target module, search children
-/// 4. Check extern prelude (via tcx.extern_crate)
+/// Priority (highest to lowest):
+/// 1. Non-glob entries (declared items + named use-redirects)
+/// 2. Glob imports (search each glob stem's source module)
+/// 3. Extern prelude (via tcx.extern_crate)
+/// 4. Std prelude (implicit `use std::prelude::v1::*`)
+///
+/// Multiple non-glob matches → Ambiguous.
+/// Zero non-globs + multiple glob matches → Ambiguous.
 pub fn resolve_name<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
@@ -271,52 +275,72 @@ pub fn resolve_name<'db>(
     name: Name<'db>,
     ns: Namespace,
 ) -> Result<Symbol<'db>, ResolutionError> {
-    // 1. Declared items
-    for item in module_items(db, module) {
-        if item_name(db, *item) == Some(name) && item_in_namespace(db, *item, ns) {
-            return Ok(Symbol::new(db, SymbolSource::Local(*item)));
-        }
-    }
+    use crate::memmap::{MemmapEntry, NamedMemberKind, module_memmap};
 
-    // 2. Named use imports
-    let imports = module_use_imports(db, module);
-    let mut named_match = None;
-    for import in imports {
-        if let UseKind::Named(alias) = import.kind(db) {
-            if alias == name {
-                let sym = resolve_use_path(db, module, source_root, crate_root, *import)?;
-                if named_match.is_some() {
-                    return Err(ResolutionError::Ambiguous);
-                }
-                named_match = Some(sym);
+    let memmap = module_memmap(db, module, source_root, crate_root);
+
+    // 1. Non-glob lookup: collect all NamedMember entries with matching name+ns
+    let mut non_glob_matches: Vec<Symbol<'db>> = Vec::new();
+    for entry in memmap.entries(db) {
+        if let MemmapEntry::Named(member) = entry {
+            if member.name != name {
+                continue;
             }
-        }
-    }
-    if let Some(sym) = named_match {
-        return Ok(sym);
-    }
-
-    // 3. Glob imports
-    let mut glob_match = None;
-    for import in imports {
-        if matches!(import.kind(db), UseKind::Glob) {
-            if let Ok(target_module) =
-                resolve_use_path_to_module(db, module, source_root, crate_root, *import)
-            {
-                if let Some(sym) = definition(db, target_module, name) {
-                    if glob_match.is_some() {
-                        return Err(ResolutionError::Ambiguous);
+            // Check namespace compatibility
+            let ns_match = match &member.kind {
+                NamedMemberKind::Item(_) => member.ns == ns,
+                NamedMemberKind::Redirect { .. } => true, // redirects are ns-agnostic
+                NamedMemberKind::MacroDef(_) => matches!(ns, Namespace::Macro(_)),
+            };
+            if !ns_match {
+                continue;
+            }
+            // Resolve to a Symbol
+            let sym = match &member.kind {
+                NamedMemberKind::Item(item) => Symbol::new(db, SymbolSource::Local(*item)),
+                NamedMemberKind::Redirect { target } => {
+                    // Resolve the redirect path
+                    match resolve_path_to_symbol(db, module, source_root, crate_root, *target) {
+                        Ok(sym) => sym,
+                        Err(_) => continue, // skip unresolvable redirects
                     }
-                    glob_match = Some(sym);
+                }
+                NamedMemberKind::MacroDef(_) => continue, // Phase 2+
+            };
+            // Deduplicate by symbol identity
+            if !non_glob_matches.contains(&sym) {
+                non_glob_matches.push(sym);
+            }
+        }
+    }
+
+    match non_glob_matches.len() {
+        1 => return Ok(non_glob_matches[0]),
+        n if n > 1 => return Err(ResolutionError::Ambiguous),
+        _ => {}
+    }
+
+    // 2. Glob lookup: for each GlobStem, search the source module's memmap
+    let mut glob_matches: Vec<Symbol<'db>> = Vec::new();
+    for entry in memmap.entries(db) {
+        if let MemmapEntry::Glob(glob) = entry {
+            // Search the glob's source module for the name
+            if let Some(sym) = definition(db, glob.source_module, name) {
+                // Deduplicate
+                if !glob_matches.contains(&sym) {
+                    glob_matches.push(sym);
                 }
             }
         }
     }
-    if let Some(sym) = glob_match {
-        return Ok(sym);
+
+    match glob_matches.len() {
+        1 => return Ok(glob_matches[0]),
+        n if n > 1 => return Err(ResolutionError::Ambiguous),
+        _ => {}
     }
 
-    // 4. Extern prelude
+    // 3. Extern prelude
     let name_text = name.text(db);
     if let Some(crate_num) = db.tcx().extern_crate(name_text) {
         return Ok(Symbol::new(
@@ -325,12 +349,46 @@ pub fn resolve_name<'db>(
         ));
     }
 
-    // 5. Std prelude — implicit `use std::prelude::v1::*`
+    // 4. Std prelude
     if let Some(sym) = resolve_in_std_prelude(db, name, ns) {
         return Ok(sym);
     }
 
     Err(ResolutionError::Unresolved)
+}
+
+/// Resolve a path (from a use-redirect) to a Symbol.
+fn resolve_path_to_symbol<'db>(
+    db: &'db dyn Db,
+    current_module: Module<'db>,
+    source_root: SourceRoot,
+    crate_root: Module<'db>,
+    path: Path<'db>,
+) -> Result<Symbol<'db>, ResolutionError> {
+    let segments = path.segments(db);
+    if segments.is_empty() {
+        return Err(ResolutionError::Unresolved);
+    }
+
+    let (first_module, rest) =
+        resolve_first_segment(db, current_module, source_root, crate_root, segments)?;
+
+    let mut current = first_module;
+    for (i, seg) in rest.iter().enumerate() {
+        let sym = definition(db, current, *seg).ok_or(ResolutionError::Unresolved)?;
+        if i < rest.len() - 1 {
+            current = symbol_to_module(db, sym, source_root, current)
+                .ok_or(ResolutionError::Unresolved)?;
+        } else {
+            return Ok(sym);
+        }
+    }
+
+    // If rest is empty, the path is just the first segment module
+    match first_module.source(db) {
+        ModuleSource::External(cn, di) => Ok(Symbol::new(db, SymbolSource::External(cn, di))),
+        _ => Err(ResolutionError::Unresolved),
+    }
 }
 
 /// Resolve a name in the std prelude (`std::prelude::v1`).
@@ -416,7 +474,7 @@ pub fn resolve_use_path<'db>(
 }
 
 /// Resolve a use import's path to a Module (for glob imports).
-fn resolve_use_path_to_module<'db>(
+pub fn resolve_use_path_to_module<'db>(
     db: &'db dyn Db,
     current_module: Module<'db>,
     source_root: SourceRoot,

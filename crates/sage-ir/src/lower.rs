@@ -439,8 +439,16 @@ impl<'db> LowerCtx<'db> {
             "use_wildcard" => {
                 // `foo::*` — the scoped part is in a child "path" if present
                 let mut path_segs = prefix.to_vec();
-                if let Some(path_node) = node.child_by_field_name("path") {
-                    self.collect_path_segments(path_node, &mut path_segs);
+                // In tree-sitter-rust 0.24, use_wildcard's path child has no
+                // field name. Find the first named child that isn't `::` or `*`.
+                let path_node = node.named_children(&mut node.walk()).find(|c| {
+                    matches!(
+                        c.kind(),
+                        "identifier" | "scoped_identifier" | "self" | "crate" | "super"
+                    )
+                });
+                if let Some(pn) = path_node {
+                    self.collect_path_segments(pn, &mut path_segs);
                 }
                 let path = Path::new(self.db, path_segs, self.span(node));
                 out.push(UseImport::new(
