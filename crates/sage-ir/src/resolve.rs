@@ -275,44 +275,23 @@ pub fn resolve_name<'db>(
     name: Name<'db>,
     ns: Namespace,
 ) -> Result<Symbol<'db>, ResolutionError> {
-    use crate::memmap::{MemmapEntry, NamedMemberKind, module_memmap};
+    use crate::memmap::module_memmap;
 
     let memmap = module_memmap(db, module, source_root, crate_root);
 
     // 1. Non-glob lookup: collect all NamedMember entries with matching name+ns
+    //    This includes entries inside expanded macro subtrees.
     let mut non_glob_matches: Vec<Symbol<'db>> = Vec::new();
-    for entry in memmap.entries(db) {
-        if let MemmapEntry::Named(member) = entry {
-            if member.name != name {
-                continue;
-            }
-            // Check namespace compatibility
-            let ns_match = match &member.kind {
-                NamedMemberKind::Item(_) => member.ns == ns,
-                NamedMemberKind::Redirect { .. } => true, // redirects are ns-agnostic
-                NamedMemberKind::MacroDef(_) => matches!(ns, Namespace::Macro(_)),
-            };
-            if !ns_match {
-                continue;
-            }
-            // Resolve to a Symbol
-            let sym = match &member.kind {
-                NamedMemberKind::Item(item) => Symbol::new(db, SymbolSource::Local(*item)),
-                NamedMemberKind::Redirect { target } => {
-                    // Resolve the redirect path
-                    match resolve_path_to_symbol(db, module, source_root, crate_root, *target) {
-                        Ok(sym) => sym,
-                        Err(_) => continue, // skip unresolvable redirects
-                    }
-                }
-                NamedMemberKind::MacroDef(_) => continue, // Phase 2+
-            };
-            // Deduplicate by symbol identity
-            if !non_glob_matches.contains(&sym) {
-                non_glob_matches.push(sym);
-            }
-        }
-    }
+    collect_named_matches(
+        db,
+        module,
+        source_root,
+        crate_root,
+        memmap.entries(db),
+        name,
+        ns,
+        &mut non_glob_matches,
+    );
 
     match non_glob_matches.len() {
         1 => return Ok(non_glob_matches[0]),
@@ -322,17 +301,7 @@ pub fn resolve_name<'db>(
 
     // 2. Glob lookup: for each GlobStem, search the source module's memmap
     let mut glob_matches: Vec<Symbol<'db>> = Vec::new();
-    for entry in memmap.entries(db) {
-        if let MemmapEntry::Glob(glob) = entry {
-            // Search the glob's source module for the name
-            if let Some(sym) = definition(db, glob.source_module, name) {
-                // Deduplicate
-                if !glob_matches.contains(&sym) {
-                    glob_matches.push(sym);
-                }
-            }
-        }
-    }
+    collect_glob_matches(db, memmap.entries(db), name, &mut glob_matches);
 
     match glob_matches.len() {
         1 => return Ok(glob_matches[0]),
@@ -355,6 +324,94 @@ pub fn resolve_name<'db>(
     }
 
     Err(ResolutionError::Unresolved)
+}
+
+/// Recursively collect named matches from entries (including expanded subtrees).
+fn collect_named_matches<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    source_root: SourceRoot,
+    crate_root: Module<'db>,
+    entries: &[crate::memmap::MemmapEntry<'db>],
+    name: Name<'db>,
+    ns: Namespace,
+    out: &mut Vec<Symbol<'db>>,
+) {
+    use crate::memmap::{MacroUseState, MemmapEntry, NamedMemberKind};
+
+    for entry in entries {
+        match entry {
+            MemmapEntry::Named(member) => {
+                if member.name != name {
+                    continue;
+                }
+                let ns_match = match &member.kind {
+                    NamedMemberKind::Item(_) => member.ns == ns,
+                    NamedMemberKind::Redirect { .. } => true,
+                    NamedMemberKind::MacroDef(_) => matches!(ns, Namespace::Macro(_)),
+                };
+                if !ns_match {
+                    continue;
+                }
+                let sym = match &member.kind {
+                    NamedMemberKind::Item(item) => Symbol::new(db, SymbolSource::Local(*item)),
+                    NamedMemberKind::Redirect { target } => {
+                        match resolve_path_to_symbol(db, module, source_root, crate_root, *target) {
+                            Ok(sym) => sym,
+                            Err(_) => continue,
+                        }
+                    }
+                    NamedMemberKind::MacroDef(_) => continue,
+                };
+                if !out.contains(&sym) {
+                    out.push(sym);
+                }
+            }
+            MemmapEntry::MacroUse(mu) => {
+                if let MacroUseState::Expanded(sub_entries) = &mu.state {
+                    collect_named_matches(
+                        db,
+                        module,
+                        source_root,
+                        crate_root,
+                        sub_entries,
+                        name,
+                        ns,
+                        out,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Collect glob matches from entries (including expanded subtrees).
+fn collect_glob_matches<'db>(
+    db: &'db dyn Db,
+    entries: &[crate::memmap::MemmapEntry<'db>],
+    name: Name<'db>,
+    out: &mut Vec<Symbol<'db>>,
+) {
+    use crate::memmap::{MacroUseState, MemmapEntry};
+
+    for entry in entries {
+        match entry {
+            MemmapEntry::Glob(glob) => {
+                if let Some(sym) = definition(db, glob.source_module, name) {
+                    if !out.contains(&sym) {
+                        out.push(sym);
+                    }
+                }
+            }
+            MemmapEntry::MacroUse(mu) => {
+                if let MacroUseState::Expanded(sub_entries) = &mu.state {
+                    collect_glob_matches(db, sub_entries, name, out);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Resolve a path (from a use-redirect) to a Symbol.

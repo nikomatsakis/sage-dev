@@ -694,7 +694,7 @@ Depth limit 128 (same as rustc). Exceeded → error.
 ## Implementation status
 
 - [x] Phase 1: MEM-map data model and basic resolution
-- [ ] Phase 2: Macro expansion in the fixpoint
+- [x] Phase 2: Macro expansion in the fixpoint
 - [ ] Phase 3: Validation query
 
 ### Deviations from plan
@@ -706,6 +706,14 @@ Depth limit 128 (same as rustc). Exceeded → error.
 3. **Namespace handling for redirects**: Use-redirects are stored with `ns: Namespace::Type` but match any namespace during resolution (since the target's namespace isn't known at seeding time). Items use `member.ns == ns` for exact namespace matching. Results are deduplicated by Symbol identity to avoid false ambiguities (e.g., a struct appearing in both Type and Value namespaces).
 
 4. **`module_items` and `module_use_imports` retained**: These queries are still used by `definition()`, `find_method()` in tests, and the derive expansion system. They were not removed/deprecated in Phase 1 to minimize blast radius. `resolve_name` is the only function that switched to `module_memmap`.
+
+5. **`seed_from_cst` parses tree-sitter directly for macro nodes**: Rather than extending `file_item_tree` to handle `macro_definition` and `expression_statement` (which would require changing the `Item` enum), `module_memmap` parses the CST directly for macro-related nodes and uses `file_item_tree` for regular items. This avoids touching the existing lowering pipeline.
+
+6. **`self::` paths resolved locally without recursive `module_memmap` call**: For `self::m!()`, the macro path is resolved by searching the current module's entries directly (the snapshot), rather than calling `module_memmap(db, module, ...)` which would create a cycle. Multi-segment `self::a::b::m` paths still use `walk_path_to_macro` for intermediate modules.
+
+7. **Snapshot-based resolution during expansion**: `resolve_and_expand_macros` clones the entries as a snapshot before mutating. The snapshot is used for macro path resolution while the original entries are mutated with expansion results. Recursive expansions use the same root snapshot.
+
+8. **`expand_macro` uses `Item::Error` as placeholder**: Expanded items (structs, fns, etc.) are represented as `NamedMember { kind: Item(Item::Error(...)) }` since we only need the name and namespace for resolution. Full lowering of expanded items is deferred to when downstream queries need the actual IR.
 
 ### Open issues
 
