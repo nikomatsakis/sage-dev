@@ -225,7 +225,11 @@ pub fn item_name<'db>(db: &'db dyn Db, item: Item<'db>) -> Option<Name<'db>> {
         Item::Const(c) => Some(c.name(db)),
         Item::Static(s) => Some(s.name(db)),
         Item::Mod(m) => Some(m.name(db)),
-        Item::Impl(_) | Item::Use(_) | Item::Error(_) => None,
+        Item::Impl(_)
+        | Item::Use(_)
+        | Item::MacroDef(_)
+        | Item::MacroInvocation(_)
+        | Item::Error(_) => None,
     }
 }
 

@@ -17,6 +17,8 @@ pub enum Item<'db> {
     Static(StaticItem<'db>),
     Mod(ModItem<'db>),
     Use(UseGroup<'db>),
+    MacroDef(MacroDefItem<'db>),
+    MacroInvocation(MacroInvocationItem<'db>),
     /// Unrecognized or unsupported item node.
     Error(SpanIndices),
 }
@@ -243,6 +245,32 @@ pub struct UseGroup<'db> {
 
     #[tracked]
     pub span_table: SpanTable<'db>,
+
+    #[tracked]
+    pub span: SpanIndices,
+}
+
+// -- MacroDef --
+
+/// A `macro_rules!` definition at item level.
+#[salsa::tracked(debug)]
+pub struct MacroDefItem<'db> {
+    pub name: Name<'db>,
+
+    #[tracked]
+    #[returns(ref)]
+    pub body_tokens: String,
+
+    #[tracked]
+    pub span: SpanIndices,
+}
+
+// -- MacroInvocation --
+
+/// An item-level macro invocation (e.g. `m!()` or `foo::bar::m!()`).
+#[salsa::tracked(debug)]
+pub struct MacroInvocationItem<'db> {
+    pub path: Path<'db>,
 
     #[tracked]
     pub span: SpanIndices,

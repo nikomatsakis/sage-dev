@@ -29,6 +29,8 @@ impl fmt::Display for Item<'_> {
             Item::Static(v) => fmt::Display::fmt(v, f),
             Item::Mod(v) => fmt::Display::fmt(v, f),
             Item::Use(v) => fmt::Display::fmt(v, f),
+            Item::MacroDef(v) => fmt::Display::fmt(v, f),
+            Item::MacroInvocation(v) => fmt::Display::fmt(v, f),
             Item::Error(span) => write!(f, "{{error {}..{}}}", span.start, span.end),
         }
     }
@@ -245,6 +247,38 @@ impl fmt::Display for UseImport<'_> {
             }
             Ok(())
         })
+    }
+}
+
+// -- MacroDef --
+
+impl fmt::Display for MacroDefItem<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        with_db(|db| {
+            let body = self.body_tokens(db);
+            if body.is_empty() {
+                write!(
+                    f,
+                    "macro_rules! {} {{ () => {{}} }}",
+                    self.name(db).text(db)
+                )
+            } else {
+                write!(
+                    f,
+                    "macro_rules! {} {{ () => {{ {} }} }}",
+                    self.name(db).text(db),
+                    body
+                )
+            }
+        })
+    }
+}
+
+// -- MacroInvocation --
+
+impl fmt::Display for MacroInvocationItem<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        with_db(|db| write!(f, "{}!()", self.path(db)))
     }
 }
 

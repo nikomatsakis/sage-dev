@@ -299,17 +299,21 @@ Yes. Used by `definition()` in resolve.rs, the CLI in `main.rs`, and tests. It's
 
 ## Implementation status
 
-- [ ] Phase 0: Baseline incremental tests (regression guard)
-- [ ] Phase 1: Extend `Item` with macro variants
-- [ ] Phase 2: Rewrite seeding to use `file_item_tree` only
-- [ ] Phase 3: Split into submodules
-- [ ] Phase 4: Documentation
-- [ ] Phase 5: Remove external module memmap
+- [x] Phase 0: Baseline incremental tests (regression guard)
+- [x] Phase 1: Extend `Item` with macro variants
+- [x] Phase 2: Rewrite seeding to use `file_item_tree` only
+- [x] Phase 3: Split into submodules
+- [x] Phase 4: Documentation
+- [x] Phase 5: Remove external module memmap
 
 ### Deviations from plan
 
-(None yet.)
+- Phase 0: Used `db.attach` pattern with separate mutation between attach calls (salsa 0.26 requires `&mut db` for input setters, which conflicts with `attach`'s `&db`). Interned structs (Module) are re-created in the second attach call (same data → same ID).
+- Phase 1: Behavior tests were added in a follow-up pass (in `item_macro_tests.rs`) rather than during the initial Phase 1 implementation. Added 7 tests (6 from plan + `display_item_macro_invocation`).
+- Phase 2: The `baseline_body_change_behavior` snapshot updated to reflect the improvement. Phase 2 incremental tests were added in a follow-up pass (appended to `memmap_incremental_tests.rs`) using content assertions rather than `expect_test` snapshots for semantic clarity.
+- Phase 3: The plan called for deduplicating `resolve_and_expand_macros` / `resolve_and_expand_inner` during the split. This was done in a follow-up pass — unified into a single `resolve_with_snapshot` function called by a thin `resolve_and_expand_macros` entry point. Additionally, shared tree-sitter helpers (`collect_macro_path_segments`, `extract_macro_body_tokens`) were extracted to `src/ts_helpers.rs` to eliminate duplication between `lower.rs` and `memmap/expand.rs`.
+- Phase 5: No code changes needed beyond the debug assertion — all callers already guard against external modules. Test (`external_module_memmap_panics`) added in a follow-up pass.
 
 ### Open issues
 
-(None yet.)
+(None.)

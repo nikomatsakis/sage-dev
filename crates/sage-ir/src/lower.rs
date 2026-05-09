@@ -150,6 +150,8 @@ impl<'db> LowerCtx<'db> {
             "static_item" => Item::Static(self.lower_static(node, attrs)),
             "mod_item" => Item::Mod(self.lower_mod(node, attrs)),
             "use_declaration" => self.lower_use(node, attrs),
+            "macro_definition" => self.lower_macro_def_item(node),
+            "expression_statement" => self.lower_expression_statement(node),
             _ => Item::Error(self.span(node)),
         }
     }
@@ -527,6 +529,46 @@ impl<'db> LowerCtx<'db> {
                 ));
             }
         }
+    }
+
+    // -- Macros -------------------------------------------------------------
+
+    fn lower_macro_def_item(&self, node: Node<'_>) -> Item<'db> {
+        let name_node = match node.child_by_field_name("name") {
+            Some(n) => n,
+            None => return Item::Error(self.span(node)),
+        };
+        let name = self.intern_name(name_node);
+        let span = self.span(node);
+        let body_tokens = crate::ts_helpers::extract_macro_body_tokens(node, self.text);
+
+        Item::MacroDef(MacroDefItem::new(self.db, name, body_tokens, span))
+    }
+
+    fn lower_expression_statement(&self, node: Node<'_>) -> Item<'db> {
+        // Item-level macro invocation: expression_statement > macro_invocation
+        let invoc = node
+            .named_children(&mut node.walk())
+            .find(|c| c.kind() == "macro_invocation");
+        match invoc {
+            Some(invoc_node) => self.lower_macro_invocation_item(invoc_node),
+            None => Item::Error(self.span(node)),
+        }
+    }
+
+    fn lower_macro_invocation_item(&self, node: Node<'_>) -> Item<'db> {
+        let macro_node = match node.child_by_field_name("macro") {
+            Some(n) => n,
+            None => return Item::Error(self.span(node)),
+        };
+        let segments =
+            crate::ts_helpers::collect_macro_path_segments(self.db, macro_node, self.text);
+        if segments.is_empty() {
+            return Item::Error(self.span(node));
+        }
+        let span = self.span(node);
+        let path = Path::new(self.db, segments, span);
+        Item::MacroInvocation(MacroInvocationItem::new(self.db, path, span))
     }
 
     // -- Types -------------------------------------------------------------

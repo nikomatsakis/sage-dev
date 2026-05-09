@@ -14,6 +14,7 @@ pub mod source;
 pub mod span;
 pub mod symbol;
 pub mod tcx;
+mod ts_helpers;
 pub mod types;
 
 /// The salsa database trait for sage-ir.

@@ -1,0 +1,65 @@
+//! Tree-sitter helpers shared between `lower` and `memmap::expand`.
+//!
+//! These small utilities avoid duplicating the same tree-sitter traversal
+//! logic in multiple places. They're the only place outside of `lower.rs`
+//! and `memmap/expand.rs` that interacts with tree-sitter nodes.
+
+use crate::Db;
+use crate::name::Name;
+
+/// Collect path segments from a tree-sitter path node
+/// (`identifier`, `scoped_identifier`, or one of `self`/`crate`/`super`).
+///
+/// Used for both source-level macro paths (in `lower`) and nested macro paths
+/// inside an expanded macro body (in `memmap::expand`).
+pub(crate) fn collect_macro_path_segments<'db>(
+    db: &'db dyn Db,
+    node: tree_sitter::Node<'_>,
+    text: &str,
+) -> Vec<Name<'db>> {
+    let mut segments = Vec::new();
+    collect_recursive(db, node, text, &mut segments);
+    segments
+}
+
+fn collect_recursive<'db>(
+    db: &'db dyn Db,
+    node: tree_sitter::Node<'_>,
+    text: &str,
+    out: &mut Vec<Name<'db>>,
+) {
+    match node.kind() {
+        "identifier" => out.push(Name::new(db, text[node.byte_range()].to_owned())),
+        "scoped_identifier" => {
+            if let Some(path) = node.child_by_field_name("path") {
+                collect_recursive(db, path, text, out);
+            }
+            if let Some(name) = node.child_by_field_name("name") {
+                out.push(Name::new(db, text[name.byte_range()].to_owned()));
+            }
+        }
+        "self" | "crate" | "super" => out.push(Name::new(db, node.kind().to_owned())),
+        _ => out.push(Name::new(db, text[node.byte_range()].to_owned())),
+    }
+}
+
+/// Extract the body tokens from a `macro_definition` tree-sitter node.
+///
+/// Finds the first `macro_rule`'s `right` field (a `token_tree`), strips the
+/// outer `{}` braces, and trims whitespace. Returns the empty string if the
+/// structure doesn't match.
+pub(crate) fn extract_macro_body_tokens(node: tree_sitter::Node<'_>, text: &str) -> String {
+    let mut cursor = node.walk();
+    node.children(&mut cursor)
+        .find(|c| c.kind() == "macro_rule")
+        .and_then(|rule| rule.child_by_field_name("right"))
+        .map(|tt| {
+            let raw = &text[tt.byte_range()];
+            raw.strip_prefix('{')
+                .and_then(|s| s.strip_suffix('}'))
+                .unwrap_or(raw)
+                .trim()
+                .to_owned()
+        })
+        .unwrap_or_default()
+}
