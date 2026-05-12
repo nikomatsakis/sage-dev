@@ -13,7 +13,14 @@ use salsa::Database as _;
 fn setup_single<'db>(db: &'db Database, code: &str) -> (SourceRoot, Module<'db>) {
     let file = SourceFile::new(db, "lib.rs".to_owned(), code.to_owned());
     let source_root = SourceRoot::new(db, vec![file]);
-    let root_module = Module::new(db, ModuleSource::Local { file, parent: None });
+    let root_module = Module::new(
+        db,
+        ModuleSource::Local {
+            file,
+            parent: None,
+            declaration: None,
+        },
+    );
     (source_root, root_module)
 }
 
@@ -33,6 +40,7 @@ fn setup_files<'db>(db: &'db Database, files: &[(&str, &str)]) -> (SourceRoot, M
         ModuleSource::Local {
             file: lib_file,
             parent: None,
+            declaration: None,
         },
     );
     (source_root, root_module)

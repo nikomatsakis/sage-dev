@@ -151,6 +151,7 @@ where
                 ModuleSource::Local {
                     file: *lib_file,
                     parent: None,
+                    declaration: None,
                 },
             );
 

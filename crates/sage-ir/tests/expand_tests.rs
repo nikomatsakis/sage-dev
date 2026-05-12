@@ -50,6 +50,7 @@ fn setup_mini_redis(db: &Database) -> (SourceRoot, Module<'_>) {
         ModuleSource::Local {
             file: *lib_file,
             parent: None,
+            declaration: None,
         },
     );
 
@@ -117,16 +118,10 @@ fn query_log_demand_driven() {
 
         let log = db.take_query_log();
         expect![[r#"
-              salsa: definition(Id(1000))
-            definition("lib.rs", "cmd")
-              salsa: module_items(Id(800))
-            module_items("lib.rs")
+              salsa: module_memmap(Id(1000))
               salsa: file_item_tree(Id(10))
             file_item_tree("lib.rs")
-              salsa: definition(Id(1001))
-            definition("cmd/mod.rs", "get")
-              salsa: module_items(Id(801))
-            module_items("cmd/mod.rs")
+              salsa: module_memmap(Id(1001))
               salsa: file_item_tree(Id(7))
             file_item_tree("cmd/mod.rs")
               salsa: module_items(Id(802))
@@ -172,10 +167,7 @@ fn resolve_no_cross_module_parsing() {
 
         let log = db.take_query_log();
         expect![[r#"
-              salsa: definition(Id(1000))
-            definition("lib.rs", "clients")
-              salsa: module_items(Id(800))
-            module_items("lib.rs")
+              salsa: module_memmap(Id(1000))
               salsa: file_item_tree(Id(10))
             file_item_tree("lib.rs")
               salsa: module_items(Id(801))

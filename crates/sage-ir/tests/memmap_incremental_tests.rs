@@ -36,7 +36,14 @@ fn baseline_initial_memmap_computation() {
             "fn hello() {}\nmacro_rules! m { () => { struct Foo; } }\nm!();\n".to_owned(),
         );
         let source_root = SourceRoot::new(db, vec![file]);
-        let root_module = Module::new(db, ModuleSource::Local { file, parent: None });
+        let root_module = Module::new(
+            db,
+            ModuleSource::Local {
+                file,
+                parent: None,
+                declaration: None,
+            },
+        );
 
         let _ = module_memmap(db, root_module, source_root, root_module);
         let log = db.take_query_log();
@@ -67,7 +74,14 @@ fn baseline_body_change_behavior() {
 
     // Initial computation
     db.attach(|db| {
-        let root_module = Module::new(db, ModuleSource::Local { file, parent: None });
+        let root_module = Module::new(
+            db,
+            ModuleSource::Local {
+                file,
+                parent: None,
+                declaration: None,
+            },
+        );
         let _ = module_memmap(db, root_module, source_root, root_module);
         db.take_query_log(); // drain
     });
@@ -79,7 +93,14 @@ fn baseline_body_change_behavior() {
     // Re-query and snapshot
     db.attach(|db| {
         // Re-intern the module (same data → same ID)
-        let root_module = Module::new(db, ModuleSource::Local { file, parent: None });
+        let root_module = Module::new(
+            db,
+            ModuleSource::Local {
+                file,
+                parent: None,
+                declaration: None,
+            },
+        );
         let _ = module_memmap(db, root_module, source_root, root_module);
         let log = db.take_query_log();
         check_log(
@@ -109,6 +130,7 @@ fn baseline_sibling_module_isolation() {
             ModuleSource::Local {
                 file: lib_file,
                 parent: None,
+                declaration: None,
             },
         );
         let module_a = Module::new(
@@ -116,6 +138,7 @@ fn baseline_sibling_module_isolation() {
             ModuleSource::Local {
                 file: file_a,
                 parent: Some(root_module),
+                declaration: None,
             },
         );
         let _ = module_memmap(db, module_a, source_root, root_module);
@@ -132,6 +155,7 @@ fn baseline_sibling_module_isolation() {
             ModuleSource::Local {
                 file: lib_file,
                 parent: None,
+                declaration: None,
             },
         );
         let module_a = Module::new(
@@ -139,6 +163,7 @@ fn baseline_sibling_module_isolation() {
             ModuleSource::Local {
                 file: file_a,
                 parent: Some(root_module),
+                declaration: None,
             },
         );
         let _ = module_memmap(db, module_a, source_root, root_module);
@@ -165,7 +190,14 @@ fn body_change_does_not_invalidate_memmap() {
     let source_root = SourceRoot::new(&db, vec![file]);
 
     db.attach(|db| {
-        let root_module = Module::new(db, ModuleSource::Local { file, parent: None });
+        let root_module = Module::new(
+            db,
+            ModuleSource::Local {
+                file,
+                parent: None,
+                declaration: None,
+            },
+        );
         let _ = module_memmap(db, root_module, source_root, root_module);
         db.take_query_log();
     });
@@ -173,7 +205,14 @@ fn body_change_does_not_invalidate_memmap() {
     file.set_text(&mut db).to("fn foo() { 2 }".to_owned());
 
     db.attach(|db| {
-        let root_module = Module::new(db, ModuleSource::Local { file, parent: None });
+        let root_module = Module::new(
+            db,
+            ModuleSource::Local {
+                file,
+                parent: None,
+                declaration: None,
+            },
+        );
         let _ = module_memmap(db, root_module, source_root, root_module);
         let log = db.take_query_log();
 
@@ -201,7 +240,14 @@ fn signature_change_invalidates_memmap() {
     let source_root = SourceRoot::new(&db, vec![file]);
 
     db.attach(|db| {
-        let root_module = Module::new(db, ModuleSource::Local { file, parent: None });
+        let root_module = Module::new(
+            db,
+            ModuleSource::Local {
+                file,
+                parent: None,
+                declaration: None,
+            },
+        );
         let _ = module_memmap(db, root_module, source_root, root_module);
         db.take_query_log();
     });
@@ -210,7 +256,14 @@ fn signature_change_invalidates_memmap() {
     file.set_text(&mut db).to("fn bar() {}".to_owned());
 
     db.attach(|db| {
-        let root_module = Module::new(db, ModuleSource::Local { file, parent: None });
+        let root_module = Module::new(
+            db,
+            ModuleSource::Local {
+                file,
+                parent: None,
+                declaration: None,
+            },
+        );
         let _ = module_memmap(db, root_module, source_root, root_module);
         let log = db.take_query_log();
 
@@ -237,7 +290,14 @@ fn adding_use_statement_invalidates_memmap() {
     let source_root = SourceRoot::new(&db, vec![file]);
 
     db.attach(|db| {
-        let root_module = Module::new(db, ModuleSource::Local { file, parent: None });
+        let root_module = Module::new(
+            db,
+            ModuleSource::Local {
+                file,
+                parent: None,
+                declaration: None,
+            },
+        );
         let _ = module_memmap(db, root_module, source_root, root_module);
         db.take_query_log();
     });
@@ -246,7 +306,14 @@ fn adding_use_statement_invalidates_memmap() {
         .to("use foo::Bar;\nstruct S;".to_owned());
 
     db.attach(|db| {
-        let root_module = Module::new(db, ModuleSource::Local { file, parent: None });
+        let root_module = Module::new(
+            db,
+            ModuleSource::Local {
+                file,
+                parent: None,
+                declaration: None,
+            },
+        );
         let _ = module_memmap(db, root_module, source_root, root_module);
         let log = db.take_query_log();
 
@@ -272,7 +339,14 @@ fn module_memmap_calls_file_item_tree_only_once() {
             "fn hello() {}\nmacro_rules! m { () => { struct Foo; } }\nm!();\n".to_owned(),
         );
         let source_root = SourceRoot::new(db, vec![file]);
-        let root_module = Module::new(db, ModuleSource::Local { file, parent: None });
+        let root_module = Module::new(
+            db,
+            ModuleSource::Local {
+                file,
+                parent: None,
+                declaration: None,
+            },
+        );
 
         let _ = module_memmap(db, root_module, source_root, root_module);
         let log = db.take_query_log();
@@ -309,6 +383,7 @@ fn body_change_in_sibling_module_does_not_invalidate_memmap() {
             ModuleSource::Local {
                 file: lib_file,
                 parent: None,
+                declaration: None,
             },
         );
         let module_a = Module::new(
@@ -316,6 +391,7 @@ fn body_change_in_sibling_module_does_not_invalidate_memmap() {
             ModuleSource::Local {
                 file: file_a,
                 parent: Some(root_module),
+                declaration: None,
             },
         );
         let _ = module_memmap(db, module_a, source_root, root_module);
@@ -331,6 +407,7 @@ fn body_change_in_sibling_module_does_not_invalidate_memmap() {
             ModuleSource::Local {
                 file: lib_file,
                 parent: None,
+                declaration: None,
             },
         );
         let module_a = Module::new(
@@ -338,6 +415,7 @@ fn body_change_in_sibling_module_does_not_invalidate_memmap() {
             ModuleSource::Local {
                 file: file_a,
                 parent: Some(root_module),
+                declaration: None,
             },
         );
         let _ = module_memmap(db, module_a, source_root, root_module);
@@ -372,7 +450,14 @@ fn external_module_memmap_panics() {
     db.attach(|db| {
         let file = SourceFile::new(db, "lib.rs".to_owned(), "".to_owned());
         let source_root = SourceRoot::new(db, vec![file]);
-        let root_module = Module::new(db, ModuleSource::Local { file, parent: None });
+        let root_module = Module::new(
+            db,
+            ModuleSource::Local {
+                file,
+                parent: None,
+                declaration: None,
+            },
+        );
         let ext_module = Module::new(db, ModuleSource::External(CrateNum(1), DefIndex(0)));
 
         // This should panic with the debug_assert message.

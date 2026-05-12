@@ -128,16 +128,10 @@ fn query_log_demand_driven_with_real_tcx() {
 
         let log = sage.db.take_query_log();
         expect![[r#"
-              salsa: definition(Id(1000))
-            definition("lib.rs", "cmd")
-              salsa: module_items(Id(800))
-            module_items("lib.rs")
+              salsa: module_memmap(Id(1000))
               salsa: file_item_tree(Id(10))
             file_item_tree("lib.rs")
-              salsa: definition(Id(1001))
-            definition("cmd/mod.rs", "get")
-              salsa: module_items(Id(801))
-            module_items("cmd/mod.rs")
+              salsa: module_memmap(Id(1001))
               salsa: file_item_tree(Id(7))
             file_item_tree("cmd/mod.rs")
               salsa: module_items(Id(802))
@@ -234,29 +228,23 @@ fn expand_derives_cmd_get_full() {
         // Verify demand-driven: only queries needed for this module + derive resolution
         let log = sage.db.take_query_log();
         expect![[r#"
-              salsa: definition(Id(1000))
-            definition("lib.rs", "cmd")
-              salsa: module_items(Id(800))
-            module_items("lib.rs")
+              salsa: module_memmap(Id(1000))
               salsa: file_item_tree(Id(10))
             file_item_tree("lib.rs")
-              salsa: definition(Id(1001))
-            definition("cmd/mod.rs", "get")
-              salsa: module_items(Id(801))
-            module_items("cmd/mod.rs")
+              salsa: module_memmap(Id(1001))
               salsa: file_item_tree(Id(7))
             file_item_tree("cmd/mod.rs")
               salsa: module_items(Id(802))
             module_items("cmd/get.rs")
               salsa: file_item_tree(Id(6))
             file_item_tree("cmd/get.rs")
-              salsa: module_memmap(Id(5c00))
+              salsa: module_memmap(Id(1002))
             tcx::extern_crate("Debug")
             tcx::extern_crate("std")
-              salsa: definition(Id(1002))
+              salsa: definition(Id(6000))
             definition(extern(1, 0), "prelude")
             tcx::module_children(1, 0)
-              salsa: definition(Id(1003))
+              salsa: definition(Id(6001))
             definition(extern(1, 3), "v1")
             tcx::module_children(1, 3)
             tcx::module_children(1, 4)
@@ -362,6 +350,7 @@ fn expand_derives_clap_parser() {
             sage_ir::module::ModuleSource::Local {
                 file: server_file,
                 parent: None,
+                declaration: None,
             },
         );
         let items = module_items(sage.db, module);
@@ -411,6 +400,7 @@ fn expanded_items_are_valid_ir() {
             sage_ir::module::ModuleSource::Local {
                 file: server_file,
                 parent: None,
+                declaration: None,
             },
         );
         let items = module_items(sage.db, module);
@@ -546,6 +536,7 @@ fn snapshot_expanded_clap_parser() {
             sage_ir::module::ModuleSource::Local {
                 file: server_file,
                 parent: None,
+                declaration: None,
             },
         );
         let items = module_items(sage.db, module);

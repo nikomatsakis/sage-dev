@@ -226,6 +226,7 @@ impl TestCrate {
             ModuleSource::Local {
                 file: lib_file,
                 parent: None,
+                declaration: None,
             },
         );
         (source_root, root)
@@ -436,6 +437,9 @@ fn fmt_path(db: &dyn sage_ir::Db, path: sage_ir::types::Path) -> String {
 fn fmt_module(db: &dyn sage_ir::Db, module: Module) -> String {
     match module.source(db) {
         ModuleSource::Local { file, .. } => format!("\"{}\"", file.path(db)),
+        ModuleSource::LocalInline { mod_item, .. } => {
+            format!("inline \"{}\"", mod_item.name(db).text(db))
+        }
         ModuleSource::External(cn, di) => format!("extern({},{})", cn.0, di.0),
     }
 }

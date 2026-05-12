@@ -70,6 +70,11 @@ pub fn module_memmap<'db>(
             let items = file_item_tree(db, file);
             seed::seed_from_items(db, module, source_root, crate_root, items)
         }
+        ModuleSource::LocalInline { mod_item, .. } => {
+            // Inline mod — seed directly from the ModItem's items.
+            let items: Vec<crate::item::Item<'db>> = mod_item.items(db).clone().unwrap_or_default();
+            seed::seed_from_items(db, module, source_root, crate_root, &items)
+        }
         ModuleSource::External(..) => Vec::new(),
     };
 

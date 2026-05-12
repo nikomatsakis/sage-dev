@@ -136,6 +136,105 @@ fn redirect_to_macro_expanded_item_in_file_module() {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 3: LocalInline + recursive mod-body parsing of expansions
+// ---------------------------------------------------------------------------
+
+/// A glob whose target is a macro-created inline module.
+///
+/// `m!()` expands to `mod foo { pub struct Bar; }`. The glob
+/// `use foo::*` looks up `foo` in the root memmap (finds it inside
+/// the expansion branch) and gets a `LocalInline` module whose
+/// items include `Bar`.
+#[test]
+fn glob_target_created_by_macro_expansion() {
+    t(r#"
+        //- /lib.rs
+        macro_rules! m { () => { mod foo { pub struct Bar; } } }
+        m!();
+        use foo::*;
+    "#)
+    .resolve("Bar", Namespace::Type, expect!["<local Struct Bar>"])
+    .errors(expect![""]);
+}
+
+/// A redirect whose target is inside a macro-created inline module.
+#[test]
+fn redirect_target_created_by_macro_expansion() {
+    t(r#"
+        //- /lib.rs
+        macro_rules! m { () => { mod things { pub struct Foo; } } }
+        m!();
+        use things::Foo;
+    "#)
+    .resolve("Foo", Namespace::Type, expect!["<local Struct Foo>"])
+    .errors(expect![""]);
+}
+
+/// A glob whose target was itself introduced by macro expansion
+/// resolves on the second fixpoint iteration.
+#[test]
+fn glob_target_from_macro_fixpoint() {
+    t(r#"
+        //- /lib.rs
+        use foo::*;
+        macro_rules! m { () => { mod foo { pub struct Bar; } } }
+        m!();
+    "#)
+    .resolve("Bar", Namespace::Type, expect!["<local Struct Bar>"])
+    .errors(expect![""]);
+}
+
+/// Glob target created by a nested (two-level) macro expansion.
+#[test]
+fn glob_target_created_by_nested_macro() {
+    t(r#"
+        //- /lib.rs
+        macro_rules! inner { () => { pub struct Deep; } }
+        macro_rules! outer { () => { mod nested { inner!(); } } }
+        outer!();
+        use nested::*;
+    "#)
+    .resolve("Deep", Namespace::Type, expect!["<local Struct Deep>"])
+    .errors(expect![""]);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3: Cycle handling
+// ---------------------------------------------------------------------------
+
+/// Mutual globs between modules terminate (no stack overflow).
+#[test]
+fn mutual_globs_terminate() {
+    t(r#"
+        //- /lib.rs
+        mod a;
+        mod b;
+        use a::*;
+
+        //- /a.rs
+        pub use crate::b::*;
+
+        //- /b.rs
+        pub use crate::a::*;
+        pub struct X;
+    "#)
+    .resolve("X", Namespace::Type, expect!["<local Struct X>"])
+    .errors(expect![""]);
+}
+
+/// A self-glob at the crate root terminates.
+#[test]
+fn self_glob_at_crate_root() {
+    t(r#"
+        //- /lib.rs
+        use crate::*;
+        pub struct X;
+    "#)
+    .resolve("X", Namespace::Type, expect!["<local Struct X>"])
+    .errors(expect![""]);
+}
+
+// ---------------------------------------------------------------------------
 // Duplicate name from two macro invocations (mirrors memmap_phase3_tests::m7)
 // ---------------------------------------------------------------------------
 

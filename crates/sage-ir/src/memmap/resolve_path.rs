@@ -22,7 +22,7 @@ use crate::item::{Item, MacroDefItem};
 use crate::module::{Module, ModuleSource};
 use crate::name::Name;
 use crate::resolve::{
-    SourceRoot, definition, resolve_first_segment, resolve_use_path_to_module_from_path,
+    SourceRoot, definition, resolve_first_segment, resolve_use_path_to_module_from_path_ctime,
     symbol_to_module,
 };
 use crate::symbol::{Symbol, SymbolSource};
@@ -79,9 +79,13 @@ fn resolve_macro_path_to_defs<'db>(
         let mut globbed: Vec<MacroDefItem<'db>> = Vec::new();
         for entry in entries {
             if let MemmapEntry::Glob { path } = entry {
-                if let Some(target) =
-                    resolve_use_path_to_module_from_path(db, module, source_root, crate_root, *path)
-                {
+                if let Some(target) = resolve_use_path_to_module_from_path_ctime(
+                    db,
+                    module,
+                    source_root,
+                    crate_root,
+                    *path,
+                ) {
                     if let Some(def) =
                         find_macro_in_module(db, target, name, source_root, crate_root)
                     {
@@ -90,7 +94,26 @@ fn resolve_macro_path_to_defs<'db>(
                 }
             }
         }
-        return dedup(globbed);
+        if !globbed.is_empty() {
+            return dedup(globbed);
+        }
+
+        // Textual-scope fallback: for LocalInline child modules,
+        // macros declared in an ancestor's memmap are still visible
+        // (mirroring rustc's `macro_rules!` scoping rule). Walk up
+        // the parent chain of LocalInline modules looking for `name`.
+        let mut current = module;
+        loop {
+            let parent = match current.source(db) {
+                ModuleSource::LocalInline { parent, .. } => parent,
+                _ => break,
+            };
+            if let Some(def) = find_macro_in_module(db, parent, name, source_root, crate_root) {
+                return vec![def];
+            }
+            current = parent;
+        }
+        return Vec::new();
     }
 
     // Multi-segment: dispatch on leading segment.
@@ -177,7 +200,7 @@ fn resolve_macro_path_to_defs<'db>(
             // 3. Globs — first segment may come from one.
             for entry in entries {
                 if let MemmapEntry::Glob { path: glob_path } = entry {
-                    let Some(glob_target) = resolve_use_path_to_module_from_path(
+                    let Some(glob_target) = resolve_use_path_to_module_from_path_ctime(
                         db,
                         module,
                         source_root,
