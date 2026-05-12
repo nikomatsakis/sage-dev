@@ -52,7 +52,9 @@ fn baseline_initial_memmap_computation() {
             expect![[r#"
               salsa: module_memmap(Id(c00))
               salsa: file_item_tree(Id(0))
-            file_item_tree("lib.rs")"#]],
+            file_item_tree("lib.rs")
+              salsa: file_item_tree(Id(1))
+            file_item_tree("<macro:m>")"#]],
         );
     });
 }

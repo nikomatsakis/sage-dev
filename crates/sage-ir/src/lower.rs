@@ -151,6 +151,7 @@ impl<'db> LowerCtx<'db> {
             "mod_item" => Item::Mod(self.lower_mod(node, attrs)),
             "use_declaration" => self.lower_use(node, attrs),
             "macro_definition" => self.lower_macro_def_item(node),
+            "macro_invocation" => self.lower_macro_invocation_item(node),
             "expression_statement" => self.lower_expression_statement(node),
             _ => Item::Error(self.span(node)),
         }
