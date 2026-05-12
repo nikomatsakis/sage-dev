@@ -303,8 +303,9 @@ pub fn resolve_name<'db>(
 
     let memmap = module_memmap(db, module, source_root, crate_root);
 
-    // 1. Non-glob lookup: collect all NamedMember entries with matching name+ns
-    //    This includes entries inside expanded macro subtrees.
+    // 1. Non-glob lookup: collect all matching entries (items,
+    //    redirects, macro defs) from the tree, descending through
+    //    every `MacroUse::Expanded` branch.
     let mut non_glob_matches: Vec<Symbol<'db>> = Vec::new();
     collect_named_matches(
         db,
@@ -323,7 +324,8 @@ pub fn resolve_name<'db>(
         _ => {}
     }
 
-    // 2. Glob lookup: for each GlobStem, search the source module's memmap
+    // 2. Glob lookup: for each `Glob { path }` entry, resolve the
+    //    path to a module dynamically and search its MEM-map.
     let mut glob_matches: Vec<Symbol<'db>> = Vec::new();
     collect_glob_matches(
         db,
@@ -856,24 +858,6 @@ pub fn resolve_use_path<'db>(
         }
         ModuleSource::External(cn, di) => Ok(Symbol::new(db, SymbolSource::External(cn, di))),
     }
-}
-
-/// Resolve a use import's path to a Module (for glob imports).
-pub fn resolve_use_path_to_module<'db>(
-    db: &'db dyn Db,
-    current_module: Module<'db>,
-    source_root: SourceRoot,
-    crate_root: Module<'db>,
-    import: UseImport<'db>,
-) -> Result<Module<'db>, ResolutionError> {
-    resolve_use_path_to_module_from_path(
-        db,
-        current_module,
-        source_root,
-        crate_root,
-        import.path(db),
-    )
-    .ok_or(ResolutionError::Unresolved)
 }
 
 /// Resolve a path (e.g. from a stored glob `MemmapEntry`) to a Module,

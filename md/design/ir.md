@@ -93,14 +93,114 @@ Multi-segment paths use `resolve_first_segment` (handles `crate`/`self`/
 - **Macro bodies** — tokens inside `MacroCall` are opaque
 - **Type references** — `TypeRef` passes through unchanged
 
-## Module resolution (`resolve.rs`)
+## Module resolution (`resolve.rs`, `memmap/`)
 
-- `module_items(module)` — items declared in a module (salsa tracked)
-- `module_use_imports(module)` — flattened use imports (salsa tracked)
-- `definition(module, name)` — find a child by name (salsa tracked)
-- `resolve_name(module, source_root, crate_root, name, ns)` — full
-  name resolution: items → named imports → globs → extern → std prelude
-- `resolve_first_segment` / `symbol_to_module` — helpers for multi-segment paths
+Module-level name resolution uses a two-faced **MEM-map** (Minimal
+Expanded Members map) per module. A MEM-map holds the entries needed
+to answer "what names does this module export?" — items, redirects
+(`use foo::bar`), globs (`use foo::*`), and macro invocations.
+
+### Data model
+
+`MemmapEntry` has five variants:
+
+- `Item(Item)` — a declared item (struct, fn, impl, mod, …).
+  Namespace derived dynamically via `item_in_namespace`.
+- `MacroDef(MacroDefItem)` — a `macro_rules!` definition, always in
+  `Namespace::Macro(Bang)`.
+- `Redirect { name, target }` — `use foo::bar [as baz]`. Namespace
+  resolved dynamically by resolving `target` at lookup time.
+- `Glob { path }` — `use foo::*`. Target module resolved dynamically
+  at lookup time, so globs whose target is created by macro
+  expansion are picked up correctly.
+- `MacroUse(MacroUse)` — a macro invocation with resolution state
+  (`Unresolved` / `Resolved(Vec<MacroCallee>)` /
+  `Expanded(Vec<Expansion>)`).
+
+Each `Expansion` pairs a callee with the entries it produced, so a
+fan-out of multiple candidates becomes multiple branches inside a
+single `MacroUse`.
+
+### Two resolvers
+
+The MEM-map is consumed by two resolvers with different semantic
+guarantees:
+
+- **Construction-time** (`memmap::resolve_path::resolve_macro_path`):
+  used while `module_memmap` is building a module's entries to
+  resolve macro invocation paths. Never errors; returns `Vec<Symbol>`
+  of candidates. Safe to call from inside `module_memmap` — uses
+  `definition` / `resolve_first_segment` (file_item_tree-backed) for
+  first-segment lookups so it never re-enters the current module's
+  memmap query.
+- **Post-construction** (`resolve_name`): used by body resolution,
+  display, and IDE-style queries. Returns exactly one `Symbol` or
+  an error. Flattens the whole tree (entries at any
+  `MacroUse::Expanded` depth count equally) and uses
+  `definition_via_memmap` for path walking, so names introduced by
+  macro expansion inside any module are visible to downstream
+  callers.
+
+Priority in `resolve_name`: named (items/redirects/macro defs) →
+glob → extern prelude → std prelude.
+
+### Inline modules
+
+`ModuleSource` has three variants:
+
+- `Local { file, parent, declaration }` — workspace module backed by
+  a source file.
+- `LocalInline { parent, mod_item }` — inline `mod foo { ... }`. Its
+  `mod_item.items` tracked field feeds `module_items` and
+  `module_memmap` directly.
+- `External(CrateNum, DefIndex)` — dependency crate, queried via
+  `TcxDb`.
+
+`Module::containing_file` walks up `LocalInline` parents to find the
+backing `SourceFile`, if any.
+
+### Cycle handling
+
+Path-walking helpers (`definition_via_memmap`,
+`resolve_path_to_symbol`, `resolve_use_path_to_module_from_path`)
+share a thread-local in-flight frame stack. Re-entering the same
+`(module, name|path, kind)` triple short-circuits to `None`/`Err`,
+so mutually cyclic globs and redirect chains terminate without stack
+overflow.
+
+### Macro expansion
+
+`memmap::expand::expand_macro` produces `Vec<MemmapEntry>` by
+creating a synthetic `SourceFile` for the macro body and calling
+`file_item_tree` on it. Expanded items are real tracked structs —
+`StructItem`, `FunctionItem`, inline `ModItem` with populated
+`items`, etc. — so downstream queries work uniformly for both
+source-level and macro-introduced items.
+
+The fixpoint loop in `resolve_and_expand_macros` iterates until
+every `MacroUse` converges. `module_memmap` uses salsa's
+`cycle_initial = empty memmap` for cross-module cycles.
+
+### Validation
+
+`memmap::validate::memmap_errors` runs after convergence and
+reports:
+
+- `UnresolvedMacro { path }`
+- `AmbiguousMacro { path }` (multiple candidate callees)
+- `UnresolvedRedirect { name }` / `UnresolvedGlob { path }`
+- `DuplicateName { name, ns }`
+- `TimeTravelViolation { name, ns }` (a macro expansion introduces
+  a name that would shadow a glob import)
+
+### Legacy helpers
+
+- `module_items(module)` / `module_use_imports(module)` — file-level
+  queries used inside `module_memmap` seeding and by
+  construction-time path walkers.
+- `definition(module, name)` — items-based direct lookup.
+- `resolve_first_segment` / `symbol_to_module` — first-segment
+  helpers for construction-time path resolution.
 
 ## Display (`display.rs`)
 

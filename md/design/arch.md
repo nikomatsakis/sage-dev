@@ -3,29 +3,34 @@
 ## Pipeline
 
 Sage processes Rust source code through demand-driven salsa queries.
-The pipeline has three stages: **lowering** (tree-sitter CST → IR),
-**module-level resolution** (names, use imports, derives), and
-**body resolution** (paths and locals inside function bodies).
+The pipeline has four stages: **lowering** (tree-sitter CST → IR),
+**MEM-map construction** (macro expansion, resolved use imports),
+**module-level resolution** (flattened name lookup), and **body
+resolution** (paths and locals inside function bodies).
 
 ```mermaid
 graph TD
     SF["SourceFile<br><i>salsa input: path + text</i>"]
     TS["tree-sitter parse"]
     FIT["file_item_tree(file)<br><i>→ Vec&lt;Item&gt;</i>"]
-    MI["module_items(module)<br><i>→ Vec&lt;Item&gt;</i>"]
+    MM["module_memmap(module)<br><i>→ ModuleMemmap</i><br>(seed + expand macros)"]
     RN["resolve_name(module, name, ns)<br><i>→ Symbol</i>"]
     RB["resolve_body(fn, module, ...)<br><i>→ ResolvedBody</i>"]
     DS["TcxDb<br><i>rustc_driver TyCtxt</i>"]
 
-    SF --> TS --> FIT --> MI
-    DS --> RN
-    MI --> RN
+    SF --> TS --> FIT --> MM
+    DS --> MM
+    MM --> RN
     RN --> RB
-    MI --> RB
+    FIT --> RB
 ```
 
 All queries are demand-driven. Resolving `Get::apply` only parses
 `cmd/get.rs` and its imports — it never touches `cmd/set.rs`.
+`module_memmap` uses salsa cycle recovery (`cycle_initial` = empty
+memmap) to handle cross-module glob/redirect cycles, and
+`expand_macro` creates synthetic `SourceFile` inputs so each unique
+`(macro_def, input_tokens)` pair is parsed once.
 
 ## Crates
 
