@@ -464,8 +464,10 @@ fn collect_glob_matches<'db>(
     }
 }
 
-/// Resolve a path (from a use-redirect) to a Symbol.
-fn resolve_path_to_symbol<'db>(
+/// Resolve a path (from a use-redirect) to a Symbol, using the MEM-map
+/// of each intermediate module so that macro-introduced names in those
+/// modules are visible.
+pub fn resolve_path_to_symbol<'db>(
     db: &'db dyn Db,
     current_module: Module<'db>,
     source_root: SourceRoot,
@@ -482,8 +484,41 @@ fn resolve_path_to_symbol<'db>(
 
     let mut current = first_module;
     for (i, seg) in rest.iter().enumerate() {
-        let sym = definition(db, current, *seg).ok_or(ResolutionError::Unresolved)?;
-        if i < rest.len() - 1 {
+        let is_last = i == rest.len() - 1;
+        let seg_ns = if is_last {
+            Namespace::Type
+        } else {
+            Namespace::Type
+        };
+        let sym = definition_via_memmap(db, current, source_root, crate_root, *seg, seg_ns)
+            .or_else(|| {
+                if is_last {
+                    // Try Value namespace for `use foo::FUNC` / `use foo::CONST`.
+                    definition_via_memmap(
+                        db,
+                        current,
+                        source_root,
+                        crate_root,
+                        *seg,
+                        Namespace::Value,
+                    )
+                    .or_else(|| {
+                        // Try Macro namespace for `use foo::my_macro`.
+                        definition_via_memmap(
+                            db,
+                            current,
+                            source_root,
+                            crate_root,
+                            *seg,
+                            Namespace::Macro(MacroKind::Bang),
+                        )
+                    })
+                } else {
+                    None
+                }
+            })
+            .ok_or(ResolutionError::Unresolved)?;
+        if !is_last {
             current = symbol_to_module(db, sym, source_root, current)
                 .ok_or(ResolutionError::Unresolved)?;
         } else {
@@ -491,10 +526,136 @@ fn resolve_path_to_symbol<'db>(
         }
     }
 
-    // If rest is empty, the path is just the first segment module
+    // If rest is empty, the path is just the first segment module.
     match first_module.source(db) {
         ModuleSource::External(cn, di) => Ok(Symbol::new(db, SymbolSource::External(cn, di))),
         _ => Err(ResolutionError::Unresolved),
+    }
+}
+
+/// Like `definition`, but consults the module's MEM-map (flattened
+/// through expansions) rather than `module_items`. This makes names
+/// introduced by macro expansion visible during path walking.
+///
+/// Returns the single matching symbol, or `None` if zero or multiple
+/// matches exist. Used for intermediate segments of a path walk — we
+/// can't disambiguate here, so we conservatively return None on
+/// ambiguity and let the caller flag it.
+fn definition_via_memmap<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    source_root: SourceRoot,
+    crate_root: Module<'db>,
+    name: Name<'db>,
+    ns: Namespace,
+) -> Option<Symbol<'db>> {
+    use crate::memmap::{MacroUseState, MemmapEntry, module_memmap};
+
+    if matches!(module.source(db), ModuleSource::External(..)) {
+        return definition_in_ns(db, module, name, ns);
+    }
+
+    let memmap = module_memmap(db, module, source_root, crate_root);
+    let mut named: Vec<Symbol<'db>> = Vec::new();
+    let mut glob_matches: Vec<Symbol<'db>> = Vec::new();
+
+    fn walk<'db>(
+        db: &'db dyn Db,
+        module: Module<'db>,
+        source_root: SourceRoot,
+        crate_root: Module<'db>,
+        entries: &[MemmapEntry<'db>],
+        name: Name<'db>,
+        ns: Namespace,
+        named: &mut Vec<Symbol<'db>>,
+        glob_matches: &mut Vec<Symbol<'db>>,
+    ) {
+        for entry in entries {
+            match entry {
+                MemmapEntry::Item(item) => {
+                    if item_name(db, *item) == Some(name) && item_in_namespace(db, *item, ns) {
+                        let sym = Symbol::new(db, SymbolSource::Local(*item));
+                        if !named.contains(&sym) {
+                            named.push(sym);
+                        }
+                    }
+                }
+                MemmapEntry::MacroDef(def) => {
+                    if def.name(db) == name && matches!(ns, Namespace::Macro(_)) {
+                        // No Symbol for local MacroDef yet; skip.
+                        let _ = def;
+                    }
+                }
+                MemmapEntry::Redirect { name: n, target } => {
+                    if *n == name {
+                        if let Ok(sym) =
+                            resolve_path_to_symbol(db, module, source_root, crate_root, *target)
+                        {
+                            if !named.contains(&sym) {
+                                named.push(sym);
+                            }
+                        }
+                    }
+                }
+                MemmapEntry::Glob { path } => {
+                    let Some(target) = resolve_use_path_to_module_from_path(
+                        db,
+                        module,
+                        source_root,
+                        crate_root,
+                        *path,
+                    ) else {
+                        continue;
+                    };
+                    if let Some(sym) = definition_in_ns(db, target, name, ns) {
+                        if !glob_matches.contains(&sym) {
+                            glob_matches.push(sym);
+                        }
+                    }
+                }
+                MemmapEntry::MacroUse(mu) => {
+                    if let MacroUseState::Expanded(exps) = &mu.state {
+                        for exp in exps {
+                            walk(
+                                db,
+                                module,
+                                source_root,
+                                crate_root,
+                                &exp.entries,
+                                name,
+                                ns,
+                                named,
+                                glob_matches,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    walk(
+        db,
+        module,
+        source_root,
+        crate_root,
+        memmap.entries(db),
+        name,
+        ns,
+        &mut named,
+        &mut glob_matches,
+    );
+
+    match named.len() {
+        1 => Some(named[0]),
+        0 => {
+            if glob_matches.len() == 1 {
+                Some(glob_matches[0])
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
 
@@ -619,7 +780,8 @@ pub fn resolve_use_path_to_module_from_path<'db>(
 
     let mut current = first_module;
     for seg in rest {
-        let sym = definition(db, current, *seg)?;
+        let sym =
+            definition_via_memmap(db, current, source_root, crate_root, *seg, Namespace::Type)?;
         current = symbol_to_module(db, sym, source_root, current)?;
     }
     Some(current)

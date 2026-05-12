@@ -1649,9 +1649,9 @@ candidate callee.
 
 ## Implementation status
 
-- [ ] Phase 0 — Test harness
-- [ ] Phase 1 — Data model
-- [ ] Phase 2 — Post-construction resolver
+- [x] Phase 0 — Test harness
+- [x] Phase 1 — Data model
+- [x] Phase 2 — Post-construction resolver
 - [ ] Phase 3 — Construction-time fan-out (with cycle detection)
 - [ ] Phase 4 — expand_macro via file_item_tree
 - [ ] Phase 5 — Cleanup
@@ -1659,6 +1659,29 @@ candidate callee.
 ### Deviations from plan
 
 (none yet)
+
+### Phase 2 deviations
+
+- Phase 2's new test cases involving glob/redirect **targets** that
+  are macro-created inline modules (`mod foo { .. }` produced by
+  macro expansion) are deferred to Phase 3. They fundamentally
+  require `ModuleSource::LocalInline` so that `symbol_to_module`
+  can return a Module for an inline mod; without it,
+  `resolve_use_path_to_module_from_path` has no module to walk
+  into.
+
+  Phase 2 still delivers the core fix: deferred resolution of
+  `Redirect { name, target }` and `Glob { path }` at lookup time
+  via the target module's MEM-map (rather than `module_items`).
+  This means the case "redirect/glob points to a *file-based*
+  module whose contents were macro-expanded" works today.
+  Inline-module targets land with LocalInline in Phase 3.
+
+- Over-flagging of same-named items across expansion levels is
+  already correctly handled by the Phase 1 + Phase 2 flattening
+  logic (collect_named_matches returns exactly 1 when only one
+  matching entry exists anywhere in the tree). Additional
+  regression guards are in place.
 
 ### Open issues
 

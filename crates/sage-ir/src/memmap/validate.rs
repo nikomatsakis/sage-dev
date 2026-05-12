@@ -32,6 +32,12 @@ pub enum MemmapError<'db> {
     /// A macro expansion introduced a non-glob name that conflicts
     /// with a glob-imported name.
     TimeTravelViolation { name: Name<'db>, ns: Namespace },
+    /// A `use foo::bar;` whose `bar` path never resolved after
+    /// convergence.
+    UnresolvedRedirect { name: Name<'db> },
+    /// A `use foo::*;` whose `foo` path never resolved after
+    /// convergence.
+    UnresolvedGlob { path: Path<'db> },
 }
 
 pub fn memmap_errors<'db>(
@@ -64,6 +70,9 @@ pub fn memmap_errors<'db>(
     }
 
     collect_macro_errors(entries, &mut errors);
+
+    // Unresolvable redirects/globs after convergence.
+    collect_unresolved_redirects_globs(db, module, entries, source_root, crate_root, &mut errors);
 
     // Time-travel: names introduced by expansion that also come via glob.
     let mut expanded_names: Vec<(Name<'db>, Namespace)> = Vec::new();
@@ -146,6 +155,79 @@ fn collect_macro_errors<'db>(entries: &[MemmapEntry<'db>], errors: &mut Vec<Memm
             }
         }
     }
+}
+
+/// Walk entries (top-level and inside all `MacroUse::Expanded` branches)
+/// and emit an error for every `Redirect` or `Glob` whose path doesn't
+/// resolve after convergence.
+fn collect_unresolved_redirects_globs<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    entries: &[MemmapEntry<'db>],
+    source_root: SourceRoot,
+    crate_root: Module<'db>,
+    out: &mut Vec<MemmapError<'db>>,
+) {
+    for entry in entries {
+        match entry {
+            MemmapEntry::Redirect { name, target } => {
+                if resolve_use_path_to_module_from_path(
+                    db,
+                    module,
+                    source_root,
+                    crate_root,
+                    *target,
+                )
+                .is_none()
+                    && target_resolves_to_nothing(db, module, source_root, crate_root, *target)
+                {
+                    let err = MemmapError::UnresolvedRedirect { name: *name };
+                    if !out.contains(&err) {
+                        out.push(err);
+                    }
+                }
+            }
+            MemmapEntry::Glob { path } => {
+                if resolve_use_path_to_module_from_path(db, module, source_root, crate_root, *path)
+                    .is_none()
+                {
+                    let err = MemmapError::UnresolvedGlob { path: *path };
+                    if !out.contains(&err) {
+                        out.push(err);
+                    }
+                }
+            }
+            MemmapEntry::MacroUse(mu) => {
+                if let MacroUseState::Expanded(exps) = &mu.state {
+                    for exp in exps {
+                        collect_unresolved_redirects_globs(
+                            db,
+                            module,
+                            &exp.entries,
+                            source_root,
+                            crate_root,
+                            out,
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// A redirect target that doesn't resolve to a Module AND doesn't
+/// resolve to any Symbol is considered unresolved. (Some redirects
+/// point to non-module items; those shouldn't flag.)
+fn target_resolves_to_nothing<'db>(
+    db: &'db dyn Db,
+    current_module: Module<'db>,
+    source_root: SourceRoot,
+    crate_root: Module<'db>,
+    path: Path<'db>,
+) -> bool {
+    crate::resolve::resolve_path_to_symbol(db, current_module, source_root, crate_root, path)
+        .is_err()
 }
 
 /// Collect names introduced only through expansions.

@@ -457,5 +457,9 @@ pub fn fmt_memmap_error(db: &dyn sage_ir::Db, err: &sage_ir::memmap::MemmapError
             name.text(db),
             fmt_namespace(*ns)
         ),
+        UnresolvedRedirect { name } => {
+            format!("UnresolvedRedirect name={}", name.text(db))
+        }
+        UnresolvedGlob { path } => format!("UnresolvedGlob path={}", fmt_path(db, *path)),
     }
 }

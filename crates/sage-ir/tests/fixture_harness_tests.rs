@@ -54,6 +54,88 @@ fn unresolved_macro_path() {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 2: Deferred glob/redirect resolution
+// ---------------------------------------------------------------------------
+
+/// `use foo::*` where `foo` doesn't exist anywhere — flags UnresolvedGlob.
+#[test]
+fn unresolved_glob_path_is_an_error() {
+    t(r#"
+        //- /lib.rs
+        use nonexistent::*;
+    "#)
+    .errors(expect!["UnresolvedGlob path=nonexistent"]);
+}
+
+/// A redirect target that never resolves flags UnresolvedRedirect.
+#[test]
+fn unresolved_redirect_is_an_error() {
+    t(r#"
+        //- /lib.rs
+        use nonexistent::Thing;
+    "#)
+    .errors(expect!["UnresolvedRedirect name=Thing"]);
+}
+
+/// Named entries beat glob imports globally, even when the glob was
+/// introduced by a macro expansion.
+#[test]
+fn named_at_root_beats_glob_from_expansion() {
+    t(r#"
+        //- /lib.rs
+        mod other;
+        struct X;
+        macro_rules! m { () => { use other::*; } }
+        m!();
+
+        //- /other.rs
+        pub struct X;
+    "#)
+    .resolve("X", Namespace::Type, expect!["<local Struct X>"])
+    .errors(expect![""]);
+}
+
+/// Regression guard: named import beats same-name glob from a sibling
+/// module.
+#[test]
+fn same_level_named_beats_glob() {
+    t(r#"
+        //- /lib.rs
+        mod a;
+        mod b;
+        use a::*;
+        use b::Foo;
+
+        //- /a.rs
+        pub struct Foo;
+
+        //- /b.rs
+        pub struct Foo;
+    "#)
+    .resolve("Foo", Namespace::Type, expect!["<local Struct Foo>"]);
+}
+
+/// A redirect whose target is a macro-introduced item in a file-based
+/// module resolves correctly.
+///
+/// The macro creates `X` inside `other.rs`. The redirect `use other::X`
+/// walks via the MEM-map of `other`, which contains the expanded `X`.
+#[test]
+fn redirect_to_macro_expanded_item_in_file_module() {
+    t(r#"
+        //- /lib.rs
+        mod other;
+        use other::X;
+
+        //- /other.rs
+        macro_rules! m { () => { pub struct X; } }
+        m!();
+    "#)
+    .resolve("X", Namespace::Type, expect!["<local Struct X>"])
+    .errors(expect![""]);
+}
+
+// ---------------------------------------------------------------------------
 // Duplicate name from two macro invocations (mirrors memmap_phase3_tests::m7)
 // ---------------------------------------------------------------------------
 
