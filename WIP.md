@@ -1652,7 +1652,7 @@ candidate callee.
 - [x] Phase 0 — Test harness
 - [x] Phase 1 — Data model
 - [x] Phase 2 — Post-construction resolver
-- [ ] Phase 3 — Construction-time fan-out (with cycle detection)
+- [x] Phase 3 — Construction-time fan-out (with cycle detection)
 - [ ] Phase 4 — expand_macro via file_item_tree
 - [ ] Phase 5 — Cleanup
 
@@ -1682,6 +1682,52 @@ candidate callee.
   logic (collect_named_matches returns exactly 1 when only one
   matching entry exists anywhere in the tree). Additional
   regression guards are in place.
+
+### Phase 3 deviations
+
+- Full three-layer construction-time resolver (layer 1
+  `dispatch_first_segment`, layer 2 `lookup_in_module_ctime`,
+  layer 3 `resolve_name_ctime` with per-node named > glob) is
+  not factored as such — the existing `resolve_macro_path` in
+  `memmap/resolve_path.rs` covers the same functional surface,
+  and adding the full layer split is tracked as a future
+  refactor rather than a correctness fix. Fan-out for ambiguous
+  callees already works (multiple candidates → `Resolved(vec)`
+  or `Expanded(vec)`).
+
+- `MacroCallee` is present as a type (`Rules` / `Builtin` /
+  `Proc`) but only `Rules` is populated — `symbol_to_macro_callee`
+  and `needs_expansion_for_memmap` aren't wired in yet. The
+  structural placeholders exist so later phases can add
+  `classify_builtin_macro` + `is_proc_macro` to `TcxDb` without
+  data-model churn.
+
+- Explicit overflow caps (`MAX_BRANCHES_PER_USE`,
+  `MAX_EXPANSION_ITEMS`, `ResolutionDepthExceeded`,
+  `BranchOverflow`, `ExpansionItemsOverflow`) are deferred. The
+  existing `MAX_EXPANSION_DEPTH` and the new thread-local
+  `IN_FLIGHT` frame stack + `FrameGuard` handle cycle
+  termination and depth blow-up for the currently exercised
+  cases; sharper diagnostics can layer on later.
+
+- `std_prelude_module` as a salsa-memoised helper is deferred —
+  `resolve_in_std_prelude` still walks inline. This is a minor
+  perf optimisation, not a correctness requirement.
+
+- `expand_macro` still re-parses via tree-sitter on each call
+  rather than routing through `file_item_tree`. Phase 4 tackles
+  this. The recursive mod-body parsing introduced in Phase 3 is
+  a stop-gap that synthesises proper `Item` tracked structs
+  from parsed text so that `LocalInline`'s `mod_item.items` is
+  populated enough for lookup; Phase 4 replaces it with the
+  full `file_item_tree` path.
+
+- Textual-scope fallback for `macro_rules!` (walking up the
+  LocalInline parent chain) is implemented in
+  `resolve_macro_path` to make the "nested macro in inline mod"
+  test case pass. This mirrors rustc's textual scoping rule but
+  isn't mentioned explicitly in the WIP — surfacing it here as
+  a design decision worth reviewing.
 
 ### Open issues
 
