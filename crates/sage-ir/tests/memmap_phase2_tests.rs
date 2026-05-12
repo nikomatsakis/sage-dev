@@ -107,10 +107,22 @@ m!();
             .collect();
         assert_eq!(macro_uses.len(), 1);
         match &macro_uses[0].state {
-            MacroUseState::Expanded(entries) => {
-                // Should have one Anon entry (the impl)
+            MacroUseState::Expanded(exps) => {
+                // One branch, one Item(Impl-placeholder) entry.
+                assert_eq!(exps.len(), 1);
+                let entries = &exps[0].entries;
                 assert_eq!(entries.len(), 1);
-                assert!(matches!(entries[0], MemmapEntry::Anon(_)));
+                // Phase 1: impls are synthesized as Item(Error) placeholders;
+                // Phase 4 will route through file_item_tree for real impls.
+                assert!(
+                    matches!(
+                        entries[0],
+                        MemmapEntry::Item(sage_ir::item::Item::Error(_))
+                            | MemmapEntry::Item(sage_ir::item::Item::Impl(_))
+                    ),
+                    "expected anonymous impl entry, got {:?}",
+                    entries[0]
+                );
             }
             other => panic!("expected Expanded, got {:?}", other),
         }
@@ -144,8 +156,12 @@ m!();
             .collect();
         assert_eq!(macro_uses.len(), 1);
         match &macro_uses[0].state {
-            MacroUseState::Expanded(entries) => {
-                assert!(entries.is_empty(), "empty macro should expand to nothing");
+            MacroUseState::Expanded(exps) => {
+                assert_eq!(exps.len(), 1);
+                assert!(
+                    exps[0].entries.is_empty(),
+                    "empty macro should expand to nothing"
+                );
             }
             other => panic!("expected Expanded, got {:?}", other),
         }
@@ -253,15 +269,20 @@ m!();
         );
 
         let memmap = module_memmap(db, root_module, source_root, root_module);
-        // The recursive expansion should hit the depth limit somewhere in the tree
-        fn has_error_recursive(entries: &[MemmapEntry]) -> bool {
+        // The recursive expansion should hit the depth limit somewhere
+        // in the tree. Phase 1 collapsed the old `Error` variant into
+        // `Unresolved` — a MacroUse that remains Unresolved after
+        // expansion has finished is the signal we're looking for.
+        fn has_unresolved_inside_expansion(entries: &[MemmapEntry]) -> bool {
             for entry in entries {
                 if let MemmapEntry::MacroUse(mu) = entry {
                     match &mu.state {
-                        MacroUseState::Error => return true,
-                        MacroUseState::Expanded(sub) => {
-                            if has_error_recursive(sub) {
-                                return true;
+                        MacroUseState::Unresolved => return true,
+                        MacroUseState::Expanded(exps) => {
+                            for exp in exps {
+                                if has_unresolved_inside_expansion(&exp.entries) {
+                                    return true;
+                                }
                             }
                         }
                         _ => {}
@@ -271,8 +292,8 @@ m!();
             false
         }
         assert!(
-            has_error_recursive(memmap.entries(db)),
-            "recursive macro should hit depth limit and produce Error somewhere in the tree"
+            has_unresolved_inside_expansion(memmap.entries(db)),
+            "recursive macro should hit depth limit and leave some MacroUse Unresolved"
         );
     });
 }

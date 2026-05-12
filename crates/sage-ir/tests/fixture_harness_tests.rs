@@ -36,7 +36,7 @@ fn macro_expands_to_struct() {
         macro_rules! m { () => { struct Foo; } }
         m!();
     "#)
-    .resolve("Foo", Namespace::Type, expect!["<local Error>"])
+    .resolve("Foo", Namespace::Type, expect!["<local Struct Foo>"])
     .errors(expect![""]);
 }
 
@@ -105,10 +105,5 @@ fn memmap_child_module() {
         //- /inner.rs
         pub struct Bar;
     "#)
-    .memmap(
-        &["inner"],
-        expect![[r#"
-            Item Bar ns=Type kind=Struct
-            Item Bar ns=Value kind=Struct"#]],
-    );
+    .memmap(&["inner"], expect!["Item Bar kind=Struct"]);
 }

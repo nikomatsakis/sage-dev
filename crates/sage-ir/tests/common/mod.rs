@@ -23,9 +23,7 @@
 
 use expect_test::Expect;
 use sage_ir::db::Database;
-use sage_ir::memmap::{
-    MacroUseState, MemmapEntry, NamedMember, NamedMemberKind, memmap_errors, module_memmap,
-};
+use sage_ir::memmap::{MacroUseState, MemmapEntry, memmap_errors, module_memmap};
 use sage_ir::module::{Module, ModuleSource};
 use sage_ir::name::Name;
 use sage_ir::resolve::{
@@ -259,11 +257,7 @@ impl TestCrate {
         // Recurse into child modules declared by this module.
         let memmap = module_memmap(db, module, source_root, crate_root);
         for entry in memmap.entries(db) {
-            if let MemmapEntry::Named(NamedMember {
-                kind: NamedMemberKind::Item(sage_ir::item::Item::Mod(mod_item)),
-                ..
-            }) = entry
-            {
+            if let MemmapEntry::Item(sage_ir::item::Item::Mod(mod_item)) = entry {
                 if let Some(child) =
                     sage_ir::resolve::resolve_mod(db, module, *mod_item, source_root)
                 {
@@ -348,21 +342,29 @@ pub fn fmt_memmap_entries(db: &dyn sage_ir::Db, entries: &[MemmapEntry], indent:
 fn fmt_entry(db: &dyn sage_ir::Db, entry: &MemmapEntry, indent: usize, out: &mut String) {
     let pad = "  ".repeat(indent);
     match entry {
-        MemmapEntry::Named(member) => {
+        MemmapEntry::Item(item) => {
+            let (kind, name) = item_kind_and_name(db, *item);
             out.push_str(&pad);
-            out.push_str(&fmt_named(db, member));
-            out.push('\n');
+            match name {
+                Some(n) => out.push_str(&format!("Item {n} kind={kind}\n")),
+                None => out.push_str(&format!("Item kind={kind}\n")),
+            }
         }
-        MemmapEntry::Glob(glob) => {
+        MemmapEntry::MacroDef(def) => {
+            out.push_str(&pad);
+            out.push_str(&format!("MacroDef {}\n", def.name(db).text(db)));
+        }
+        MemmapEntry::Redirect { name, target } => {
             out.push_str(&pad);
             out.push_str(&format!(
-                "Glob source={}\n",
-                fmt_module(db, glob.source_module)
+                "Redirect {} target={}\n",
+                name.text(db),
+                fmt_path(db, *target)
             ));
         }
-        MemmapEntry::Anon(_) => {
+        MemmapEntry::Glob { path } => {
             out.push_str(&pad);
-            out.push_str("Anon\n");
+            out.push_str(&format!("Glob path={}\n", fmt_path(db, *path)));
         }
         MemmapEntry::MacroUse(mu) => {
             out.push_str(&pad);
@@ -375,34 +377,43 @@ fn fmt_entry(db: &dyn sage_ir::Db, entry: &MemmapEntry, indent: usize, out: &mut
     }
 }
 
-fn fmt_named(db: &dyn sage_ir::Db, member: &NamedMember) -> String {
-    let name = member.name.text(db);
-    let ns = fmt_namespace(member.ns);
-    match &member.kind {
-        NamedMemberKind::Item(item) => {
-            let (kind, _) = item_kind_and_name(db, *item);
-            format!("Item {name} ns={ns} kind={kind}")
-        }
-        NamedMemberKind::Redirect { target } => {
-            format!("Redirect {name} ns={ns} target={}", fmt_path(db, *target))
-        }
-        NamedMemberKind::MacroDef(_) => format!("MacroDef {name}"),
-    }
-}
-
 fn fmt_macro_use_state(db: &dyn sage_ir::Db, state: &MacroUseState, indent: usize) -> String {
     match state {
         MacroUseState::Unresolved => "Unresolved".to_owned(),
-        MacroUseState::Unexpanded(_) => "Unexpanded".to_owned(),
-        MacroUseState::Ambiguous => "Ambiguous".to_owned(),
-        MacroUseState::Error => "Error".to_owned(),
-        MacroUseState::Expanded(entries) => {
+        MacroUseState::Resolved(callees) => {
+            let cs: Vec<String> = callees.iter().map(|c| fmt_callee(db, c)).collect();
+            format!("Resolved [{}]", cs.join(", "))
+        }
+        MacroUseState::Expanded(exps) => {
             let mut s = String::from("Expanded [\n");
-            s.push_str(&fmt_memmap_entries(db, entries, indent));
-            s.push('\n');
+            for exp in exps {
+                s.push_str(&"  ".repeat(indent));
+                s.push_str(&format!(
+                    "branch callee={} {{\n",
+                    fmt_callee(db, &exp.callee)
+                ));
+                s.push_str(&fmt_memmap_entries(db, &exp.entries, indent + 1));
+                s.push('\n');
+                s.push_str(&"  ".repeat(indent));
+                s.push_str("}\n");
+            }
             s.push_str(&"  ".repeat(indent.saturating_sub(1)));
             s.push(']');
             s
+        }
+    }
+}
+
+fn fmt_callee(db: &dyn sage_ir::Db, callee: &sage_ir::memmap::MacroCallee) -> String {
+    use sage_ir::memmap::MacroCallee;
+    match callee {
+        MacroCallee::Rules(def) => format!("Rules({})", def.name(db).text(db)),
+        MacroCallee::Builtin(kind) => format!("Builtin({kind:?})"),
+        MacroCallee::Proc {
+            crate_num,
+            def_index,
+        } => {
+            format!("Proc({},{})", crate_num.0, def_index.0)
         }
     }
 }

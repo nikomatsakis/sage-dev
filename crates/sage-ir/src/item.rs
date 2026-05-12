@@ -272,6 +272,13 @@ pub struct MacroDefItem<'db> {
 pub struct MacroInvocationItem<'db> {
     pub path: Path<'db>,
 
+    /// The token stream passed to the macro at the invocation site — i.e.
+    /// the contents of `m!(...)`, with the outer delimiter pair stripped.
+    /// Empty for zero-argument invocations like `m!()`.
+    #[tracked]
+    #[returns(ref)]
+    pub input_tokens: String,
+
     #[tracked]
     pub span: SpanIndices,
 }

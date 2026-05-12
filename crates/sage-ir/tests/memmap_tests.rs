@@ -262,7 +262,7 @@ fn memmap_records_glob_stems() {
         let has_glob = memmap
             .entries(db)
             .iter()
-            .any(|e| matches!(e, MemmapEntry::Glob(_)));
+            .any(|e| matches!(e, MemmapEntry::Glob { .. }));
         assert!(has_glob, "memmap should contain a glob stem");
     });
 }

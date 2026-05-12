@@ -1,165 +1,171 @@
-//! Macro path resolution within the MEM-map.
+//! Construction-time macro path resolution (Phase 1 translation).
 //!
-//! Handles all path forms:
-//! - `m!()` — single segment, checks local entries then globs
-//! - `self::m!()` — resolves in current module
-//! - `crate::inner::m!()` — absolute from crate root
-//! - `super::m!()` — parent module
-//! - `bar::m!()` — bare identifier, checks local modules then extern prelude
+//! This module resolves a macro invocation path to a set of candidate
+//! callees against a snapshot of the enclosing module's MEM-map entries.
+//! It mirrors the resolution behaviour of the pre-refactor code 1:1 onto
+//! the new data model:
+//!
+//!   * Single-segment: walk entries for `MacroDef`/`MacroUse::Expanded`
+//!     matches (named), then globs (dynamically resolved to modules and
+//!     searched). If any named matches exist, globs are ignored — named
+//!     wins globs within the same tree node.
+//!   * Multi-segment: dispatch on leading segment (`self`/`crate`/
+//!     `super`/bare), then walk the remaining segments via
+//!     `module_memmap` / `definition`.
+//!
+//! Phase 3 will replace this with the three-layer algorithm described in
+//! the WIP plan. For Phase 1 we stay faithful to current behaviour and
+//! return `Vec<MacroCallee>` instead of the ad-hoc `MacroResolution`.
 
 use crate::Db;
-use crate::item::MacroDefItem;
+use crate::item::{Item, MacroDefItem};
 use crate::module::{Module, ModuleSource};
 use crate::name::Name;
-use crate::resolve::{Namespace, SourceRoot, definition, resolve_first_segment, symbol_to_module};
+use crate::resolve::{
+    SourceRoot, definition, resolve_first_segment, resolve_use_path_to_module_from_path,
+    symbol_to_module,
+};
 use crate::symbol::{Symbol, SymbolSource};
 use crate::types::Path;
 
 use super::data::*;
 use super::module_memmap;
 
-/// Result of resolving a macro path.
-pub(super) enum MacroResolution<'db> {
-    Found(MacroDefItem<'db>),
-    Ambiguous,
-    NotFound,
-}
-
-impl<'db> From<Option<MacroDefItem<'db>>> for MacroResolution<'db> {
-    fn from(opt: Option<MacroDefItem<'db>>) -> Self {
-        match opt {
-            Some(def) => MacroResolution::Found(def),
-            None => MacroResolution::NotFound,
-        }
-    }
-}
-
 /// Resolve a macro path within the current MEM-map context.
-pub(super) fn resolve_memmap_path<'db>(
+///
+/// Returns the set of candidate macro callees. Never errors; zero
+/// candidates means "leave as `Unresolved`, try again next fixpoint
+/// iteration (or let the validator report `UnresolvedMacro`)".
+pub(super) fn resolve_macro_path<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
     source_root: SourceRoot,
     crate_root: Module<'db>,
     entries: &[MemmapEntry<'db>],
     path: Path<'db>,
-) -> MacroResolution<'db> {
+) -> Vec<MacroCallee<'db>> {
+    let defs = resolve_macro_path_to_defs(db, module, source_root, crate_root, entries, path);
+    defs.into_iter().map(MacroCallee::Rules).collect()
+}
+
+/// Inner version that returns `MacroDefItem`s. Phase 1 only produces
+/// `Rules` callees; later phases will return the broader `MacroCallee`
+/// set directly from the resolver.
+fn resolve_macro_path_to_defs<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    source_root: SourceRoot,
+    crate_root: Module<'db>,
+    entries: &[MemmapEntry<'db>],
+    path: Path<'db>,
+) -> Vec<MacroDefItem<'db>> {
     let segments = path.segments(db);
     if segments.is_empty() {
-        return MacroResolution::NotFound;
+        return Vec::new();
     }
 
     if segments.len() == 1 {
         let name = segments[0];
-        for entry in entries {
-            if let MemmapEntry::Named(member) = entry {
-                if member.name == name {
-                    if let NamedMemberKind::MacroDef(def) = &member.kind {
-                        return MacroResolution::Found(*def);
-                    }
-                }
-            }
+        // Named candidates (locally defined or inside expansion branches).
+        let mut named: Vec<MacroDefItem<'db>> = Vec::new();
+        collect_named_macro_defs(db, entries, name, &mut named);
+
+        if !named.is_empty() {
+            return dedup(named);
         }
-        let mut glob_result: Option<MacroDefItem<'db>> = None;
+
+        // Fall back to globs — resolve each glob's path dynamically and
+        // look up the macro by name in that module's memmap.
+        let mut globbed: Vec<MacroDefItem<'db>> = Vec::new();
         for entry in entries {
-            if let MemmapEntry::Glob(glob) = entry {
-                if let Some(def) =
-                    find_macro_in_module(db, glob.source_module, name, source_root, crate_root)
+            if let MemmapEntry::Glob { path } = entry {
+                if let Some(target) =
+                    resolve_use_path_to_module_from_path(db, module, source_root, crate_root, *path)
                 {
-                    if let Some(existing) = glob_result {
-                        if existing != def {
-                            return MacroResolution::Ambiguous;
-                        }
-                    } else {
-                        glob_result = Some(def);
+                    if let Some(def) =
+                        find_macro_in_module(db, target, name, source_root, crate_root)
+                    {
+                        globbed.push(def);
                     }
                 }
             }
         }
-        return match glob_result {
-            Some(def) => MacroResolution::Found(def),
-            None => MacroResolution::NotFound,
-        };
+        return dedup(globbed);
     }
 
-    // Multi-segment: resolve first segment, walk the rest
+    // Multi-segment: dispatch on leading segment.
     let first_text = segments[0].text(db);
+    let rest = &segments[1..];
     match first_text.as_str() {
         "self" => {
-            if segments.len() == 2 {
-                let name = segments[1];
-                for entry in entries {
-                    if let MemmapEntry::Named(member) = entry {
-                        if member.name == name {
-                            if let NamedMemberKind::MacroDef(def) = &member.kind {
-                                return MacroResolution::Found(*def);
-                            }
-                        }
-                    }
-                }
-                return MacroResolution::NotFound;
+            // self::<name> — walk the in-flight snapshot directly so we
+            // don't re-enter our own module's memmap query. For longer
+            // self::a::b::m paths, fall through to walk_path_to_macro
+            // which only calls module_memmap on child modules.
+            if rest.len() == 1 {
+                let name = rest[0];
+                let mut named: Vec<MacroDefItem<'db>> = Vec::new();
+                collect_named_macro_defs(db, entries, name, &mut named);
+                return dedup(named);
             }
-            walk_path_to_macro(db, module, source_root, crate_root, &segments[1..]).into()
+            walk_path_to_macro(db, module, source_root, crate_root, rest)
+                .into_iter()
+                .collect()
         }
-        "crate" => {
-            walk_path_to_macro(db, crate_root, source_root, crate_root, &segments[1..]).into()
-        }
+        "crate" => walk_path_to_macro(db, crate_root, source_root, crate_root, rest)
+            .into_iter()
+            .collect(),
         "super" => {
             if let ModuleSource::Local {
-                parent: Some(p), ..
+                parent: Some(parent),
+                ..
             } = module.source(db)
             {
-                walk_path_to_macro(db, p, source_root, crate_root, &segments[1..]).into()
+                walk_path_to_macro(db, parent, source_root, crate_root, rest)
+                    .into_iter()
+                    .collect()
             } else {
-                MacroResolution::NotFound
+                Vec::new()
             }
         }
         _ => {
             let first = segments[0];
+
+            // 1. Local items in this module's snapshot.
             for entry in entries {
-                if let MemmapEntry::Named(member) = entry {
-                    if member.name == first && member.ns == Namespace::Type {
-                        if let NamedMemberKind::Item(item) = &member.kind {
-                            if let Some(m) = symbol_to_module(
-                                db,
-                                Symbol::new(db, SymbolSource::Local(*item)),
-                                source_root,
-                                module,
-                            ) {
-                                return walk_path_to_macro(
-                                    db,
-                                    m,
-                                    source_root,
-                                    crate_root,
-                                    &segments[1..],
-                                )
-                                .into();
-                            }
+                if let MemmapEntry::Item(Item::Mod(_)) = entry {
+                    if let Some(m) = item_as_child_module(db, entry, first, source_root, module) {
+                        let mut defs = Vec::new();
+                        if let Some(def) = walk_path_to_macro(db, m, source_root, crate_root, rest)
+                        {
+                            defs.push(def);
                         }
+                        return defs;
                     }
                 }
             }
+
+            // 2. Look inside expansion subtrees.
             for entry in entries {
                 if let MemmapEntry::MacroUse(mu) = entry {
-                    if let MacroUseState::Expanded(sub) = &mu.state {
-                        for sub_entry in sub {
-                            if let MemmapEntry::Named(member) = sub_entry {
-                                if member.name == first && member.ns == Namespace::Type {
-                                    if let NamedMemberKind::Item(item) = &member.kind {
-                                        if let Some(m) = symbol_to_module(
-                                            db,
-                                            Symbol::new(db, SymbolSource::Local(*item)),
-                                            source_root,
-                                            module,
-                                        ) {
-                                            return walk_path_to_macro(
-                                                db,
-                                                m,
-                                                source_root,
-                                                crate_root,
-                                                &segments[1..],
-                                            )
-                                            .into();
+                    if let MacroUseState::Expanded(exps) = &mu.state {
+                        for exp in exps {
+                            for sub_entry in &exp.entries {
+                                if let MemmapEntry::Item(Item::Mod(_)) = sub_entry {
+                                    if let Some(m) = item_as_child_module(
+                                        db,
+                                        sub_entry,
+                                        first,
+                                        source_root,
+                                        module,
+                                    ) {
+                                        let mut defs = Vec::new();
+                                        if let Some(def) =
+                                            walk_path_to_macro(db, m, source_root, crate_root, rest)
+                                        {
+                                            defs.push(def);
                                         }
+                                        return defs;
                                     }
                                 }
                             }
@@ -167,42 +173,75 @@ pub(super) fn resolve_memmap_path<'db>(
                     }
                 }
             }
+
+            // 3. Globs — first segment may come from one.
             for entry in entries {
-                if let MemmapEntry::Glob(glob) = entry {
-                    if matches!(glob.source_module.source(db), ModuleSource::External(..)) {
+                if let MemmapEntry::Glob { path: glob_path } = entry {
+                    let Some(glob_target) = resolve_use_path_to_module_from_path(
+                        db,
+                        module,
+                        source_root,
+                        crate_root,
+                        *glob_path,
+                    ) else {
+                        continue;
+                    };
+                    if matches!(glob_target.source(db), ModuleSource::External(..)) {
                         continue;
                     }
-                    let source_memmap =
-                        module_memmap(db, glob.source_module, source_root, crate_root);
+                    let source_memmap = module_memmap(db, glob_target, source_root, crate_root);
                     for src_entry in source_memmap.entries(db) {
-                        if let MemmapEntry::Named(member) = src_entry {
-                            if member.name == first && member.ns == Namespace::Type {
-                                if let NamedMemberKind::Item(item) = &member.kind {
-                                    if let Some(m) = symbol_to_module(
-                                        db,
-                                        Symbol::new(db, SymbolSource::Local(*item)),
-                                        source_root,
-                                        glob.source_module,
-                                    ) {
-                                        return walk_path_to_macro(
-                                            db,
-                                            m,
-                                            source_root,
-                                            crate_root,
-                                            &segments[1..],
-                                        )
-                                        .into();
-                                    }
+                        if let MemmapEntry::Item(Item::Mod(_)) = src_entry {
+                            if let Some(m) =
+                                item_as_child_module(db, src_entry, first, source_root, glob_target)
+                            {
+                                let mut defs = Vec::new();
+                                if let Some(def) =
+                                    walk_path_to_macro(db, m, source_root, crate_root, rest)
+                                {
+                                    defs.push(def);
                                 }
+                                return defs;
                             }
                         }
                     }
                 }
             }
+
+            // 4. Fall back to the generic first-segment resolver (extern prelude, etc.).
             match resolve_first_segment(db, module, source_root, crate_root, segments) {
-                Ok((m, rest)) => walk_path_to_macro(db, m, source_root, crate_root, rest).into(),
-                Err(_) => MacroResolution::NotFound,
+                Ok((m, rest)) => walk_path_to_macro(db, m, source_root, crate_root, rest)
+                    .into_iter()
+                    .collect(),
+                Err(_) => Vec::new(),
             }
+        }
+    }
+}
+
+/// Collect `MacroDef` entries with a matching name from `entries`,
+/// descending through every `MacroUse::Expanded` branch.
+fn collect_named_macro_defs<'db>(
+    db: &'db dyn Db,
+    entries: &[MemmapEntry<'db>],
+    name: Name<'db>,
+    out: &mut Vec<MacroDefItem<'db>>,
+) {
+    for entry in entries {
+        match entry {
+            MemmapEntry::MacroDef(def) => {
+                if def.name(db) == name {
+                    out.push(*def);
+                }
+            }
+            MemmapEntry::MacroUse(mu) => {
+                if let MacroUseState::Expanded(exps) = &mu.state {
+                    for exp in exps {
+                        collect_named_macro_defs(db, &exp.entries, name, out);
+                    }
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -226,12 +265,14 @@ fn walk_path_to_macro<'db>(
         } else {
             let target_memmap = module_memmap(db, current, source_root, crate_root);
             for entry in target_memmap.entries(db) {
-                if let MemmapEntry::Named(member) = entry {
-                    if member.name == *seg {
-                        if let NamedMemberKind::MacroDef(def) = &member.kind {
+                match entry {
+                    MemmapEntry::MacroDef(def) => {
+                        if def.name(db) == *seg {
                             return Some(*def);
                         }
-                        if let NamedMemberKind::Redirect { target } = &member.kind {
+                    }
+                    MemmapEntry::Redirect { name, target } => {
+                        if *name == *seg {
                             return resolve_redirect_to_macro(
                                 db,
                                 current,
@@ -241,6 +282,7 @@ fn walk_path_to_macro<'db>(
                             );
                         }
                     }
+                    _ => {}
                 }
             }
             return None;
@@ -279,13 +321,47 @@ pub(super) fn find_macro_in_module<'db>(
     }
     let memmap = module_memmap(db, module, source_root, crate_root);
     for entry in memmap.entries(db) {
-        if let MemmapEntry::Named(member) = entry {
-            if member.name == name {
-                if let NamedMemberKind::MacroDef(def) = &member.kind {
-                    return Some(*def);
-                }
+        if let MemmapEntry::MacroDef(def) = entry {
+            if def.name(db) == name {
+                return Some(*def);
             }
         }
     }
     None
+}
+
+/// Helper: interpret a `MemmapEntry::Item(Item::Mod(..))` as a child
+/// module if its name matches the supplied first segment.
+fn item_as_child_module<'db>(
+    db: &'db dyn Db,
+    entry: &MemmapEntry<'db>,
+    first: Name<'db>,
+    source_root: SourceRoot,
+    parent: Module<'db>,
+) -> Option<Module<'db>> {
+    let MemmapEntry::Item(item) = entry else {
+        return None;
+    };
+    let Item::Mod(mod_item) = item else {
+        return None;
+    };
+    if mod_item.name(db) != first {
+        return None;
+    }
+    let sym = Symbol::new(db, SymbolSource::Local(*item));
+    symbol_to_module(db, sym, source_root, parent)
+}
+
+/// Tiny set-dedup helper — preserves insertion order.
+fn dedup<'db>(mut defs: Vec<MacroDefItem<'db>>) -> Vec<MacroDefItem<'db>> {
+    let mut out: Vec<MacroDefItem<'db>> = Vec::new();
+    defs.retain(|def| {
+        if out.contains(def) {
+            false
+        } else {
+            out.push(*def);
+            true
+        }
+    });
+    out
 }

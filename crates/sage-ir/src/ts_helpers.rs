@@ -43,6 +43,29 @@ fn collect_recursive<'db>(
     }
 }
 
+/// Extract the input-token text from a `macro_invocation` tree-sitter node.
+///
+/// Finds the invocation's `token_tree` child (the `(...)`, `[...]` or
+/// `{...}` argument), strips the outer delimiter pair, and trims
+/// whitespace. Returns the empty string if the structure doesn't match
+/// (e.g., for a malformed invocation).
+pub(crate) fn extract_macro_invocation_tokens(node: tree_sitter::Node<'_>, text: &str) -> String {
+    let mut cursor = node.walk();
+    node.children(&mut cursor)
+        .find(|c| c.kind() == "token_tree")
+        .map(|tt| {
+            let raw = &text[tt.byte_range()];
+            // Strip one outer delimiter pair of any kind.
+            let inner = raw
+                .strip_prefix('(')
+                .and_then(|s| s.strip_suffix(')'))
+                .or_else(|| raw.strip_prefix('[').and_then(|s| s.strip_suffix(']')))
+                .or_else(|| raw.strip_prefix('{').and_then(|s| s.strip_suffix('}')))
+                .unwrap_or(raw);
+            inner.trim().to_owned()
+        })
+        .unwrap_or_default()
+}
 /// Extract the body tokens from a `macro_definition` tree-sitter node.
 ///
 /// Finds the first `macro_rule`'s `right` field (a `token_tree`), strips the

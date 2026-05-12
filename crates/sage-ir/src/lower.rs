@@ -568,7 +568,8 @@ impl<'db> LowerCtx<'db> {
         }
         let span = self.span(node);
         let path = Path::new(self.db, segments, span);
-        Item::MacroInvocation(MacroInvocationItem::new(self.db, path, span))
+        let input_tokens = crate::ts_helpers::extract_macro_invocation_tokens(node, self.text);
+        Item::MacroInvocation(MacroInvocationItem::new(self.db, path, input_tokens, span))
     }
 
     // -- Types -------------------------------------------------------------
