@@ -29,10 +29,7 @@ use crate::types::UseKind;
 use super::data::*;
 
 /// Seed MEM-map entries from file_item_tree items.
-pub(super) fn seed_from_items<'db>(
-    db: &'db dyn Db,
-    items: &[Item<'db>],
-) -> Vec<MemmapEntry<'db>> {
+pub(super) fn seed_from_items<'db>(db: &'db dyn Db, items: &[Item<'db>]) -> Vec<MemmapEntry<'db>> {
     let mut entries = Vec::new();
     for &item in items {
         match item {

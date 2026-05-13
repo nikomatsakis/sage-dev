@@ -150,7 +150,7 @@ impl TestCrate {
             };
 
             let name_interned = Name::new(db, name.to_owned());
-            let result = resolve_name(db, module, source_root, root, name_interned, ns);
+            let result = resolve_name(db, module, source_root, name_interned, ns);
             let rendered = fmt_resolve_result(db, &result);
             expect.assert_eq(&rendered);
         });
@@ -187,7 +187,7 @@ impl TestCrate {
                     None => panic!("module path {module_path:?} did not resolve"),
                 }
             };
-            let memmap = module_memmap(db, module, source_root, root);
+            let memmap = module_memmap(db, module, source_root);
             let rendered = fmt_memmap_entries(db, memmap.entries(db), 0);
             expect.assert_eq(&rendered);
         });
@@ -250,13 +250,13 @@ impl TestCrate {
             return;
         }
 
-        let errs = memmap_errors(db, module, source_root, crate_root);
+        let errs = memmap_errors(db, module, source_root);
         for err in &errs {
             out.push(fmt_memmap_error(db, err));
         }
 
         // Recurse into child modules declared by this module.
-        let memmap = module_memmap(db, module, source_root, crate_root);
+        let memmap = module_memmap(db, module, source_root);
         for entry in memmap.entries(db) {
             if let MemmapEntry::Item(sage_ir::item::Item::Mod(mod_item)) = entry {
                 if let Some(child) =

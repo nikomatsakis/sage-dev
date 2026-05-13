@@ -15,7 +15,6 @@ struct BodyResolver<'db> {
     db: &'db dyn Db,
     module: Module<'db>,
     source_root: SourceRoot,
-    crate_root: Module<'db>,
     src: &'db Stash,
     out: Stash,
     locals: Vec<LocalVar<'db>>,
@@ -82,27 +81,14 @@ impl<'db> BodyResolver<'db> {
 
         // Single-segment: delegate to module-level resolve_name.
         if segments.len() == 1 {
-            return match resolve_name(
-                self.db,
-                self.module,
-                self.source_root,
-                self.crate_root,
-                segments[0],
-                ns,
-            ) {
+            return match resolve_name(self.db, self.module, self.source_root, segments[0], ns) {
                 Ok(sym) => Res::Def(sym),
                 Err(_) => Res::Err,
             };
         }
 
         // Multi-segment: resolve first segment, walk the rest.
-        match resolve_first_segment(
-            self.db,
-            self.module,
-            self.source_root,
-            self.crate_root,
-            segments,
-        ) {
+        match resolve_first_segment(self.db, self.module, self.source_root, segments) {
             Ok((module, rest)) => {
                 let mut current = module;
                 for (i, seg) in rest.iter().enumerate() {
@@ -398,7 +384,6 @@ pub fn resolve_body<'db>(
     function: FunctionItem<'db>,
     module: Module<'db>,
     source_root: SourceRoot,
-    crate_root: Module<'db>,
 ) -> ResolvedBody<'db> {
     let body = function.body(db);
     let src_stash = body.stash();
@@ -409,7 +394,6 @@ pub fn resolve_body<'db>(
         db,
         module,
         source_root,
-        crate_root,
         src: src_stash,
         out: Stash::new(),
         locals: Vec::new(),

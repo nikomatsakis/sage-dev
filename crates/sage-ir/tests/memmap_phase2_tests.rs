@@ -66,14 +66,7 @@ m!();
         );
 
         let name = Name::new(db, "Foo".to_owned());
-        let result = resolve_name(
-            db,
-            root_module,
-            source_root,
-            root_module,
-            name,
-            Namespace::Type,
-        );
+        let result = resolve_name(db, root_module, source_root, name, Namespace::Type);
         assert!(
             result.is_ok(),
             "Foo should resolve from macro expansion, got {:?}",
@@ -104,7 +97,7 @@ m!();
         );
 
         // m!() expands to an impl — no new names introduced
-        let memmap = module_memmap(db, root_module, source_root, root_module);
+        let memmap = module_memmap(db, root_module, source_root);
         let macro_uses: Vec<_> = memmap
             .entries(db)
             .iter()
@@ -153,7 +146,7 @@ m!();
 "#,
         );
 
-        let memmap = module_memmap(db, root_module, source_root, root_module);
+        let memmap = module_memmap(db, root_module, source_root);
         let macro_uses: Vec<_> = memmap
             .entries(db)
             .iter()
@@ -193,14 +186,7 @@ self::m!();
         );
 
         let name = Name::new(db, "Foo".to_owned());
-        let result = resolve_name(
-            db,
-            root_module,
-            source_root,
-            root_module,
-            name,
-            Namespace::Type,
-        );
+        let result = resolve_name(db, root_module, source_root, name, Namespace::Type);
         assert!(
             result.is_ok(),
             "Foo should resolve via self::m!(), got {:?}",
@@ -244,14 +230,7 @@ pub(crate) use m;
         );
 
         let name = Name::new(db, "Deep".to_owned());
-        let result = resolve_name(
-            db,
-            root_module,
-            source_root,
-            root_module,
-            name,
-            Namespace::Type,
-        );
+        let result = resolve_name(db, root_module, source_root, name, Namespace::Type);
         assert!(
             result.is_ok(),
             "Deep should resolve via a::b::m!(), got {:?}",
@@ -276,7 +255,7 @@ m!();
 "#,
         );
 
-        let memmap = module_memmap(db, root_module, source_root, root_module);
+        let memmap = module_memmap(db, root_module, source_root);
         // The recursive expansion should hit the depth limit somewhere
         // in the tree. Phase 1 collapsed the old `Error` variant into
         // `Unresolved` — a MacroUse that remains Unresolved after

@@ -51,7 +51,7 @@ fn resolve_and_print(
 ) -> String {
     let module = resolve_module_path(sage.db, sage.root, sage.source_root, module_path).unwrap();
     let method = find_method(sage.db, module, type_name, method_name);
-    let resolved = resolve_body(sage.db, method, module, sage.source_root, sage.root);
+    let resolved = resolve_body(sage.db, method, module, sage.source_root);
     pretty_print_resolved(sage.db.tcx(), &resolved)
 }
 
@@ -167,7 +167,7 @@ fn query_log_body_resolve_demand_driven() {
         let module =
             resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
         let method = find_method(sage.db, module, "Get", "apply");
-        let _resolved = resolve_body(sage.db, method, module, sage.source_root, sage.root);
+        let _resolved = resolve_body(sage.db, method, module, sage.source_root);
 
         let log = sage.db.take_query_log();
         assert!(

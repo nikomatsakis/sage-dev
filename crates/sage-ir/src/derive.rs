@@ -23,7 +23,6 @@ pub fn expand_derives<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
     source_root: SourceRoot,
-    crate_root: Module<'db>,
     item: Item<'db>,
 ) -> Vec<DeriveResult<'db>> {
     let attrs = match item {
@@ -48,7 +47,6 @@ pub fn expand_derives<'db>(
                 db,
                 module,
                 source_root,
-                crate_root,
                 derive_name,
                 Namespace::Macro(MacroKind::Derive),
             ) {

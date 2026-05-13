@@ -91,7 +91,6 @@ fn expand_derives_cmd_get() {
             sage.db,
             module,
             sage.source_root,
-            sage.root,
             debug_name,
             sage_ir::resolve::Namespace::Macro(sage_ir::resolve::MacroKind::Derive),
         );
@@ -184,13 +183,8 @@ fn expand_derives_cmd_get_full() {
             .find(|item| matches!(item, Item::Struct(s) if s.name(sage.db).text(sage.db) == "Get"))
             .expect("Get struct not found in cmd/get.rs");
 
-        let results = sage_ir::derive::expand_derives(
-            sage.db,
-            module,
-            sage.source_root,
-            sage.root,
-            *get_struct,
-        );
+        let results =
+            sage_ir::derive::expand_derives(sage.db, module, sage.source_root, *get_struct);
 
         let mut out = String::new();
         for result in &results {
@@ -359,13 +353,8 @@ fn expand_derives_clap_parser() {
             .find(|i| matches!(i, Item::Struct(s) if s.name(sage.db).text(sage.db) == "Cli"))
             .expect("Cli struct not found");
 
-        let results = sage_ir::derive::expand_derives(
-            sage.db,
-            module,
-            sage.source_root,
-            sage.root,
-            *cli_struct,
-        );
+        let results =
+            sage_ir::derive::expand_derives(sage.db, module, sage.source_root, *cli_struct);
 
         // Should have Parser (expanded) + Debug (builtin)
         let has_builtin = results
@@ -409,13 +398,8 @@ fn expanded_items_are_valid_ir() {
             .find(|i| matches!(i, Item::Struct(s) if s.name(sage.db).text(sage.db) == "Cli"))
             .expect("Cli struct not found");
 
-        let results = sage_ir::derive::expand_derives(
-            sage.db,
-            module,
-            sage.source_root,
-            sage.root,
-            *cli_struct,
-        );
+        let results =
+            sage_ir::derive::expand_derives(sage.db, module, sage.source_root, *cli_struct);
 
         for result in &results {
             if let sage_ir::derive::DeriveResult::Expanded { items } = result {
@@ -545,13 +529,8 @@ fn snapshot_expanded_clap_parser() {
             .find(|i| matches!(i, Item::Struct(s) if s.name(sage.db).text(sage.db) == "Cli"))
             .expect("Cli struct not found");
 
-        let results = sage_ir::derive::expand_derives(
-            sage.db,
-            module,
-            sage.source_root,
-            sage.root,
-            *cli_struct,
-        );
+        let results =
+            sage_ir::derive::expand_derives(sage.db, module, sage.source_root, *cli_struct);
 
         let mut out = String::new();
         for result in &results {

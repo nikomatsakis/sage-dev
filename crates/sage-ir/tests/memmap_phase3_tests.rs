@@ -70,7 +70,7 @@ m!();
             ],
         );
 
-        let errors = memmap_errors(db, root_module, source_root, root_module);
+        let errors = memmap_errors(db, root_module, source_root);
         let has_duplicate = errors
             .iter()
             .any(|e| matches!(e, MemmapError::DuplicateName { .. }));
@@ -97,7 +97,7 @@ nonexistent::m!();
 "#,
         );
 
-        let errors = memmap_errors(db, root_module, source_root, root_module);
+        let errors = memmap_errors(db, root_module, source_root);
         let has_unresolved = errors
             .iter()
             .any(|e| matches!(e, MemmapError::UnresolvedMacro { .. }));
@@ -126,7 +126,7 @@ m!();
 "#,
         );
 
-        let errors = memmap_errors(db, root_module, source_root, root_module);
+        let errors = memmap_errors(db, root_module, source_root);
         let has_duplicate = errors
             .iter()
             .any(|e| matches!(e, MemmapError::DuplicateName { .. }));
@@ -176,7 +176,7 @@ pub(crate) use m;
             ],
         );
 
-        let errors = memmap_errors(db, root_module, source_root, root_module);
+        let errors = memmap_errors(db, root_module, source_root);
         let has_time_travel = errors
             .iter()
             .any(|e| matches!(e, MemmapError::TimeTravelViolation { .. }));
@@ -226,7 +226,7 @@ pub(crate) use m;
             ],
         );
 
-        let errors = memmap_errors(db, root_module, source_root, root_module);
+        let errors = memmap_errors(db, root_module, source_root);
         let has_ambiguous = errors
             .iter()
             .any(|e| matches!(e, MemmapError::AmbiguousMacro { .. }));
@@ -254,7 +254,7 @@ m!();
 "#,
         );
 
-        let errors = memmap_errors(db, root_module, source_root, root_module);
+        let errors = memmap_errors(db, root_module, source_root);
         assert!(
             errors.is_empty(),
             "valid code should have no errors, got: {:?}",

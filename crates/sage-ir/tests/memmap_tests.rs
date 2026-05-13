@@ -76,14 +76,7 @@ fn p1_named_import_beats_glob() {
         );
 
         let name = Name::new(db, "Foo".to_owned());
-        let result = resolve_name(
-            db,
-            root_module,
-            source_root,
-            root_module,
-            name,
-            Namespace::Type,
-        );
+        let result = resolve_name(db, root_module, source_root, name, Namespace::Type);
         assert!(result.is_ok(), "Foo should resolve, got {:?}", result);
 
         // Should resolve to b::Foo (named import), not a::Foo (glob)
@@ -120,14 +113,7 @@ fn p4_glob_beats_std_prelude() {
         );
 
         let name = Name::new(db, "Option".to_owned());
-        let result = resolve_name(
-            db,
-            root_module,
-            source_root,
-            root_module,
-            name,
-            Namespace::Type,
-        );
+        let result = resolve_name(db, root_module, source_root, name, Namespace::Type);
         assert!(result.is_ok(), "Option should resolve, got {:?}", result);
 
         // Should resolve to custom::Option (glob), not std::Option (prelude)
@@ -165,14 +151,7 @@ fn p5_two_globs_same_name_ambiguous() {
         );
 
         let name = Name::new(db, "Foo".to_owned());
-        let result = resolve_name(
-            db,
-            root_module,
-            source_root,
-            root_module,
-            name,
-            Namespace::Type,
-        );
+        let result = resolve_name(db, root_module, source_root, name, Namespace::Type);
         assert_eq!(result, Err(ResolutionError::Ambiguous));
     });
 }
@@ -201,14 +180,7 @@ fn p7_explicit_item_plus_named_import_same_name() {
         );
 
         let name = Name::new(db, "Foo".to_owned());
-        let result = resolve_name(
-            db,
-            root_module,
-            source_root,
-            root_module,
-            name,
-            Namespace::Type,
-        );
+        let result = resolve_name(db, root_module, source_root, name, Namespace::Type);
         // Two non-glob items with same name = ambiguous
         assert_eq!(result, Err(ResolutionError::Ambiguous));
     });
@@ -231,7 +203,7 @@ fn memmap_contains_declared_items() {
         "#,
         );
 
-        let memmap = module_memmap(db, root_module, source_root, root_module);
+        let memmap = module_memmap(db, root_module, source_root);
         let entries = memmap.entries(db);
         // Should have named entries for Foo (type+value), bar (value), baz (type)
         assert!(
@@ -266,7 +238,7 @@ fn memmap_records_glob_stems() {
             ],
         );
 
-        let memmap = module_memmap(db, root_module, source_root, root_module);
+        let memmap = module_memmap(db, root_module, source_root);
         let has_glob = memmap
             .entries(db)
             .iter()

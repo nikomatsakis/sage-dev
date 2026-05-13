@@ -53,7 +53,9 @@ impl<'db> Module<'db> {
         let mut current = self;
         loop {
             match current.source(db) {
-                ModuleSource::Local { parent: Some(p), .. } => current = p,
+                ModuleSource::Local {
+                    parent: Some(p), ..
+                } => current = p,
                 ModuleSource::LocalInline { parent, .. } => current = parent,
                 ModuleSource::Local { parent: None, .. } => return current,
                 ModuleSource::External(cn, _) => {

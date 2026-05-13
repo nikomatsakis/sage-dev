@@ -45,7 +45,7 @@ fn baseline_initial_memmap_computation() {
             },
         );
 
-        let _ = module_memmap(db, root_module, source_root, root_module);
+        let _ = module_memmap(db, root_module, source_root);
         let log = db.take_query_log();
         check_log(
             &log,
@@ -84,7 +84,7 @@ fn baseline_body_change_behavior() {
                 declaration: None,
             },
         );
-        let _ = module_memmap(db, root_module, source_root, root_module);
+        let _ = module_memmap(db, root_module, source_root);
         db.take_query_log(); // drain
     });
 
@@ -103,7 +103,7 @@ fn baseline_body_change_behavior() {
                 declaration: None,
             },
         );
-        let _ = module_memmap(db, root_module, source_root, root_module);
+        let _ = module_memmap(db, root_module, source_root);
         let log = db.take_query_log();
         check_log(
             &log,
@@ -143,7 +143,7 @@ fn baseline_sibling_module_isolation() {
                 declaration: None,
             },
         );
-        let _ = module_memmap(db, module_a, source_root, root_module);
+        let _ = module_memmap(db, module_a, source_root);
         db.take_query_log(); // drain
     });
 
@@ -168,7 +168,7 @@ fn baseline_sibling_module_isolation() {
                 declaration: None,
             },
         );
-        let _ = module_memmap(db, module_a, source_root, root_module);
+        let _ = module_memmap(db, module_a, source_root);
         let log = db.take_query_log();
         check_log(&log, expect![[r#""#]]);
     });
@@ -200,7 +200,7 @@ fn body_change_does_not_invalidate_memmap() {
                 declaration: None,
             },
         );
-        let _ = module_memmap(db, root_module, source_root, root_module);
+        let _ = module_memmap(db, root_module, source_root);
         db.take_query_log();
     });
 
@@ -215,7 +215,7 @@ fn body_change_does_not_invalidate_memmap() {
                 declaration: None,
             },
         );
-        let _ = module_memmap(db, root_module, source_root, root_module);
+        let _ = module_memmap(db, root_module, source_root);
         let log = db.take_query_log();
 
         assert!(
@@ -250,7 +250,7 @@ fn signature_change_invalidates_memmap() {
                 declaration: None,
             },
         );
-        let _ = module_memmap(db, root_module, source_root, root_module);
+        let _ = module_memmap(db, root_module, source_root);
         db.take_query_log();
     });
 
@@ -266,7 +266,7 @@ fn signature_change_invalidates_memmap() {
                 declaration: None,
             },
         );
-        let _ = module_memmap(db, root_module, source_root, root_module);
+        let _ = module_memmap(db, root_module, source_root);
         let log = db.take_query_log();
 
         assert!(
@@ -300,7 +300,7 @@ fn adding_use_statement_invalidates_memmap() {
                 declaration: None,
             },
         );
-        let _ = module_memmap(db, root_module, source_root, root_module);
+        let _ = module_memmap(db, root_module, source_root);
         db.take_query_log();
     });
 
@@ -316,7 +316,7 @@ fn adding_use_statement_invalidates_memmap() {
                 declaration: None,
             },
         );
-        let _ = module_memmap(db, root_module, source_root, root_module);
+        let _ = module_memmap(db, root_module, source_root);
         let log = db.take_query_log();
 
         assert!(
@@ -350,7 +350,7 @@ fn module_memmap_calls_file_item_tree_only_once() {
             },
         );
 
-        let _ = module_memmap(db, root_module, source_root, root_module);
+        let _ = module_memmap(db, root_module, source_root);
         let log = db.take_query_log();
 
         // Count file_item_tree invocations for lib.rs. There should be exactly one.
@@ -396,7 +396,7 @@ fn body_change_in_sibling_module_does_not_invalidate_memmap() {
                 declaration: None,
             },
         );
-        let _ = module_memmap(db, module_a, source_root, root_module);
+        let _ = module_memmap(db, module_a, source_root);
         db.take_query_log();
     });
 
@@ -420,7 +420,7 @@ fn body_change_in_sibling_module_does_not_invalidate_memmap() {
                 declaration: None,
             },
         );
-        let _ = module_memmap(db, module_a, source_root, root_module);
+        let _ = module_memmap(db, module_a, source_root);
         let log = db.take_query_log();
 
         // Neither module_a's file_item_tree nor its memmap should re-execute.
@@ -452,7 +452,7 @@ fn external_module_memmap_panics() {
     db.attach(|db| {
         let file = SourceFile::new(db, "lib.rs".to_owned(), "".to_owned());
         let source_root = SourceRoot::new(db, vec![file]);
-        let root_module = Module::new(
+        let _root_module = Module::new(
             db,
             ModuleSource::Local {
                 file,
@@ -463,6 +463,6 @@ fn external_module_memmap_panics() {
         let ext_module = Module::new(db, ModuleSource::External(CrateNum(1), DefIndex(0)));
 
         // This should panic with the debug_assert message.
-        let _ = module_memmap(db, ext_module, source_root, root_module);
+        let _ = module_memmap(db, ext_module, source_root);
     });
 }

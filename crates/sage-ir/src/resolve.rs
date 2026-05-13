@@ -410,15 +410,7 @@ fn collect_named_matches<'db>(
             MemmapEntry::MacroUse(mu) => {
                 if let MacroUseState::Expanded(exps) = &mu.state {
                     for exp in exps {
-                        collect_named_matches(
-                            db,
-                            module,
-                            source_root,
-                            &exp.entries,
-                            name,
-                            ns,
-                            out,
-                        );
+                        collect_named_matches(db, module, source_root, &exp.entries, name, ns, out);
                     }
                 }
             }
@@ -509,8 +501,8 @@ pub fn resolve_path_to_symbol<'db>(
         let sym = definition_via_memmap(db, current, source_root, *seg, Namespace::Type)
             .or_else(|| {
                 if is_last {
-                    definition_via_memmap(db, current, source_root, *seg, Namespace::Value)
-                        .or_else(|| {
+                    definition_via_memmap(db, current, source_root, *seg, Namespace::Value).or_else(
+                        || {
                             definition_via_memmap(
                                 db,
                                 current,
@@ -518,7 +510,8 @@ pub fn resolve_path_to_symbol<'db>(
                                 *seg,
                                 Namespace::Macro(MacroKind::Bang),
                             )
-                        })
+                        },
+                    )
                 } else {
                     None
                 }
@@ -658,9 +651,7 @@ fn definition_via_memmap<'db>(
                 }
                 MemmapEntry::Redirect { name: n, target } => {
                     if *n == name {
-                        if let Ok(sym) =
-                            resolve_path_to_symbol(db, module, source_root, *target)
-                        {
+                        if let Ok(sym) = resolve_path_to_symbol(db, module, source_root, *target) {
                             if !named.contains(&sym) {
                                 named.push(sym);
                             }
@@ -668,12 +659,9 @@ fn definition_via_memmap<'db>(
                     }
                 }
                 MemmapEntry::Glob { path } => {
-                    let Some(target) = resolve_use_path_to_module_from_path(
-                        db,
-                        module,
-                        source_root,
-                        *path,
-                    ) else {
+                    let Some(target) =
+                        resolve_use_path_to_module_from_path(db, module, source_root, *path)
+                    else {
                         continue;
                     };
                     let sym = match target.source(db) {
@@ -768,15 +756,10 @@ fn resolve_in_std_prelude<'db>(
 }
 
 /// Resolve a use import's path to a Symbol.
-///
-/// First segment: crate → root, self → current, super → parent,
-///   bare → current module items then extern prelude.
-/// Remaining segments: definition(module, segment) for each.
 pub fn resolve_use_path<'db>(
     db: &'db dyn Db,
     current_module: Module<'db>,
     source_root: SourceRoot,
-    crate_root: Module<'db>,
     import: UseImport<'db>,
 ) -> Result<Symbol<'db>, ResolutionError> {
     let segments = import.path(db).segments(db);
@@ -784,28 +767,21 @@ pub fn resolve_use_path<'db>(
         return Err(ResolutionError::Unresolved);
     }
 
-    let (first_module, rest) =
-        resolve_first_segment(db, current_module, source_root, crate_root, segments)?;
+    let (first_module, rest) = resolve_first_segment(db, current_module, source_root, segments)?;
 
-    // Walk remaining segments
     let mut current = first_module;
     for (i, seg) in rest.iter().enumerate() {
         let sym = definition(db, current, *seg).ok_or(ResolutionError::Unresolved)?;
         if i < rest.len() - 1 {
-            // Intermediate segment — must resolve to a module
             current = symbol_to_module(db, sym, source_root, current)
                 .ok_or(ResolutionError::Unresolved)?;
         } else {
-            // Last segment — return the symbol
             return Ok(sym);
         }
     }
 
-    // If rest is empty, the import is just the first segment (e.g., `use crate`)
-    // Return the module itself as a symbol — this is unusual but valid for `use foo::{self}`
     match first_module.source(db) {
         ModuleSource::Local { .. } | ModuleSource::LocalInline { .. } => {
-            // Find the item that corresponds to this module in the parent
             Err(ResolutionError::Unresolved)
         }
         ModuleSource::External(cn, di) => Ok(Symbol::new(db, SymbolSource::External(cn, di))),
@@ -813,23 +789,15 @@ pub fn resolve_use_path<'db>(
 }
 
 /// Resolve a path (e.g. from a stored glob `MemmapEntry`) to a Module,
-/// or return None if it doesn't resolve. Used at MEM-map lookup time to
-/// resolve glob targets lazily, so globs whose target is created by
-/// macro expansion resolve correctly.
-///
-/// This is the **post-construction** variant — it walks path segments
-/// via the memmap, so macro-introduced inline modules are visible as
-/// path roots. For **construction-time** callers (inside
-/// `module_memmap`), use `resolve_use_path_to_module_from_path_ctime`
-/// instead to avoid re-entering `module_memmap` on the current module.
+/// or return None if it doesn't resolve. Post-construction variant —
+/// walks path segments via the memmap, so macro-introduced inline
+/// modules are visible as path roots.
 pub fn resolve_use_path_to_module_from_path<'db>(
     db: &'db dyn Db,
     current_module: Module<'db>,
     source_root: SourceRoot,
-    crate_root: Module<'db>,
     path: Path<'db>,
 ) -> Option<Module<'db>> {
-    // Cycle-break.
     let _guard = FrameGuard::enter(
         salsa::plumbing::AsId::as_id(&current_module),
         salsa::plumbing::AsId::as_id(&path),
@@ -842,31 +810,24 @@ pub fn resolve_use_path_to_module_from_path<'db>(
     }
 
     let (first_module, rest) =
-        first_segment_module_via_memmap(db, current_module, source_root, crate_root, segments)?;
+        first_segment_module_via_memmap(db, current_module, source_root, segments)?;
 
     let mut current = first_module;
     for seg in rest {
-        let sym =
-            definition_via_memmap(db, current, source_root, crate_root, *seg, Namespace::Type)?;
+        let sym = definition_via_memmap(db, current, source_root, *seg, Namespace::Type)?;
         current = symbol_to_module(db, sym, source_root, current)?;
     }
     Some(current)
 }
 
-/// Construction-time variant of `resolve_use_path_to_module_from_path`:
-/// walks path segments via `definition` (file_item_tree-backed) rather
-/// than the MEM-map, so it's safe to call from inside `module_memmap`
-/// without re-entering the current module's query.
-///
-/// Trades off: it can't resolve paths through macro-introduced inline
-/// modules. Used by ctime glob/redirect fallback resolution where this
-/// is acceptable (and usually file-based target modules are what's
-/// involved anyway).
+/// Construction-time variant: walks path segments via `definition`
+/// (file_item_tree-backed) rather than the MEM-map, so it's safe to
+/// call from inside `module_memmap` without re-entering the current
+/// module's query.
 pub fn resolve_use_path_to_module_from_path_ctime<'db>(
     db: &'db dyn Db,
     current_module: Module<'db>,
     source_root: SourceRoot,
-    crate_root: Module<'db>,
     path: Path<'db>,
 ) -> Option<Module<'db>> {
     let segments = path.segments(db);
@@ -875,7 +836,7 @@ pub fn resolve_use_path_to_module_from_path_ctime<'db>(
     }
 
     let (first_module, rest) =
-        resolve_first_segment(db, current_module, source_root, crate_root, segments).ok()?;
+        resolve_first_segment(db, current_module, source_root, segments).ok()?;
 
     let mut current = first_module;
     for seg in rest {
@@ -886,18 +847,11 @@ pub fn resolve_use_path_to_module_from_path_ctime<'db>(
 }
 
 /// A variant of `resolve_first_segment` that consults the MEM-map for
-/// bare-identifier first segments, so that names introduced by macro
-/// expansion (including `LocalInline` modules) can be found.
-///
-/// This is separate from `resolve_first_segment` because the latter is
-/// used by construction-time callers where re-entering `module_memmap`
-/// would be unsafe; the memmap-aware variant is used only by
-/// post-construction path walkers.
+/// bare-identifier first segments.
 fn first_segment_module_via_memmap<'db>(
     db: &'db dyn Db,
     current_module: Module<'db>,
     source_root: SourceRoot,
-    crate_root: Module<'db>,
     segments: &'db [Name<'db>],
 ) -> Option<(Module<'db>, &'db [Name<'db>])> {
     let first = segments[0];
@@ -914,34 +868,17 @@ fn first_segment_module_via_memmap<'db>(
             let ext_mod = Module::new(db, ModuleSource::External(cn, crate::module::DefIndex(0)));
             Some((ext_mod, &rest[1..]))
         }
-        "crate" => Some((crate_root, rest)),
+        "crate" => Some((current_module.crate_root(db), rest)),
         "self" => Some((current_module, rest)),
-        "super" => {
-            let parent = match current_module.source(db) {
-                ModuleSource::Local {
-                    parent: Some(p), ..
-                } => p,
-                ModuleSource::LocalInline { parent, .. } => parent,
-                _ => return None,
-            };
-            Some((parent, rest))
-        }
+        "super" => current_module.parent(db).map(|p| (p, rest)),
         _ => {
-            // Try the current module's MEM-map (covers macro-introduced
-            // inline modules via `LocalInline`).
-            if let Some(sym) = definition_via_memmap(
-                db,
-                current_module,
-                source_root,
-                crate_root,
-                first,
-                Namespace::Type,
-            ) {
+            if let Some(sym) =
+                definition_via_memmap(db, current_module, source_root, first, Namespace::Type)
+            {
                 if let Some(child_mod) = symbol_to_module(db, sym, source_root, current_module) {
                     return Some((child_mod, rest));
                 }
             }
-            // Extern prelude.
             if let Some(cn) = db.tcx().extern_crate(first_text) {
                 let ext_mod =
                     Module::new(db, ModuleSource::External(cn, crate::module::DefIndex(0)));
@@ -958,7 +895,6 @@ pub(crate) fn resolve_first_segment<'db>(
     db: &'db dyn Db,
     current_module: Module<'db>,
     source_root: SourceRoot,
-    crate_root: Module<'db>,
     segments: &'db [Name<'db>],
 ) -> Result<(Module<'db>, &'db [Name<'db>]), ResolutionError> {
     let first = segments[0];
@@ -967,7 +903,6 @@ pub(crate) fn resolve_first_segment<'db>(
 
     match first_text.as_str() {
         "" => {
-            // Leading `::` — force extern prelude lookup on the next segment
             if rest.is_empty() {
                 return Err(ResolutionError::Unresolved);
             }
@@ -981,30 +916,21 @@ pub(crate) fn resolve_first_segment<'db>(
             }
             Err(ResolutionError::Unresolved)
         }
-        "crate" => Ok((crate_root, rest)),
+        "crate" => Ok((current_module.crate_root(db), rest)),
         "self" => Ok((current_module, rest)),
-        "super" => {
-            let parent = match current_module.source(db) {
-                ModuleSource::Local {
-                    parent: Some(p), ..
-                } => p,
-                ModuleSource::LocalInline { parent, .. } => parent,
-                _ => return Err(ResolutionError::Unresolved),
-            };
-            Ok((parent, rest))
-        }
+        "super" => current_module
+            .parent(db)
+            .map(|p| (p, rest))
+            .ok_or(ResolutionError::Unresolved),
         _ => {
-            // Bare identifier: check current module's items first
             if let Some(sym) = definition(db, current_module, first) {
                 if let Some(child_mod) = symbol_to_module(db, sym, source_root, current_module) {
                     return Ok((child_mod, rest));
                 }
-                // It's a non-module item — if rest is empty, this is the target
                 if rest.is_empty() {
-                    // This case is handled by the caller
+                    // non-module terminal — caller handles
                 }
             }
-            // Then extern prelude
             if let Some(crate_num) = db.tcx().extern_crate(first_text) {
                 let ext_mod = Module::new(
                     db,
