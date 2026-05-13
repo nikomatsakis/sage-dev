@@ -39,7 +39,7 @@ use crate::lower::file_item_tree;
 use crate::module::{Module, ModuleSource};
 use crate::resolve::SourceRoot;
 
-/// The MEM-map for a single module.
+/// The Minimally Expanded Member Map (MEM-map) for a single module.
 #[salsa::tracked(debug)]
 pub struct ModuleMemmap<'db> {
     #[returns(ref)]
