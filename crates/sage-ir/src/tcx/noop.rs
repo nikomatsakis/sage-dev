@@ -14,6 +14,12 @@ impl TcxDb for NoopTcxDb {
         Vec::new()
     }
 
+    fn is_module(&self, _crate_num: CrateNum, _def_index: DefIndex) -> bool {
+        // Noop has no crates, so nothing is a module. In tests that
+        // do care, use a mock TcxDb.
+        false
+    }
+
     fn is_builtin_derive(&self, _crate_num: CrateNum, _def_index: DefIndex) -> bool {
         false
     }

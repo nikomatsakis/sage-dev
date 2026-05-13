@@ -107,6 +107,20 @@ impl<'tcx> RustcTcxDb<'tcx> {
         }
     }
 
+    pub fn is_module(&self, crate_num: CrateNum, def_index: DefIndex) -> bool {
+        assert!(
+            crate_num.0 != 0,
+            "TcxDb must not be called with LOCAL_CRATE"
+        );
+
+        let def_id = DefId {
+            krate: RustcCrateNum::from_u32(crate_num.0),
+            index: rustc_hir::def_id::DefIndex::from_u32(def_index.0),
+        };
+
+        matches!(self.tcx.def_kind(def_id), DefKind::Mod)
+    }
+
     pub fn def_path(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<String> {
         let def_id = DefId {
             krate: RustcCrateNum::from_u32(crate_num.0),

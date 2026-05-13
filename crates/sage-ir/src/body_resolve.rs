@@ -5,9 +5,7 @@ use crate::body::*;
 use crate::item::FunctionItem;
 use crate::module::Module;
 use crate::name::Name;
-use crate::resolve::{
-    Namespace, SourceRoot, definition, resolve_first_segment, resolve_name, symbol_to_module,
-};
+use crate::resolve::{Namespace, SourceRoot, resolve_name};
 use crate::resolved::*;
 use crate::span::SpanIndices;
 
@@ -79,7 +77,8 @@ impl<'db> BodyResolver<'db> {
             }
         }
 
-        // Single-segment: delegate to module-level resolve_name.
+        // Single-segment: delegate to module-level resolve_name
+        // (includes extern/std prelude fallback).
         if segments.len() == 1 {
             return match resolve_name(self.db, self.module, self.source_root, segments[0], ns) {
                 Ok(sym) => Res::Def(sym),
@@ -87,27 +86,13 @@ impl<'db> BodyResolver<'db> {
             };
         }
 
-        // Multi-segment: resolve first segment, walk the rest.
-        match resolve_first_segment(self.db, self.module, self.source_root, segments) {
-            Ok((module, rest)) => {
-                let mut current = module;
-                for (i, seg) in rest.iter().enumerate() {
-                    match definition(self.db, current, *seg) {
-                        Some(sym) => {
-                            if i < rest.len() - 1 {
-                                match symbol_to_module(self.db, sym, self.source_root, current) {
-                                    Some(m) => current = m,
-                                    None => return Res::Err,
-                                }
-                            } else {
-                                return Res::Def(sym);
-                            }
-                        }
-                        None => return Res::Err,
-                    }
-                }
-                Res::Err
-            }
+        // Multi-segment: walk via Module::resolve_path so that
+        // macro-introduced modules in any segment are visible.
+        match self
+            .module
+            .resolve_path(self.db, self.source_root, path, ns)
+        {
+            Ok(sym) => Res::Def(sym),
             Err(_) => Res::Err,
         }
     }

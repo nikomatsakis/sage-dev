@@ -17,6 +17,11 @@ pub enum TcxRequest {
         def_index: DefIndex,
         reply: mpsc::Sender<Vec<RawChild>>,
     },
+    IsModule {
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        reply: mpsc::Sender<bool>,
+    },
     IsBuiltinDerive {
         crate_num: CrateNum,
         def_index: DefIndex,
@@ -89,6 +94,22 @@ impl TcxDb for ProxyTcxDb {
         let (reply, rx) = mpsc::channel();
         self.tx
             .send(TcxRequest::IsBuiltinDerive {
+                crate_num,
+                def_index,
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn is_module(&self, crate_num: CrateNum, def_index: DefIndex) -> bool {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("tcx::is_module({}, {})", crate_num.0, def_index.0));
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::IsModule {
                 crate_num,
                 def_index,
                 reply,

@@ -733,39 +733,6 @@ fn resolve_in_std_prelude<'db>(
         .map(|c| Symbol::new(db, SymbolSource::External(c.crate_num, c.def_index)))
 }
 
-/// Resolve a use import's path to a Symbol.
-pub fn resolve_use_path<'db>(
-    db: &'db dyn Db,
-    current_module: Module<'db>,
-    source_root: SourceRoot,
-    import: UseImport<'db>,
-) -> Result<Symbol<'db>, ResolutionError> {
-    let segments = import.path(db).segments(db);
-    if segments.is_empty() {
-        return Err(ResolutionError::Unresolved);
-    }
-
-    let (first_module, rest) = resolve_first_segment(db, current_module, source_root, segments)?;
-
-    let mut current = first_module;
-    for (i, seg) in rest.iter().enumerate() {
-        let sym = definition(db, current, *seg).ok_or(ResolutionError::Unresolved)?;
-        if i < rest.len() - 1 {
-            current = symbol_to_module(db, sym, source_root, current)
-                .ok_or(ResolutionError::Unresolved)?;
-        } else {
-            return Ok(sym);
-        }
-    }
-
-    match first_module.source(db) {
-        ModuleSource::Local { .. } | ModuleSource::LocalInline { .. } => {
-            Err(ResolutionError::Unresolved)
-        }
-        ModuleSource::External(cn, di) => Ok(Symbol::new(db, SymbolSource::External(cn, di))),
-    }
-}
-
 /// Resolve a path (e.g. from a stored glob `MemmapEntry`) to a Module,
 /// or return None if it doesn't resolve. Post-construction variant —
 /// walks path segments via the memmap, so macro-introduced inline
@@ -789,61 +756,14 @@ pub fn resolve_use_path_to_module_from_path<'db>(
 /// in `memmap::resolve_path` alongside the rest of the construction-
 /// time resolver. Post-construction callers use `Module::resolve_path`
 /// / `Module::resolve_path_to_module` instead.
-/// Resolve the first segment of a use path.
-/// Returns (module to search in, remaining segments).
-pub(crate) fn resolve_first_segment<'db>(
-    db: &'db dyn Db,
-    current_module: Module<'db>,
-    source_root: SourceRoot,
-    segments: &'db [Name<'db>],
-) -> Result<(Module<'db>, &'db [Name<'db>]), ResolutionError> {
-    let first = segments[0];
-    let first_text = first.text(db);
-    let rest = &segments[1..];
-
-    match first_text.as_str() {
-        "" => {
-            if rest.is_empty() {
-                return Err(ResolutionError::Unresolved);
-            }
-            let crate_name = rest[0].text(db);
-            if let Some(crate_num) = db.tcx().extern_crate(crate_name) {
-                let ext_mod = Module::new(
-                    db,
-                    ModuleSource::External(crate_num, crate::module::DefIndex(0)),
-                );
-                return Ok((ext_mod, &rest[1..]));
-            }
-            Err(ResolutionError::Unresolved)
-        }
-        "crate" => Ok((current_module.crate_root(db), rest)),
-        "self" => Ok((current_module, rest)),
-        "super" => current_module
-            .parent(db)
-            .map(|p| (p, rest))
-            .ok_or(ResolutionError::Unresolved),
-        _ => {
-            if let Some(sym) = definition(db, current_module, first) {
-                if let Some(child_mod) = symbol_to_module(db, sym, source_root, current_module) {
-                    return Ok((child_mod, rest));
-                }
-                if rest.is_empty() {
-                    // non-module terminal — caller handles
-                }
-            }
-            if let Some(crate_num) = db.tcx().extern_crate(first_text) {
-                let ext_mod = Module::new(
-                    db,
-                    ModuleSource::External(crate_num, crate::module::DefIndex(0)),
-                );
-                return Ok((ext_mod, rest));
-            }
-            Err(ResolutionError::Unresolved)
-        }
-    }
-}
-
 /// Try to convert a Symbol into a Module (for walking into child segments).
+///
+/// Only succeeds when the symbol actually refers to a module — a
+/// local `mod foo` (file-based or inline), or an external DefId that
+/// `tcx.is_module` confirms as a module. Structs, functions, etc. are
+/// rejected with `None`, which prevents the walker from asking rustc
+/// for `module_children` on a non-module DefId (that makes rustc
+/// panic).
 pub(crate) fn symbol_to_module<'db>(
     db: &'db dyn Db,
     sym: Symbol<'db>,
@@ -856,10 +776,15 @@ pub(crate) fn symbol_to_module<'db>(
             // inline → LocalInline, file-based → Local.
             resolve_mod(db, parent, mod_item, source_root)
         }
-        SymbolSource::External(crate_num, def_index) => Some(Module::new(
-            db,
-            ModuleSource::External(crate_num, def_index),
-        )),
+        SymbolSource::External(crate_num, def_index) => {
+            if !db.tcx().is_module(crate_num, def_index) {
+                return None;
+            }
+            Some(Module::new(
+                db,
+                ModuleSource::External(crate_num, def_index),
+            ))
+        }
         _ => None,
     }
 }

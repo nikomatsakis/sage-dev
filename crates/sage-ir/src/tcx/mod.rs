@@ -26,6 +26,16 @@ pub trait TcxDb: Send + Sync {
 
     fn module_children(&self, crate_num: CrateNum, def_index: DefIndex) -> Vec<RawChild>;
 
+    /// True iff the given external definition is a module (crate
+    /// root, `mod foo`, etc.). Modules are the only DefIds on which
+    /// `module_children` is valid to call — asking on a struct or
+    /// function makes rustc's `module_children` query panic.
+    ///
+    /// Callers that convert a `Symbol::External(cn, di)` into a
+    /// `Module::External(cn, di)` must gate the conversion on this
+    /// check.
+    fn is_module(&self, crate_num: CrateNum, def_index: DefIndex) -> bool;
+
     fn is_builtin_derive(&self, crate_num: CrateNum, def_index: DefIndex) -> bool;
 
     /// Human-readable path for an external definition, e.g. `"core::option::Option::Some"`.

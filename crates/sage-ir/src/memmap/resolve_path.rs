@@ -14,12 +14,66 @@ use crate::Db;
 use crate::item::{Item, MacroDefItem};
 use crate::module::{Module, ModuleSource};
 use crate::name::Name;
-use crate::resolve::{SourceRoot, definition, resolve_first_segment, symbol_to_module};
+use crate::resolve::{ResolutionError, SourceRoot, definition, symbol_to_module};
 use crate::symbol::{Symbol, SymbolSource};
 use crate::types::Path;
 
 use super::data::*;
 use super::module_memmap;
+
+/// Dispatch the first segment of a path during construction-time
+/// resolution. Returns the module to start from plus the remaining
+/// segments. Like `Module::dispatch_first_segment` but items-based —
+/// safe to call from inside `module_memmap` because it never goes
+/// through the MEM-map on the current module.
+fn memmap_first_segment<'db>(
+    db: &'db dyn Db,
+    current_module: Module<'db>,
+    source_root: SourceRoot,
+    segments: &'db [Name<'db>],
+) -> Result<(Module<'db>, &'db [Name<'db>]), ResolutionError> {
+    let first = segments[0];
+    let first_text = first.text(db);
+    let rest = &segments[1..];
+
+    match first_text.as_str() {
+        "" => {
+            if rest.is_empty() {
+                return Err(ResolutionError::Unresolved);
+            }
+            let crate_name = rest[0].text(db);
+            if let Some(crate_num) = db.tcx().extern_crate(crate_name) {
+                let ext_mod = Module::new(
+                    db,
+                    ModuleSource::External(crate_num, crate::module::DefIndex(0)),
+                );
+                return Ok((ext_mod, &rest[1..]));
+            }
+            Err(ResolutionError::Unresolved)
+        }
+        "crate" => Ok((current_module.crate_root(db), rest)),
+        "self" => Ok((current_module, rest)),
+        "super" => current_module
+            .parent(db)
+            .map(|p| (p, rest))
+            .ok_or(ResolutionError::Unresolved),
+        _ => {
+            if let Some(sym) = definition(db, current_module, first) {
+                if let Some(child_mod) = symbol_to_module(db, sym, source_root, current_module) {
+                    return Ok((child_mod, rest));
+                }
+            }
+            if let Some(crate_num) = db.tcx().extern_crate(first_text) {
+                let ext_mod = Module::new(
+                    db,
+                    ModuleSource::External(crate_num, crate::module::DefIndex(0)),
+                );
+                return Ok((ext_mod, rest));
+            }
+            Err(ResolutionError::Unresolved)
+        }
+    }
+}
 
 /// Walk `path` from `current_module` to a module it names, using
 /// `definition` (items-based) for each segment rather than the
@@ -46,7 +100,7 @@ fn memmap_resolve_path_to_module<'db>(
     }
 
     let (first_module, rest) =
-        resolve_first_segment(db, current_module, source_root, segments).ok()?;
+        memmap_first_segment(db, current_module, source_root, segments).ok()?;
 
     let mut current = first_module;
     for seg in rest {
@@ -219,7 +273,7 @@ fn resolve_macro_path_to_defs<'db>(
             }
 
             // 4. Fall back to the generic first-segment resolver (extern prelude, etc.).
-            match resolve_first_segment(db, module, source_root, segments) {
+            match memmap_first_segment(db, module, source_root, segments) {
                 Ok((m, rest)) => walk_path_to_macro(db, m, source_root, rest)
                     .into_iter()
                     .collect(),
@@ -306,7 +360,7 @@ fn resolve_redirect_to_macro<'db>(
         return None;
     }
     let (first_module, rest) =
-        resolve_first_segment(db, current_module, source_root, segments).ok()?;
+        memmap_first_segment(db, current_module, source_root, segments).ok()?;
     walk_path_to_macro(db, first_module, source_root, rest)
 }
 
