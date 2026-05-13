@@ -1,11 +1,4 @@
 //! Validation: detect errors in the converged MEM-map.
-//!
-//! Runs after the fixpoint converges to detect:
-//! - Duplicate non-glob names in the same namespace
-//! - Unresolved macro invocations (path never resolved)
-//! - Ambiguous macro invocations (multiple candidates or branches)
-//! - Time-travel violations (macro expansion introduces a name that
-//!   shadows a glob import)
 
 use crate::Db;
 use crate::item::Item;
@@ -23,20 +16,11 @@ use super::module_memmap;
 /// Errors detected by inspecting the converged MEM-map.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MemmapError<'db> {
-    /// Two non-glob items with the same name in the same namespace.
     DuplicateName { name: Name<'db>, ns: Namespace },
-    /// A macro invocation whose path never resolved after convergence.
     UnresolvedMacro { path: Path<'db> },
-    /// A macro invocation that resolved to multiple candidates.
     AmbiguousMacro { path: Path<'db> },
-    /// A macro expansion introduced a non-glob name that conflicts
-    /// with a glob-imported name.
     TimeTravelViolation { name: Name<'db>, ns: Namespace },
-    /// A `use foo::bar;` whose `bar` path never resolved after
-    /// convergence.
     UnresolvedRedirect { name: Name<'db> },
-    /// A `use foo::*;` whose `foo` path never resolved after
-    /// convergence.
     UnresolvedGlob { path: Path<'db> },
 }
 
@@ -44,14 +28,11 @@ pub fn memmap_errors<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
     source_root: SourceRoot,
-    crate_root: Module<'db>,
 ) -> Vec<MemmapError<'db>> {
-    let memmap = module_memmap(db, module, source_root, crate_root);
+    let memmap = module_memmap(db, module, source_root);
     let entries = memmap.entries(db);
     let mut errors = Vec::new();
 
-    // Duplicate names: flatten all (name, ns) pairs across the tree, then
-    // report any pair that appears twice.
     let mut names: Vec<(Name<'db>, Namespace)> = Vec::new();
     collect_all_names(db, entries, &mut names);
 
@@ -70,15 +51,12 @@ pub fn memmap_errors<'db>(
     }
 
     collect_macro_errors(entries, &mut errors);
+    collect_unresolved_redirects_globs(db, module, entries, source_root, &mut errors);
 
-    // Unresolvable redirects/globs after convergence.
-    collect_unresolved_redirects_globs(db, module, entries, source_root, crate_root, &mut errors);
-
-    // Time-travel: names introduced by expansion that also come via glob.
     let mut expanded_names: Vec<(Name<'db>, Namespace)> = Vec::new();
     collect_expanded_names(db, entries, &mut expanded_names);
     for (name, ns) in &expanded_names {
-        if name_available_via_glob(db, module, entries, *name, *ns, source_root, crate_root) {
+        if name_available_via_glob(db, module, entries, *name, *ns, source_root) {
             let err = MemmapError::TimeTravelViolation {
                 name: *name,
                 ns: *ns,
@@ -92,8 +70,6 @@ pub fn memmap_errors<'db>(
     errors
 }
 
-/// Collect `(name, namespace)` pairs for every named entry in the tree
-/// (top-level and inside all `MacroUse::Expanded` branches).
 fn collect_all_names<'db>(
     db: &'db dyn Db,
     entries: &[MemmapEntry<'db>],
@@ -115,9 +91,6 @@ fn collect_all_names<'db>(
                 out.push((def.name(db), Namespace::Macro(MacroKind::Bang)));
             }
             MemmapEntry::Redirect { name, target: _ } => {
-                // Redirects' namespace is dynamic — conservatively count
-                // each redirect in Type namespace for the duplicate check
-                // (matches pre-refactor behaviour which stored Type).
                 out.push((*name, Namespace::Type));
             }
             MemmapEntry::Glob { .. } => {}
@@ -132,7 +105,6 @@ fn collect_all_names<'db>(
     }
 }
 
-/// Recursively collect resolution errors from `MacroUse` entries.
 fn collect_macro_errors<'db>(entries: &[MemmapEntry<'db>], errors: &mut Vec<MemmapError<'db>>) {
     for entry in entries {
         if let MemmapEntry::MacroUse(mu) = entry {
@@ -157,29 +129,18 @@ fn collect_macro_errors<'db>(entries: &[MemmapEntry<'db>], errors: &mut Vec<Memm
     }
 }
 
-/// Walk entries (top-level and inside all `MacroUse::Expanded` branches)
-/// and emit an error for every `Redirect` or `Glob` whose path doesn't
-/// resolve after convergence.
 fn collect_unresolved_redirects_globs<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
     entries: &[MemmapEntry<'db>],
     source_root: SourceRoot,
-    crate_root: Module<'db>,
     out: &mut Vec<MemmapError<'db>>,
 ) {
     for entry in entries {
         match entry {
             MemmapEntry::Redirect { name, target } => {
-                if resolve_use_path_to_module_from_path(
-                    db,
-                    module,
-                    source_root,
-                    crate_root,
-                    *target,
-                )
-                .is_none()
-                    && target_resolves_to_nothing(db, module, source_root, crate_root, *target)
+                if resolve_use_path_to_module_from_path(db, module, source_root, *target).is_none()
+                    && target_resolves_to_nothing(db, module, source_root, *target)
                 {
                     let err = MemmapError::UnresolvedRedirect { name: *name };
                     if !out.contains(&err) {
@@ -188,9 +149,7 @@ fn collect_unresolved_redirects_globs<'db>(
                 }
             }
             MemmapEntry::Glob { path } => {
-                if resolve_use_path_to_module_from_path(db, module, source_root, crate_root, *path)
-                    .is_none()
-                {
+                if resolve_use_path_to_module_from_path(db, module, source_root, *path).is_none() {
                     let err = MemmapError::UnresolvedGlob { path: *path };
                     if !out.contains(&err) {
                         out.push(err);
@@ -205,7 +164,6 @@ fn collect_unresolved_redirects_globs<'db>(
                             module,
                             &exp.entries,
                             source_root,
-                            crate_root,
                             out,
                         );
                     }
@@ -216,21 +174,15 @@ fn collect_unresolved_redirects_globs<'db>(
     }
 }
 
-/// A redirect target that doesn't resolve to a Module AND doesn't
-/// resolve to any Symbol is considered unresolved. (Some redirects
-/// point to non-module items; those shouldn't flag.)
 fn target_resolves_to_nothing<'db>(
     db: &'db dyn Db,
     current_module: Module<'db>,
     source_root: SourceRoot,
-    crate_root: Module<'db>,
     path: Path<'db>,
 ) -> bool {
-    crate::resolve::resolve_path_to_symbol(db, current_module, source_root, crate_root, path)
-        .is_err()
+    crate::resolve::resolve_path_to_symbol(db, current_module, source_root, path).is_err()
 }
 
-/// Collect names introduced only through expansions.
 fn collect_expanded_names<'db>(
     db: &'db dyn Db,
     entries: &[MemmapEntry<'db>],
@@ -247,7 +199,6 @@ fn collect_expanded_names<'db>(
     }
 }
 
-/// Does `name` appear under the given `ns` through any top-level glob?
 fn name_available_via_glob<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
@@ -255,19 +206,17 @@ fn name_available_via_glob<'db>(
     name: Name<'db>,
     ns: Namespace,
     source_root: SourceRoot,
-    crate_root: Module<'db>,
 ) -> bool {
     for entry in entries {
         if let MemmapEntry::Glob { path } = entry {
-            let Some(target) =
-                resolve_use_path_to_module_from_path(db, module, source_root, crate_root, *path)
+            let Some(target) = resolve_use_path_to_module_from_path(db, module, source_root, *path)
             else {
                 continue;
             };
             if matches!(target.source(db), ModuleSource::External(..)) {
                 continue;
             }
-            let source_memmap = module_memmap(db, target, source_root, crate_root);
+            let source_memmap = module_memmap(db, target, source_root);
             for src_entry in source_memmap.entries(db) {
                 match src_entry {
                     MemmapEntry::Item(item) => {
@@ -293,6 +242,5 @@ fn name_available_via_glob<'db>(
     false
 }
 
-// Silence `Item` unused-import warning when compiled without certain cfg.
 #[allow(dead_code)]
 fn _use_item(_: Item<'_>) {}

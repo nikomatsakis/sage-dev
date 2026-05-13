@@ -222,7 +222,7 @@ pub fn resolve_module_path<'db>(
     for seg_text in segments {
         let name = Name::new(db, (*seg_text).to_owned());
         // Use memmap-aware lookup so macro-created modules are visible.
-        let sym = definition_via_memmap(db, current, source_root, root, name, Namespace::Type)
+        let sym = definition_via_memmap(db, current, source_root, name, Namespace::Type)
             .or_else(|| definition(db, current, name))?;
         match sym.source(db) {
             SymbolSource::Local(item) => {
@@ -295,13 +295,12 @@ pub fn resolve_name<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
     source_root: SourceRoot,
-    crate_root: Module<'db>,
     name: Name<'db>,
     ns: Namespace,
 ) -> Result<Symbol<'db>, ResolutionError> {
     use crate::memmap::module_memmap;
 
-    let memmap = module_memmap(db, module, source_root, crate_root);
+    let memmap = module_memmap(db, module, source_root);
 
     // 1. Non-glob lookup: collect all matching entries (items,
     //    redirects, macro defs) from the tree, descending through
@@ -311,7 +310,6 @@ pub fn resolve_name<'db>(
         db,
         module,
         source_root,
-        crate_root,
         memmap.entries(db),
         name,
         ns,
@@ -331,7 +329,6 @@ pub fn resolve_name<'db>(
         db,
         module,
         source_root,
-        crate_root,
         memmap.entries(db),
         name,
         ns,
@@ -366,7 +363,6 @@ fn collect_named_matches<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
     source_root: SourceRoot,
-    crate_root: Module<'db>,
     entries: &[crate::memmap::MemmapEntry<'db>],
     name: Name<'db>,
     ns: Namespace,
@@ -395,19 +391,13 @@ fn collect_named_matches<'db>(
                 if !matches!(ns, Namespace::Macro(_)) {
                     continue;
                 }
-                // MacroDef is not representable as a Symbol today; skip
-                // for now (Phase 3 will produce a proper MacroCallee).
                 let _ = def;
             }
             MemmapEntry::Redirect { name: n, target } => {
                 if *n != name {
                     continue;
                 }
-                // Namespace is dynamic — resolve the target and let
-                // downstream decide (we return the resolved symbol
-                // regardless of `ns` here; the post-construction
-                // semantics in Phase 2 will filter properly).
-                match resolve_path_to_symbol(db, module, source_root, crate_root, *target) {
+                match resolve_path_to_symbol(db, module, source_root, *target) {
                     Ok(sym) => {
                         if !out.contains(&sym) {
                             out.push(sym);
@@ -424,7 +414,6 @@ fn collect_named_matches<'db>(
                             db,
                             module,
                             source_root,
-                            crate_root,
                             &exp.entries,
                             name,
                             ns,
@@ -442,7 +431,6 @@ fn collect_glob_matches<'db>(
     db: &'db dyn Db,
     current_module: Module<'db>,
     source_root: SourceRoot,
-    crate_root: Module<'db>,
     entries: &[crate::memmap::MemmapEntry<'db>],
     name: Name<'db>,
     ns: Namespace,
@@ -453,20 +441,14 @@ fn collect_glob_matches<'db>(
     for entry in entries {
         match entry {
             MemmapEntry::Glob { path } => {
-                let Some(target) = resolve_use_path_to_module_from_path(
-                    db,
-                    current_module,
-                    source_root,
-                    crate_root,
-                    *path,
-                ) else {
+                let Some(target) =
+                    resolve_use_path_to_module_from_path(db, current_module, source_root, *path)
+                else {
                     continue;
                 };
-                // Use memmap-aware lookup for local targets so that
-                // macro-expanded items in the target are visible.
                 let sym = match target.source(db) {
                     ModuleSource::External(..) => definition_in_ns(db, target, name, ns),
-                    _ => definition_via_memmap(db, target, source_root, crate_root, name, ns),
+                    _ => definition_via_memmap(db, target, source_root, name, ns),
                 };
                 if let Some(sym) = sym {
                     if !out.contains(&sym) {
@@ -481,7 +463,6 @@ fn collect_glob_matches<'db>(
                             db,
                             current_module,
                             source_root,
-                            crate_root,
                             &exp.entries,
                             name,
                             ns,
@@ -502,7 +483,6 @@ pub fn resolve_path_to_symbol<'db>(
     db: &'db dyn Db,
     current_module: Module<'db>,
     source_root: SourceRoot,
-    crate_root: Module<'db>,
     path: Path<'db>,
 ) -> Result<Symbol<'db>, ResolutionError> {
     // Cycle-break: short-circuit if already resolving this (module, path).
@@ -520,40 +500,25 @@ pub fn resolve_path_to_symbol<'db>(
     }
 
     let (first_module, rest) =
-        first_segment_module_via_memmap(db, current_module, source_root, crate_root, segments)
+        first_segment_module_via_memmap(db, current_module, source_root, segments)
             .ok_or(ResolutionError::Unresolved)?;
 
     let mut current = first_module;
     for (i, seg) in rest.iter().enumerate() {
         let is_last = i == rest.len() - 1;
-        let seg_ns = if is_last {
-            Namespace::Type
-        } else {
-            Namespace::Type
-        };
-        let sym = definition_via_memmap(db, current, source_root, crate_root, *seg, seg_ns)
+        let sym = definition_via_memmap(db, current, source_root, *seg, Namespace::Type)
             .or_else(|| {
                 if is_last {
-                    // Try Value namespace for `use foo::FUNC` / `use foo::CONST`.
-                    definition_via_memmap(
-                        db,
-                        current,
-                        source_root,
-                        crate_root,
-                        *seg,
-                        Namespace::Value,
-                    )
-                    .or_else(|| {
-                        // Try Macro namespace for `use foo::my_macro`.
-                        definition_via_memmap(
-                            db,
-                            current,
-                            source_root,
-                            crate_root,
-                            *seg,
-                            Namespace::Macro(MacroKind::Bang),
-                        )
-                    })
+                    definition_via_memmap(db, current, source_root, *seg, Namespace::Value)
+                        .or_else(|| {
+                            definition_via_memmap(
+                                db,
+                                current,
+                                source_root,
+                                *seg,
+                                Namespace::Macro(MacroKind::Bang),
+                            )
+                        })
                 } else {
                     None
                 }
@@ -639,16 +604,11 @@ fn definition_via_memmap<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
     source_root: SourceRoot,
-    crate_root: Module<'db>,
     name: Name<'db>,
     ns: Namespace,
 ) -> Option<Symbol<'db>> {
     use crate::memmap::{MacroUseState, MemmapEntry, module_memmap};
 
-    // Cycle-break: if we're already resolving (module, name) further
-    // up the stack, bottom out with None. The name/ns pair is encoded
-    // into `name`'s salsa id + namespace discriminant via the frame
-    // kind, so different namespaces are distinct frames.
     let frame_kind = match ns {
         Namespace::Type => 0,
         Namespace::Value => 1,
@@ -666,7 +626,7 @@ fn definition_via_memmap<'db>(
         return definition_in_ns(db, module, name, ns);
     }
 
-    let memmap = module_memmap(db, module, source_root, crate_root);
+    let memmap = module_memmap(db, module, source_root);
     let mut named: Vec<Symbol<'db>> = Vec::new();
     let mut glob_matches: Vec<Symbol<'db>> = Vec::new();
 
@@ -674,7 +634,6 @@ fn definition_via_memmap<'db>(
         db: &'db dyn Db,
         module: Module<'db>,
         source_root: SourceRoot,
-        crate_root: Module<'db>,
         entries: &[MemmapEntry<'db>],
         name: Name<'db>,
         ns: Namespace,
@@ -700,7 +659,7 @@ fn definition_via_memmap<'db>(
                 MemmapEntry::Redirect { name: n, target } => {
                     if *n == name {
                         if let Ok(sym) =
-                            resolve_path_to_symbol(db, module, source_root, crate_root, *target)
+                            resolve_path_to_symbol(db, module, source_root, *target)
                         {
                             if !named.contains(&sym) {
                                 named.push(sym);
@@ -713,18 +672,13 @@ fn definition_via_memmap<'db>(
                         db,
                         module,
                         source_root,
-                        crate_root,
                         *path,
                     ) else {
                         continue;
                     };
-                    // Use `definition_via_memmap` for locals so that
-                    // glob targets see macro-expanded names in the
-                    // target's MEM-map. For externals, fall back to
-                    // `definition_in_ns` (tcx-backed).
                     let sym = match target.source(db) {
                         ModuleSource::External(..) => definition_in_ns(db, target, name, ns),
-                        _ => definition_via_memmap(db, target, source_root, crate_root, name, ns),
+                        _ => definition_via_memmap(db, target, source_root, name, ns),
                     };
                     if let Some(sym) = sym {
                         if !glob_matches.contains(&sym) {
@@ -739,7 +693,6 @@ fn definition_via_memmap<'db>(
                                 db,
                                 module,
                                 source_root,
-                                crate_root,
                                 &exp.entries,
                                 name,
                                 ns,
@@ -757,7 +710,6 @@ fn definition_via_memmap<'db>(
         db,
         module,
         source_root,
-        crate_root,
         memmap.entries(db),
         name,
         ns,

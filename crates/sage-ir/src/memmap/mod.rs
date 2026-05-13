@@ -58,7 +58,6 @@ pub fn module_memmap<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
     source_root: SourceRoot,
-    crate_root: Module<'db>,
 ) -> ModuleMemmap<'db> {
     debug_assert!(
         !matches!(module.source(db), ModuleSource::External(..)),
@@ -68,17 +67,17 @@ pub fn module_memmap<'db>(
     let mut entries = match module.source(db) {
         ModuleSource::Local { file, .. } => {
             let items = file_item_tree(db, file);
-            seed::seed_from_items(db, module, source_root, crate_root, items)
+            seed::seed_from_items(db, items)
         }
         ModuleSource::LocalInline { mod_item, .. } => {
             // Inline mod — seed directly from the ModItem's items.
             let items: Vec<crate::item::Item<'db>> = mod_item.items(db).clone().unwrap_or_default();
-            seed::seed_from_items(db, module, source_root, crate_root, &items)
+            seed::seed_from_items(db, &items)
         }
         ModuleSource::External(..) => Vec::new(),
     };
 
-    expand::resolve_and_expand_macros(db, module, source_root, crate_root, &mut entries, 0);
+    expand::resolve_and_expand_macros(db, module, source_root, &mut entries, 0);
 
     ModuleMemmap::new(db, entries)
 }
@@ -89,7 +88,6 @@ fn module_memmap_initial<'db>(
     _id: salsa::Id,
     _module: Module<'db>,
     _source_root: SourceRoot,
-    _crate_root: Module<'db>,
 ) -> ModuleMemmap<'db> {
     ModuleMemmap::new(db, Vec::new())
 }

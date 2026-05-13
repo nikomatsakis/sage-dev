@@ -24,8 +24,6 @@
 
 use crate::Db;
 use crate::item::Item;
-use crate::module::Module;
-use crate::resolve::SourceRoot;
 use crate::types::UseKind;
 
 use super::data::*;
@@ -33,9 +31,6 @@ use super::data::*;
 /// Seed MEM-map entries from file_item_tree items.
 pub(super) fn seed_from_items<'db>(
     db: &'db dyn Db,
-    _module: Module<'db>,
-    _source_root: SourceRoot,
-    _crate_root: Module<'db>,
     items: &[Item<'db>],
 ) -> Vec<MemmapEntry<'db>> {
     let mut entries = Vec::new();

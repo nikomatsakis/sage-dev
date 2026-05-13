@@ -29,20 +29,11 @@ pub(super) fn resolve_and_expand_macros<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
     source_root: SourceRoot,
-    crate_root: Module<'db>,
     entries: &mut Vec<MemmapEntry<'db>>,
     depth: usize,
 ) {
     let snapshot: Vec<MemmapEntry<'db>> = entries.clone();
-    resolve_with_snapshot(
-        db,
-        module,
-        source_root,
-        crate_root,
-        entries,
-        &snapshot,
-        depth,
-    );
+    resolve_with_snapshot(db, module, source_root, entries, &snapshot, depth);
 }
 
 /// Inner worker: resolve and expand macros in `entries`, using
@@ -51,7 +42,6 @@ fn resolve_with_snapshot<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
     source_root: SourceRoot,
-    crate_root: Module<'db>,
     entries: &mut Vec<MemmapEntry<'db>>,
     root_entries: &[MemmapEntry<'db>],
     depth: usize,
@@ -70,8 +60,7 @@ fn resolve_with_snapshot<'db>(
             let path = mu.path;
             let input_tokens = mu.input_tokens.clone();
 
-            let callees =
-                resolve_macro_path(db, module, source_root, crate_root, root_entries, path);
+            let callees = resolve_macro_path(db, module, source_root, root_entries, path);
             match callees.len() {
                 0 => {
                     // Stay Unresolved — next fixpoint iteration may succeed.
@@ -89,7 +78,6 @@ fn resolve_with_snapshot<'db>(
                         db,
                         module,
                         source_root,
-                        crate_root,
                         &mut expanded,
                         root_entries,
                         depth + 1,
@@ -149,28 +137,6 @@ pub fn expand_macro<'db>(
     let items = file_item_tree(db, file);
 
     // Convert items → memmap entries via the same seeder used for
-    // real source files. The module/source_root arguments aren't
-    // consulted by seed_from_items (it's a pure transform), so
-    // passing any Module works here.
-    seed_from_items(
-        db,
-        /* module */
-        Module::new(
-            db,
-            crate::module::ModuleSource::External(
-                crate::module::CrateNum(0),
-                crate::module::DefIndex(0),
-            ),
-        ),
-        SourceRoot::new(db, Vec::new()),
-        /* crate_root */
-        Module::new(
-            db,
-            crate::module::ModuleSource::External(
-                crate::module::CrateNum(0),
-                crate::module::DefIndex(0),
-            ),
-        ),
-        items,
-    )
+    // real source files.
+    seed_from_items(db, items)
 }
