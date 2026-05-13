@@ -222,7 +222,9 @@ pub fn resolve_module_path<'db>(
     for seg_text in segments {
         let name = Name::new(db, (*seg_text).to_owned());
         // Use memmap-aware lookup so macro-created modules are visible.
-        let sym = definition_via_memmap(db, current, source_root, name, Namespace::Type)
+        let sym = current
+            .resolve(db, source_root, name, Namespace::Type)
+            .ok()
             .or_else(|| definition(db, current, name))?;
         match sym.source(db) {
             SymbolSource::Local(item) => {
@@ -438,10 +440,8 @@ fn collect_glob_matches<'db>(
                 else {
                     continue;
                 };
-                let sym = match target.source(db) {
-                    ModuleSource::External(..) => definition_in_ns(db, target, name, ns),
-                    _ => definition_via_memmap(db, target, source_root, name, ns),
-                };
+                // Module::resolve dispatches on local vs external internally.
+                let sym = target.resolve(db, source_root, name, ns).ok();
                 if let Some(sym) = sym {
                     if !out.contains(&sym) {
                         out.push(sym);
@@ -498,25 +498,24 @@ pub fn resolve_path_to_symbol<'db>(
     let mut current = first_module;
     for (i, seg) in rest.iter().enumerate() {
         let is_last = i == rest.len() - 1;
-        let sym = definition_via_memmap(db, current, source_root, *seg, Namespace::Type)
-            .or_else(|| {
+        let sym = current
+            .resolve(db, source_root, *seg, Namespace::Type)
+            .or_else(|_| {
                 if is_last {
-                    definition_via_memmap(db, current, source_root, *seg, Namespace::Value).or_else(
-                        || {
-                            definition_via_memmap(
+                    current
+                        .resolve(db, source_root, *seg, Namespace::Value)
+                        .or_else(|_| {
+                            current.resolve(
                                 db,
-                                current,
                                 source_root,
                                 *seg,
                                 Namespace::Macro(MacroKind::Bang),
                             )
-                        },
-                    )
+                        })
                 } else {
-                    None
+                    Err(ResolutionError::Unresolved)
                 }
-            })
-            .ok_or(ResolutionError::Unresolved)?;
+            })?;
         if !is_last {
             current = symbol_to_module(db, sym, source_root, current)
                 .ok_or(ResolutionError::Unresolved)?;
@@ -585,136 +584,153 @@ impl Drop for FrameGuard {
     }
 }
 
-/// Like `definition`, but consults the module's MEM-map (flattened
-/// through expansions) rather than `module_items`. This makes names
-/// introduced by macro expansion visible during path walking.
+/// Inherent resolution methods on `Module`.
 ///
-/// Returns the single matching symbol, or `None` if zero or multiple
-/// matches exist. Used for intermediate segments of a path walk — we
-/// can't disambiguate here, so we conservatively return None on
-/// ambiguity and let the caller flag it.
-fn definition_via_memmap<'db>(
-    db: &'db dyn Db,
-    module: Module<'db>,
-    source_root: SourceRoot,
-    name: Name<'db>,
-    ns: Namespace,
-) -> Option<Symbol<'db>> {
-    use crate::memmap::{MacroUseState, MemmapEntry, module_memmap};
-
-    let frame_kind = match ns {
-        Namespace::Type => 0,
-        Namespace::Value => 1,
-        Namespace::Macro(MacroKind::Bang) => 2,
-        Namespace::Macro(MacroKind::Attr) => 3,
-        Namespace::Macro(MacroKind::Derive) => 4,
-    };
-    let _guard = FrameGuard::enter(
-        salsa::plumbing::AsId::as_id(&module),
-        salsa::plumbing::AsId::as_id(&name),
-        FRAME_DEFINITION + frame_kind,
-    )?;
-
-    if matches!(module.source(db), ModuleSource::External(..)) {
-        return definition_in_ns(db, module, name, ns);
-    }
-
-    let memmap = module_memmap(db, module, source_root);
-    let mut named: Vec<Symbol<'db>> = Vec::new();
-    let mut glob_matches: Vec<Symbol<'db>> = Vec::new();
-
-    fn walk<'db>(
+/// These are the user-facing entry point for asking "what does this
+/// name refer to in this module?". They consult the MEM-map for local
+/// modules and `TcxDb` for external modules, so macro-introduced names
+/// are visible uniformly.
+///
+/// These methods do NOT apply extern/std prelude fallback — preludes
+/// are a crate-root concern handled by the top-level path walker.
+impl<'db> Module<'db> {
+    /// Resolve a name in this module's direct contents.
+    ///
+    /// - Local / LocalInline: walks the MEM-map (flattened through
+    ///   `MacroUse::Expanded` branches). Named entries beat globs.
+    /// - External: consults `TcxDb::module_children`.
+    ///
+    /// Returns `Err(Ambiguous)` if the name has more than one match
+    /// (whether among named entries or among glob candidates).
+    /// Returns `Err(Unresolved)` on zero matches or when a cycle
+    /// short-circuit prevents progress.
+    pub fn resolve(
+        self,
         db: &'db dyn Db,
-        module: Module<'db>,
         source_root: SourceRoot,
-        entries: &[MemmapEntry<'db>],
         name: Name<'db>,
         ns: Namespace,
-        named: &mut Vec<Symbol<'db>>,
-        glob_matches: &mut Vec<Symbol<'db>>,
-    ) {
-        for entry in entries {
-            match entry {
-                MemmapEntry::Item(item) => {
-                    if item_name(db, *item) == Some(name) && item_in_namespace(db, *item, ns) {
-                        let sym = Symbol::new(db, SymbolSource::Local(*item));
-                        if !named.contains(&sym) {
-                            named.push(sym);
-                        }
-                    }
-                }
-                MemmapEntry::MacroDef(def) => {
-                    if def.name(db) == name && matches!(ns, Namespace::Macro(_)) {
-                        // No Symbol for local MacroDef yet; skip.
-                        let _ = def;
-                    }
-                }
-                MemmapEntry::Redirect { name: n, target } => {
-                    if *n == name {
-                        if let Ok(sym) = resolve_path_to_symbol(db, module, source_root, *target) {
+    ) -> Result<Symbol<'db>, ResolutionError> {
+        use crate::memmap::{MacroUseState, MemmapEntry, module_memmap};
+
+        let frame_kind = match ns {
+            Namespace::Type => 0,
+            Namespace::Value => 1,
+            Namespace::Macro(MacroKind::Bang) => 2,
+            Namespace::Macro(MacroKind::Attr) => 3,
+            Namespace::Macro(MacroKind::Derive) => 4,
+        };
+        let Some(_guard) = FrameGuard::enter(
+            salsa::plumbing::AsId::as_id(&self),
+            salsa::plumbing::AsId::as_id(&name),
+            FRAME_DEFINITION + frame_kind,
+        ) else {
+            return Err(ResolutionError::Unresolved);
+        };
+
+        if matches!(self.source(db), ModuleSource::External(..)) {
+            return definition_in_ns(db, self, name, ns).ok_or(ResolutionError::Unresolved);
+        }
+
+        let memmap = module_memmap(db, self, source_root);
+        let mut named: Vec<Symbol<'db>> = Vec::new();
+        let mut glob_matches: Vec<Symbol<'db>> = Vec::new();
+
+        fn walk<'db>(
+            db: &'db dyn Db,
+            module: Module<'db>,
+            source_root: SourceRoot,
+            entries: &[MemmapEntry<'db>],
+            name: Name<'db>,
+            ns: Namespace,
+            named: &mut Vec<Symbol<'db>>,
+            glob_matches: &mut Vec<Symbol<'db>>,
+        ) {
+            for entry in entries {
+                match entry {
+                    MemmapEntry::Item(item) => {
+                        if item_name(db, *item) == Some(name) && item_in_namespace(db, *item, ns) {
+                            let sym = Symbol::new(db, SymbolSource::Local(*item));
                             if !named.contains(&sym) {
                                 named.push(sym);
                             }
                         }
                     }
-                }
-                MemmapEntry::Glob { path } => {
-                    let Some(target) =
-                        resolve_use_path_to_module_from_path(db, module, source_root, *path)
-                    else {
-                        continue;
-                    };
-                    let sym = match target.source(db) {
-                        ModuleSource::External(..) => definition_in_ns(db, target, name, ns),
-                        _ => definition_via_memmap(db, target, source_root, name, ns),
-                    };
-                    if let Some(sym) = sym {
-                        if !glob_matches.contains(&sym) {
-                            glob_matches.push(sym);
+                    MemmapEntry::MacroDef(def) => {
+                        if def.name(db) == name && matches!(ns, Namespace::Macro(_)) {
+                            // No Symbol for local MacroDef yet; skip.
+                            let _ = def;
                         }
                     }
-                }
-                MemmapEntry::MacroUse(mu) => {
-                    if let MacroUseState::Expanded(exps) = &mu.state {
-                        for exp in exps {
-                            walk(
-                                db,
-                                module,
-                                source_root,
-                                &exp.entries,
-                                name,
-                                ns,
-                                named,
-                                glob_matches,
-                            );
+                    MemmapEntry::Redirect { name: n, target } => {
+                        if *n == name {
+                            if let Ok(sym) =
+                                resolve_path_to_symbol(db, module, source_root, *target)
+                            {
+                                if !named.contains(&sym) {
+                                    named.push(sym);
+                                }
+                            }
+                        }
+                    }
+                    MemmapEntry::Glob { path } => {
+                        let Some(target) =
+                            resolve_use_path_to_module_from_path(db, module, source_root, *path)
+                        else {
+                            continue;
+                        };
+                        // Recurse into the glob target via the same
+                        // `Module::resolve` primitive. Ambiguity inside
+                        // the target contributes zero candidates here
+                        // (we swallow Err), which matches the prior
+                        // "conservative miss on ambiguity" behaviour.
+                        let sym = target.resolve(db, source_root, name, ns).ok();
+                        if let Some(sym) = sym {
+                            if !glob_matches.contains(&sym) {
+                                glob_matches.push(sym);
+                            }
+                        }
+                    }
+                    MemmapEntry::MacroUse(mu) => {
+                        if let MacroUseState::Expanded(exps) = &mu.state {
+                            for exp in exps {
+                                walk(
+                                    db,
+                                    module,
+                                    source_root,
+                                    &exp.entries,
+                                    name,
+                                    ns,
+                                    named,
+                                    glob_matches,
+                                );
+                            }
                         }
                     }
                 }
             }
         }
-    }
 
-    walk(
-        db,
-        module,
-        source_root,
-        memmap.entries(db),
-        name,
-        ns,
-        &mut named,
-        &mut glob_matches,
-    );
+        walk(
+            db,
+            self,
+            source_root,
+            memmap.entries(db),
+            name,
+            ns,
+            &mut named,
+            &mut glob_matches,
+        );
 
-    match named.len() {
-        1 => Some(named[0]),
-        0 => {
-            if glob_matches.len() == 1 {
-                Some(glob_matches[0])
-            } else {
-                None
-            }
+        match named.len() {
+            1 => Ok(named[0]),
+            0 => match glob_matches.len() {
+                0 => Err(ResolutionError::Unresolved),
+                1 => Ok(glob_matches[0]),
+                _ => Err(ResolutionError::Ambiguous),
+            },
+            _ => Err(ResolutionError::Ambiguous),
         }
-        _ => None,
     }
 }
 
@@ -814,7 +830,9 @@ pub fn resolve_use_path_to_module_from_path<'db>(
 
     let mut current = first_module;
     for seg in rest {
-        let sym = definition_via_memmap(db, current, source_root, *seg, Namespace::Type)?;
+        let sym = current
+            .resolve(db, source_root, *seg, Namespace::Type)
+            .ok()?;
         current = symbol_to_module(db, sym, source_root, current)?;
     }
     Some(current)
@@ -872,9 +890,7 @@ fn first_segment_module_via_memmap<'db>(
         "self" => Some((current_module, rest)),
         "super" => current_module.parent(db).map(|p| (p, rest)),
         _ => {
-            if let Some(sym) =
-                definition_via_memmap(db, current_module, source_root, first, Namespace::Type)
-            {
+            if let Ok(sym) = current_module.resolve(db, source_root, first, Namespace::Type) {
                 if let Some(child_mod) = symbol_to_module(db, sym, source_root, current_module) {
                     return Some((child_mod, rest));
                 }
