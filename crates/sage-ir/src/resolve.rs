@@ -27,17 +27,28 @@ pub enum Namespace {
 
 /// Whether an item lives in the given namespace.
 pub(crate) fn item_in_namespace(_db: &dyn Db, item: Item<'_>, ns: Namespace) -> bool {
-    match (item, ns) {
-        (
-            Item::Struct(_) | Item::Enum(_) | Item::Trait(_) | Item::TypeAlias(_) | Item::Mod(_),
-            Namespace::Type,
-        ) => true,
-        (Item::Function(_) | Item::Const(_) | Item::Static(_), Namespace::Value) => true,
-        // Structs also live in the value namespace (constructor).
-        (Item::Struct(_), Namespace::Value) => true,
-        // Enum variants live in both type and value, but we don't have them as top-level items.
-        // For derive resolution, we need macro namespace — builtins are resolved via extern prelude.
-        _ => false,
+    match item {
+        // Structs live in both Type (as a type name) and Value (as a
+        // constructor or unit value).
+        Item::Struct(_) => matches!(ns, Namespace::Type | Namespace::Value),
+
+        // Type-namespace-only items.
+        Item::Enum(_) | Item::Trait(_) | Item::TypeAlias(_) | Item::Mod(_) => {
+            matches!(ns, Namespace::Type)
+        }
+
+        // Value-namespace-only items.
+        Item::Function(_) | Item::Const(_) | Item::Static(_) => matches!(ns, Namespace::Value),
+
+        // `macro_rules!` definitions live in the bang-macro namespace.
+        // Not observable in practice — seeding routes these to
+        // `MemmapEntry::MacroDef`, not `MemmapEntry::Item` — but we
+        // answer correctly here for exhaustiveness.
+        Item::MacroDef(_) => matches!(ns, Namespace::Macro(MacroKind::Bang)),
+
+        // Items with no name: they're never looked up by name, so
+        // they don't occupy any namespace.
+        Item::Impl(_) | Item::Use(_) | Item::MacroInvocation(_) | Item::Error(_) => false,
     }
 }
 
@@ -283,16 +294,19 @@ fn parent_dir_for(path: &str) -> String {
 // Name resolution
 // ---------------------------------------------------------------------------
 
-/// Resolve a name in a module's scope using the MEM-map.
+/// Resolve a name in a module's scope.
+///
+/// Layers `Module::resolve_member` (which handles the module's own
+/// contents — items, redirects, globs, with named > glob priority)
+/// with extern-prelude and std-prelude fallbacks.
 ///
 /// Priority (highest to lowest):
-/// 1. Non-glob entries (declared items + named use-redirects)
-/// 2. Glob imports (search each glob stem's source module)
-/// 3. Extern prelude (via tcx.extern_crate)
+/// 1. Members of `module` (items, named redirects, expansion-introduced names)
+/// 2. Glob-imported names (recursively, via `Module::resolve_member`)
+/// 3. Extern prelude (via `tcx.extern_crate`)
 /// 4. Std prelude (implicit `use std::prelude::v1::*`)
 ///
-/// Multiple non-glob matches → Ambiguous.
-/// Zero non-globs + multiple glob matches → Ambiguous.
+/// Ambiguity in (1) or (2) propagates as `Err(Ambiguous)`.
 pub fn resolve_name<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
@@ -300,172 +314,23 @@ pub fn resolve_name<'db>(
     name: Name<'db>,
     ns: Namespace,
 ) -> Result<Symbol<'db>, ResolutionError> {
-    use crate::memmap::module_memmap;
-
-    let memmap = module_memmap(db, module, source_root);
-
-    // 1. Non-glob lookup: collect all matching entries (items,
-    //    redirects, macro defs) from the tree, descending through
-    //    every `MacroUse::Expanded` branch.
-    let mut non_glob_matches: Vec<Symbol<'db>> = Vec::new();
-    collect_named_matches(
-        db,
-        module,
-        source_root,
-        memmap.entries(db),
-        name,
-        ns,
-        &mut non_glob_matches,
-    );
-
-    match non_glob_matches.len() {
-        1 => return Ok(non_glob_matches[0]),
-        n if n > 1 => return Err(ResolutionError::Ambiguous),
-        _ => {}
+    // 1 + 2: the module's own members (named > glob handled inside).
+    match module.resolve_member(db, source_root, name, ns) {
+        Ok(sym) => return Ok(sym),
+        Err(ResolutionError::Ambiguous) => return Err(ResolutionError::Ambiguous),
+        Err(ResolutionError::Unresolved) => {}
     }
 
-    // 2. Glob lookup: for each `Glob { path }` entry, resolve the
-    //    path to a module dynamically and search its MEM-map.
-    let mut glob_matches: Vec<Symbol<'db>> = Vec::new();
-    collect_glob_matches(
-        db,
-        module,
-        source_root,
-        memmap.entries(db),
-        name,
-        ns,
-        &mut glob_matches,
-    );
-
-    match glob_matches.len() {
-        1 => return Ok(glob_matches[0]),
-        n if n > 1 => return Err(ResolutionError::Ambiguous),
-        _ => {}
-    }
-
-    // 3. Extern prelude
-    let name_text = name.text(db);
-    if let Some(crate_num) = db.tcx().extern_crate(name_text) {
+    // 3. Extern prelude.
+    if let Some(crate_num) = db.tcx().extern_crate(name.text(db)) {
         return Ok(Symbol::new(
             db,
             SymbolSource::External(crate_num, crate::module::DefIndex(0)),
         ));
     }
 
-    // 4. Std prelude
-    if let Some(sym) = resolve_in_std_prelude(db, name, ns) {
-        return Ok(sym);
-    }
-
-    Err(ResolutionError::Unresolved)
-}
-
-/// Recursively collect named matches from entries (including expanded subtrees).
-fn collect_named_matches<'db>(
-    db: &'db dyn Db,
-    module: Module<'db>,
-    source_root: SourceRoot,
-    entries: &[crate::memmap::MemmapEntry<'db>],
-    name: Name<'db>,
-    ns: Namespace,
-    out: &mut Vec<Symbol<'db>>,
-) {
-    use crate::memmap::{MacroUseState, MemmapEntry};
-
-    for entry in entries {
-        match entry {
-            MemmapEntry::Item(item) => {
-                if item_name(db, *item) != Some(name) {
-                    continue;
-                }
-                if !item_in_namespace(db, *item, ns) {
-                    continue;
-                }
-                let sym = Symbol::new(db, SymbolSource::Local(*item));
-                if !out.contains(&sym) {
-                    out.push(sym);
-                }
-            }
-            MemmapEntry::MacroDef(def) => {
-                if def.name(db) != name {
-                    continue;
-                }
-                if !matches!(ns, Namespace::Macro(_)) {
-                    continue;
-                }
-                let _ = def;
-            }
-            MemmapEntry::Redirect { name: n, target } => {
-                if *n != name {
-                    continue;
-                }
-                match resolve_path_to_symbol(db, module, source_root, *target) {
-                    Ok(sym) => {
-                        if !out.contains(&sym) {
-                            out.push(sym);
-                        }
-                    }
-                    Err(_) => continue,
-                }
-            }
-            MemmapEntry::Glob { .. } => {}
-            MemmapEntry::MacroUse(mu) => {
-                if let MacroUseState::Expanded(exps) = &mu.state {
-                    for exp in exps {
-                        collect_named_matches(db, module, source_root, &exp.entries, name, ns, out);
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Collect glob matches from entries (including expanded subtrees).
-fn collect_glob_matches<'db>(
-    db: &'db dyn Db,
-    current_module: Module<'db>,
-    source_root: SourceRoot,
-    entries: &[crate::memmap::MemmapEntry<'db>],
-    name: Name<'db>,
-    ns: Namespace,
-    out: &mut Vec<Symbol<'db>>,
-) {
-    use crate::memmap::{MacroUseState, MemmapEntry};
-
-    for entry in entries {
-        match entry {
-            MemmapEntry::Glob { path } => {
-                let Some(target) =
-                    resolve_use_path_to_module_from_path(db, current_module, source_root, *path)
-                else {
-                    continue;
-                };
-                // Module::resolve dispatches on local vs external internally.
-                let sym = target.resolve_member(db, source_root, name, ns).ok();
-                if let Some(sym) = sym {
-                    if !out.contains(&sym) {
-                        out.push(sym);
-                    }
-                }
-            }
-            MemmapEntry::MacroUse(mu) => {
-                if let MacroUseState::Expanded(exps) = &mu.state {
-                    for exp in exps {
-                        collect_glob_matches(
-                            db,
-                            current_module,
-                            source_root,
-                            &exp.entries,
-                            name,
-                            ns,
-                            out,
-                        );
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
+    // 4. Std prelude.
+    resolve_in_std_prelude(db, name, ns).ok_or(ResolutionError::Unresolved)
 }
 
 /// Resolve a path (from a use-redirect) to a Symbol, using the MEM-map
@@ -628,8 +493,11 @@ impl<'db> Module<'db> {
             return Err(ResolutionError::Unresolved);
         };
 
-        if matches!(self.source(db), ModuleSource::External(..)) {
-            return definition_in_ns(db, self, name, ns).ok_or(ResolutionError::Unresolved);
+        match self.source(db) {
+            ModuleSource::External(..) => {
+                return definition_in_ns(db, self, name, ns).ok_or(ResolutionError::Unresolved);
+            }
+            ModuleSource::Local { .. } | ModuleSource::LocalInline { .. } => {}
         }
 
         let memmap = module_memmap(db, self, source_root);
