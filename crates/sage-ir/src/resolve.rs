@@ -223,7 +223,7 @@ pub fn resolve_module_path<'db>(
         let name = Name::new(db, (*seg_text).to_owned());
         // Use memmap-aware lookup so macro-created modules are visible.
         let sym = current
-            .resolve(db, source_root, name, Namespace::Type)
+            .resolve_member(db, source_root, name, Namespace::Type)
             .ok()
             .or_else(|| definition(db, current, name))?;
         match sym.source(db) {
@@ -441,7 +441,7 @@ fn collect_glob_matches<'db>(
                     continue;
                 };
                 // Module::resolve dispatches on local vs external internally.
-                let sym = target.resolve(db, source_root, name, ns).ok();
+                let sym = target.resolve_member(db, source_root, name, ns).ok();
                 if let Some(sym) = sym {
                     if !out.contains(&sym) {
                         out.push(sym);
@@ -499,13 +499,13 @@ pub fn resolve_path_to_symbol<'db>(
     for (i, seg) in rest.iter().enumerate() {
         let is_last = i == rest.len() - 1;
         let sym = current
-            .resolve(db, source_root, *seg, Namespace::Type)
+            .resolve_member(db, source_root, *seg, Namespace::Type)
             .or_else(|_| {
                 if is_last {
                     current
-                        .resolve(db, source_root, *seg, Namespace::Value)
+                        .resolve_member(db, source_root, *seg, Namespace::Value)
                         .or_else(|_| {
-                            current.resolve(
+                            current.resolve_member(
                                 db,
                                 source_root,
                                 *seg,
@@ -604,7 +604,7 @@ impl<'db> Module<'db> {
     /// (whether among named entries or among glob candidates).
     /// Returns `Err(Unresolved)` on zero matches or when a cycle
     /// short-circuit prevents progress.
-    pub fn resolve(
+    pub fn resolve_member(
         self,
         db: &'db dyn Db,
         source_root: SourceRoot,
@@ -684,7 +684,7 @@ impl<'db> Module<'db> {
                         // the target contributes zero candidates here
                         // (we swallow Err), which matches the prior
                         // "conservative miss on ambiguity" behaviour.
-                        let sym = target.resolve(db, source_root, name, ns).ok();
+                        let sym = target.resolve_member(db, source_root, name, ns).ok();
                         if let Some(sym) = sym {
                             if !glob_matches.contains(&sym) {
                                 glob_matches.push(sym);
@@ -831,7 +831,7 @@ pub fn resolve_use_path_to_module_from_path<'db>(
     let mut current = first_module;
     for seg in rest {
         let sym = current
-            .resolve(db, source_root, *seg, Namespace::Type)
+            .resolve_member(db, source_root, *seg, Namespace::Type)
             .ok()?;
         current = symbol_to_module(db, sym, source_root, current)?;
     }
@@ -890,7 +890,8 @@ fn first_segment_module_via_memmap<'db>(
         "self" => Some((current_module, rest)),
         "super" => current_module.parent(db).map(|p| (p, rest)),
         _ => {
-            if let Ok(sym) = current_module.resolve(db, source_root, first, Namespace::Type) {
+            if let Ok(sym) = current_module.resolve_member(db, source_root, first, Namespace::Type)
+            {
                 if let Some(child_mod) = symbol_to_module(db, sym, source_root, current_module) {
                     return Some((child_mod, rest));
                 }
