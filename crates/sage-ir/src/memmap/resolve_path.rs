@@ -14,15 +14,47 @@ use crate::Db;
 use crate::item::{Item, MacroDefItem};
 use crate::module::{Module, ModuleSource};
 use crate::name::Name;
-use crate::resolve::{
-    SourceRoot, definition, resolve_first_segment, resolve_use_path_to_module_from_path_ctime,
-    symbol_to_module,
-};
+use crate::resolve::{SourceRoot, definition, resolve_first_segment, symbol_to_module};
 use crate::symbol::{Symbol, SymbolSource};
 use crate::types::Path;
 
 use super::data::*;
 use super::module_memmap;
+
+/// Walk `path` from `current_module` to a module it names, using
+/// `definition` (items-based) for each segment rather than the
+/// MEM-map.
+///
+/// This is the **construction-time** path walker — safe to call from
+/// inside `module_memmap` because it never re-enters `module_memmap`
+/// on the current module. Trades off: it can't see names introduced
+/// by macro expansion at the current module (they aren't in
+/// `file_item_tree`), only in already-constructed target modules.
+///
+/// Used by `resolve_macro_path` when resolving glob-target modules
+/// during macro-path resolution. Callers in non-ctime contexts should
+/// use `Module::resolve_path_to_module` instead.
+fn memmap_resolve_path_to_module<'db>(
+    db: &'db dyn Db,
+    current_module: Module<'db>,
+    source_root: SourceRoot,
+    path: Path<'db>,
+) -> Option<Module<'db>> {
+    let segments = path.segments(db);
+    if segments.is_empty() {
+        return None;
+    }
+
+    let (first_module, rest) =
+        resolve_first_segment(db, current_module, source_root, segments).ok()?;
+
+    let mut current = first_module;
+    for seg in rest {
+        let sym = definition(db, current, *seg)?;
+        current = symbol_to_module(db, sym, source_root, current)?;
+    }
+    Some(current)
+}
 
 /// Resolve a macro path within the current MEM-map context.
 pub(super) fn resolve_macro_path<'db>(
@@ -60,8 +92,7 @@ fn resolve_macro_path_to_defs<'db>(
         let mut globbed: Vec<MacroDefItem<'db>> = Vec::new();
         for entry in entries {
             if let MemmapEntry::Glob { path } = entry {
-                if let Some(target) =
-                    resolve_use_path_to_module_from_path_ctime(db, module, source_root, *path)
+                if let Some(target) = memmap_resolve_path_to_module(db, module, source_root, *path)
                 {
                     if let Some(def) = find_macro_in_module(db, target, name, source_root) {
                         globbed.push(def);
@@ -162,12 +193,9 @@ fn resolve_macro_path_to_defs<'db>(
             // 3. Globs — first segment may come from one.
             for entry in entries {
                 if let MemmapEntry::Glob { path: glob_path } = entry {
-                    let Some(glob_target) = resolve_use_path_to_module_from_path_ctime(
-                        db,
-                        module,
-                        source_root,
-                        *glob_path,
-                    ) else {
+                    let Some(glob_target) =
+                        memmap_resolve_path_to_module(db, module, source_root, *glob_path)
+                    else {
                         continue;
                     };
                     if matches!(glob_target.source(db), ModuleSource::External(..)) {

@@ -785,32 +785,10 @@ pub fn resolve_use_path_to_module_from_path<'db>(
         .ok()
 }
 
-/// Construction-time variant: walks path segments via `definition`
-/// (file_item_tree-backed) rather than the MEM-map, so it's safe to
-/// call from inside `module_memmap` without re-entering the current
-/// module's query.
-pub fn resolve_use_path_to_module_from_path_ctime<'db>(
-    db: &'db dyn Db,
-    current_module: Module<'db>,
-    source_root: SourceRoot,
-    path: Path<'db>,
-) -> Option<Module<'db>> {
-    let segments = path.segments(db);
-    if segments.is_empty() {
-        return None;
-    }
-
-    let (first_module, rest) =
-        resolve_first_segment(db, current_module, source_root, segments).ok()?;
-
-    let mut current = first_module;
-    for seg in rest {
-        let sym = definition(db, current, *seg)?;
-        current = symbol_to_module(db, sym, source_root, current)?;
-    }
-    Some(current)
-}
-
+/// Construction-time path resolution — items-based walking — lives
+/// in `memmap::resolve_path` alongside the rest of the construction-
+/// time resolver. Post-construction callers use `Module::resolve_path`
+/// / `Module::resolve_path_to_module` instead.
 /// Resolve the first segment of a use path.
 /// Returns (module to search in, remaining segments).
 pub(crate) fn resolve_first_segment<'db>(
