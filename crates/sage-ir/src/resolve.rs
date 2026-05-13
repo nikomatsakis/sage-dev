@@ -333,69 +333,6 @@ pub fn resolve_name<'db>(
     resolve_in_std_prelude(db, name, ns).ok_or(ResolutionError::Unresolved)
 }
 
-/// Resolve a path (from a use-redirect) to a Symbol, using the MEM-map
-/// of each intermediate module so that macro-introduced names in those
-/// modules are visible.
-pub fn resolve_path_to_symbol<'db>(
-    db: &'db dyn Db,
-    current_module: Module<'db>,
-    source_root: SourceRoot,
-    path: Path<'db>,
-) -> Result<Symbol<'db>, ResolutionError> {
-    // Cycle-break: short-circuit if already resolving this (module, path).
-    let Some(_guard) = FrameGuard::enter(
-        salsa::plumbing::AsId::as_id(&current_module),
-        salsa::plumbing::AsId::as_id(&path),
-        FRAME_PATH_SYMBOL,
-    ) else {
-        return Err(ResolutionError::Unresolved);
-    };
-
-    let segments = path.segments(db);
-    if segments.is_empty() {
-        return Err(ResolutionError::Unresolved);
-    }
-
-    let (first_module, rest) =
-        first_segment_module_via_memmap(db, current_module, source_root, segments)
-            .ok_or(ResolutionError::Unresolved)?;
-
-    let mut current = first_module;
-    for (i, seg) in rest.iter().enumerate() {
-        let is_last = i == rest.len() - 1;
-        let sym = current
-            .resolve_member(db, source_root, *seg, Namespace::Type)
-            .or_else(|_| {
-                if is_last {
-                    current
-                        .resolve_member(db, source_root, *seg, Namespace::Value)
-                        .or_else(|_| {
-                            current.resolve_member(
-                                db,
-                                source_root,
-                                *seg,
-                                Namespace::Macro(MacroKind::Bang),
-                            )
-                        })
-                } else {
-                    Err(ResolutionError::Unresolved)
-                }
-            })?;
-        if !is_last {
-            current = symbol_to_module(db, sym, source_root, current)
-                .ok_or(ResolutionError::Unresolved)?;
-        } else {
-            return Ok(sym);
-        }
-    }
-
-    // If rest is empty, the path is just the first segment module.
-    match first_module.source(db) {
-        ModuleSource::External(cn, di) => Ok(Symbol::new(db, SymbolSource::External(cn, di))),
-        _ => Err(ResolutionError::Unresolved),
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Cycle detection for MEM-map-aware path walking.
 // ---------------------------------------------------------------------------
@@ -410,7 +347,6 @@ thread_local! {
 
 const FRAME_DEFINITION: u8 = 0;
 const FRAME_PATH_SYMBOL: u8 = 1;
-const FRAME_PATH_MODULE: u8 = 2;
 
 /// RAII guard that pushes a resolution frame on entry and pops on drop.
 /// The constructor returns `None` if the frame is already in flight —
@@ -532,9 +468,8 @@ impl<'db> Module<'db> {
                     }
                     MemmapEntry::Redirect { name: n, target } => {
                         if *n == name {
-                            if let Ok(sym) =
-                                resolve_path_to_symbol(db, module, source_root, *target)
-                            {
+                            // Respect the caller's requested namespace.
+                            if let Ok(sym) = module.resolve_path(db, source_root, *target, ns) {
                                 if !named.contains(&sym) {
                                     named.push(sym);
                                 }
@@ -542,16 +477,12 @@ impl<'db> Module<'db> {
                         }
                     }
                     MemmapEntry::Glob { path } => {
-                        let Some(target) =
-                            resolve_use_path_to_module_from_path(db, module, source_root, *path)
+                        // Glob target is a module path.
+                        let Ok(target) = module.resolve_path_to_module(db, source_root, *path)
                         else {
                             continue;
                         };
-                        // Recurse into the glob target via the same
-                        // `Module::resolve` primitive. Ambiguity inside
-                        // the target contributes zero candidates here
-                        // (we swallow Err), which matches the prior
-                        // "conservative miss on ambiguity" behaviour.
+                        // Look up the requested name inside the glob target.
                         let sym = target.resolve_member(db, source_root, name, ns).ok();
                         if let Some(sym) = sym {
                             if !glob_matches.contains(&sym) {
@@ -598,6 +529,169 @@ impl<'db> Module<'db> {
                 _ => Err(ResolutionError::Ambiguous),
             },
             _ => Err(ResolutionError::Ambiguous),
+        }
+    }
+
+    /// Walk a path starting from this module and return the symbol it
+    /// resolves to.
+    ///
+    /// First-segment dispatch handles the usual path prefixes:
+    /// `crate`, `self`, `super`, leading `::` (extern prelude), and
+    /// bare identifiers (which try `resolve_member` first, then fall
+    /// back to extern prelude).
+    ///
+    /// Every subsequent segment is resolved via `resolve_member`, with
+    /// `Namespace::Type` for intermediate segments (they must name a
+    /// module) and `final_ns` for the terminal segment.
+    ///
+    /// Cycle-safe via the shared `FrameGuard` stack. Meant for
+    /// post-construction callers — construction-time code should use
+    /// `resolve_use_path_to_module_from_path_ctime` instead, which
+    /// walks via `definition` to avoid re-entering the current
+    /// module's `module_memmap` query.
+    pub fn resolve_path(
+        self,
+        db: &'db dyn Db,
+        source_root: SourceRoot,
+        path: Path<'db>,
+        final_ns: Namespace,
+    ) -> Result<Symbol<'db>, ResolutionError> {
+        // Cycle-break: short-circuit if already resolving this (module, path).
+        let Some(_guard) = FrameGuard::enter(
+            salsa::plumbing::AsId::as_id(&self),
+            salsa::plumbing::AsId::as_id(&path),
+            FRAME_PATH_SYMBOL,
+        ) else {
+            return Err(ResolutionError::Unresolved);
+        };
+
+        let segments = path.segments(db);
+        if segments.is_empty() {
+            return Err(ResolutionError::Unresolved);
+        }
+
+        let (first_module, rest) = self.dispatch_first_segment(db, source_root, segments)?;
+
+        if rest.is_empty() {
+            // Path was purely a prefix (`crate`, `self`, `super`, or a
+            // single extern-crate name). Only extern modules have a
+            // Symbol we can return directly; locals fall through to Err.
+            // Callers that want the module itself (e.g. glob targets)
+            // should use `resolve_path_to_module` instead.
+            return match first_module.source(db) {
+                ModuleSource::External(cn, di) => {
+                    Ok(Symbol::new(db, SymbolSource::External(cn, di)))
+                }
+                _ => Err(ResolutionError::Unresolved),
+            };
+        }
+
+        let mut current = first_module;
+        for (i, seg) in rest.iter().enumerate() {
+            let is_last = i == rest.len() - 1;
+            let seg_ns = if is_last { final_ns } else { Namespace::Type };
+            let sym = current.resolve_member(db, source_root, *seg, seg_ns)?;
+            if !is_last {
+                current = symbol_to_module(db, sym, source_root, current)
+                    .ok_or(ResolutionError::Unresolved)?;
+            } else {
+                return Ok(sym);
+            }
+        }
+        unreachable!("rest is non-empty and loop always returns on is_last")
+    }
+
+    /// Walk a path starting from this module and return the module it
+    /// resolves to.
+    ///
+    /// Like `resolve_path`, but always treats the terminal as a module
+    /// rather than trying to produce a terminal `Symbol`. Accepts
+    /// "prefix only" paths (`crate`, `self`, `super`, single extern
+    /// crate name) by returning the prefix module directly. Used by
+    /// glob-target resolution, where the path spelled in
+    /// `use foo::*` resolves to a *module*, not a value/type.
+    pub fn resolve_path_to_module(
+        self,
+        db: &'db dyn Db,
+        source_root: SourceRoot,
+        path: Path<'db>,
+    ) -> Result<Module<'db>, ResolutionError> {
+        let Some(_guard) = FrameGuard::enter(
+            salsa::plumbing::AsId::as_id(&self),
+            salsa::plumbing::AsId::as_id(&path),
+            FRAME_PATH_SYMBOL,
+        ) else {
+            return Err(ResolutionError::Unresolved);
+        };
+
+        let segments = path.segments(db);
+        if segments.is_empty() {
+            return Err(ResolutionError::Unresolved);
+        }
+
+        let (first_module, rest) = self.dispatch_first_segment(db, source_root, segments)?;
+
+        let mut current = first_module;
+        for seg in rest {
+            let sym = current.resolve_member(db, source_root, *seg, Namespace::Type)?;
+            current = symbol_to_module(db, sym, source_root, current)
+                .ok_or(ResolutionError::Unresolved)?;
+        }
+        Ok(current)
+    }
+
+    /// Dispatch the first segment of a path. Returns the module to
+    /// start from plus the remaining segments to walk. Shared by
+    /// `resolve_path` and `resolve_path_to_module`.
+    fn dispatch_first_segment(
+        self,
+        db: &'db dyn Db,
+        source_root: SourceRoot,
+        segments: &'db [Name<'db>],
+    ) -> Result<(Module<'db>, &'db [Name<'db>]), ResolutionError> {
+        let first = segments[0];
+        let first_text = first.text(db);
+        let rest = &segments[1..];
+
+        match first_text.as_str() {
+            "" => {
+                // Leading `::` — extern prelude only, consumes both
+                // the empty segment and the crate name.
+                if rest.is_empty() {
+                    return Err(ResolutionError::Unresolved);
+                }
+                let crate_name = rest[0].text(db);
+                let cn = db
+                    .tcx()
+                    .extern_crate(crate_name)
+                    .ok_or(ResolutionError::Unresolved)?;
+                let ext_mod =
+                    Module::new(db, ModuleSource::External(cn, crate::module::DefIndex(0)));
+                Ok((ext_mod, &rest[1..]))
+            }
+            "crate" => Ok((self.crate_root(db), rest)),
+            "self" => Ok((self, rest)),
+            "super" => self
+                .parent(db)
+                .map(|p| (p, rest))
+                .ok_or(ResolutionError::Unresolved),
+            _ => {
+                // Bare identifier: try the current module first, then
+                // fall back to extern prelude.
+                if let Ok(sym) = self.resolve_member(db, source_root, first, Namespace::Type) {
+                    if let Some(child_mod) = symbol_to_module(db, sym, source_root, self) {
+                        return Ok((child_mod, rest));
+                    }
+                    // A non-module symbol is only meaningful if this
+                    // was the whole path; the caller handles that.
+                }
+                if let Some(cn) = db.tcx().extern_crate(first_text) {
+                    let ext_mod =
+                        Module::new(db, ModuleSource::External(cn, crate::module::DefIndex(0)));
+                    return Ok((ext_mod, rest));
+                }
+                Err(ResolutionError::Unresolved)
+            }
         }
     }
 }
@@ -676,34 +770,19 @@ pub fn resolve_use_path<'db>(
 /// or return None if it doesn't resolve. Post-construction variant —
 /// walks path segments via the memmap, so macro-introduced inline
 /// modules are visible as path roots.
+///
+/// Thin wrapper around `Module::resolve_path_to_module`. Kept as a
+/// free function because the validator finds the `Option<Module>`
+/// return type more ergonomic than `Result<Module, _>`.
 pub fn resolve_use_path_to_module_from_path<'db>(
     db: &'db dyn Db,
     current_module: Module<'db>,
     source_root: SourceRoot,
     path: Path<'db>,
 ) -> Option<Module<'db>> {
-    let _guard = FrameGuard::enter(
-        salsa::plumbing::AsId::as_id(&current_module),
-        salsa::plumbing::AsId::as_id(&path),
-        FRAME_PATH_MODULE,
-    )?;
-
-    let segments = path.segments(db);
-    if segments.is_empty() {
-        return None;
-    }
-
-    let (first_module, rest) =
-        first_segment_module_via_memmap(db, current_module, source_root, segments)?;
-
-    let mut current = first_module;
-    for seg in rest {
-        let sym = current
-            .resolve_member(db, source_root, *seg, Namespace::Type)
-            .ok()?;
-        current = symbol_to_module(db, sym, source_root, current)?;
-    }
-    Some(current)
+    current_module
+        .resolve_path_to_module(db, source_root, path)
+        .ok()
 }
 
 /// Construction-time variant: walks path segments via `definition`
@@ -730,48 +809,6 @@ pub fn resolve_use_path_to_module_from_path_ctime<'db>(
         current = symbol_to_module(db, sym, source_root, current)?;
     }
     Some(current)
-}
-
-/// A variant of `resolve_first_segment` that consults the MEM-map for
-/// bare-identifier first segments.
-fn first_segment_module_via_memmap<'db>(
-    db: &'db dyn Db,
-    current_module: Module<'db>,
-    source_root: SourceRoot,
-    segments: &'db [Name<'db>],
-) -> Option<(Module<'db>, &'db [Name<'db>])> {
-    let first = segments[0];
-    let first_text = first.text(db);
-    let rest = &segments[1..];
-
-    match first_text.as_str() {
-        "" => {
-            if rest.is_empty() {
-                return None;
-            }
-            let crate_name = rest[0].text(db);
-            let cn = db.tcx().extern_crate(crate_name)?;
-            let ext_mod = Module::new(db, ModuleSource::External(cn, crate::module::DefIndex(0)));
-            Some((ext_mod, &rest[1..]))
-        }
-        "crate" => Some((current_module.crate_root(db), rest)),
-        "self" => Some((current_module, rest)),
-        "super" => current_module.parent(db).map(|p| (p, rest)),
-        _ => {
-            if let Ok(sym) = current_module.resolve_member(db, source_root, first, Namespace::Type)
-            {
-                if let Some(child_mod) = symbol_to_module(db, sym, source_root, current_module) {
-                    return Some((child_mod, rest));
-                }
-            }
-            if let Some(cn) = db.tcx().extern_crate(first_text) {
-                let ext_mod =
-                    Module::new(db, ModuleSource::External(cn, crate::module::DefIndex(0)));
-                return Some((ext_mod, rest));
-            }
-            None
-        }
-    }
 }
 
 /// Resolve the first segment of a use path.

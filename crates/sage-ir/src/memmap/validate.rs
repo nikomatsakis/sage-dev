@@ -180,7 +180,16 @@ fn target_resolves_to_nothing<'db>(
     source_root: SourceRoot,
     path: Path<'db>,
 ) -> bool {
-    crate::resolve::resolve_path_to_symbol(db, current_module, source_root, path).is_err()
+    // A redirect's target has no inherent namespace — try Type first,
+    // then Value and Macro(Bang). If none resolves, the redirect is
+    // truly unresolvable.
+    current_module
+        .resolve_path(db, source_root, path, Namespace::Type)
+        .or_else(|_| current_module.resolve_path(db, source_root, path, Namespace::Value))
+        .or_else(|_| {
+            current_module.resolve_path(db, source_root, path, Namespace::Macro(MacroKind::Bang))
+        })
+        .is_err()
 }
 
 fn collect_expanded_names<'db>(
