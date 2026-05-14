@@ -25,5 +25,4 @@ jobs:
         run: |
           cargo install mdbook --locked
           cargo install mdbook-mermaid --locked
-          cargo install mdbook-linkcheck
       - run: cargo xtask ci
