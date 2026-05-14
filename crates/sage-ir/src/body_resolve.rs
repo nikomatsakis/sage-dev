@@ -7,7 +7,7 @@ use crate::module::ModSymbol;
 use crate::name::Name;
 use crate::resolve::{Namespace, SourceRoot, resolve_name};
 use crate::resolved::*;
-use crate::span::SpanIndices;
+use crate::span::RelativeSpan;
 
 struct BodyResolver<'db> {
     db: &'db dyn Db,
@@ -30,7 +30,7 @@ impl<'db> BodyResolver<'db> {
         self.scopes.pop();
     }
 
-    fn add_binding(&mut self, name: Name<'db>, span: SpanIndices) -> LocalId {
+    fn add_binding(&mut self, name: Name<'db>, span: RelativeSpan) -> LocalId {
         let id = LocalId(self.locals.len() as u32);
         self.locals.push(LocalVar { name, span });
         if let Some(scope) = self.scopes.last_mut() {

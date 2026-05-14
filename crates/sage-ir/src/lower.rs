@@ -9,7 +9,7 @@ use crate::body::*;
 use crate::item::*;
 use crate::name::Name;
 use crate::source::SourceFile;
-use crate::span::{SpanIndices, SpanTable};
+use crate::span::{AbsoluteSpan, RelativeSpan};
 use crate::types::*;
 
 /// Parse a source file and return its top-level items.
@@ -22,14 +22,26 @@ pub fn file_item_tree<'db>(db: &'db dyn Db, file: SourceFile) -> Vec<ItemAst<'db
         .set_language(&tree_sitter_rust::LANGUAGE.into())
         .expect("failed to set tree-sitter-rust language");
     let tree = parser.parse(text, None).expect("tree-sitter parse failed");
-    let mut cx = LowerCtx { db, file, text };
+    let mut cx = LowerCtx {
+        db,
+        file,
+        text,
+        item_start: 0,
+    };
     cx.lower_items(tree.root_node())
+}
+
+enum AttrNodeKind {
+    Attr,
+    OuterDoc,
+    InnerDoc,
 }
 
 struct LowerCtx<'db> {
     db: &'db dyn Db,
     file: SourceFile,
     text: &'db str,
+    item_start: u32,
 }
 
 impl<'db> LowerCtx<'db> {
@@ -41,26 +53,26 @@ impl<'db> LowerCtx<'db> {
         Name::new(self.db, self.node_text(node).to_owned())
     }
 
-    fn span(&self, node: Node<'_>) -> SpanIndices {
-        SpanIndices {
+    fn abs_span(&self, node: Node<'_>) -> AbsoluteSpan {
+        AbsoluteSpan {
+            file: self.file,
             start: node.start_byte() as u32,
             end: node.end_byte() as u32,
         }
     }
 
-    fn make_span_table(&self, node: Node<'_>) -> SpanTable<'db> {
-        SpanTable::new(
-            self.db,
-            self.file,
-            vec![node.start_byte() as u32, node.end_byte() as u32],
-        )
+    fn rel_span(&self, node: Node<'_>) -> RelativeSpan {
+        RelativeSpan {
+            start: node.start_byte() as u32 - self.item_start,
+            end: node.end_byte() as u32 - self.item_start,
+        }
     }
 
     // -- Items -------------------------------------------------------------
 
     fn lower_items(&mut self, parent: Node<'_>) -> Vec<ItemAst<'db>> {
         let mut items = Vec::new();
-        let mut pending_attrs = Vec::new();
+        let mut pending_attr_nodes: Vec<(Node<'_>, AttrNodeKind)> = Vec::new();
         let mut cursor = parent.walk();
         for child in parent.children(&mut cursor) {
             if !child.is_named() {
@@ -68,22 +80,41 @@ impl<'db> LowerCtx<'db> {
             }
             match child.kind() {
                 "attribute_item" | "inner_attribute_item" => {
-                    pending_attrs.push(self.lower_attr(child));
+                    pending_attr_nodes.push((child, AttrNodeKind::Attr));
                 }
                 "line_comment" => {
                     let text = self.node_text(child);
-                    if let Some(doc) = text.strip_prefix("///") {
-                        let doc = doc.strip_prefix(' ').unwrap_or(doc).trim_end();
-                        pending_attrs.push(self.make_doc_attr(child, doc, false));
-                    } else if let Some(doc) = text.strip_prefix("//!") {
-                        let doc = doc.strip_prefix(' ').unwrap_or(doc).trim_end();
-                        pending_attrs.push(self.make_doc_attr(child, doc, true));
+                    if text.starts_with("///") {
+                        pending_attr_nodes.push((child, AttrNodeKind::OuterDoc));
+                    } else if text.starts_with("//!") {
+                        pending_attr_nodes.push((child, AttrNodeKind::InnerDoc));
                     }
-                    // Regular comments are skipped.
                 }
                 "block_comment" | "empty_statement" => continue,
                 _ => {
-                    let attrs = std::mem::take(&mut pending_attrs);
+                    let attr_nodes = std::mem::take(&mut pending_attr_nodes);
+                    let first_attr_start = attr_nodes.first().map(|(n, _)| n.start_byte() as u32);
+                    let item_node_start = child.start_byte() as u32;
+                    self.item_start = first_attr_start.unwrap_or(item_node_start);
+
+                    let attrs: Vec<Attr<'db>> = attr_nodes
+                        .iter()
+                        .map(|(n, kind)| match kind {
+                            AttrNodeKind::Attr => self.lower_attr(*n),
+                            AttrNodeKind::OuterDoc => {
+                                let text = self.node_text(*n);
+                                let doc = text.strip_prefix("///").unwrap();
+                                let doc = doc.strip_prefix(' ').unwrap_or(doc).trim_end();
+                                self.make_doc_attr(*n, doc, false)
+                            }
+                            AttrNodeKind::InnerDoc => {
+                                let text = self.node_text(*n);
+                                let doc = text.strip_prefix("//!").unwrap();
+                                let doc = doc.strip_prefix(' ').unwrap_or(doc).trim_end();
+                                self.make_doc_attr(*n, doc, true)
+                            }
+                        })
+                        .collect();
                     items.push(self.lower_item(child, attrs));
                 }
             }
@@ -108,15 +139,15 @@ impl<'db> LowerCtx<'db> {
         let path = Path::new(
             self.db,
             vec![Name::new(self.db, path_text.trim().to_owned())],
-            self.span(node),
+            self.rel_span(node),
         );
-        let args = args_text.map(|a| TokenTree::new(self.db, a.to_owned(), self.span(node)));
+        let args = args_text.map(|a| TokenTree::new(self.db, a.to_owned(), self.rel_span(node)));
         Attr::new(
             self.db,
             AttrKind::Normal,
             path,
             args,
-            self.span(node),
+            self.rel_span(node),
             is_inner,
         )
     }
@@ -125,15 +156,19 @@ impl<'db> LowerCtx<'db> {
         let path = Path::new(
             self.db,
             vec![Name::new(self.db, "doc".to_owned())],
-            self.span(node),
+            self.rel_span(node),
         );
-        let args = Some(TokenTree::new(self.db, text.to_owned(), self.span(node)));
+        let args = Some(TokenTree::new(
+            self.db,
+            text.to_owned(),
+            self.rel_span(node),
+        ));
         Attr::new(
             self.db,
             AttrKind::DocComment,
             path,
             args,
-            self.span(node),
+            self.rel_span(node),
             is_inner,
         )
     }
@@ -153,7 +188,7 @@ impl<'db> LowerCtx<'db> {
             "macro_definition" => self.lower_macro_def_item(node),
             "macro_invocation" => self.lower_macro_invocation_item(node),
             "expression_statement" => self.lower_expression_statement(node),
-            _ => ItemAst::Error(self.span(node)),
+            _ => ItemAst::Error(self.abs_span(node)),
         }
     }
 
@@ -162,8 +197,7 @@ impl<'db> LowerCtx<'db> {
             .child_by_field_name("name")
             .expect("function has no name");
         let name = self.intern_name(name_node);
-        let span = self.span(node);
-        let span_table = self.make_span_table(node);
+        let span = self.abs_span(node);
 
         let is_async = node.children(&mut node.walk()).any(|c| c.kind() == "async");
         let is_unsafe = node
@@ -182,7 +216,7 @@ impl<'db> LowerCtx<'db> {
         let body = self.lower_body(node);
 
         FnAst::new(
-            self.db, name, attrs, params, ret_type, is_async, is_unsafe, body, span_table, span,
+            self.db, name, attrs, params, ret_type, is_async, is_unsafe, body, span,
         )
     }
 
@@ -199,7 +233,7 @@ impl<'db> LowerCtx<'db> {
                         .child_by_field_name("type")
                         .map(|n| self.lower_type(n))
                         .unwrap_or_else(|| self.make_error_type(child));
-                    params.push(Param::new(self.db, name, ty, self.span(child)));
+                    params.push(Param::new(self.db, name, ty, self.rel_span(child)));
                 }
                 "self_parameter" => {
                     let name = Some(Name::new(self.db, "self".to_owned()));
@@ -210,10 +244,10 @@ impl<'db> LowerCtx<'db> {
                     let self_path = Path::new(
                         self.db,
                         vec![Name::new(self.db, "Self".to_owned())],
-                        self.span(child),
+                        self.rel_span(child),
                     );
                     let self_ty =
-                        TypeRef::new(self.db, TypeRefKind::Path(self_path), self.span(child));
+                        TypeRef::new(self.db, TypeRefKind::Path(self_path), self.rel_span(child));
                     let ty = if has_ref {
                         let m = if is_mut {
                             Mutability::Mut
@@ -223,12 +257,12 @@ impl<'db> LowerCtx<'db> {
                         TypeRef::new(
                             self.db,
                             TypeRefKind::Reference(self_ty, m),
-                            self.span(child),
+                            self.rel_span(child),
                         )
                     } else {
                         self_ty
                     };
-                    params.push(Param::new(self.db, name, ty, self.span(child)));
+                    params.push(Param::new(self.db, name, ty, self.rel_span(child)));
                 }
                 _ => {}
             }
@@ -241,15 +275,14 @@ impl<'db> LowerCtx<'db> {
             node.child_by_field_name("name")
                 .expect("struct has no name"),
         );
-        let span = self.span(node);
-        let span_table = self.make_span_table(node);
+        let span = self.abs_span(node);
 
         let fields = node
             .child_by_field_name("body")
             .map(|body| self.lower_field_defs(body))
             .unwrap_or_default();
 
-        StructAst::new(self.db, name, attrs, fields, span_table, span)
+        StructAst::new(self.db, name, attrs, fields, span)
     }
 
     fn lower_field_defs(&mut self, body: Node<'_>) -> Vec<FieldDef<'db>> {
@@ -265,7 +298,7 @@ impl<'db> LowerCtx<'db> {
                     .child_by_field_name("type")
                     .map(|n| self.lower_type(n))
                     .unwrap_or_else(|| self.make_error_type(child));
-                fields.push(FieldDef::new(self.db, name, ty, self.span(child)));
+                fields.push(FieldDef::new(self.db, name, ty, self.rel_span(child)));
             }
         }
         fields
@@ -273,8 +306,7 @@ impl<'db> LowerCtx<'db> {
 
     fn lower_enum(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> EnumAst<'db> {
         let name = self.intern_name(node.child_by_field_name("name").expect("enum has no name"));
-        let span = self.span(node);
-        let span_table = self.make_span_table(node);
+        let span = self.abs_span(node);
 
         let mut variants = Vec::new();
         if let Some(body) = node.child_by_field_name("body") {
@@ -289,30 +321,33 @@ impl<'db> LowerCtx<'db> {
                         .child_by_field_name("body")
                         .map(|b| self.lower_field_defs(b))
                         .unwrap_or_default();
-                    variants.push(VariantDef::new(self.db, vname, fields, self.span(child)));
+                    variants.push(VariantDef::new(
+                        self.db,
+                        vname,
+                        fields,
+                        self.rel_span(child),
+                    ));
                 }
             }
         }
 
-        EnumAst::new(self.db, name, attrs, variants, span_table, span)
+        EnumAst::new(self.db, name, attrs, variants, span)
     }
 
     fn lower_trait(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> TraitAst<'db> {
         let name = self.intern_name(node.child_by_field_name("name").expect("trait has no name"));
-        let span = self.span(node);
-        let span_table = self.make_span_table(node);
+        let span = self.abs_span(node);
 
         let items = node
             .child_by_field_name("body")
             .map(|body| self.lower_items(body))
             .unwrap_or_default();
 
-        TraitAst::new(self.db, name, attrs, items, span_table, span)
+        TraitAst::new(self.db, name, attrs, items, span)
     }
 
     fn lower_impl(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> ImplAst<'db> {
-        let span = self.span(node);
-        let span_table = self.make_span_table(node);
+        let span = self.abs_span(node);
 
         let self_ty = node
             .child_by_field_name("type")
@@ -328,7 +363,7 @@ impl<'db> LowerCtx<'db> {
             .map(|body| self.lower_items(body))
             .unwrap_or_default();
 
-        ImplAst::new(self.db, attrs, self_ty, trait_path, items, span_table, span)
+        ImplAst::new(self.db, attrs, self_ty, trait_path, items, span)
     }
 
     fn lower_type_alias(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> TypeAliasAst<'db> {
@@ -336,18 +371,16 @@ impl<'db> LowerCtx<'db> {
             node.child_by_field_name("name")
                 .expect("type alias has no name"),
         );
-        let span = self.span(node);
-        let span_table = self.make_span_table(node);
+        let span = self.abs_span(node);
         let ty = node.child_by_field_name("type").map(|n| self.lower_type(n));
-        TypeAliasAst::new(self.db, name, attrs, ty, span_table, span)
+        TypeAliasAst::new(self.db, name, attrs, ty, span)
     }
 
     fn lower_const(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> ConstAst<'db> {
         let name = self.intern_name(node.child_by_field_name("name").expect("const has no name"));
-        let span = self.span(node);
-        let span_table = self.make_span_table(node);
+        let span = self.abs_span(node);
         let ty = node.child_by_field_name("type").map(|n| self.lower_type(n));
-        ConstAst::new(self.db, name, attrs, ty, span_table, span)
+        ConstAst::new(self.db, name, attrs, ty, span)
     }
 
     fn lower_static(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> StaticAst<'db> {
@@ -355,31 +388,25 @@ impl<'db> LowerCtx<'db> {
             node.child_by_field_name("name")
                 .expect("static has no name"),
         );
-        let span = self.span(node);
-        let span_table = self.make_span_table(node);
+        let span = self.abs_span(node);
         let ty = node.child_by_field_name("type").map(|n| self.lower_type(n));
         let is_mut = node
             .children(&mut node.walk())
             .any(|c| c.kind() == "mutable_specifier");
-        StaticAst::new(self.db, name, attrs, ty, is_mut, span_table, span)
+        StaticAst::new(self.db, name, attrs, ty, is_mut, span)
     }
 
     fn lower_mod(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> ModAst<'db> {
         let name = self.intern_name(node.child_by_field_name("name").expect("mod has no name"));
-        let span = self.span(node);
-        let span_table = self.make_span_table(node);
+        let span = self.abs_span(node);
         let items = node
             .child_by_field_name("body")
             .map(|body| self.lower_items(body));
-        // Lowering produces declaration-site ModAsts with no parent/
-        // file context — those fields are filled in later by
-        // resolution (see `resolve::resolve_mod`).
-        ModAst::new(self.db, name, None, None, attrs, items, span_table, span)
+        ModAst::new(self.db, name, None, None, attrs, items, span)
     }
 
     fn lower_use(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> ItemAst<'db> {
-        let span = self.span(node);
-        let span_table = self.make_span_table(node);
+        let span = self.abs_span(node);
         let mut imports = Vec::new();
         // The use tree is the first named child after visibility/`use` keyword.
         let mut cursor = node.walk();
@@ -393,7 +420,7 @@ impl<'db> LowerCtx<'db> {
                 }
             }
         }
-        ItemAst::Use(UseGroupAst::new(self.db, attrs, imports, span_table, span))
+        ItemAst::Use(UseGroupAst::new(self.db, attrs, imports, span))
     }
 
     fn flatten_use_tree(
@@ -439,8 +466,8 @@ impl<'db> LowerCtx<'db> {
                         UseKind::Named(last)
                     }
                 };
-                let path = Path::new(self.db, path_segs, self.span(node));
-                out.push(UseImport::new(self.db, path, kind, self.span(node)));
+                let path = Path::new(self.db, path_segs, self.rel_span(node));
+                out.push(UseImport::new(self.db, path, kind, self.rel_span(node)));
             }
             "use_wildcard" => {
                 // `foo::*` — the scoped part is in a child "path" if present
@@ -456,12 +483,12 @@ impl<'db> LowerCtx<'db> {
                 if let Some(pn) = path_node {
                     self.collect_path_segments(pn, &mut path_segs);
                 }
-                let path = Path::new(self.db, path_segs, self.span(node));
+                let path = Path::new(self.db, path_segs, self.rel_span(node));
                 out.push(UseImport::new(
                     self.db,
                     path,
                     UseKind::Glob,
-                    self.span(node),
+                    self.rel_span(node),
                 ));
             }
             "scoped_identifier" => {
@@ -472,24 +499,24 @@ impl<'db> LowerCtx<'db> {
                     .last()
                     .copied()
                     .unwrap_or_else(|| Name::new(self.db, "?".to_owned()));
-                let path = Path::new(self.db, path_segs, self.span(node));
+                let path = Path::new(self.db, path_segs, self.rel_span(node));
                 out.push(UseImport::new(
                     self.db,
                     path,
                     UseKind::Named(last),
-                    self.span(node),
+                    self.rel_span(node),
                 ));
             }
             "identifier" | "type_identifier" => {
                 let name = self.intern_name(node);
                 let mut path_segs = prefix.to_vec();
                 path_segs.push(name);
-                let path = Path::new(self.db, path_segs, self.span(node));
+                let path = Path::new(self.db, path_segs, self.rel_span(node));
                 out.push(UseImport::new(
                     self.db,
                     path,
                     UseKind::Named(name),
-                    self.span(node),
+                    self.rel_span(node),
                 ));
             }
             "self" => {
@@ -499,24 +526,24 @@ impl<'db> LowerCtx<'db> {
                     .last()
                     .copied()
                     .unwrap_or_else(|| Name::new(self.db, "self".to_owned()));
-                let path = Path::new(self.db, path_segs, self.span(node));
+                let path = Path::new(self.db, path_segs, self.rel_span(node));
                 out.push(UseImport::new(
                     self.db,
                     path,
                     UseKind::Named(alias),
-                    self.span(node),
+                    self.rel_span(node),
                 ));
             }
             "crate" | "super" => {
                 let name = Name::new(self.db, node.kind().to_owned());
                 let mut path_segs = prefix.to_vec();
                 path_segs.push(name);
-                let path = Path::new(self.db, path_segs, self.span(node));
+                let path = Path::new(self.db, path_segs, self.rel_span(node));
                 out.push(UseImport::new(
                     self.db,
                     path,
                     UseKind::Named(name),
-                    self.span(node),
+                    self.rel_span(node),
                 ));
             }
             _ => {
@@ -524,12 +551,12 @@ impl<'db> LowerCtx<'db> {
                 let name = Name::new(self.db, self.node_text(node).to_owned());
                 let mut path_segs = prefix.to_vec();
                 path_segs.push(name);
-                let path = Path::new(self.db, path_segs, self.span(node));
+                let path = Path::new(self.db, path_segs, self.rel_span(node));
                 out.push(UseImport::new(
                     self.db,
                     path,
                     UseKind::Named(name),
-                    self.span(node),
+                    self.rel_span(node),
                 ));
             }
         }
@@ -540,38 +567,37 @@ impl<'db> LowerCtx<'db> {
     fn lower_macro_def_item(&self, node: Node<'_>) -> ItemAst<'db> {
         let name_node = match node.child_by_field_name("name") {
             Some(n) => n,
-            None => return ItemAst::Error(self.span(node)),
+            None => return ItemAst::Error(self.abs_span(node)),
         };
         let name = self.intern_name(name_node);
-        let span = self.span(node);
+        let span = self.abs_span(node);
         let body_tokens = crate::ts_helpers::extract_macro_body_tokens(node, self.text);
 
         ItemAst::MacroDef(MacroDefAst::new(self.db, name, body_tokens, span))
     }
 
     fn lower_expression_statement(&self, node: Node<'_>) -> ItemAst<'db> {
-        // Item-level macro invocation: expression_statement > macro_invocation
         let invoc = node
             .named_children(&mut node.walk())
             .find(|c| c.kind() == "macro_invocation");
         match invoc {
             Some(invoc_node) => self.lower_macro_invocation_item(invoc_node),
-            None => ItemAst::Error(self.span(node)),
+            None => ItemAst::Error(self.abs_span(node)),
         }
     }
 
     fn lower_macro_invocation_item(&self, node: Node<'_>) -> ItemAst<'db> {
         let macro_node = match node.child_by_field_name("macro") {
             Some(n) => n,
-            None => return ItemAst::Error(self.span(node)),
+            None => return ItemAst::Error(self.abs_span(node)),
         };
         let segments =
             crate::ts_helpers::collect_macro_path_segments(self.db, macro_node, self.text);
         if segments.is_empty() {
-            return ItemAst::Error(self.span(node));
+            return ItemAst::Error(self.abs_span(node));
         }
-        let span = self.span(node);
-        let path = Path::new(self.db, segments, span);
+        let span = self.abs_span(node);
+        let path = Path::new(self.db, segments, self.rel_span(node));
         let input_tokens = crate::ts_helpers::extract_macro_invocation_tokens(node, self.text);
         ItemAst::MacroInvocation(MacroInvocationAst::new(self.db, path, input_tokens, span))
     }
@@ -579,7 +605,7 @@ impl<'db> LowerCtx<'db> {
     // -- Types -------------------------------------------------------------
 
     fn lower_type(&mut self, node: Node<'_>) -> TypeRef<'db> {
-        let span = self.span(node);
+        let span = self.rel_span(node);
         let kind = match node.kind() {
             "type_identifier"
             | "scoped_type_identifier"
@@ -644,7 +670,7 @@ impl<'db> LowerCtx<'db> {
     fn lower_path(&self, node: Node<'_>) -> Path<'db> {
         let mut segments = Vec::new();
         self.collect_path_segments(node, &mut segments);
-        Path::new(self.db, segments, self.span(node))
+        Path::new(self.db, segments, self.rel_span(node))
     }
 
     fn collect_path_segments(&self, node: Node<'_>, out: &mut Vec<Name<'db>>) {
@@ -680,20 +706,20 @@ impl<'db> LowerCtx<'db> {
     }
 
     fn make_error_type(&self, node: Node<'_>) -> TypeRef<'db> {
-        TypeRef::new(self.db, TypeRefKind::Error, self.span(node))
+        TypeRef::new(self.db, TypeRefKind::Error, self.rel_span(node))
     }
 
     // -- Body lowering -----------------------------------------------------
 
     fn lower_body(&self, fn_node: Node<'_>) -> FunctionBody<'db> {
-        let mut bcx = BodyLowerCtx::new(self.db, self.text);
+        let mut bcx = BodyLowerCtx::new(self.db, self.text, self.item_start);
         let body_node = fn_node.child_by_field_name("body");
         let root_expr = body_node
             .map(|n| bcx.lower_expr(n))
             .unwrap_or_else(|| bcx.missing_expr(fn_node));
         let body = bcx.stash.alloc(Body {
             root: root_expr,
-            span: self.span(fn_node),
+            span: self.rel_span(fn_node),
         });
         Stashed::new(bcx.stash, body)
     }
@@ -706,14 +732,16 @@ impl<'db> LowerCtx<'db> {
 struct BodyLowerCtx<'db> {
     db: &'db dyn Db,
     text: &'db str,
+    item_start: u32,
     stash: Stash,
 }
 
 impl<'db> BodyLowerCtx<'db> {
-    fn new(db: &'db dyn Db, text: &'db str) -> Self {
+    fn new(db: &'db dyn Db, text: &'db str, item_start: u32) -> Self {
         Self {
             db,
             text,
+            item_start,
             stash: Stash::new(),
         }
     }
@@ -722,10 +750,10 @@ impl<'db> BodyLowerCtx<'db> {
         &self.text[node.byte_range()]
     }
 
-    fn span(&self, node: Node<'_>) -> SpanIndices {
-        SpanIndices {
-            start: node.start_byte() as u32,
-            end: node.end_byte() as u32,
+    fn rel_span(&self, node: Node<'_>) -> RelativeSpan {
+        RelativeSpan {
+            start: node.start_byte() as u32 - self.item_start,
+            end: node.end_byte() as u32 - self.item_start,
         }
     }
 
@@ -736,14 +764,14 @@ impl<'db> BodyLowerCtx<'db> {
     fn missing_expr(&mut self, node: Node<'_>) -> Ptr<Expr<'db>> {
         self.stash.alloc(Expr {
             kind: ExprKind::Missing,
-            span: self.span(node),
+            span: self.rel_span(node),
         })
     }
 
     fn lower_path(&self, node: Node<'_>) -> Path<'db> {
         let mut segments = Vec::new();
         self.collect_path_segments(node, &mut segments);
-        Path::new(self.db, segments, self.span(node))
+        Path::new(self.db, segments, self.rel_span(node))
     }
 
     fn collect_path_segments(&self, node: Node<'_>, out: &mut Vec<Name<'db>>) {
@@ -778,7 +806,7 @@ impl<'db> BodyLowerCtx<'db> {
     // -- Expressions -------------------------------------------------------
 
     fn lower_expr(&mut self, node: Node<'_>) -> Ptr<Expr<'db>> {
-        let span = self.span(node);
+        let span = self.rel_span(node);
         let kind = match node.kind() {
             "block" => return self.lower_block(node),
             "integer_literal" => ExprKind::Literal(Literal::Int),
@@ -980,9 +1008,15 @@ impl<'db> BodyLowerCtx<'db> {
                 let ty = node
                     .child_by_field_name("type")
                     .map(|n| {
-                        TypeRef::new(self.db, TypeRefKind::Path(self.lower_path(n)), self.span(n))
+                        TypeRef::new(
+                            self.db,
+                            TypeRefKind::Path(self.lower_path(n)),
+                            self.rel_span(n),
+                        )
                     })
-                    .unwrap_or_else(|| TypeRef::new(self.db, TypeRefKind::Error, self.span(node)));
+                    .unwrap_or_else(|| {
+                        TypeRef::new(self.db, TypeRefKind::Error, self.rel_span(node))
+                    });
                 ExprKind::Cast(expr, ty)
             }
             "struct_expression" => return self.lower_struct_lit(node),
@@ -1015,7 +1049,7 @@ impl<'db> BodyLowerCtx<'db> {
                         Path::new(
                             self.db,
                             vec![Name::new(self.db, "?".to_owned())],
-                            self.span(node),
+                            self.rel_span(node),
                         )
                     });
                 let args_node = node
@@ -1027,7 +1061,9 @@ impl<'db> BodyLowerCtx<'db> {
                         .map(|n| self.node_text(n))
                         .unwrap_or("")
                         .to_owned(),
-                    args_node.map(|n| self.span(n)).unwrap_or(self.span(node)),
+                    args_node
+                        .map(|n| self.rel_span(n))
+                        .unwrap_or(self.rel_span(node)),
                 );
                 ExprKind::MacroCall(path, args)
             }
@@ -1072,7 +1108,7 @@ impl<'db> BodyLowerCtx<'db> {
     }
 
     fn lower_block(&mut self, node: Node<'_>) -> Ptr<Expr<'db>> {
-        let span = self.span(node);
+        let span = self.rel_span(node);
         let mut stmts = Vec::new();
         let mut tail: Option<Ptr<Expr<'db>>> = None;
         let mut cursor = node.walk();
@@ -1097,7 +1133,7 @@ impl<'db> BodyLowerCtx<'db> {
                         let expr = self.lower_expr(expr_node);
                         stmts.push(Stmt {
                             kind: StmtKind::Expr(expr),
-                            span: self.span(*child),
+                            span: self.rel_span(*child),
                         });
                     }
                 }
@@ -1109,7 +1145,7 @@ impl<'db> BodyLowerCtx<'db> {
                     let expr = self.lower_expr(*child);
                     stmts.push(Stmt {
                         kind: StmtKind::Expr(expr),
-                        span: self.span(*child),
+                        span: self.rel_span(*child),
                     });
                 }
             }
@@ -1127,20 +1163,24 @@ impl<'db> BodyLowerCtx<'db> {
             .child_by_field_name("pattern")
             .map(|n| self.lower_pat(n))
             .unwrap_or_else(|| self.missing_pat(node));
-        let ty = node
-            .child_by_field_name("type")
-            .map(|n| TypeRef::new(self.db, TypeRefKind::Path(self.lower_path(n)), self.span(n)));
+        let ty = node.child_by_field_name("type").map(|n| {
+            TypeRef::new(
+                self.db,
+                TypeRefKind::Path(self.lower_path(n)),
+                self.rel_span(n),
+            )
+        });
         let init = node
             .child_by_field_name("value")
             .map(|n| self.lower_expr(n));
         Stmt {
             kind: StmtKind::Let(pat, ty, init),
-            span: self.span(node),
+            span: self.rel_span(node),
         }
     }
 
     fn lower_if(&mut self, node: Node<'_>) -> Ptr<Expr<'db>> {
-        let span = self.span(node);
+        let span = self.rel_span(node);
         let cond_node = node.child_by_field_name("condition");
         let then = node
             .child_by_field_name("consequence")
@@ -1178,7 +1218,7 @@ impl<'db> BodyLowerCtx<'db> {
     }
 
     fn lower_match(&mut self, node: Node<'_>) -> Ptr<Expr<'db>> {
-        let span = self.span(node);
+        let span = self.rel_span(node);
         let scrutinee = node
             .child_by_field_name("value")
             .map(|n| self.lower_expr(n))
@@ -1203,7 +1243,7 @@ impl<'db> BodyLowerCtx<'db> {
                         pat,
                         guard,
                         body,
-                        span: self.span(child),
+                        span: self.rel_span(child),
                     });
                 }
             }
@@ -1216,7 +1256,7 @@ impl<'db> BodyLowerCtx<'db> {
     }
 
     fn lower_closure(&mut self, node: Node<'_>) -> Ptr<Expr<'db>> {
-        let span = self.span(node);
+        let span = self.rel_span(node);
         let mut params = Vec::new();
         if let Some(params_node) = node.child_by_field_name("parameters") {
             let mut cursor = params_node.walk();
@@ -1225,7 +1265,7 @@ impl<'db> BodyLowerCtx<'db> {
                 params.push(ClosureParam {
                     pat,
                     ty: None,
-                    span: self.span(child),
+                    span: self.rel_span(child),
                 });
             }
         }
@@ -1244,7 +1284,7 @@ impl<'db> BodyLowerCtx<'db> {
         // tree-sitter-rust doesn't have a dedicated method_call node;
         // it's a call_expression whose function is a field_expression.
         // Just lower as a regular call.
-        let span = self.span(node);
+        let span = self.rel_span(node);
         let func = node
             .child_by_field_name("function")
             .map(|n| self.lower_expr(n))
@@ -1261,7 +1301,7 @@ impl<'db> BodyLowerCtx<'db> {
     }
 
     fn lower_struct_lit(&mut self, node: Node<'_>) -> Ptr<Expr<'db>> {
-        let span = self.span(node);
+        let span = self.rel_span(node);
         let path = node
             .child_by_field_name("name")
             .map(|n| self.lower_path(n))
@@ -1269,7 +1309,7 @@ impl<'db> BodyLowerCtx<'db> {
                 Path::new(
                     self.db,
                     vec![Name::new(self.db, "?".to_owned())],
-                    self.span(node),
+                    self.rel_span(node),
                 )
             });
         let mut fields = Vec::new();
@@ -1288,18 +1328,18 @@ impl<'db> BodyLowerCtx<'db> {
                     fields.push(FieldInit {
                         name,
                         value,
-                        span: self.span(child),
+                        span: self.rel_span(child),
                     });
                 } else if child.kind() == "shorthand_field_initializer" {
                     let name = self.name(child);
                     let value = self.stash.alloc(Expr {
                         kind: ExprKind::Path(self.lower_path(child)),
-                        span: self.span(child),
+                        span: self.rel_span(child),
                     });
                     fields.push(FieldInit {
                         name,
                         value,
-                        span: self.span(child),
+                        span: self.rel_span(child),
                     });
                 }
             }
@@ -1314,7 +1354,7 @@ impl<'db> BodyLowerCtx<'db> {
     // -- Patterns ----------------------------------------------------------
 
     fn lower_pat(&mut self, node: Node<'_>) -> Ptr<Pat<'db>> {
-        let span = self.span(node);
+        let span = self.rel_span(node);
         let kind = match node.kind() {
             // match_pattern wraps the actual pattern in match arms
             "match_pattern" => {
@@ -1344,7 +1384,7 @@ impl<'db> BodyLowerCtx<'db> {
                         Path::new(
                             self.db,
                             vec![Name::new(self.db, "?".to_owned())],
-                            self.span(node),
+                            self.rel_span(node),
                         )
                     });
                 let pats = self.lower_pat_children(node);
@@ -1358,7 +1398,7 @@ impl<'db> BodyLowerCtx<'db> {
                         Path::new(
                             self.db,
                             vec![Name::new(self.db, "?".to_owned())],
-                            self.span(node),
+                            self.rel_span(node),
                         )
                     });
                 let mut field_pats = Vec::new();
@@ -1376,13 +1416,13 @@ impl<'db> BodyLowerCtx<'db> {
                                 // Shorthand: `Foo { x }` means `Foo { x: x }`
                                 self.stash.alloc(Pat {
                                     kind: PatKind::Bind(name, Mutability::Shared),
-                                    span: self.span(child),
+                                    span: self.rel_span(child),
                                 })
                             });
                         field_pats.push(FieldPat {
                             name,
                             pat,
-                            span: self.span(child),
+                            span: self.rel_span(child),
                         });
                     }
                 }
@@ -1441,7 +1481,7 @@ impl<'db> BodyLowerCtx<'db> {
     fn missing_pat(&mut self, node: Node<'_>) -> Ptr<Pat<'db>> {
         self.stash.alloc(Pat {
             kind: PatKind::Missing,
-            span: self.span(node),
+            span: self.rel_span(node),
         })
     }
 }

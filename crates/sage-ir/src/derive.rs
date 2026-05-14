@@ -161,13 +161,12 @@ fn potential_crate_names(derive_name: &str) -> Vec<String> {
 
 /// Get the source text for a struct/enum item.
 fn extract_item_source<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Option<String> {
-    let (span_table, span) = match item {
-        ItemAst::Struct(s) => (s.span_table(db), s.span(db)),
-        ItemAst::Enum(e) => (e.span_table(db), e.span(db)),
+    let span = match item {
+        ItemAst::Struct(s) => s.span(db),
+        ItemAst::Enum(e) => e.span(db),
         _ => return None,
     };
-    let file = span_table.file(db);
-    let text = file.text(db);
+    let text = span.file.text(db);
     let start = span.start as usize;
     let end = span.end as usize;
     if end <= text.len() {

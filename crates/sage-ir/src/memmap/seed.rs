@@ -64,7 +64,7 @@ pub(super) fn seed_from_items<'db>(
                     }
                 }
             }
-            ItemAst::Error(_) => {}
+            ItemAst::Error(..) => {}
             _ => {
                 entries.push(MemmapEntry::Item(item));
             }

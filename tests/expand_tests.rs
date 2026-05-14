@@ -129,14 +129,14 @@ fn query_log_demand_driven_with_real_tcx() {
 
         let log = sage.db.take_query_log();
         expect![[r#"
-              salsa: expanded_module(Id(1400))
+              salsa: expanded_module(Id(1000))
               salsa: file_item_tree(Id(10))
             file_item_tree("lib.rs")
-              salsa: resolve_mod_tracked(Id(3c00))
-              salsa: expanded_module(Id(1401))
+              salsa: resolve_mod_tracked(Id(3800))
+              salsa: expanded_module(Id(1001))
               salsa: file_item_tree(Id(7))
             file_item_tree("cmd/mod.rs")
-              salsa: resolve_mod_tracked(Id(3c01))
+              salsa: resolve_mod_tracked(Id(3801))
             module_items("cmd/get.rs")
               salsa: file_item_tree(Id(6))
             file_item_tree("cmd/get.rs")"#]]
@@ -228,18 +228,18 @@ fn expand_derives_cmd_get_full() {
         // Verify demand-driven: only queries needed for this module + derive resolution
         let log = sage.db.take_query_log();
         expect![[r#"
-              salsa: expanded_module(Id(1400))
+              salsa: expanded_module(Id(1000))
               salsa: file_item_tree(Id(10))
             file_item_tree("lib.rs")
-              salsa: resolve_mod_tracked(Id(3c00))
-              salsa: expanded_module(Id(1401))
+              salsa: resolve_mod_tracked(Id(3800))
+              salsa: expanded_module(Id(1001))
               salsa: file_item_tree(Id(7))
             file_item_tree("cmd/mod.rs")
-              salsa: resolve_mod_tracked(Id(3c01))
+              salsa: resolve_mod_tracked(Id(3801))
             module_items("cmd/get.rs")
               salsa: file_item_tree(Id(6))
             file_item_tree("cmd/get.rs")
-              salsa: expanded_module(Id(1402))
+              salsa: expanded_module(Id(1002))
             tcx::extern_crate("Debug")
             tcx::extern_crate("std")
             definition(extern(1, 0), "prelude")
@@ -250,7 +250,7 @@ fn expand_derives_cmd_get_full() {
             tcx::is_module(1, 4)
             tcx::module_children(1, 4)
             tcx::is_builtin_derive(2, 12719)
-              salsa: expand_builtin(Id(5c00))
+              salsa: expand_builtin(Id(5800))
             expand_builtin("Debug", "Get")"#]]
         .assert_eq(&log);
     });

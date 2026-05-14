@@ -1,21 +1,29 @@
 use crate::source::SourceFile;
 
-/// Indices into a `SpanTable`'s byte_offsets vec. 8 bytes, `Copy`, no `'db`.
-/// Stored densely in body nodes.
+/// Byte offset range within a file, together with the file identity.
+/// Stored on items.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
-pub struct SpanIndices {
+pub struct AbsoluteSpan {
+    pub file: SourceFile,
     pub start: u32,
     pub end: u32,
 }
 
-/// One span table per top-level item. Editing one item's body doesn't
-/// affect other items' span tables. Semantic queries never read
-/// `byte_offsets`, so span changes don't invalidate them.
-#[salsa::tracked(debug)]
-pub struct SpanTable<'db> {
-    #[tracked]
-    pub file: SourceFile,
-    #[tracked]
-    #[returns(ref)]
-    pub byte_offsets: Vec<u32>,
+/// Byte offset range relative to the containing item's start.
+/// Stored on body nodes (expressions, statements, patterns)
+/// and signature types (paths, type refs, params, etc.).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub struct RelativeSpan {
+    pub start: u32,
+    pub end: u32,
+}
+
+impl AbsoluteSpan {
+    pub fn resolve(&self, relative: RelativeSpan) -> AbsoluteSpan {
+        AbsoluteSpan {
+            file: self.file,
+            start: self.start + relative.start,
+            end: self.start + relative.end,
+        }
+    }
 }

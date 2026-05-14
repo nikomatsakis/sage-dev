@@ -44,7 +44,7 @@ fn baseline_initial_memmap_computation() {
         check_log(
             &log,
             expect![[r#"
-                  salsa: expanded_module(Id(1800))
+                  salsa: expanded_module(Id(1400))
                   salsa: file_item_tree(Id(0))
                 file_item_tree("lib.rs")
                   salsa: file_item_tree(Id(1))

@@ -1,7 +1,7 @@
 use sage_stash::{AllocStashData, Ptr, Slice, Stashed};
 
 use crate::name::Name;
-use crate::span::SpanIndices;
+use crate::span::RelativeSpan;
 use crate::types::{Mutability, Path, TokenTree, TypeRef};
 
 /// A function body stored in a `Stash`.
@@ -11,13 +11,13 @@ pub type FunctionBody<'db> = Stashed<Ptr<Body<'db>>>;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct Body<'db> {
     pub root: Ptr<Expr<'db>>,
-    pub span: SpanIndices,
+    pub span: RelativeSpan,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct Expr<'db> {
     pub kind: ExprKind<'db>,
-    pub span: SpanIndices,
+    pub span: RelativeSpan,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
@@ -64,14 +64,14 @@ pub enum ExprKind<'db> {
 pub struct ClosureParam<'db> {
     pub pat: Ptr<Pat<'db>>,
     pub ty: Option<TypeRef<'db>>,
-    pub span: SpanIndices,
+    pub span: RelativeSpan,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct FieldInit<'db> {
     pub name: Name<'db>,
     pub value: Ptr<Expr<'db>>,
-    pub span: SpanIndices,
+    pub span: RelativeSpan,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
@@ -79,7 +79,7 @@ pub struct MatchArm<'db> {
     pub pat: Ptr<Pat<'db>>,
     pub guard: Option<Ptr<Expr<'db>>>,
     pub body: Ptr<Expr<'db>>,
-    pub span: SpanIndices,
+    pub span: RelativeSpan,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -123,7 +123,7 @@ pub enum UnaryOp {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct Stmt<'db> {
     pub kind: StmtKind<'db>,
-    pub span: SpanIndices,
+    pub span: RelativeSpan,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
@@ -135,7 +135,7 @@ pub enum StmtKind<'db> {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct Pat<'db> {
     pub kind: PatKind<'db>,
-    pub span: SpanIndices,
+    pub span: RelativeSpan,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
@@ -157,5 +157,5 @@ pub enum PatKind<'db> {
 pub struct FieldPat<'db> {
     pub name: Name<'db>,
     pub pat: Ptr<Pat<'db>>,
-    pub span: SpanIndices,
+    pub span: RelativeSpan,
 }

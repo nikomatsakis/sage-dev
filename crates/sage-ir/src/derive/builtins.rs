@@ -3,13 +3,12 @@ use crate::body::*;
 use crate::item::*;
 use crate::name::Name;
 use crate::source::SourceFile;
-use crate::span::{SpanIndices, SpanTable};
+use crate::span::{AbsoluteSpan, RelativeSpan};
 use crate::types::*;
 
 use sage_stash::{Stash, Stashed};
 
-/// Dummy span for generated code.
-const GEN_SPAN: SpanIndices = SpanIndices { start: 0, end: 0 };
+const GEN_REL_SPAN: RelativeSpan = RelativeSpan { start: 0, end: 0 };
 
 /// Generate impl blocks for a builtin derive.
 #[salsa::tracked(returns(ref))]
@@ -44,7 +43,6 @@ fn expand_debug<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
 
     let trait_path = make_abs_path(db, &["std", "fmt", "Debug"]);
     let self_ty = make_type_path(db, &[type_name.text(db)]);
-    let span_table = gen_span_table(db);
 
     // Build fmt method body: `f.debug_struct("TypeName").field("x", &self.x)...finish()`
     let mut stash = Stash::new();
@@ -52,12 +50,12 @@ fn expand_debug<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
         // Missing body — we represent the body as a placeholder
         stash.alloc(Expr {
             kind: ExprKind::Missing,
-            span: GEN_SPAN,
+            span: GEN_REL_SPAN,
         })
     };
     let body = stash.alloc(Body {
         root: body_expr,
-        span: GEN_SPAN,
+        span: GEN_REL_SPAN,
     });
     let body = Stashed::new(stash, body);
 
@@ -70,21 +68,20 @@ fn expand_debug<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
                 db,
                 Some(Name::new(db, "self".to_owned())),
                 make_ref_self(db),
-                GEN_SPAN,
+                GEN_REL_SPAN,
             ),
             Param::new(
                 db,
                 Some(Name::new(db, "f".to_owned())),
                 make_abs_type_path(db, &["std", "fmt", "Formatter"]),
-                GEN_SPAN,
+                GEN_REL_SPAN,
             ),
         ],
         Some(make_abs_type_path(db, &["std", "fmt", "Result"])),
         false,
         false,
         body,
-        span_table,
-        GEN_SPAN,
+        gen_abs_span(db),
     );
 
     let impl_item = ImplAst::new(
@@ -93,8 +90,7 @@ fn expand_debug<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
         self_ty,
         Some(trait_path),
         vec![ItemAst::Function(fmt_fn)],
-        span_table,
-        GEN_SPAN,
+        gen_abs_span(db),
     );
     vec![impl_item]
 }
@@ -108,16 +104,15 @@ fn expand_clone<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
 
     let trait_path = make_abs_path(db, &["core", "clone", "Clone"]);
     let self_ty = make_type_path(db, &[type_name.text(db)]);
-    let span_table = gen_span_table(db);
 
     let mut stash = Stash::new();
     let body_expr = stash.alloc(Expr {
         kind: ExprKind::Missing,
-        span: GEN_SPAN,
+        span: GEN_REL_SPAN,
     });
     let body = stash.alloc(Body {
         root: body_expr,
-        span: GEN_SPAN,
+        span: GEN_REL_SPAN,
     });
     let body = Stashed::new(stash, body);
 
@@ -129,14 +124,13 @@ fn expand_clone<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
             db,
             Some(Name::new(db, "self".to_owned())),
             make_ref_self(db),
-            GEN_SPAN,
+            GEN_REL_SPAN,
         )],
         Some(make_type_path(db, &["Self"])),
         false,
         false,
         body,
-        span_table,
-        GEN_SPAN,
+        gen_abs_span(db),
     );
 
     let impl_item = ImplAst::new(
@@ -145,8 +139,7 @@ fn expand_clone<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
         self_ty,
         Some(trait_path),
         vec![ItemAst::Function(clone_fn)],
-        span_table,
-        GEN_SPAN,
+        gen_abs_span(db),
     );
     vec![impl_item]
 }
@@ -160,16 +153,15 @@ fn expand_default<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>>
 
     let trait_path = make_abs_path(db, &["core", "default", "Default"]);
     let self_ty = make_type_path(db, &[type_name.text(db)]);
-    let span_table = gen_span_table(db);
 
     let mut stash = Stash::new();
     let body_expr = stash.alloc(Expr {
         kind: ExprKind::Missing,
-        span: GEN_SPAN,
+        span: GEN_REL_SPAN,
     });
     let body = stash.alloc(Body {
         root: body_expr,
-        span: GEN_SPAN,
+        span: GEN_REL_SPAN,
     });
     let body = Stashed::new(stash, body);
 
@@ -182,8 +174,7 @@ fn expand_default<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>>
         false,
         false,
         body,
-        span_table,
-        GEN_SPAN,
+        gen_abs_span(db),
     );
 
     let impl_item = ImplAst::new(
@@ -192,8 +183,7 @@ fn expand_default<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>>
         self_ty,
         Some(trait_path),
         vec![ItemAst::Function(default_fn)],
-        span_table,
-        GEN_SPAN,
+        gen_abs_span(db),
     );
     vec![impl_item]
 }
@@ -219,7 +209,6 @@ fn expand_marker<'db>(
         _ => make_path(db, &[derive_name.text(db)]),
     };
     let self_ty = make_type_path(db, &[type_name.text(db)]);
-    let span_table = gen_span_table(db);
 
     let impl_item = ImplAst::new(
         db,
@@ -227,8 +216,7 @@ fn expand_marker<'db>(
         self_ty,
         Some(trait_path),
         Vec::new(),
-        span_table,
-        GEN_SPAN,
+        gen_abs_span(db),
     );
     vec![impl_item]
 }
@@ -253,7 +241,7 @@ fn make_path<'db>(db: &'db dyn Db, segments: &[&str]) -> Path<'db> {
             .iter()
             .map(|s| Name::new(db, (*s).to_owned()))
             .collect(),
-        GEN_SPAN,
+        GEN_REL_SPAN,
     )
 }
 
@@ -261,15 +249,19 @@ fn make_path<'db>(db: &'db dyn Db, segments: &[&str]) -> Path<'db> {
 fn make_abs_path<'db>(db: &'db dyn Db, segments: &[&str]) -> Path<'db> {
     let mut segs = vec![Name::new(db, String::new())];
     segs.extend(segments.iter().map(|s| Name::new(db, (*s).to_owned())));
-    Path::new(db, segs, GEN_SPAN)
+    Path::new(db, segs, GEN_REL_SPAN)
 }
 
 fn make_type_path<'db>(db: &'db dyn Db, segments: &[&str]) -> TypeRef<'db> {
-    TypeRef::new(db, TypeRefKind::Path(make_path(db, segments)), GEN_SPAN)
+    TypeRef::new(db, TypeRefKind::Path(make_path(db, segments)), GEN_REL_SPAN)
 }
 
 fn make_abs_type_path<'db>(db: &'db dyn Db, segments: &[&str]) -> TypeRef<'db> {
-    TypeRef::new(db, TypeRefKind::Path(make_abs_path(db, segments)), GEN_SPAN)
+    TypeRef::new(
+        db,
+        TypeRefKind::Path(make_abs_path(db, segments)),
+        GEN_REL_SPAN,
+    )
 }
 
 fn make_ref_self<'db>(db: &'db dyn Db) -> TypeRef<'db> {
@@ -277,12 +269,18 @@ fn make_ref_self<'db>(db: &'db dyn Db) -> TypeRef<'db> {
     TypeRef::new(
         db,
         TypeRefKind::Reference(self_ty, Mutability::Shared),
-        GEN_SPAN,
+        GEN_REL_SPAN,
     )
 }
 
-fn gen_span_table<'db>(db: &'db dyn Db) -> SpanTable<'db> {
-    // Use a dummy SourceFile for generated code
-    let file = SourceFile::new(db, "<generated>".to_owned(), String::new());
-    SpanTable::new(db, file, vec![0, 0])
+fn gen_abs_span<'db>(db: &'db dyn Db) -> AbsoluteSpan {
+    AbsoluteSpan {
+        file: gen_source_file(db),
+        start: 0,
+        end: 0,
+    }
+}
+
+fn gen_source_file<'db>(db: &'db dyn Db) -> SourceFile {
+    SourceFile::new(db, "<generated>".to_owned(), String::new())
 }
