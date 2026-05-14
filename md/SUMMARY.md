@@ -12,6 +12,8 @@
   - [Active](./rfds/active.md)
     - [Macro Expansion as Tracked Query](./rfds/macro-expansion-tracked-query.md)
     - [Resolve at Position](./rfds/resolve-at-position.md)
+    - [Tuple Struct Constructors](./rfds/tuple-struct-ctors.md)
+    - [Type Signatures](./rfds/type-signatures.md)
   - [Completed](./rfds/completed.md)
     - [Initial Setup](./rfds/initial-setup.md)
     - [Relative Span Model](./rfds/relative-span-model.md)
