@@ -6,7 +6,7 @@ use expect_test::expect;
 use sage_ir::Db;
 use sage_ir::body_resolve::resolve_body;
 use sage_ir::display::pretty_print_resolved;
-use sage_ir::item::Item;
+use sage_ir::item::ItemAst;
 use sage_ir::resolve::{module_items, resolve_module_path};
 use sage_ir::types::TypeRefKind;
 
@@ -20,17 +20,17 @@ fn mini_redis_dir() -> &'static Path {
 
 fn find_method<'db>(
     db: &'db dyn Db,
-    module: sage_ir::module::Module<'db>,
+    module: sage_ir::module::ModSymbol<'db>,
     type_name: &str,
     method_name: &str,
-) -> sage_ir::item::FunctionItem<'db> {
+) -> sage_ir::item::FnAst<'db> {
     let items = module_items(db, module);
     for item in items {
-        if let Item::Impl(impl_item) = item {
+        if let ItemAst::Impl(impl_item) = item {
             if let TypeRefKind::Path(path) = impl_item.self_ty(db).kind(db) {
                 if path.segments(db).last().map(|n| n.text(db).as_str()) == Some(type_name) {
                     for sub_item in impl_item.items(db) {
-                        if let Item::Function(f) = sub_item {
+                        if let ItemAst::Function(f) = sub_item {
                             if f.name(db).text(db) == method_name {
                                 return *f;
                             }

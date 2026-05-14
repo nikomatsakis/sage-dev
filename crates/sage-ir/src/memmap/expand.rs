@@ -11,9 +11,9 @@
 //! proper IR nodes.
 
 use crate::Db;
-use crate::item::MacroDefItem;
+use crate::item::MacroDefAst;
 use crate::lower::file_item_tree;
-use crate::module::Module;
+use crate::module::ModSymbol;
 use crate::resolve::SourceRoot;
 use crate::source::SourceFile;
 
@@ -27,7 +27,7 @@ const MAX_EXPANSION_DEPTH: usize = 128;
 /// Resolve and expand all unresolved `MacroUse` entries in `entries`.
 pub(super) fn resolve_and_expand_macros<'db>(
     db: &'db dyn Db,
-    module: Module<'db>,
+    module: ModSymbol<'db>,
     source_root: SourceRoot,
     entries: &mut Vec<MemmapEntry<'db>>,
     depth: usize,
@@ -40,7 +40,7 @@ pub(super) fn resolve_and_expand_macros<'db>(
 /// `root_entries` as the resolution context.
 fn resolve_with_snapshot<'db>(
     db: &'db dyn Db,
-    module: Module<'db>,
+    module: ModSymbol<'db>,
     source_root: SourceRoot,
     entries: &mut Vec<MemmapEntry<'db>>,
     root_entries: &[MemmapEntry<'db>],
@@ -113,13 +113,13 @@ fn resolve_with_snapshot<'db>(
 /// body is used as the verbatim expansion.
 ///
 /// Routes through `file_item_tree` on a synthetic SourceFile so the
-/// expanded items are real tracked structs (Struct, Enum, ModItem,
-/// etc.), not `Item::Error` placeholders. Inline `mod foo { .. }`
+/// expanded items are real tracked structs (Struct, Enum, ModAst,
+/// etc.), not `ItemAst::Error` placeholders. Inline `mod foo { .. }`
 /// bodies inside the expansion are handled by `lower_mod`'s normal
 /// recursion — nothing special needed here.
 pub fn expand_macro<'db>(
     db: &'db dyn Db,
-    macro_def: MacroDefItem<'db>,
+    macro_def: MacroDefAst<'db>,
     _input_tokens: &str,
 ) -> Vec<MemmapEntry<'db>> {
     let body = macro_def.body_tokens(db);

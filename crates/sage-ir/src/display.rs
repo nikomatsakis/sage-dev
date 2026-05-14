@@ -16,29 +16,29 @@ fn with_db(f: impl FnOnce(&dyn salsa::Database) -> fmt::Result) -> fmt::Result {
 
 // -- Item --
 
-impl fmt::Display for Item<'_> {
+impl fmt::Display for ItemAst<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Item::Function(v) => fmt::Display::fmt(v, f),
-            Item::Struct(v) => fmt::Display::fmt(v, f),
-            Item::Enum(v) => fmt::Display::fmt(v, f),
-            Item::Trait(v) => fmt::Display::fmt(v, f),
-            Item::Impl(v) => fmt::Display::fmt(v, f),
-            Item::TypeAlias(v) => fmt::Display::fmt(v, f),
-            Item::Const(v) => fmt::Display::fmt(v, f),
-            Item::Static(v) => fmt::Display::fmt(v, f),
-            Item::Mod(v) => fmt::Display::fmt(v, f),
-            Item::Use(v) => fmt::Display::fmt(v, f),
-            Item::MacroDef(v) => fmt::Display::fmt(v, f),
-            Item::MacroInvocation(v) => fmt::Display::fmt(v, f),
-            Item::Error(span) => write!(f, "{{error {}..{}}}", span.start, span.end),
+            ItemAst::Function(v) => fmt::Display::fmt(v, f),
+            ItemAst::Struct(v) => fmt::Display::fmt(v, f),
+            ItemAst::Enum(v) => fmt::Display::fmt(v, f),
+            ItemAst::Trait(v) => fmt::Display::fmt(v, f),
+            ItemAst::Impl(v) => fmt::Display::fmt(v, f),
+            ItemAst::TypeAlias(v) => fmt::Display::fmt(v, f),
+            ItemAst::Const(v) => fmt::Display::fmt(v, f),
+            ItemAst::Static(v) => fmt::Display::fmt(v, f),
+            ItemAst::Mod(v) => fmt::Display::fmt(v, f),
+            ItemAst::Use(v) => fmt::Display::fmt(v, f),
+            ItemAst::MacroDef(v) => fmt::Display::fmt(v, f),
+            ItemAst::MacroInvocation(v) => fmt::Display::fmt(v, f),
+            ItemAst::Error(span) => write!(f, "{{error {}..{}}}", span.start, span.end),
         }
     }
 }
 
 // -- Function --
 
-impl fmt::Display for FunctionItem<'_> {
+impl fmt::Display for FnAst<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         with_db(|db| {
             write_attrs(f, self.attrs(db))?;
@@ -71,7 +71,7 @@ impl fmt::Display for FunctionItem<'_> {
 
 // -- Struct --
 
-impl fmt::Display for StructItem<'_> {
+impl fmt::Display for StructAst<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         with_db(|db| {
             write_attrs(f, self.attrs(db))?;
@@ -86,7 +86,7 @@ impl fmt::Display for StructItem<'_> {
 
 // -- Enum --
 
-impl fmt::Display for EnumItem<'_> {
+impl fmt::Display for EnumAst<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         with_db(|db| {
             write_attrs(f, self.attrs(db))?;
@@ -110,7 +110,7 @@ impl fmt::Display for EnumItem<'_> {
 
 // -- Trait --
 
-impl fmt::Display for TraitItem<'_> {
+impl fmt::Display for TraitAst<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         with_db(|db| {
             write_attrs(f, self.attrs(db))?;
@@ -125,7 +125,7 @@ impl fmt::Display for TraitItem<'_> {
 
 // -- Impl --
 
-impl fmt::Display for ImplItem<'_> {
+impl fmt::Display for ImplAst<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         with_db(|db| {
             write_attrs(f, self.attrs(db))?;
@@ -145,7 +145,7 @@ impl fmt::Display for ImplItem<'_> {
 
 // -- TypeAlias --
 
-impl fmt::Display for TypeAliasItem<'_> {
+impl fmt::Display for TypeAliasAst<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         with_db(|db| {
             write_attrs(f, self.attrs(db))?;
@@ -160,7 +160,7 @@ impl fmt::Display for TypeAliasItem<'_> {
 
 // -- Const --
 
-impl fmt::Display for ConstItem<'_> {
+impl fmt::Display for ConstAst<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         with_db(|db| {
             write_attrs(f, self.attrs(db))?;
@@ -175,7 +175,7 @@ impl fmt::Display for ConstItem<'_> {
 
 // -- Static --
 
-impl fmt::Display for StaticItem<'_> {
+impl fmt::Display for StaticAst<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         with_db(|db| {
             write_attrs(f, self.attrs(db))?;
@@ -195,11 +195,11 @@ impl fmt::Display for StaticItem<'_> {
 
 // -- Mod --
 
-impl fmt::Display for ModItem<'_> {
+impl fmt::Display for ModAst<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         with_db(|db| {
             write_attrs(f, self.attrs(db))?;
-            match self.items(db) {
+            match self.inline_unexpanded_items(db) {
                 Some(items) => {
                     writeln!(f, "mod {} {{", self.name(db).text(db))?;
                     for item in items {
@@ -215,7 +215,7 @@ impl fmt::Display for ModItem<'_> {
 
 // -- Use --
 
-impl fmt::Display for UseGroup<'_> {
+impl fmt::Display for UseGroupAst<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         with_db(|db| {
             write_attrs(f, self.attrs(db))?;
@@ -252,7 +252,7 @@ impl fmt::Display for UseImport<'_> {
 
 // -- MacroDef --
 
-impl fmt::Display for MacroDefItem<'_> {
+impl fmt::Display for MacroDefAst<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         with_db(|db| {
             let body = self.body_tokens(db);
@@ -276,7 +276,7 @@ impl fmt::Display for MacroDefItem<'_> {
 
 // -- MacroInvocation --
 
-impl fmt::Display for MacroInvocationItem<'_> {
+impl fmt::Display for MacroInvocationAst<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         with_db(|db| write!(f, "{}!()", self.path(db)))
     }
@@ -439,7 +439,7 @@ impl<'db, T: StashData<'db> + PrettyPrint<'db>> PrettyPrint<'db> for Ptr<T> {
 // -- dump_function_body (public entry point) --
 
 /// Dump a function including its body.
-pub fn dump_function_body(f: &mut fmt::Formatter<'_>, func: FunctionItem<'_>) -> fmt::Result {
+pub fn dump_function_body(f: &mut fmt::Formatter<'_>, func: FnAst<'_>) -> fmt::Result {
     with_db(|db| {
         fmt::Display::fmt(&func, f)?;
         f.write_str(" ")?;
@@ -804,7 +804,7 @@ use sage_stash::StashData;
 // ===========================================================================
 
 use crate::resolved::*;
-use crate::symbol::SymbolSource;
+use crate::symbol::SymbolData;
 
 std::thread_local! {
     static DISPLAY_TCX: std::cell::Cell<[usize; 2]> =
@@ -835,27 +835,28 @@ fn with_display_tcx<R>(f: impl FnOnce(&dyn crate::tcx::TcxDb) -> R) -> Option<R>
 /// Helper to format a Res.
 fn fmt_res(f: &mut fmt::Formatter<'_>, res: &Res<'_>) -> fmt::Result {
     with_db(|db| match res {
-        Res::Def(sym) => match sym.source(db) {
-            SymbolSource::Local(item) => {
+        Res::Def(sym) => match sym.data() {
+            SymbolData::Ast(item) => {
                 let name = match item {
-                    Item::Function(func) => Some(func.name(db).text(db).to_string()),
-                    Item::Struct(s) => Some(s.name(db).text(db).to_string()),
-                    Item::Enum(e) => Some(e.name(db).text(db).to_string()),
-                    Item::Trait(t) => Some(t.name(db).text(db).to_string()),
-                    Item::TypeAlias(t) => Some(t.name(db).text(db).to_string()),
-                    Item::Const(c) => Some(c.name(db).text(db).to_string()),
-                    Item::Static(s) => Some(s.name(db).text(db).to_string()),
-                    Item::Mod(m) => Some(m.name(db).text(db).to_string()),
+                    ItemAst::Function(func) => Some(func.name(db).text(db).to_string()),
+                    ItemAst::Struct(s) => Some(s.name(db).text(db).to_string()),
+                    ItemAst::Enum(e) => Some(e.name(db).text(db).to_string()),
+                    ItemAst::Trait(t) => Some(t.name(db).text(db).to_string()),
+                    ItemAst::TypeAlias(t) => Some(t.name(db).text(db).to_string()),
+                    ItemAst::Const(c) => Some(c.name(db).text(db).to_string()),
+                    ItemAst::Static(s) => Some(s.name(db).text(db).to_string()),
+                    ItemAst::Mod(m) => Some(m.name(db).text(db).to_string()),
                     _ => None,
                 };
                 let name = name.unwrap_or_else(|| "?".to_string());
                 write!(f, "<def {name}>")
             }
-            SymbolSource::External(cn, di) => {
-                let path = with_display_tcx(|tcx| tcx.def_path(cn, di)).flatten();
+            SymbolData::Ext(ext) => {
+                let path =
+                    with_display_tcx(|tcx| tcx.def_path(ext.crate_num, ext.def_index)).flatten();
                 match path {
                     Some(p) => write!(f, "<ext {p}>"),
-                    None => write!(f, "<ext {}:{}>", cn.0, di.0),
+                    None => write!(f, "<ext {}:{}>", ext.crate_num.0, ext.def_index.0),
                 }
             }
         },

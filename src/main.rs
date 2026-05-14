@@ -44,7 +44,7 @@ fn main() {
             match resolve_module_path(sage.db, sage.root, sage.source_root, &segments) {
                 Some(module) => {
                     let items = module_items(sage.db, module);
-                    println!("=== Module: {} ({} items) ===", module_path, items.len());
+                    println!("=== ModSymbol: {} ({} items) ===", module_path, items.len());
                     for item in items {
                         println!("  {item}");
                     }

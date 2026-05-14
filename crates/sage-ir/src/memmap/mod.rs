@@ -8,21 +8,28 @@
 //!
 //! ```text
 //! Source text
-//!   → tree-sitter [in file_item_tree only] → Vec<Item>
+//!   → tree-sitter [in file_item_tree only] → Vec<ItemAst>
 //!                                               ↓
-//!                                       module_memmap (Item → MemmapEntry, resolve, expand)
+//!                                       expanded_module (Item → MemmapEntry, resolve, expand)
 //!                                               ↓
 //!                                       resolve_name / memmap_errors
 //! ```
 //!
 //! # Key design decisions
 //!
-//! - **No direct tree-sitter in seeding**: `module_memmap` reads only from `file_item_tree`,
+//! - **No direct tree-sitter in seeding**: `expanded_module` reads only from `file_item_tree`,
 //!   which provides the incremental firewall — body-only edits don't invalidate the memmap.
 //! - **Snapshot-based expansion**: macros are resolved against a snapshot of entries to avoid
 //!   reading while mutating.
 //! - **Fixpoint with cycle recovery**: cross-module macro resolution uses salsa's cycle
 //!   recovery (initial value = empty memmap) to converge.
+//!
+//! # Keying
+//!
+//! `expanded_module` is keyed on `ModAst` rather than `ModSymbol`.
+//! External modules don't have memmaps — `ModSymbol::resolve_member`
+//! dispatches on `data()` and consults `TcxDb::module_children`
+//! directly for the ext arm.
 
 mod data;
 mod expand;
@@ -35,59 +42,57 @@ pub use expand::expand_macro;
 pub use validate::{MemmapError, memmap_errors};
 
 use crate::Db;
-use crate::lower::file_item_tree;
-use crate::module::{Module, ModuleSource};
+use crate::item::ModAst;
+use crate::module::ModSymbol;
 use crate::resolve::SourceRoot;
 
 /// The Minimally Expanded Member Map (MEM-map) for a single module.
 #[salsa::tracked(debug)]
-pub struct ModuleMemmap<'db> {
+pub struct ExpandedModule<'db> {
     #[returns(ref)]
     pub entries: Vec<MemmapEntry<'db>>,
 }
 
-/// Compute the MEM-map for a module. Seeds from file_item_tree, then resolves and
-/// expands macros. Uses salsa fixpoint for cross-module convergence.
+/// Compute the MEM-map for a local module. Seeds from `file_item_tree`
+/// (for file-backed modules) or from the ModAst's inline `items` field
+/// (for `mod foo { ... }`), then resolves and expands macros.
 ///
-/// # Panics (debug only)
-///
-/// Panics if called on an external module. External module contents should be
-/// queried via `TcxDb` directly.
-#[salsa::tracked(returns(ref), cycle_initial = module_memmap_initial)]
-pub fn module_memmap<'db>(
+/// Keyed on `ModAst` — external modules don't have memmaps.
+#[salsa::tracked(returns(ref), cycle_initial = expanded_module_initial)]
+pub fn expanded_module<'db>(
     db: &'db dyn Db,
-    module: Module<'db>,
+    module: ModAst<'db>,
     source_root: SourceRoot,
-) -> ModuleMemmap<'db> {
-    debug_assert!(
-        !matches!(module.source(db), ModuleSource::External(..)),
-        "module_memmap should not be called on external modules"
-    );
+) -> ExpandedModule<'db> {
+    let items = module.unexpanded_items(db);
+    let mut entries = seed::seed_from_items(db, &items);
 
-    let mut entries = match module.source(db) {
-        ModuleSource::Local { file, .. } => {
-            let items = file_item_tree(db, file);
-            seed::seed_from_items(db, items)
-        }
-        ModuleSource::LocalInline { mod_item, .. } => {
-            // Inline mod — seed directly from the ModItem's items.
-            let items: Vec<crate::item::Item<'db>> = mod_item.items(db).clone().unwrap_or_default();
-            seed::seed_from_items(db, &items)
-        }
-        ModuleSource::External(..) => Vec::new(),
-    };
+    expand::resolve_and_expand_macros(db, ModSymbol::ast(module), source_root, &mut entries, 0);
 
-    expand::resolve_and_expand_macros(db, module, source_root, &mut entries, 0);
-
-    ModuleMemmap::new(db, entries)
+    ExpandedModule::new(db, entries)
 }
 
 /// Cycle recovery initial value: empty MEM-map.
-fn module_memmap_initial<'db>(
+fn expanded_module_initial<'db>(
     db: &'db dyn Db,
     _id: salsa::Id,
-    _module: Module<'db>,
+    _module: ModAst<'db>,
     _source_root: SourceRoot,
-) -> ModuleMemmap<'db> {
-    ModuleMemmap::new(db, Vec::new())
+) -> ExpandedModule<'db> {
+    ExpandedModule::new(db, Vec::new())
+}
+
+/// Convenience wrapper: dispatch on `ModSymbol`. For external modules
+/// returns an empty placeholder (their contents are queried via
+/// `TcxDb` directly, not via the memmap).
+#[salsa::tracked]
+pub fn module_memmap<'db>(
+    db: &'db dyn Db,
+    module: ModSymbol<'db>,
+    source_root: SourceRoot,
+) -> ExpandedModule<'db> {
+    match module.data() {
+        crate::module::ModSymbolData::Ast(ast) => *expanded_module(db, ast, source_root),
+        crate::module::ModSymbolData::Ext(_) => ExpandedModule::new(db, Vec::new()),
+    }
 }

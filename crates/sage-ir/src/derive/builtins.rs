@@ -16,8 +16,8 @@ const GEN_SPAN: SpanIndices = SpanIndices { start: 0, end: 0 };
 pub fn expand_builtin<'db>(
     db: &'db dyn Db,
     derive_name: Name<'db>,
-    item: Item<'db>,
-) -> Vec<ImplItem<'db>> {
+    item: ItemAst<'db>,
+) -> Vec<ImplAst<'db>> {
     let name_text = derive_name.text(db);
     let item_name = crate::resolve::item_name(db, item)
         .map(|n| n.text(db).to_string())
@@ -36,7 +36,7 @@ pub fn expand_builtin<'db>(
 }
 
 /// `impl Debug for T { fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result { ... } }`
-fn expand_debug<'db>(db: &'db dyn Db, item: Item<'db>) -> Vec<ImplItem<'db>> {
+fn expand_debug<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
     let (type_name, _fields) = match item_info(db, item) {
         Some(info) => info,
         None => return Vec::new(),
@@ -61,7 +61,7 @@ fn expand_debug<'db>(db: &'db dyn Db, item: Item<'db>) -> Vec<ImplItem<'db>> {
     });
     let body = Stashed::new(stash, body);
 
-    let fmt_fn = FunctionItem::new(
+    let fmt_fn = FnAst::new(
         db,
         Name::new(db, "fmt".to_owned()),
         Vec::new(), // attrs
@@ -87,12 +87,12 @@ fn expand_debug<'db>(db: &'db dyn Db, item: Item<'db>) -> Vec<ImplItem<'db>> {
         GEN_SPAN,
     );
 
-    let impl_item = ImplItem::new(
+    let impl_item = ImplAst::new(
         db,
         Vec::new(),
         self_ty,
         Some(trait_path),
-        vec![Item::Function(fmt_fn)],
+        vec![ItemAst::Function(fmt_fn)],
         span_table,
         GEN_SPAN,
     );
@@ -100,7 +100,7 @@ fn expand_debug<'db>(db: &'db dyn Db, item: Item<'db>) -> Vec<ImplItem<'db>> {
 }
 
 /// `impl Clone for T { fn clone(&self) -> Self { ... } }`
-fn expand_clone<'db>(db: &'db dyn Db, item: Item<'db>) -> Vec<ImplItem<'db>> {
+fn expand_clone<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
     let (type_name, _fields) = match item_info(db, item) {
         Some(info) => info,
         None => return Vec::new(),
@@ -121,7 +121,7 @@ fn expand_clone<'db>(db: &'db dyn Db, item: Item<'db>) -> Vec<ImplItem<'db>> {
     });
     let body = Stashed::new(stash, body);
 
-    let clone_fn = FunctionItem::new(
+    let clone_fn = FnAst::new(
         db,
         Name::new(db, "clone".to_owned()),
         Vec::new(),
@@ -139,12 +139,12 @@ fn expand_clone<'db>(db: &'db dyn Db, item: Item<'db>) -> Vec<ImplItem<'db>> {
         GEN_SPAN,
     );
 
-    let impl_item = ImplItem::new(
+    let impl_item = ImplAst::new(
         db,
         Vec::new(),
         self_ty,
         Some(trait_path),
-        vec![Item::Function(clone_fn)],
+        vec![ItemAst::Function(clone_fn)],
         span_table,
         GEN_SPAN,
     );
@@ -152,7 +152,7 @@ fn expand_clone<'db>(db: &'db dyn Db, item: Item<'db>) -> Vec<ImplItem<'db>> {
 }
 
 /// `impl Default for T { fn default() -> Self { ... } }`
-fn expand_default<'db>(db: &'db dyn Db, item: Item<'db>) -> Vec<ImplItem<'db>> {
+fn expand_default<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
     let (type_name, _fields) = match item_info(db, item) {
         Some(info) => info,
         None => return Vec::new(),
@@ -173,7 +173,7 @@ fn expand_default<'db>(db: &'db dyn Db, item: Item<'db>) -> Vec<ImplItem<'db>> {
     });
     let body = Stashed::new(stash, body);
 
-    let default_fn = FunctionItem::new(
+    let default_fn = FnAst::new(
         db,
         Name::new(db, "default".to_owned()),
         Vec::new(),
@@ -186,12 +186,12 @@ fn expand_default<'db>(db: &'db dyn Db, item: Item<'db>) -> Vec<ImplItem<'db>> {
         GEN_SPAN,
     );
 
-    let impl_item = ImplItem::new(
+    let impl_item = ImplAst::new(
         db,
         Vec::new(),
         self_ty,
         Some(trait_path),
-        vec![Item::Function(default_fn)],
+        vec![ItemAst::Function(default_fn)],
         span_table,
         GEN_SPAN,
     );
@@ -202,8 +202,8 @@ fn expand_default<'db>(db: &'db dyn Db, item: Item<'db>) -> Vec<ImplItem<'db>> {
 fn expand_marker<'db>(
     db: &'db dyn Db,
     derive_name: Name<'db>,
-    item: Item<'db>,
-) -> Vec<ImplItem<'db>> {
+    item: ItemAst<'db>,
+) -> Vec<ImplAst<'db>> {
     let (type_name, _fields) = match item_info(db, item) {
         Some(info) => info,
         None => return Vec::new(),
@@ -221,7 +221,7 @@ fn expand_marker<'db>(
     let self_ty = make_type_path(db, &[type_name.text(db)]);
     let span_table = gen_span_table(db);
 
-    let impl_item = ImplItem::new(
+    let impl_item = ImplAst::new(
         db,
         Vec::new(),
         self_ty,
@@ -238,10 +238,10 @@ fn expand_marker<'db>(
 // ---------------------------------------------------------------------------
 
 /// Extract type name and fields from a struct or enum item.
-fn item_info<'db>(db: &'db dyn Db, item: Item<'db>) -> Option<(Name<'db>, Vec<FieldDef<'db>>)> {
+fn item_info<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Option<(Name<'db>, Vec<FieldDef<'db>>)> {
     match item {
-        Item::Struct(s) => Some((s.name(db), s.fields(db).to_vec())),
-        Item::Enum(e) => Some((e.name(db), Vec::new())),
+        ItemAst::Struct(s) => Some((s.name(db), s.fields(db).to_vec())),
+        ItemAst::Enum(e) => Some((e.name(db), Vec::new())),
         _ => None,
     }
 }

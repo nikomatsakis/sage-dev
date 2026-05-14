@@ -1,6 +1,6 @@
 //! Seeding MEM-map entries from `file_item_tree` items.
 //!
-//! Transforms `Vec<Item>` (from lowering) into `Vec<MemmapEntry>`. Never
+//! Transforms `Vec<ItemAst>` (from lowering) into `Vec<MemmapEntry>`. Never
 //! touches tree-sitter — all parsing happens in `file_item_tree`. This
 //! separation provides the incremental firewall: body-only edits don't
 //! invalidate the memmap because `file_item_tree` produces the same
@@ -19,31 +19,34 @@
 //!     invocation's argument tokens forward.
 //!   - Anonymous items (impls) stay as `Item` entries — `item_name()`
 //!     returns `None` so walkers naturally skip them.
-//!   - `Item::Error` and `Item::Use` are never emitted as-is — they're
+//!   - `ItemAst::Error` and `ItemAst::Use` are never emitted as-is — they're
 //!     either dropped or transformed above.
 
 use crate::Db;
-use crate::item::Item;
+use crate::item::ItemAst;
 use crate::types::UseKind;
 
 use super::data::*;
 
 /// Seed MEM-map entries from file_item_tree items.
-pub(super) fn seed_from_items<'db>(db: &'db dyn Db, items: &[Item<'db>]) -> Vec<MemmapEntry<'db>> {
+pub(super) fn seed_from_items<'db>(
+    db: &'db dyn Db,
+    items: &[ItemAst<'db>],
+) -> Vec<MemmapEntry<'db>> {
     let mut entries = Vec::new();
     for &item in items {
         match item {
-            Item::MacroDef(def) => {
+            ItemAst::MacroDef(def) => {
                 entries.push(MemmapEntry::MacroDef(def));
             }
-            Item::MacroInvocation(inv) => {
+            ItemAst::MacroInvocation(inv) => {
                 entries.push(MemmapEntry::MacroUse(MacroUse {
                     path: inv.path(db),
                     input_tokens: inv.input_tokens(db).clone(),
                     state: MacroUseState::Unresolved,
                 }));
             }
-            Item::Use(group) => {
+            ItemAst::Use(group) => {
                 for import in group.imports(db) {
                     match import.kind(db) {
                         UseKind::Named(alias) => {
@@ -61,7 +64,7 @@ pub(super) fn seed_from_items<'db>(db: &'db dyn Db, items: &[Item<'db>]) -> Vec<
                     }
                 }
             }
-            Item::Error(_) => {}
+            ItemAst::Error(_) => {}
             _ => {
                 entries.push(MemmapEntry::Item(item));
             }

@@ -2,7 +2,8 @@ use std::path::Path;
 
 use expect_test::expect;
 use sage_ir::db::Database;
-use sage_ir::module::{Module, ModuleSource};
+use sage_ir::item::ModAst;
+use sage_ir::module::ModSymbol;
 use sage_ir::resolve::{SourceRoot, module_items, module_use_imports, resolve_module_path};
 use sage_ir::source::SourceFile;
 use salsa::Database as _;
@@ -25,7 +26,7 @@ fn collect_rs_files(dir: &Path) -> Vec<std::path::PathBuf> {
 }
 
 /// Set up the mini-redis fixture: create all SourceFiles and a SourceRoot.
-fn setup_mini_redis(db: &Database) -> (SourceRoot, Module<'_>) {
+fn setup_mini_redis(db: &Database) -> (SourceRoot, ModSymbol<'_>) {
     let fixture_dir =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test-fixtures/mini-redis/src");
     let paths = collect_rs_files(&fixture_dir);
@@ -45,14 +46,7 @@ fn setup_mini_redis(db: &Database) -> (SourceRoot, Module<'_>) {
         .find(|f| f.path(db) == "lib.rs")
         .expect("mini-redis has no lib.rs");
 
-    let root_module = Module::new(
-        db,
-        ModuleSource::Local {
-            file: *lib_file,
-            parent: None,
-            declaration: None,
-        },
-    );
+    let root_module = ModSymbol::ast(ModAst::crate_root(db, *lib_file));
 
     (source_root, root_module)
 }
@@ -67,8 +61,11 @@ fn resolve_cmd_get_module() {
         assert!(module.is_some(), "failed to resolve cmd::get module");
 
         let module = module.unwrap();
-        let ModuleSource::Local { file, .. } = module.source(db) else {
-            panic!("expected local module");
+        let file = match module.data() {
+            sage_ir::module::ModSymbolData::Ast(a) => {
+                a.file(db).expect("expected file-backed local module")
+            }
+            _ => panic!("expected local module"),
         };
         assert_eq!(file.path(db), "cmd/get.rs");
     });
@@ -118,13 +115,14 @@ fn query_log_demand_driven() {
 
         let log = db.take_query_log();
         expect![[r#"
-              salsa: module_memmap(Id(1000))
+              salsa: expanded_module(Id(1400))
               salsa: file_item_tree(Id(10))
             file_item_tree("lib.rs")
-              salsa: module_memmap(Id(1001))
+              salsa: resolve_mod_tracked(Id(3c00))
+              salsa: expanded_module(Id(1401))
               salsa: file_item_tree(Id(7))
             file_item_tree("cmd/mod.rs")
-              salsa: module_items(Id(802))
+              salsa: resolve_mod_tracked(Id(3c01))
             module_items("cmd/get.rs")
               salsa: file_item_tree(Id(6))
             file_item_tree("cmd/get.rs")"#]]
@@ -142,8 +140,11 @@ fn resolve_clients_module() {
         assert!(module.is_some(), "failed to resolve clients module");
 
         let module = module.unwrap();
-        let ModuleSource::Local { file, .. } = module.source(db) else {
-            panic!("expected local module");
+        let file = match module.data() {
+            sage_ir::module::ModSymbolData::Ast(a) => {
+                a.file(db).expect("expected file-backed local module")
+            }
+            _ => panic!("expected local module"),
         };
         assert_eq!(file.path(db), "clients/mod.rs");
     });
@@ -167,10 +168,10 @@ fn resolve_no_cross_module_parsing() {
 
         let log = db.take_query_log();
         expect![[r#"
-              salsa: module_memmap(Id(1000))
+              salsa: expanded_module(Id(1400))
               salsa: file_item_tree(Id(10))
             file_item_tree("lib.rs")
-              salsa: module_items(Id(801))
+              salsa: resolve_mod_tracked(Id(3c00))
             module_items("clients/mod.rs")
               salsa: file_item_tree(Id(5))
             file_item_tree("clients/mod.rs")"#]]

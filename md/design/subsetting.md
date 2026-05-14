@@ -27,46 +27,23 @@ almost never define proc-macros inline. Projects that do (e.g., a proc-macro
 crate + its consumer in one workspace) can still use sage for the consumer
 crate — just not for the proc-macro crate itself.
 
-### No glob imports from workspace modules
+### No glob imports targeting inline modules
 
-**What:** `use some_workspace_module::*` is not supported for inline modules
-(`mod foo { ... }`). Glob imports from file-based workspace modules
-(`mod foo;` → `foo.rs`) and external dependencies work fine.
+**What:** `use some_inline_module::*` (where the target is `mod foo { ... }`,
+not `mod foo;`) is not yet supported. Glob imports from file-based workspace
+modules and from external dependencies work fine. Inline modules can still
+be navigated as path targets (`mod foo { ... }; foo::Bar` resolves), and the
+items inside an inline module participate in normal name resolution; only
+glob-importing *into* a parent's scope from an inline module is broken.
 
-**Why:** Glob imports between workspace modules are the primary source of
-fixed-point iteration in name resolution. Without them, every `use` import
-names exactly what it brings in, and name resolution becomes a single
-deterministic pass. With them, you need to iterate: resolve module A's exports
-to know what B's glob imports, but A might glob from C, which might glob from
-B...
+**Why:** Glob target resolution feeds back into the construction-time path
+walker. The walker takes a fast items-based path that doesn't traverse
+inline-module bodies; until it does, globs that resolve through an inline
+intermediate produce no entries.
 
-Glob imports from external deps don't have this problem — the dep snapshot
-already has complete, fully-resolved module contents. Looking up `std::io::*`
-is a single query into the `TyCtxt` snapshot. File-based workspace modules
-are similarly straightforward since their items are discovered via
-`file_item_tree`.
-
-**Impact:** Low. Inline modules with glob imports are uncommon. The most common
-glob pattern is `use MyEnum::*` inside a function body (enum variant shorthand)
-— this is a *local* glob, not a cross-module one, and sage can support it
-trivially.
-
-**Future:** This restriction can be lifted by implementing `symbol_to_module`
-for inline modules — creating a `Module` backed by the inline module's item
-list rather than a `SourceFile`.
-
-### No inline module resolution
-
-**What:** `mod foo { ... }` (inline modules) cannot be resolved as path
-targets. `mod foo;` (file-based modules) work fine.
-
-**Why:** `symbol_to_module` currently only handles file-based modules (looks up
-`foo.rs` or `foo/mod.rs`) and external modules. Inline modules would need a
-`ModuleSource` variant backed by the inline item list rather than a
-`SourceFile`.
-
-**Impact:** Low. Inline modules are uncommon in application code. Most modules
-use `mod foo;` with a separate file.
+**Impact:** Low. Inline modules with glob imports are uncommon in
+application code, and the cross-module glob case (the primary fixpoint
+trigger) goes through file-based modules in practice.
 
 ### No `#[path = "..."]` on modules
 
@@ -164,7 +141,7 @@ resolved. `macro_rules!` expansion is the next major feature needed.
 derives (`Debug`, `Clone`, etc.) produce synthetic IR. Proc-macro
 derives (e.g., `Parser`, `Subcommand`) are invoked via
 `proc_macro::bridge` and the expanded source is lowered through
-tree-sitter into `Vec<Item>`. See `derive.rs` and `proc_macro_srv.rs`.
+tree-sitter into `Vec<ItemAst>`. See `derive.rs` and `proc_macro_srv.rs`.
 
 ### Type references in bodies pass through
 

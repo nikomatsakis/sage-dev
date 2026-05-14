@@ -32,7 +32,7 @@ pub trait TcxDb: Send + Sync {
     /// function makes rustc's `module_children` query panic.
     ///
     /// Callers that convert a `Symbol::External(cn, di)` into a
-    /// `Module::External(cn, di)` must gate the conversion on this
+    /// `ModSymbol::External(cn, di)` must gate the conversion on this
     /// check.
     fn is_module(&self, crate_num: CrateNum, def_index: DefIndex) -> bool;
 

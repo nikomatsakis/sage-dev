@@ -17,18 +17,30 @@ restricted subset of Rust, trading generality for speed.
 
 ## Current status
 
-Sage can parse Rust source files using tree-sitter and lower them into a
-salsa-based IR that captures:
+Sage parses Rust source files with tree-sitter, lowers them into a
+salsa-based IR, and resolves names end-to-end:
 
-- All item kinds (functions, structs, enums, traits, impls, type aliases,
-  consts, statics, modules, use declarations)
-- Function signatures (parameters, return types, async/unsafe)
-- Function bodies (expressions, statements, patterns)
-- Attributes and doc comments
-- Struct fields, enum variants
+- **Lowering.** All item kinds (functions, structs, enums, traits,
+  impls, type aliases, consts, statics, modules, use declarations),
+  function signatures, function bodies (expressions, statements,
+  patterns), attributes, doc comments.
+- **Module discovery.** `mod foo;` resolves to `foo.rs` or
+  `foo/mod.rs` on demand; inline `mod foo { ... }` is also handled.
+- **Macro expansion.** `macro_rules!` invocations expand inside the
+  expanded-module pipeline; expansions feed back into the same
+  resolution machinery as source-level items.
+- **Name resolution.** Use redirects (`use foo::bar`), glob imports
+  (`use foo::*`), `crate::` / `self::` / `super::` paths, the extern
+  prelude, and the `std::prelude::v1::*` injection.
+- **Derive resolution and expansion.** Builtin derives generate
+  synthesized impls; proc-macro derives are dispatched through
+  `rustc_driver`'s loaded dylibs.
+- **Body resolution.** Local variables, function parameters, and
+  paths inside function bodies resolve to `Symbol` / `LocalId`.
 
-This IR is tested against the [mini-redis](https://github.com/tokio-rs/mini-redis)
-codebase with snapshot tests that verify zero error or missing nodes.
+The pipeline runs against [mini-redis](https://github.com/tokio-rs/mini-redis)
+end-to-end, with snapshot tests covering both signatures and resolved
+bodies.
 
-**Not yet implemented:** name resolution, type checking, macro expansion,
-module file discovery.
+**Not yet implemented:** type checking, method resolution, trait
+selection. These are the next milestones on the roadmap.

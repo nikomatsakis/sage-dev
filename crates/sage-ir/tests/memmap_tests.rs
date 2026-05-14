@@ -1,34 +1,29 @@
-//! Phase 1 MEM-map tests: basic resolution via module_memmap.
+//! Phase 1 MEM-map tests: basic resolution via expanded_module.
 //!
 //! Tests cover: named members, use-redirects, globs, precedence rules.
 //! No macro expansion yet — invocations are recorded but unresolved.
 
 use sage_ir::db::Database;
+use sage_ir::item::ModAst;
 use sage_ir::memmap::module_memmap;
-use sage_ir::module::{Module, ModuleSource};
+use sage_ir::module::ModSymbol;
 use sage_ir::name::Name;
 use sage_ir::resolve::{Namespace, ResolutionError, SourceRoot, resolve_name};
 use sage_ir::source::SourceFile;
-use sage_ir::symbol::SymbolSource;
+use sage_ir::symbol::SymbolData;
+
 use salsa::Database as _;
 
 /// Helper: create a single-file crate and return (source_root, root_module).
-fn setup_single_file<'db>(db: &'db Database, code: &str) -> (SourceRoot, Module<'db>) {
+fn setup_single_file<'db>(db: &'db Database, code: &str) -> (SourceRoot, ModSymbol<'db>) {
     let file = SourceFile::new(db, "lib.rs".to_owned(), code.to_owned());
     let source_root = SourceRoot::new(db, vec![file]);
-    let root_module = Module::new(
-        db,
-        ModuleSource::Local {
-            file,
-            parent: None,
-            declaration: None,
-        },
-    );
+    let root_module = ModSymbol::ast(ModAst::crate_root(db, file));
     (source_root, root_module)
 }
 
 /// Helper: create a multi-file crate.
-fn setup_files<'db>(db: &'db Database, files: &[(&str, &str)]) -> (SourceRoot, Module<'db>) {
+fn setup_files<'db>(db: &'db Database, files: &[(&str, &str)]) -> (SourceRoot, ModSymbol<'db>) {
     let source_files: Vec<_> = files
         .iter()
         .map(|(path, text)| SourceFile::new(db, path.to_string(), text.to_string()))
@@ -39,14 +34,7 @@ fn setup_files<'db>(db: &'db Database, files: &[(&str, &str)]) -> (SourceRoot, M
         .find(|f| f.path(db) == "lib.rs")
         .copied()
         .expect("must have lib.rs");
-    let root_module = Module::new(
-        db,
-        ModuleSource::Local {
-            file: lib_file,
-            parent: None,
-            declaration: None,
-        },
-    );
+    let root_module = ModSymbol::ast(ModAst::crate_root(db, lib_file));
     (source_root, root_module)
 }
 
@@ -81,10 +69,8 @@ fn p1_named_import_beats_glob() {
 
         // Should resolve to b::Foo (named import), not a::Foo (glob)
         let sym = result.unwrap();
-        match sym.source(db) {
-            SymbolSource::Local(item) => {
-                let _ = item; // resolves without ambiguity = named beat glob
-            }
+        match sym.data() {
+            SymbolData::Ast(_) => {}
             _ => panic!("expected local symbol"),
         }
     });
@@ -118,9 +104,9 @@ fn p4_glob_beats_std_prelude() {
 
         // Should resolve to custom::Option (glob), not std::Option (prelude)
         let sym = result.unwrap();
-        match sym.source(db) {
-            SymbolSource::Local(_) => {} // good — it's the local one
-            SymbolSource::External(..) => panic!("should resolve to local, not std prelude"),
+        match sym.data() {
+            SymbolData::Ast(_) => {}
+            SymbolData::Ext(_) => panic!("should resolve to local, not std prelude"),
         }
     });
 }
@@ -187,7 +173,7 @@ fn p7_explicit_item_plus_named_import_same_name() {
 }
 
 // ---------------------------------------------------------------------------
-// Basic: module_memmap produces entries for declared items
+// Basic: expanded_module produces entries for declared items
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -215,7 +201,7 @@ fn memmap_contains_declared_items() {
 }
 
 // ---------------------------------------------------------------------------
-// Basic: module_memmap records glob stems
+// Basic: expanded_module records glob stems
 // ---------------------------------------------------------------------------
 
 #[test]

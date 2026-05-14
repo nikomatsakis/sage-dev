@@ -1,0 +1,21 @@
+version = 1
+
+[[battery-pack]]
+name = "ci"
+features = [
+    "benchmarks",
+    "default",
+    "fuzzing",
+]
+
+[[battery-pack.managed-deps]]
+name = "arbitrary"
+version = "1"
+
+[[battery-pack.managed-deps]]
+name = "criterion"
+version = "0.8"
+
+[[battery-pack.managed-deps]]
+name = "libfuzzer-sys"
+version = "0.4"

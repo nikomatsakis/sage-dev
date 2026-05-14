@@ -2,8 +2,8 @@ use sage_stash::{Ptr, Stash, Stashed};
 
 use crate::Db;
 use crate::body::*;
-use crate::item::FunctionItem;
-use crate::module::Module;
+use crate::item::FnAst;
+use crate::module::ModSymbol;
 use crate::name::Name;
 use crate::resolve::{Namespace, SourceRoot, resolve_name};
 use crate::resolved::*;
@@ -11,7 +11,7 @@ use crate::span::SpanIndices;
 
 struct BodyResolver<'db> {
     db: &'db dyn Db,
-    module: Module<'db>,
+    module: ModSymbol<'db>,
     source_root: SourceRoot,
     src: &'db Stash,
     out: Stash,
@@ -86,7 +86,7 @@ impl<'db> BodyResolver<'db> {
             };
         }
 
-        // Multi-segment: walk via Module::resolve_path so that
+        // Multi-segment: walk via ModSymbol::resolve_path so that
         // macro-introduced modules in any segment are visible.
         match self
             .module
@@ -366,8 +366,8 @@ impl<'db> BodyResolver<'db> {
 #[salsa::tracked(returns(ref))]
 pub fn resolve_body<'db>(
     db: &'db dyn Db,
-    function: FunctionItem<'db>,
-    module: Module<'db>,
+    function: FnAst<'db>,
+    module: ModSymbol<'db>,
     source_root: SourceRoot,
 ) -> ResolvedBody<'db> {
     let body = function.body(db);

@@ -3,31 +3,31 @@ pub mod builtins;
 use crate::Db;
 use crate::item::*;
 use crate::lower::file_item_tree;
-use crate::module::{CrateNum, DefIndex, Module, ModuleSource};
+use crate::module::{CrateNum, DefIndex, ModSymbol};
 use crate::name::Name;
 use crate::resolve::{MacroKind, Namespace, SourceRoot, definition_in_ns, resolve_name};
 use crate::source::SourceFile;
-use crate::symbol::{Symbol, SymbolSource};
+use crate::symbol::{Symbol, SymbolData};
 use crate::types::{AttrKind, TokenTree};
 
 /// Result of expanding a single derive.
 #[derive(Clone, PartialEq, Eq)]
 pub enum DeriveResult<'db> {
-    Builtin { impls: Vec<ImplItem<'db>> },
-    Expanded { items: Vec<Item<'db>> },
+    Builtin { impls: Vec<ImplAst<'db>> },
+    Expanded { items: Vec<ItemAst<'db>> },
     ProcMacro { symbol: Symbol<'db> },
 }
 
 /// Resolve and expand all derives on an item.
 pub fn expand_derives<'db>(
     db: &'db dyn Db,
-    module: Module<'db>,
+    module: ModSymbol<'db>,
     source_root: SourceRoot,
-    item: Item<'db>,
+    item: ItemAst<'db>,
 ) -> Vec<DeriveResult<'db>> {
     let attrs = match item {
-        Item::Struct(s) => s.attrs(db).to_vec(),
-        Item::Enum(e) => e.attrs(db).to_vec(),
+        ItemAst::Struct(s) => s.attrs(db).to_vec(),
+        ItemAst::Enum(e) => e.attrs(db).to_vec(),
         _ => return Vec::new(),
     };
 
@@ -51,8 +51,8 @@ pub fn expand_derives<'db>(
                 Namespace::Macro(MacroKind::Derive),
             ) {
                 Ok(symbol) => {
-                    let (cn, di) = match symbol.source(db) {
-                        SymbolSource::External(cn, di) => (cn, di),
+                    let (cn, di) = match symbol.data() {
+                        SymbolData::Ext(ext) => (ext.crate_num, ext.def_index),
                         _ => {
                             results.push(DeriveResult::ProcMacro { symbol });
                             continue;
@@ -89,7 +89,7 @@ pub fn expand_derives<'db>(
 ///    extern crate that the name was imported from.
 fn try_expand_proc_macro<'db>(
     db: &'db dyn Db,
-    item: Item<'db>,
+    item: ItemAst<'db>,
     cn: CrateNum,
     di: DefIndex,
     derive_name: Name<'db>,
@@ -116,17 +116,19 @@ fn try_expand_proc_macro<'db>(
     // Simplest approach: try extern_crate for common patterns.
     for crate_name in potential_crate_names(&name_text) {
         if let Some(ext_cn) = db.tcx().extern_crate(&crate_name) {
-            let ext_module = Module::new(db, ModuleSource::External(ext_cn, DefIndex(0)));
+            let ext_module = ModSymbol::external(ext_cn, DefIndex(0));
             if let Some(sym) = definition_in_ns(
                 db,
                 ext_module,
                 derive_name,
                 Namespace::Macro(MacroKind::Derive),
             ) {
-                if let SymbolSource::External(dcn, ddi) = sym.source(db) {
-                    if let Some(expanded) =
-                        db.tcx().expand_proc_macro_derive(dcn, ddi, &item_source)
-                    {
+                if let SymbolData::Ext(ext) = sym.data() {
+                    if let Some(expanded) = db.tcx().expand_proc_macro_derive(
+                        ext.crate_num,
+                        ext.def_index,
+                        &item_source,
+                    ) {
                         return Some(DeriveResult::Expanded {
                             items: lower_expanded_source(db, &expanded),
                         });
@@ -158,10 +160,10 @@ fn potential_crate_names(derive_name: &str) -> Vec<String> {
 }
 
 /// Get the source text for a struct/enum item.
-fn extract_item_source<'db>(db: &'db dyn Db, item: Item<'db>) -> Option<String> {
+fn extract_item_source<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Option<String> {
     let (span_table, span) = match item {
-        Item::Struct(s) => (s.span_table(db), s.span(db)),
-        Item::Enum(e) => (e.span_table(db), e.span(db)),
+        ItemAst::Struct(s) => (s.span_table(db), s.span(db)),
+        ItemAst::Enum(e) => (e.span_table(db), e.span(db)),
         _ => return None,
     };
     let file = span_table.file(db);
@@ -176,7 +178,7 @@ fn extract_item_source<'db>(db: &'db dyn Db, item: Item<'db>) -> Option<String> 
 }
 
 /// Lower expanded source text through tree-sitter into IR items.
-fn lower_expanded_source<'db>(db: &'db dyn Db, text: &str) -> Vec<Item<'db>> {
+fn lower_expanded_source<'db>(db: &'db dyn Db, text: &str) -> Vec<ItemAst<'db>> {
     let file = SourceFile::new(db, "<proc-macro-expansion>".to_owned(), text.to_owned());
     file_item_tree(db, file).clone()
 }

@@ -4,16 +4,18 @@
 //! fixpoint convergence, depth limit.
 
 use sage_ir::db::Database;
+use sage_ir::item::ModAst;
 use sage_ir::memmap::{MacroUseState, MemmapEntry, module_memmap};
-use sage_ir::module::{Module, ModuleSource};
+use sage_ir::module::ModSymbol;
 use sage_ir::name::Name;
 use sage_ir::resolve::{Namespace, SourceRoot, resolve_name};
 use sage_ir::source::SourceFile;
-use sage_ir::symbol::SymbolSource;
+use sage_ir::symbol::SymbolData;
+
 use salsa::Database as _;
 
 /// Helper: create a multi-file crate.
-fn setup_files<'db>(db: &'db Database, files: &[(&str, &str)]) -> (SourceRoot, Module<'db>) {
+fn setup_files<'db>(db: &'db Database, files: &[(&str, &str)]) -> (SourceRoot, ModSymbol<'db>) {
     let source_files: Vec<_> = files
         .iter()
         .map(|(path, text)| SourceFile::new(db, path.to_string(), text.to_string()))
@@ -24,28 +26,14 @@ fn setup_files<'db>(db: &'db Database, files: &[(&str, &str)]) -> (SourceRoot, M
         .find(|f| f.path(db) == "lib.rs")
         .copied()
         .expect("must have lib.rs");
-    let root_module = Module::new(
-        db,
-        ModuleSource::Local {
-            file: lib_file,
-            parent: None,
-            declaration: None,
-        },
-    );
+    let root_module = ModSymbol::ast(ModAst::crate_root(db, lib_file));
     (source_root, root_module)
 }
 
-fn setup_single<'db>(db: &'db Database, code: &str) -> (SourceRoot, Module<'db>) {
+fn setup_single<'db>(db: &'db Database, code: &str) -> (SourceRoot, ModSymbol<'db>) {
     let file = SourceFile::new(db, "lib.rs".to_owned(), code.to_owned());
     let source_root = SourceRoot::new(db, vec![file]);
-    let root_module = Module::new(
-        db,
-        ModuleSource::Local {
-            file,
-            parent: None,
-            declaration: None,
-        },
-    );
+    let root_module = ModSymbol::ast(ModAst::crate_root(db, file));
     (source_root, root_module)
 }
 
@@ -72,8 +60,8 @@ m!();
             "Foo should resolve from macro expansion, got {:?}",
             result
         );
-        match result.unwrap().source(db) {
-            SymbolSource::Local(_) => {} // good
+        match result.unwrap().data() {
+            SymbolData::Ast(_) => {} // good
             _ => panic!("expected local symbol"),
         }
     });
@@ -118,8 +106,8 @@ m!();
                 assert!(
                     matches!(
                         entries[0],
-                        MemmapEntry::Item(sage_ir::item::Item::Error(_))
-                            | MemmapEntry::Item(sage_ir::item::Item::Impl(_))
+                        MemmapEntry::Item(sage_ir::item::ItemAst::Error(_))
+                            | MemmapEntry::Item(sage_ir::item::ItemAst::Impl(_))
                     ),
                     "expected anonymous impl entry, got {:?}",
                     entries[0]

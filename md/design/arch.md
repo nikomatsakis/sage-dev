@@ -4,31 +4,31 @@
 
 Sage processes Rust source code through demand-driven salsa queries.
 The pipeline has four stages: **lowering** (tree-sitter CST → IR),
-**MEM-map construction** (macro expansion, resolved use imports),
-**module-level resolution** (flattened name lookup), and **body
-resolution** (paths and locals inside function bodies).
+**expanded-module construction** (macro expansion, use redirects,
+glob imports), **module-level resolution** (flattened name lookup),
+and **body resolution** (paths and locals inside function bodies).
 
 ```mermaid
 graph TD
     SF["SourceFile<br><i>salsa input: path + text</i>"]
     TS["tree-sitter parse"]
-    FIT["file_item_tree(file)<br><i>→ Vec&lt;Item&gt;</i>"]
-    MM["module_memmap(module)<br><i>→ ModuleMemmap</i><br>(seed + expand macros)"]
-    RN["resolve_name(module, name, ns)<br><i>→ Symbol</i>"]
-    RB["resolve_body(fn, module, ...)<br><i>→ ResolvedBody</i>"]
+    FIT["file_item_tree(file)<br><i>→ Vec&lt;ItemAst&gt;</i>"]
+    EM["expanded_module(ModAst)<br><i>→ ExpandedModule</i><br>(seed + expand macros)"]
+    RN["resolve_name(ModSymbol, name, ns)<br><i>→ Symbol</i>"]
+    RB["resolve_body(FnAst, ModSymbol, ...)<br><i>→ ResolvedBody</i>"]
     DS["TcxDb<br><i>rustc_driver TyCtxt</i>"]
 
-    SF --> TS --> FIT --> MM
-    DS --> MM
-    MM --> RN
+    SF --> TS --> FIT --> EM
+    DS --> EM
+    EM --> RN
     RN --> RB
     FIT --> RB
 ```
 
 All queries are demand-driven. Resolving `Get::apply` only parses
 `cmd/get.rs` and its imports — it never touches `cmd/set.rs`.
-`module_memmap` uses salsa cycle recovery (`cycle_initial` = empty
-memmap) to handle cross-module glob/redirect cycles, and
+`expanded_module` uses salsa cycle recovery (`cycle_initial` = empty
+expanded module) to handle cross-module glob/redirect cycles, and
 `expand_macro` creates synthetic `SourceFile` inputs so each unique
 `(macro_def, input_tokens)` pair is parsed once.
 
@@ -57,6 +57,7 @@ communicates via typed channels (`TcxRequest` enum in `tcx/proxy.rs`).
 pub trait TcxDb: Send + Sync {
     fn extern_crate(&self, name: &str) -> Option<CrateNum>;
     fn module_children(&self, crate_num: CrateNum, def_index: DefIndex) -> Vec<RawChild>;
+    fn is_module(&self, crate_num: CrateNum, def_index: DefIndex) -> bool;
     fn is_builtin_derive(&self, crate_num: CrateNum, def_index: DefIndex) -> bool;
     fn def_path(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<String>;
     fn expand_proc_macro_derive(&self, crate_num: CrateNum, def_index: DefIndex, item_source: &str) -> Option<String>;
@@ -71,14 +72,15 @@ rustc thread. It loads the macro via `CStore::load_macro_untracked`,
 extracts the `Client` from `DeriveProcMacro`, and calls it through
 `proc_macro::bridge` with a `SageServer` implementation
 (`src/proc_macro_srv.rs`). The expanded source text is returned to
-the salsa thread, which lowers it through tree-sitter into `Vec<Item>`.
+the salsa thread, which lowers it through tree-sitter into
+`Vec<ItemAst>`.
 
 The `TcxDb` is accessed via `Arc<dyn TcxDb>` on the salsa `Database`.
 It's immutable within a session — dependency metadata doesn't change.
 
 ## Tree-sitter
 
-Sage uses tree-sitter-rust for parsing. The CST is not stored — 
+Sage uses tree-sitter-rust for parsing. The CST is not stored —
 `file_item_tree` re-parses source text and lowers to tracked structs
 in one pass. Tree-sitter is fast enough that this is cheap, and the
 salsa tracked structs provide the real incrementality boundary.
@@ -95,5 +97,6 @@ full pipeline: workspace loading → dep building → `rustc_driver` →
   proc-macro expansion (clap `Parser` on mini-redis `Cli`)
 - `crates/sage-ir/tests/snapshot_tests.rs` — signature + body snapshots (no TcxDb)
 - `crates/sage-ir/tests/expand_tests.rs` — resolution unit tests (noop TcxDb)
+- `crates/sage-ir/tests/dump_expanded_module_tests.rs` — `dump_expanded_module` end-to-end
 
 Snapshot tests use `expect-test` with inline expectations.

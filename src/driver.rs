@@ -13,7 +13,8 @@ use rustc_interface::interface;
 use rustc_middle::ty::TyCtxt;
 
 use sage_ir::db::Database;
-use sage_ir::module::{Module, ModuleSource};
+use sage_ir::item::ModAst;
+use sage_ir::module::ModSymbol;
 use sage_ir::resolve::SourceRoot;
 use sage_ir::source::SourceFile;
 use sage_ir::tcx::TcxRequest;
@@ -25,13 +26,13 @@ use crate::tcx_impl::RustcTcxDb;
 /// Everything needed to query sage inside the callback.
 pub struct SageContext<'db> {
     pub db: &'db Database,
-    pub root: Module<'db>,
+    pub root: ModSymbol<'db>,
     pub source_root: SourceRoot,
 }
 
 /// Set up the full sage pipeline for a project and call `f` with a live
 /// `SageContext`. Handles: load_workspace, build rustc args, run_compiler,
-/// create Database + root Module.
+/// create Database + root ModSymbol.
 ///
 /// Rustc runs on a spawned thread (serving TyCtxt queries). Salsa work
 /// runs on the caller's thread. No unsafe code.
@@ -153,14 +154,7 @@ where
                 .or_else(|| files.iter().find(|f| f.path(db) == "main.rs"))
                 .expect("no lib.rs or main.rs found");
 
-            let root = Module::new(
-                db,
-                ModuleSource::Local {
-                    file: *lib_file,
-                    parent: None,
-                    declaration: None,
-                },
-            );
+            let root = ModSymbol::ast(ModAst::crate_root(db, *lib_file));
 
             let ctx = SageContext {
                 db,

@@ -1,4 +1,4 @@
-//! Phase 0: Baseline incremental tests for module_memmap.
+//! Phase 0: Baseline incremental tests for expanded_module.
 //!
 //! These tests lock in current incremental behavior using `expect_test` snapshots.
 //! Any reorganization that changes which queries re-execute must update the snapshot,
@@ -6,8 +6,9 @@
 
 use expect_test::{Expect, expect};
 use sage_ir::db::Database;
+use sage_ir::item::ModAst;
 use sage_ir::memmap::module_memmap;
-use sage_ir::module::{Module, ModuleSource};
+use sage_ir::module::ModSymbol;
 use sage_ir::resolve::SourceRoot;
 use sage_ir::source::SourceFile;
 use salsa::{Database as _, Setter};
@@ -17,7 +18,7 @@ fn check_log(actual: &str, expected: Expect) {
         .lines()
         .filter(|l| {
             l.contains("file_item_tree")
-                || l.contains("module_memmap")
+                || l.contains("expanded_module")
                 || l.contains("module_items")
         })
         .collect::<Vec<_>>()
@@ -25,7 +26,7 @@ fn check_log(actual: &str, expected: Expect) {
     expected.assert_eq(&filtered);
 }
 
-/// Snapshot the query log for a fresh module_memmap computation.
+/// Snapshot the query log for a fresh expanded_module computation.
 #[test]
 fn baseline_initial_memmap_computation() {
     let db = Database::default();
@@ -36,31 +37,24 @@ fn baseline_initial_memmap_computation() {
             "fn hello() {}\nmacro_rules! m { () => { struct Foo; } }\nm!();\n".to_owned(),
         );
         let source_root = SourceRoot::new(db, vec![file]);
-        let root_module = Module::new(
-            db,
-            ModuleSource::Local {
-                file,
-                parent: None,
-                declaration: None,
-            },
-        );
+        let root_module = ModSymbol::ast(ModAst::crate_root(db, file));
 
         let _ = module_memmap(db, root_module, source_root);
         let log = db.take_query_log();
         check_log(
             &log,
             expect![[r#"
-              salsa: module_memmap(Id(c00))
-              salsa: file_item_tree(Id(0))
-            file_item_tree("lib.rs")
-              salsa: file_item_tree(Id(1))
-            file_item_tree("<macro:m>")"#]],
+                  salsa: expanded_module(Id(1800))
+                  salsa: file_item_tree(Id(0))
+                file_item_tree("lib.rs")
+                  salsa: file_item_tree(Id(1))
+                file_item_tree("<macro:m>")"#]],
         );
     });
 }
 
 /// Snapshot the query log when a function body changes.
-/// After Phase 2: module_memmap does NOT re-execute — only file_item_tree does.
+/// After Phase 2: expanded_module does NOT re-execute — only file_item_tree does.
 /// This is the key incremental improvement: body edits don't invalidate the memmap.
 #[test]
 fn baseline_body_change_behavior() {
@@ -76,14 +70,7 @@ fn baseline_body_change_behavior() {
 
     // Initial computation
     db.attach(|db| {
-        let root_module = Module::new(
-            db,
-            ModuleSource::Local {
-                file,
-                parent: None,
-                declaration: None,
-            },
-        );
+        let root_module = ModSymbol::ast(ModAst::crate_root(db, file));
         let _ = module_memmap(db, root_module, source_root);
         db.take_query_log(); // drain
     });
@@ -95,14 +82,7 @@ fn baseline_body_change_behavior() {
     // Re-query and snapshot
     db.attach(|db| {
         // Re-intern the module (same data → same ID)
-        let root_module = Module::new(
-            db,
-            ModuleSource::Local {
-                file,
-                parent: None,
-                declaration: None,
-            },
-        );
+        let root_module = ModSymbol::ast(ModAst::crate_root(db, file));
         let _ = module_memmap(db, root_module, source_root);
         let log = db.take_query_log();
         check_log(
@@ -127,22 +107,8 @@ fn baseline_sibling_module_isolation() {
 
     // Initial computation
     db.attach(|db| {
-        let root_module = Module::new(
-            db,
-            ModuleSource::Local {
-                file: lib_file,
-                parent: None,
-                declaration: None,
-            },
-        );
-        let module_a = Module::new(
-            db,
-            ModuleSource::Local {
-                file: file_a,
-                parent: Some(root_module),
-                declaration: None,
-            },
-        );
+        let root_module = ModSymbol::ast(ModAst::crate_root(db, lib_file));
+        let module_a = ModSymbol::ast(ModAst::synthetic_child(db, "child", root_module, file_a));
         let _ = module_memmap(db, module_a, source_root);
         db.take_query_log(); // drain
     });
@@ -152,22 +118,8 @@ fn baseline_sibling_module_isolation() {
 
     // Re-query module_a and snapshot
     db.attach(|db| {
-        let root_module = Module::new(
-            db,
-            ModuleSource::Local {
-                file: lib_file,
-                parent: None,
-                declaration: None,
-            },
-        );
-        let module_a = Module::new(
-            db,
-            ModuleSource::Local {
-                file: file_a,
-                parent: Some(root_module),
-                declaration: None,
-            },
-        );
+        let root_module = ModSymbol::ast(ModAst::crate_root(db, lib_file));
+        let module_a = ModSymbol::ast(ModAst::synthetic_child(db, "child", root_module, file_a));
         let _ = module_memmap(db, module_a, source_root);
         let log = db.take_query_log();
         check_log(&log, expect![[r#""#]]);
@@ -181,8 +133,8 @@ fn baseline_sibling_module_isolation() {
 
 /// Body-only edits don't invalidate the memmap.
 ///
-/// The item tree's `FunctionItem` is identified by name, so a body-only change
-/// preserves the tracked-struct identity. `module_memmap` reads only the name,
+/// The item tree's `FnAst` is identified by name, so a body-only change
+/// preserves the tracked-struct identity. `expanded_module` reads only the name,
 /// so it stays cached.
 #[test]
 fn body_change_does_not_invalidate_memmap() {
@@ -192,14 +144,7 @@ fn body_change_does_not_invalidate_memmap() {
     let source_root = SourceRoot::new(&db, vec![file]);
 
     db.attach(|db| {
-        let root_module = Module::new(
-            db,
-            ModuleSource::Local {
-                file,
-                parent: None,
-                declaration: None,
-            },
-        );
+        let root_module = ModSymbol::ast(ModAst::crate_root(db, file));
         let _ = module_memmap(db, root_module, source_root);
         db.take_query_log();
     });
@@ -207,14 +152,7 @@ fn body_change_does_not_invalidate_memmap() {
     file.set_text(&mut db).to("fn foo() { 2 }".to_owned());
 
     db.attach(|db| {
-        let root_module = Module::new(
-            db,
-            ModuleSource::Local {
-                file,
-                parent: None,
-                declaration: None,
-            },
-        );
+        let root_module = ModSymbol::ast(ModAst::crate_root(db, file));
         let _ = module_memmap(db, root_module, source_root);
         let log = db.take_query_log();
 
@@ -223,16 +161,16 @@ fn body_change_does_not_invalidate_memmap() {
             "file_item_tree should re-execute after body change, got log:\n{log}"
         );
         assert!(
-            !log.contains("module_memmap"),
-            "module_memmap should NOT re-execute after body-only change, got log:\n{log}"
+            !log.contains("expanded_module"),
+            "expanded_module should NOT re-execute after body-only change, got log:\n{log}"
         );
     });
 }
 
 /// Signature changes (renaming a function) invalidate the memmap.
 ///
-/// Renaming changes the `FunctionItem`'s identity (its `name` field), so the
-/// old tracked struct is deleted and a new one is created. `module_memmap`
+/// Renaming changes the `FnAst`'s identity (its `name` field), so the
+/// old tracked struct is deleted and a new one is created. `expanded_module`
 /// reads names, so it must re-execute.
 #[test]
 fn signature_change_invalidates_memmap() {
@@ -242,30 +180,16 @@ fn signature_change_invalidates_memmap() {
     let source_root = SourceRoot::new(&db, vec![file]);
 
     db.attach(|db| {
-        let root_module = Module::new(
-            db,
-            ModuleSource::Local {
-                file,
-                parent: None,
-                declaration: None,
-            },
-        );
+        let root_module = ModSymbol::ast(ModAst::crate_root(db, file));
         let _ = module_memmap(db, root_module, source_root);
         db.take_query_log();
     });
 
-    // Rename foo → bar (changes the identity of the FunctionItem)
+    // Rename foo → bar (changes the identity of the FnAst)
     file.set_text(&mut db).to("fn bar() {}".to_owned());
 
     db.attach(|db| {
-        let root_module = Module::new(
-            db,
-            ModuleSource::Local {
-                file,
-                parent: None,
-                declaration: None,
-            },
-        );
+        let root_module = ModSymbol::ast(ModAst::crate_root(db, file));
         let _ = module_memmap(db, root_module, source_root);
         let log = db.take_query_log();
 
@@ -274,15 +198,15 @@ fn signature_change_invalidates_memmap() {
             "file_item_tree should re-execute, got log:\n{log}"
         );
         assert!(
-            log.contains("module_memmap"),
-            "module_memmap should re-execute after rename, got log:\n{log}"
+            log.contains("expanded_module"),
+            "expanded_module should re-execute after rename, got log:\n{log}"
         );
     });
 }
 
 /// Adding a use statement invalidates the memmap.
 ///
-/// A new `UseGroup` item changes the item tree's shape, so `module_memmap`
+/// A new `UseGroupAst` item changes the item tree's shape, so `expanded_module`
 /// must re-execute to pick up the new entry.
 #[test]
 fn adding_use_statement_invalidates_memmap() {
@@ -292,14 +216,7 @@ fn adding_use_statement_invalidates_memmap() {
     let source_root = SourceRoot::new(&db, vec![file]);
 
     db.attach(|db| {
-        let root_module = Module::new(
-            db,
-            ModuleSource::Local {
-                file,
-                parent: None,
-                declaration: None,
-            },
-        );
+        let root_module = ModSymbol::ast(ModAst::crate_root(db, file));
         let _ = module_memmap(db, root_module, source_root);
         db.take_query_log();
     });
@@ -308,25 +225,18 @@ fn adding_use_statement_invalidates_memmap() {
         .to("use foo::Bar;\nstruct S;".to_owned());
 
     db.attach(|db| {
-        let root_module = Module::new(
-            db,
-            ModuleSource::Local {
-                file,
-                parent: None,
-                declaration: None,
-            },
-        );
+        let root_module = ModSymbol::ast(ModAst::crate_root(db, file));
         let _ = module_memmap(db, root_module, source_root);
         let log = db.take_query_log();
 
         assert!(
-            log.contains("module_memmap"),
-            "module_memmap should re-execute when a use statement is added, got log:\n{log}"
+            log.contains("expanded_module"),
+            "expanded_module should re-execute when a use statement is added, got log:\n{log}"
         );
     });
 }
 
-/// `module_memmap` calls `file_item_tree` exactly once (no double-parse).
+/// `expanded_module` calls `file_item_tree` exactly once (no double-parse).
 ///
 /// Before Phase 2, `seed_from_cst` parsed tree-sitter AND `file_item_tree`
 /// was memoized separately — effectively two parses. After Phase 2, only
@@ -341,14 +251,7 @@ fn module_memmap_calls_file_item_tree_only_once() {
             "fn hello() {}\nmacro_rules! m { () => { struct Foo; } }\nm!();\n".to_owned(),
         );
         let source_root = SourceRoot::new(db, vec![file]);
-        let root_module = Module::new(
-            db,
-            ModuleSource::Local {
-                file,
-                parent: None,
-                declaration: None,
-            },
-        );
+        let root_module = ModSymbol::ast(ModAst::crate_root(db, file));
 
         let _ = module_memmap(db, root_module, source_root);
         let log = db.take_query_log();
@@ -367,7 +270,7 @@ fn module_memmap_calls_file_item_tree_only_once() {
 
 /// A body change in sibling module `b` doesn't invalidate `module_memmap(a)`.
 ///
-/// Each module's memmap is keyed on its own `Module` tracked struct. Changes
+/// Each module's memmap is keyed on its own `ModSymbol` tracked struct. Changes
 /// to `b.rs` only flow through `file_item_tree(b.rs)` → `module_memmap(b)` —
 /// they never touch the `a` chain.
 #[test]
@@ -380,22 +283,8 @@ fn body_change_in_sibling_module_does_not_invalidate_memmap() {
     let source_root = SourceRoot::new(&db, vec![lib_file, file_a, file_b]);
 
     db.attach(|db| {
-        let root_module = Module::new(
-            db,
-            ModuleSource::Local {
-                file: lib_file,
-                parent: None,
-                declaration: None,
-            },
-        );
-        let module_a = Module::new(
-            db,
-            ModuleSource::Local {
-                file: file_a,
-                parent: Some(root_module),
-                declaration: None,
-            },
-        );
+        let root_module = ModSymbol::ast(ModAst::crate_root(db, lib_file));
+        let module_a = ModSymbol::ast(ModAst::synthetic_child(db, "child", root_module, file_a));
         let _ = module_memmap(db, module_a, source_root);
         db.take_query_log();
     });
@@ -404,22 +293,8 @@ fn body_change_in_sibling_module_does_not_invalidate_memmap() {
     file_b.set_text(&mut db).to("fn b_fn() { 2 }".to_owned());
 
     db.attach(|db| {
-        let root_module = Module::new(
-            db,
-            ModuleSource::Local {
-                file: lib_file,
-                parent: None,
-                declaration: None,
-            },
-        );
-        let module_a = Module::new(
-            db,
-            ModuleSource::Local {
-                file: file_a,
-                parent: Some(root_module),
-                declaration: None,
-            },
-        );
+        let root_module = ModSymbol::ast(ModAst::crate_root(db, lib_file));
+        let module_a = ModSymbol::ast(ModAst::synthetic_child(db, "child", root_module, file_a));
         let _ = module_memmap(db, module_a, source_root);
         let log = db.take_query_log();
 
@@ -429,40 +304,33 @@ fn body_change_in_sibling_module_does_not_invalidate_memmap() {
             "file_item_tree(a.rs) should not re-run, got log:\n{log}"
         );
         assert!(
-            !log.contains("module_memmap"),
+            !log.contains("expanded_module"),
             "module_memmap(a) should not re-execute when b changes, got log:\n{log}"
         );
     });
 }
 
 // ===========================================================================
-// Phase 5: External modules should never reach module_memmap.
+// Phase 5: External modules should never reach expanded_module.
 // ===========================================================================
 
-/// Calling `module_memmap` on an external module panics (debug assertion).
+/// `module_memmap` on an external module returns an empty MEM-map.
 ///
-/// External module contents are queried via `TcxDb` directly — they have no
-/// source file to parse.
+/// External module contents are queried via `TcxDb` directly — there's
+/// no source file or memmap to compute. The dispatch wrapper short-
+/// circuits the Ext arm without invoking the underlying tracked query.
 #[test]
-#[should_panic(expected = "module_memmap should not be called on external modules")]
-fn external_module_memmap_panics() {
+fn external_module_memmap_is_empty() {
     use sage_ir::module::{CrateNum, DefIndex};
 
     let db = Database::default();
     db.attach(|db| {
         let file = SourceFile::new(db, "lib.rs".to_owned(), "".to_owned());
         let source_root = SourceRoot::new(db, vec![file]);
-        let _root_module = Module::new(
-            db,
-            ModuleSource::Local {
-                file,
-                parent: None,
-                declaration: None,
-            },
-        );
-        let ext_module = Module::new(db, ModuleSource::External(CrateNum(1), DefIndex(0)));
+        let _root_module = ModSymbol::ast(ModAst::crate_root(db, file));
+        let ext_module = ModSymbol::external(CrateNum(1), DefIndex(0));
 
-        // This should panic with the debug_assert message.
-        let _ = module_memmap(db, ext_module, source_root);
+        let memmap = module_memmap(db, ext_module, source_root);
+        assert!(memmap.entries(db).is_empty());
     });
 }

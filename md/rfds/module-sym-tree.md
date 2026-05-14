@@ -212,6 +212,27 @@ The plan is organised around milestones, each ending in a *demonstrable capabili
 
 ## Milestone 1 — "expanded module by path"
 
+**Status:** demo working end-to-end. Snapshot tests in `crates/sage-ir/tests/dump_expanded_module_tests.rs`.
+
+**What landed (final shape):**
+
+* **Per-kind tracked structs renamed to `*Ast`.** `ModItem` → `ModAst`, `FunctionItem` → `FnAst`, `StructItem` → `StructAst`, etc.; `UseGroup` → `UseGroupAst`; `MacroDefItem` → `MacroDefAst`; `MacroInvocationItem` → `MacroInvocationAst`. `Item<'db>` → `ItemAst<'db>`.
+* **`Symbol<'db>` is a `Copy` wrapper-of-enum**, no longer salsa-interned. Variants are `SymbolData::Ast(ItemAst)` and `SymbolData::Ext(SymExt)`. `SymExt` is a plain `Copy` struct holding `(CrateNum, DefIndex)`.
+* **`ModSymbol<'db>` is a `Copy` wrapper-of-enum**, no longer salsa-interned. Variants are `ModSymbolData::Ast(ModAst)` and `ModSymbolData::Ext(ModExt)`. `ModExt` is a plain `Copy` struct.
+* **`ModAst` carries `parent` and `file` fields directly.** The old `ModSymbolKind::{Local, LocalInline}` distinction is gone; `Local`/`LocalInline` are now expressible via field combinations on `ModAst`:
+  * crate root: `parent = None`, `file = Some(crate_file)`, `items = None`.
+  * file-based child (`mod foo;`): `parent = Some(parent_mod)`, `file = Some(child_file)`, `items = None`.
+  * inline child (`mod foo { ... }`): `parent = Some(parent_mod)`, `file = None`, `items = Some(...)`.
+  * raw declaration (lowering output, before resolution): `parent = None`, `file = None`.
+* **`expanded_module` is keyed on `ModAst`** rather than `ModSymbol`. The convenience wrapper `module_memmap(ModSymbol, …)` dispatches: ast arm → `expanded_module(ast, …)`, ext arm → empty placeholder.
+* **Resolution mints resolved ModAsts.** `resolve_mod` (now backed by a tracked function `resolve_mod_tracked`) takes a declaration-site `ModAst` plus a parent `ModSymbol`, and produces a *resolved* `ModAst` carrying the parent and file context. Resolution is salsa-cached — equal `(parent, decl, source_root)` triples produce the same `ModAst` id.
+* **`dump_expanded_module(db, root, source_root, path)` is the entry point.** Snapshot tests cover root, `crate::`, inline, file, deep, and unresolved paths.
+
+**Deferred (out of scope for milestone 1, picked up later):**
+
+* Per-kind ergonomic wrappers `FnSymbol`/`StructSymbol`/… and the conversions described in the symbol-sketch section. The current `Symbol::data() → SymbolData::{Ast(ItemAst), Ext(SymExt)}` covers the cross-source axis; per-kind wrappers add a kind axis on top and are most useful once body IRs need to discriminate kinds. Today's callers branch on `ItemAst::Function(_)` etc. directly, which already produces well-typed code.
+* `FnExt`/`StructExt`/… kind-specific ext leaves. Today both ext arms (for symbols and for modules) collapse onto `(CrateNum, DefIndex)` — `SymExt` and `ModExt` are the only ext leaves.
+
 **Demo:** a top-level entry point that, given a starting scope and a path string (e.g., `"crate::foo::bar"`), returns the expanded memmap of the module it names, reached through the new IR types end-to-end.
 
 ```rust

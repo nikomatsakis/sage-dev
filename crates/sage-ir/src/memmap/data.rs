@@ -9,20 +9,20 @@
 //! ```
 //!
 //! The module's MEM-map contains:
-//! - `Item(StructItem("Foo"))` — namespace is derived from the item at
+//! - `Item(StructAst("Foo"))` — namespace is derived from the item at
 //!   lookup time (struct → Type and Value)
 //! - `Redirect { name: "Baz", target: bar::Baz }` — namespace resolved
 //!   dynamically by resolving the target
 //! - `MacroDef(m)` — always `Namespace::Macro(Bang)`
 //! - `MacroUse { path: "m", input_tokens: "", state: Expanded([
-//!       Expansion { callee: Rules(m), entries: [Item(StructItem("X"))] }
+//!       Expansion { callee: Rules(m), entries: [Item(StructAst("X"))] }
 //!   ]) }`
 //!
 //! Namespace information is never stored on entries — it's always
 //! derivable from the variant shape (Item → `item_in_namespace`, MacroDef
 //! → `Macro(Bang)`, Redirect → resolve target).
 
-use crate::item::{Item, MacroDefItem};
+use crate::item::{ItemAst, MacroDefAst};
 use crate::module::{CrateNum, DefIndex};
 use crate::name::Name;
 use crate::types::Path;
@@ -33,19 +33,19 @@ pub enum MemmapEntry<'db> {
     /// A declared item — struct, fn, impl, mod, macro_rules!, etc.
     ///
     /// Name is via `item_name()` and is `None` for anonymous items
-    /// (`Item::Impl`, `Item::Use`, `Item::MacroInvocation`, `Item::Error`).
+    /// (`ItemAst::Impl`, `ItemAst::Use`, `ItemAst::MacroInvocation`, `ItemAst::Error`).
     /// Namespace is via `item_in_namespace()`.
     ///
-    /// `Item::MacroDef` is split out into a dedicated `MacroDef` variant
+    /// `ItemAst::MacroDef` is split out into a dedicated `MacroDef` variant
     /// below so callers can filter macro definitions without going through
-    /// `Item`. `Item::Use` and `Item::MacroInvocation` are never emitted
+    /// `Item`. `ItemAst::Use` and `ItemAst::MacroInvocation` are never emitted
     /// here — seeding transforms them into `Redirect`/`Glob`/`MacroUse`
     /// entries.
-    Item(Item<'db>),
+    Item(ItemAst<'db>),
 
     /// A `macro_rules!` definition. Name via `def.name()`. Always lives in
     /// `Namespace::Macro(Bang)`.
-    MacroDef(MacroDefItem<'db>),
+    MacroDef(MacroDefAst<'db>),
 
     /// A `use foo::bar [as baz]` import. `name` is the alias (or the last
     /// segment of `target`). Namespace is determined dynamically by
@@ -123,12 +123,12 @@ pub struct Expansion<'db> {
 
 /// Anything that can appear as the "target" of a macro invocation.
 ///
-/// Broader than `MacroDefItem` because derives and proc-macros aren't
+/// Broader than `MacroDefAst` because derives and proc-macros aren't
 /// `macro_rules!` definitions.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub enum MacroCallee<'db> {
     /// Local `macro_rules!` definition.
-    Rules(MacroDefItem<'db>),
+    Rules(MacroDefAst<'db>),
 
     /// Builtin macro, identified by `tcx.classify_builtin_macro`. The
     /// kind directly tells us whether expansion can contribute names

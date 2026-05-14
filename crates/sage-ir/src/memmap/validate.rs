@@ -1,8 +1,8 @@
 //! Validation: detect errors in the converged MEM-map.
 
 use crate::Db;
-use crate::item::Item;
-use crate::module::{Module, ModuleSource};
+use crate::item::ItemAst;
+use crate::module::{ModSymbol, ModSymbolData};
 use crate::name::Name;
 use crate::resolve::{
     MacroKind, Namespace, SourceRoot, item_in_namespace, item_name,
@@ -11,7 +11,7 @@ use crate::resolve::{
 use crate::types::Path;
 
 use super::data::*;
-use super::module_memmap;
+use super::expanded_module;
 
 /// Errors detected by inspecting the converged MEM-map.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -26,10 +26,14 @@ pub enum MemmapError<'db> {
 
 pub fn memmap_errors<'db>(
     db: &'db dyn Db,
-    module: Module<'db>,
+    module: ModSymbol<'db>,
     source_root: SourceRoot,
 ) -> Vec<MemmapError<'db>> {
-    let memmap = module_memmap(db, module, source_root);
+    let ast = match module.data() {
+        ModSymbolData::Ast(a) => a,
+        ModSymbolData::Ext(_) => return Vec::new(),
+    };
+    let memmap = expanded_module(db, ast, source_root);
     let entries = memmap.entries(db);
     let mut errors = Vec::new();
 
@@ -131,7 +135,7 @@ fn collect_macro_errors<'db>(entries: &[MemmapEntry<'db>], errors: &mut Vec<Memm
 
 fn collect_unresolved_redirects_globs<'db>(
     db: &'db dyn Db,
-    module: Module<'db>,
+    module: ModSymbol<'db>,
     entries: &[MemmapEntry<'db>],
     source_root: SourceRoot,
     out: &mut Vec<MemmapError<'db>>,
@@ -176,7 +180,7 @@ fn collect_unresolved_redirects_globs<'db>(
 
 fn target_resolves_to_nothing<'db>(
     db: &'db dyn Db,
-    current_module: Module<'db>,
+    current_module: ModSymbol<'db>,
     source_root: SourceRoot,
     path: Path<'db>,
 ) -> bool {
@@ -210,7 +214,7 @@ fn collect_expanded_names<'db>(
 
 fn name_available_via_glob<'db>(
     db: &'db dyn Db,
-    module: Module<'db>,
+    module: ModSymbol<'db>,
     entries: &[MemmapEntry<'db>],
     name: Name<'db>,
     ns: Namespace,
@@ -222,10 +226,11 @@ fn name_available_via_glob<'db>(
             else {
                 continue;
             };
-            if matches!(target.source(db), ModuleSource::External(..)) {
-                continue;
-            }
-            let source_memmap = module_memmap(db, target, source_root);
+            let target_ast = match target.data() {
+                ModSymbolData::Ast(a) => a,
+                ModSymbolData::Ext(_) => continue,
+            };
+            let source_memmap = expanded_module(db, target_ast, source_root);
             for src_entry in source_memmap.entries(db) {
                 match src_entry {
                     MemmapEntry::Item(item) => {
@@ -252,4 +257,4 @@ fn name_available_via_glob<'db>(
 }
 
 #[allow(dead_code)]
-fn _use_item(_: Item<'_>) {}
+fn _use_item(_: ItemAst<'_>) {}

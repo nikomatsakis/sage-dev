@@ -1,23 +1,23 @@
-//! Phase 1 behavior tests: Item::MacroDef and Item::MacroInvocation variants.
+//! Phase 1 behavior tests: ItemAst::MacroDef and ItemAst::MacroInvocation variants.
 //!
 //! Verifies that `file_item_tree` produces the new macro variants,
 //! that `item_name` returns None for them (preserving `definition()` semantics),
 //! and that Display impls render them correctly.
 
 use sage_ir::db::Database;
-use sage_ir::item::Item;
+use sage_ir::item::ItemAst;
 use sage_ir::lower::file_item_tree;
 use sage_ir::resolve::item_name;
 use sage_ir::source::SourceFile;
 use salsa::Database as _;
 
-fn parse<'db>(db: &'db Database, code: &str) -> Vec<Item<'db>> {
+fn parse<'db>(db: &'db Database, code: &str) -> Vec<ItemAst<'db>> {
     let file = SourceFile::new(db, "lib.rs".to_owned(), code.to_owned());
     file_item_tree(db, file).clone()
 }
 
 // ---------------------------------------------------------------------------
-// file_item_tree produces Item::MacroDef for macro_rules!
+// file_item_tree produces ItemAst::MacroDef for macro_rules!
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -29,17 +29,17 @@ fn file_item_tree_produces_macro_def() {
         let macro_def = items
             .iter()
             .find_map(|i| match i {
-                Item::MacroDef(d) => Some(*d),
+                ItemAst::MacroDef(d) => Some(*d),
                 _ => None,
             })
-            .expect("expected Item::MacroDef");
+            .expect("expected ItemAst::MacroDef");
 
         assert_eq!(macro_def.name(db).text(db).as_str(), "m");
     });
 }
 
 // ---------------------------------------------------------------------------
-// file_item_tree produces Item::MacroInvocation for m!()
+// file_item_tree produces ItemAst::MacroInvocation for m!()
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -51,10 +51,10 @@ fn file_item_tree_produces_macro_invocation() {
         let inv = items
             .iter()
             .find_map(|i| match i {
-                Item::MacroInvocation(v) => Some(*v),
+                ItemAst::MacroInvocation(v) => Some(*v),
                 _ => None,
             })
-            .expect("expected Item::MacroInvocation");
+            .expect("expected ItemAst::MacroInvocation");
 
         let segments = inv.path(db).segments(db);
         assert_eq!(segments.len(), 1);
@@ -75,10 +75,10 @@ fn file_item_tree_multi_segment_macro_path() {
         let inv = items
             .iter()
             .find_map(|i| match i {
-                Item::MacroInvocation(v) => Some(*v),
+                ItemAst::MacroInvocation(v) => Some(*v),
                 _ => None,
             })
-            .expect("expected Item::MacroInvocation");
+            .expect("expected ItemAst::MacroInvocation");
 
         let segments = inv.path(db).segments(db);
         let texts: Vec<&str> = segments.iter().map(|s| s.text(db).as_str()).collect();
@@ -97,7 +97,7 @@ fn item_name_returns_none_for_macro_def() {
         let items = parse(db, "macro_rules! m { () => {} }");
         let macro_def_item = items
             .iter()
-            .find(|i| matches!(i, Item::MacroDef(_)))
+            .find(|i| matches!(i, ItemAst::MacroDef(_)))
             .copied()
             .expect("expected a MacroDef item");
 
@@ -116,7 +116,7 @@ fn item_name_returns_none_for_macro_invocation() {
         let items = parse(db, "m!();");
         let inv_item = items
             .iter()
-            .find(|i| matches!(i, Item::MacroInvocation(_)))
+            .find(|i| matches!(i, ItemAst::MacroInvocation(_)))
             .copied()
             .expect("expected a MacroInvocation item");
 
@@ -135,7 +135,7 @@ fn display_item_macro_def() {
         let items = parse(db, "macro_rules! m { () => { struct X; } }");
         let macro_def_item = items
             .iter()
-            .find(|i| matches!(i, Item::MacroDef(_)))
+            .find(|i| matches!(i, ItemAst::MacroDef(_)))
             .copied()
             .expect("expected a MacroDef item");
 
@@ -164,7 +164,7 @@ fn display_item_macro_invocation() {
         let items = parse(db, "foo::m!();");
         let inv_item = items
             .iter()
-            .find(|i| matches!(i, Item::MacroInvocation(_)))
+            .find(|i| matches!(i, ItemAst::MacroInvocation(_)))
             .copied()
             .expect("expected a MacroInvocation item");
 

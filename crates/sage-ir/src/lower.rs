@@ -14,7 +14,7 @@ use crate::types::*;
 
 /// Parse a source file and return its top-level items.
 #[salsa::tracked(returns(ref))]
-pub fn file_item_tree<'db>(db: &'db dyn Db, file: SourceFile) -> Vec<Item<'db>> {
+pub fn file_item_tree<'db>(db: &'db dyn Db, file: SourceFile) -> Vec<ItemAst<'db>> {
     db.log_query(format!("file_item_tree(\"{}\")", file.path(db)));
     let text = file.text(db);
     let mut parser = tree_sitter::Parser::new();
@@ -58,7 +58,7 @@ impl<'db> LowerCtx<'db> {
 
     // -- Items -------------------------------------------------------------
 
-    fn lower_items(&mut self, parent: Node<'_>) -> Vec<Item<'db>> {
+    fn lower_items(&mut self, parent: Node<'_>) -> Vec<ItemAst<'db>> {
         let mut items = Vec::new();
         let mut pending_attrs = Vec::new();
         let mut cursor = parent.walk();
@@ -138,26 +138,26 @@ impl<'db> LowerCtx<'db> {
         )
     }
 
-    fn lower_item(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> Item<'db> {
+    fn lower_item(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> ItemAst<'db> {
         match node.kind() {
-            "function_item" => Item::Function(self.lower_function(node, attrs)),
-            "struct_item" => Item::Struct(self.lower_struct(node, attrs)),
-            "enum_item" => Item::Enum(self.lower_enum(node, attrs)),
-            "trait_item" => Item::Trait(self.lower_trait(node, attrs)),
-            "impl_item" => Item::Impl(self.lower_impl(node, attrs)),
-            "type_item" => Item::TypeAlias(self.lower_type_alias(node, attrs)),
-            "const_item" => Item::Const(self.lower_const(node, attrs)),
-            "static_item" => Item::Static(self.lower_static(node, attrs)),
-            "mod_item" => Item::Mod(self.lower_mod(node, attrs)),
+            "function_item" => ItemAst::Function(self.lower_function(node, attrs)),
+            "struct_item" => ItemAst::Struct(self.lower_struct(node, attrs)),
+            "enum_item" => ItemAst::Enum(self.lower_enum(node, attrs)),
+            "trait_item" => ItemAst::Trait(self.lower_trait(node, attrs)),
+            "impl_item" => ItemAst::Impl(self.lower_impl(node, attrs)),
+            "type_item" => ItemAst::TypeAlias(self.lower_type_alias(node, attrs)),
+            "const_item" => ItemAst::Const(self.lower_const(node, attrs)),
+            "static_item" => ItemAst::Static(self.lower_static(node, attrs)),
+            "mod_item" => ItemAst::Mod(self.lower_mod(node, attrs)),
             "use_declaration" => self.lower_use(node, attrs),
             "macro_definition" => self.lower_macro_def_item(node),
             "macro_invocation" => self.lower_macro_invocation_item(node),
             "expression_statement" => self.lower_expression_statement(node),
-            _ => Item::Error(self.span(node)),
+            _ => ItemAst::Error(self.span(node)),
         }
     }
 
-    fn lower_function(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> FunctionItem<'db> {
+    fn lower_function(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> FnAst<'db> {
         let name_node = node
             .child_by_field_name("name")
             .expect("function has no name");
@@ -181,7 +181,7 @@ impl<'db> LowerCtx<'db> {
 
         let body = self.lower_body(node);
 
-        FunctionItem::new(
+        FnAst::new(
             self.db, name, attrs, params, ret_type, is_async, is_unsafe, body, span_table, span,
         )
     }
@@ -236,7 +236,7 @@ impl<'db> LowerCtx<'db> {
         params
     }
 
-    fn lower_struct(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> StructItem<'db> {
+    fn lower_struct(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> StructAst<'db> {
         let name = self.intern_name(
             node.child_by_field_name("name")
                 .expect("struct has no name"),
@@ -249,7 +249,7 @@ impl<'db> LowerCtx<'db> {
             .map(|body| self.lower_field_defs(body))
             .unwrap_or_default();
 
-        StructItem::new(self.db, name, attrs, fields, span_table, span)
+        StructAst::new(self.db, name, attrs, fields, span_table, span)
     }
 
     fn lower_field_defs(&mut self, body: Node<'_>) -> Vec<FieldDef<'db>> {
@@ -271,7 +271,7 @@ impl<'db> LowerCtx<'db> {
         fields
     }
 
-    fn lower_enum(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> EnumItem<'db> {
+    fn lower_enum(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> EnumAst<'db> {
         let name = self.intern_name(node.child_by_field_name("name").expect("enum has no name"));
         let span = self.span(node);
         let span_table = self.make_span_table(node);
@@ -294,10 +294,10 @@ impl<'db> LowerCtx<'db> {
             }
         }
 
-        EnumItem::new(self.db, name, attrs, variants, span_table, span)
+        EnumAst::new(self.db, name, attrs, variants, span_table, span)
     }
 
-    fn lower_trait(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> TraitItem<'db> {
+    fn lower_trait(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> TraitAst<'db> {
         let name = self.intern_name(node.child_by_field_name("name").expect("trait has no name"));
         let span = self.span(node);
         let span_table = self.make_span_table(node);
@@ -307,10 +307,10 @@ impl<'db> LowerCtx<'db> {
             .map(|body| self.lower_items(body))
             .unwrap_or_default();
 
-        TraitItem::new(self.db, name, attrs, items, span_table, span)
+        TraitAst::new(self.db, name, attrs, items, span_table, span)
     }
 
-    fn lower_impl(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> ImplItem<'db> {
+    fn lower_impl(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> ImplAst<'db> {
         let span = self.span(node);
         let span_table = self.make_span_table(node);
 
@@ -328,10 +328,10 @@ impl<'db> LowerCtx<'db> {
             .map(|body| self.lower_items(body))
             .unwrap_or_default();
 
-        ImplItem::new(self.db, attrs, self_ty, trait_path, items, span_table, span)
+        ImplAst::new(self.db, attrs, self_ty, trait_path, items, span_table, span)
     }
 
-    fn lower_type_alias(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> TypeAliasItem<'db> {
+    fn lower_type_alias(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> TypeAliasAst<'db> {
         let name = self.intern_name(
             node.child_by_field_name("name")
                 .expect("type alias has no name"),
@@ -339,18 +339,18 @@ impl<'db> LowerCtx<'db> {
         let span = self.span(node);
         let span_table = self.make_span_table(node);
         let ty = node.child_by_field_name("type").map(|n| self.lower_type(n));
-        TypeAliasItem::new(self.db, name, attrs, ty, span_table, span)
+        TypeAliasAst::new(self.db, name, attrs, ty, span_table, span)
     }
 
-    fn lower_const(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> ConstItem<'db> {
+    fn lower_const(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> ConstAst<'db> {
         let name = self.intern_name(node.child_by_field_name("name").expect("const has no name"));
         let span = self.span(node);
         let span_table = self.make_span_table(node);
         let ty = node.child_by_field_name("type").map(|n| self.lower_type(n));
-        ConstItem::new(self.db, name, attrs, ty, span_table, span)
+        ConstAst::new(self.db, name, attrs, ty, span_table, span)
     }
 
-    fn lower_static(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> StaticItem<'db> {
+    fn lower_static(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> StaticAst<'db> {
         let name = self.intern_name(
             node.child_by_field_name("name")
                 .expect("static has no name"),
@@ -361,20 +361,23 @@ impl<'db> LowerCtx<'db> {
         let is_mut = node
             .children(&mut node.walk())
             .any(|c| c.kind() == "mutable_specifier");
-        StaticItem::new(self.db, name, attrs, ty, is_mut, span_table, span)
+        StaticAst::new(self.db, name, attrs, ty, is_mut, span_table, span)
     }
 
-    fn lower_mod(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> ModItem<'db> {
+    fn lower_mod(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> ModAst<'db> {
         let name = self.intern_name(node.child_by_field_name("name").expect("mod has no name"));
         let span = self.span(node);
         let span_table = self.make_span_table(node);
         let items = node
             .child_by_field_name("body")
             .map(|body| self.lower_items(body));
-        ModItem::new(self.db, name, attrs, items, span_table, span)
+        // Lowering produces declaration-site ModAsts with no parent/
+        // file context — those fields are filled in later by
+        // resolution (see `resolve::resolve_mod`).
+        ModAst::new(self.db, name, None, None, attrs, items, span_table, span)
     }
 
-    fn lower_use(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> Item<'db> {
+    fn lower_use(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> ItemAst<'db> {
         let span = self.span(node);
         let span_table = self.make_span_table(node);
         let mut imports = Vec::new();
@@ -390,7 +393,7 @@ impl<'db> LowerCtx<'db> {
                 }
             }
         }
-        Item::Use(UseGroup::new(self.db, attrs, imports, span_table, span))
+        ItemAst::Use(UseGroupAst::new(self.db, attrs, imports, span_table, span))
     }
 
     fn flatten_use_tree(
@@ -534,43 +537,43 @@ impl<'db> LowerCtx<'db> {
 
     // -- Macros -------------------------------------------------------------
 
-    fn lower_macro_def_item(&self, node: Node<'_>) -> Item<'db> {
+    fn lower_macro_def_item(&self, node: Node<'_>) -> ItemAst<'db> {
         let name_node = match node.child_by_field_name("name") {
             Some(n) => n,
-            None => return Item::Error(self.span(node)),
+            None => return ItemAst::Error(self.span(node)),
         };
         let name = self.intern_name(name_node);
         let span = self.span(node);
         let body_tokens = crate::ts_helpers::extract_macro_body_tokens(node, self.text);
 
-        Item::MacroDef(MacroDefItem::new(self.db, name, body_tokens, span))
+        ItemAst::MacroDef(MacroDefAst::new(self.db, name, body_tokens, span))
     }
 
-    fn lower_expression_statement(&self, node: Node<'_>) -> Item<'db> {
+    fn lower_expression_statement(&self, node: Node<'_>) -> ItemAst<'db> {
         // Item-level macro invocation: expression_statement > macro_invocation
         let invoc = node
             .named_children(&mut node.walk())
             .find(|c| c.kind() == "macro_invocation");
         match invoc {
             Some(invoc_node) => self.lower_macro_invocation_item(invoc_node),
-            None => Item::Error(self.span(node)),
+            None => ItemAst::Error(self.span(node)),
         }
     }
 
-    fn lower_macro_invocation_item(&self, node: Node<'_>) -> Item<'db> {
+    fn lower_macro_invocation_item(&self, node: Node<'_>) -> ItemAst<'db> {
         let macro_node = match node.child_by_field_name("macro") {
             Some(n) => n,
-            None => return Item::Error(self.span(node)),
+            None => return ItemAst::Error(self.span(node)),
         };
         let segments =
             crate::ts_helpers::collect_macro_path_segments(self.db, macro_node, self.text);
         if segments.is_empty() {
-            return Item::Error(self.span(node));
+            return ItemAst::Error(self.span(node));
         }
         let span = self.span(node);
         let path = Path::new(self.db, segments, span);
         let input_tokens = crate::ts_helpers::extract_macro_invocation_tokens(node, self.text);
-        Item::MacroInvocation(MacroInvocationItem::new(self.db, path, input_tokens, span))
+        ItemAst::MacroInvocation(MacroInvocationAst::new(self.db, path, input_tokens, span))
     }
 
     // -- Types -------------------------------------------------------------

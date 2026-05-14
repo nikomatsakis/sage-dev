@@ -28,6 +28,9 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 tree-sitter = "0.25"
 tree-sitter-rust = "0.24"
+arbitrary = { version = "1", features = ["derive"] }
+criterion = { version = "0.8", features = ["html_reports"] }
+libfuzzer-sys = "0.4"
 
 [dev-dependencies]
 expect-test = "1.5.1"
