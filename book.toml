@@ -8,6 +8,7 @@ src = "md"
 
 [preprocessor.mermaid]
 command = "mdbook-mermaid"
+optional = true
 
 [output]
 
