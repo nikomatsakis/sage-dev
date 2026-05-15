@@ -2,7 +2,7 @@ use sage_stash::{AllocStashData, Ptr, Slice, StashDirect, Stashed};
 
 use crate::body::{BinaryOp, Literal, UnaryOp};
 use crate::name::Name;
-use crate::span::SpanIndices;
+use crate::span::RelativeSpan;
 use crate::symbol::Symbol;
 use crate::types::{Mutability, TokenTree, TypeRef};
 
@@ -29,7 +29,7 @@ impl StashDirect for LocalId {}
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct LocalVar<'db> {
     pub name: Name<'db>,
-    pub span: SpanIndices,
+    pub span: RelativeSpan,
 }
 
 impl StashDirect for LocalVar<'_> {}
@@ -38,13 +38,13 @@ impl StashDirect for LocalVar<'_> {}
 pub struct RBody<'db> {
     pub root: Ptr<RExpr<'db>>,
     pub locals: Slice<LocalVar<'db>>,
-    pub span: SpanIndices,
+    pub span: RelativeSpan,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct RExpr<'db> {
     pub kind: RExprKind<'db>,
-    pub span: SpanIndices,
+    pub span: RelativeSpan,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
@@ -90,7 +90,7 @@ pub enum RExprKind<'db> {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct RStmt<'db> {
     pub kind: RStmtKind<'db>,
-    pub span: SpanIndices,
+    pub span: RelativeSpan,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
@@ -106,7 +106,7 @@ pub enum RStmtKind<'db> {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct RPat<'db> {
     pub kind: RPatKind<'db>,
-    pub span: SpanIndices,
+    pub span: RelativeSpan,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
@@ -128,14 +128,14 @@ pub enum RPatKind<'db> {
 pub struct RFieldInit<'db> {
     pub name: Name<'db>,
     pub value: Ptr<RExpr<'db>>,
-    pub span: SpanIndices,
+    pub span: RelativeSpan,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct RFieldPat<'db> {
     pub name: Name<'db>,
     pub pat: Ptr<RPat<'db>>,
-    pub span: SpanIndices,
+    pub span: RelativeSpan,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
@@ -143,12 +143,12 @@ pub struct RMatchArm<'db> {
     pub pat: Ptr<RPat<'db>>,
     pub guard: Option<Ptr<RExpr<'db>>>,
     pub body: Ptr<RExpr<'db>>,
-    pub span: SpanIndices,
+    pub span: RelativeSpan,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct RClosureParam<'db> {
     pub pat: Ptr<RPat<'db>>,
     pub ty: Option<TypeRef<'db>>,
-    pub span: SpanIndices,
+    pub span: RelativeSpan,
 }

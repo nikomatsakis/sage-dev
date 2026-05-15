@@ -46,7 +46,7 @@ pub(crate) fn item_in_namespace(_db: &dyn Db, item: ItemAst<'_>, ns: Namespace) 
 
         // Items with no name: they're never looked up by name, so
         // they don't occupy any namespace.
-        ItemAst::Impl(_) | ItemAst::Use(_) | ItemAst::MacroInvocation(_) | ItemAst::Error(_) => {
+        ItemAst::Impl(_) | ItemAst::Use(_) | ItemAst::MacroInvocation(_) | ItemAst::Error(..) => {
             false
         }
     }
@@ -180,7 +180,6 @@ fn resolve_mod_tracked<'db>(
             None,
             decl.attrs(db).clone(),
             Some(items.clone()),
-            decl.span_table(db),
             decl.span(db),
         );
         return Some(inline);
@@ -205,7 +204,6 @@ fn resolve_mod_tracked<'db>(
                 Some(child_file),
                 decl.attrs(db).clone(),
                 None,
-                decl.span_table(db),
                 decl.span(db),
             );
             return Some(resolved);
@@ -249,7 +247,7 @@ pub fn item_name<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Option<Name<'db>> 
         | ItemAst::Use(_)
         | ItemAst::MacroDef(_)
         | ItemAst::MacroInvocation(_)
-        | ItemAst::Error(_) => None,
+        | ItemAst::Error(..) => None,
     }
 }
 

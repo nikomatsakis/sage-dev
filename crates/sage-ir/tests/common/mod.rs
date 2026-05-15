@@ -309,7 +309,7 @@ fn item_kind_and_name(
         ItemAst::Use(_) => ("Use", None),
         ItemAst::MacroDef(d) => ("MacroDef", Some(d.name(db).text(db).clone())),
         ItemAst::MacroInvocation(_) => ("MacroInvocation", None),
-        ItemAst::Error(_) => ("Error", None),
+        ItemAst::Error(..) => ("Error", None),
     }
 }
 

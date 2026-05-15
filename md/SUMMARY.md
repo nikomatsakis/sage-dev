@@ -9,3 +9,4 @@
 - [RFDs](./rfds/README.md)
   - [Module sym tree](./rfds/module-sym-tree.md)
   - [Initial Setup](./rfds/initial-setup.md)
+  - [Relative Span Model](./rfds/relative-span-model.md)

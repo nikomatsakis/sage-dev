@@ -8,8 +8,12 @@ src = "md"
 
 [preprocessor.mermaid]
 command = "mdbook-mermaid"
+optional = true
 
 [output]
 
 [output.html]
 additional-js = ["mermaid.min.js", "mermaid-init.js"]
+
+[output.linkcheck2]
+optional = true

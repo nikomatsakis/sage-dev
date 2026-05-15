@@ -1,19 +1,19 @@
 use crate::name::Name;
-use crate::span::SpanIndices;
+use crate::span::RelativeSpan;
 
 /// A path as written in source: `std::collections::HashMap`.
 #[salsa::tracked(debug)]
 pub struct Path<'db> {
     #[returns(ref)]
     pub segments: Vec<Name<'db>>,
-    pub span: SpanIndices,
+    pub span: RelativeSpan,
 }
 
 /// Unresolved type as written in source.
 #[salsa::tracked(debug)]
 pub struct TypeRef<'db> {
     pub kind: TypeRefKind<'db>,
-    pub span: SpanIndices,
+    pub span: RelativeSpan,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
@@ -48,7 +48,7 @@ pub enum Mutability {
 pub struct Param<'db> {
     pub name: Option<Name<'db>>,
     pub ty: TypeRef<'db>,
-    pub span: SpanIndices,
+    pub span: RelativeSpan,
 }
 
 /// A struct/enum field.
@@ -56,7 +56,7 @@ pub struct Param<'db> {
 pub struct FieldDef<'db> {
     pub name: Name<'db>,
     pub ty: TypeRef<'db>,
-    pub span: SpanIndices,
+    pub span: RelativeSpan,
 }
 
 /// An enum variant.
@@ -65,7 +65,7 @@ pub struct VariantDef<'db> {
     pub name: Name<'db>,
     #[returns(ref)]
     pub fields: Vec<FieldDef<'db>>,
-    pub span: SpanIndices,
+    pub span: RelativeSpan,
 }
 
 /// The syntactic form of an attribute.
@@ -83,7 +83,7 @@ pub struct UseImport<'db> {
     /// The full path as written, e.g. [foo, bar].
     pub path: Path<'db>,
     pub kind: UseKind<'db>,
-    pub span: SpanIndices,
+    pub span: RelativeSpan,
 }
 
 /// What a use import brings into scope.
@@ -107,7 +107,7 @@ pub struct Attr<'db> {
     /// For normal attrs: the arguments inside parens, if any.
     /// For doc comments: the comment text.
     pub args: Option<TokenTree<'db>>,
-    pub span: SpanIndices,
+    pub span: RelativeSpan,
     /// True for inner attributes (`#![...]`) or inner doc comments (`//!`).
     pub is_inner: bool,
 }
@@ -117,5 +117,5 @@ pub struct Attr<'db> {
 pub struct TokenTree<'db> {
     #[returns(ref)]
     pub text: String,
-    pub span: SpanIndices,
+    pub span: RelativeSpan,
 }

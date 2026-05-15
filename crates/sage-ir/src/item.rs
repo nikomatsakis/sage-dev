@@ -1,6 +1,7 @@
 use crate::body::FunctionBody;
 use crate::name::Name;
-use crate::span::{SpanIndices, SpanTable};
+use crate::source::SourceFile;
+use crate::span::AbsoluteSpan;
 use crate::types::{Attr, FieldDef, Param, Path, TypeRef, UseImport, VariantDef};
 
 /// Thin enum over all item kinds. `Copy` because salsa tracked struct
@@ -20,7 +21,31 @@ pub enum ItemAst<'db> {
     MacroDef(MacroDefAst<'db>),
     MacroInvocation(MacroInvocationAst<'db>),
     /// Unrecognized or unsupported item node.
-    Error(SpanIndices),
+    Error(AbsoluteSpan),
+}
+
+impl<'db> ItemAst<'db> {
+    pub fn absolute_span(&self, db: &'db dyn crate::Db) -> AbsoluteSpan {
+        match *self {
+            ItemAst::Function(f) => f.span(db),
+            ItemAst::Struct(s) => s.span(db),
+            ItemAst::Enum(e) => e.span(db),
+            ItemAst::Trait(t) => t.span(db),
+            ItemAst::Impl(i) => i.span(db),
+            ItemAst::TypeAlias(t) => t.span(db),
+            ItemAst::Const(c) => c.span(db),
+            ItemAst::Static(s) => s.span(db),
+            ItemAst::Mod(m) => m.span(db),
+            ItemAst::Use(u) => u.span(db),
+            ItemAst::MacroDef(m) => m.span(db),
+            ItemAst::MacroInvocation(m) => m.span(db),
+            ItemAst::Error(span) => span,
+        }
+    }
+
+    pub fn source_file(&self, db: &'db dyn crate::Db) -> SourceFile {
+        self.absolute_span(db).file
+    }
 }
 
 // -- Function --
@@ -51,10 +76,7 @@ pub struct FnAst<'db> {
     pub body: FunctionBody<'db>,
 
     #[tracked]
-    pub span_table: SpanTable<'db>,
-
-    #[tracked]
-    pub span: SpanIndices,
+    pub span: AbsoluteSpan,
 }
 
 // -- Struct --
@@ -72,10 +94,7 @@ pub struct StructAst<'db> {
     pub fields: Vec<FieldDef<'db>>,
 
     #[tracked]
-    pub span_table: SpanTable<'db>,
-
-    #[tracked]
-    pub span: SpanIndices,
+    pub span: AbsoluteSpan,
 }
 
 // -- Enum --
@@ -93,10 +112,7 @@ pub struct EnumAst<'db> {
     pub variants: Vec<VariantDef<'db>>,
 
     #[tracked]
-    pub span_table: SpanTable<'db>,
-
-    #[tracked]
-    pub span: SpanIndices,
+    pub span: AbsoluteSpan,
 }
 
 // -- Trait --
@@ -114,10 +130,7 @@ pub struct TraitAst<'db> {
     pub items: Vec<ItemAst<'db>>,
 
     #[tracked]
-    pub span_table: SpanTable<'db>,
-
-    #[tracked]
-    pub span: SpanIndices,
+    pub span: AbsoluteSpan,
 }
 
 // -- Impl --
@@ -139,10 +152,7 @@ pub struct ImplAst<'db> {
     pub items: Vec<ItemAst<'db>>,
 
     #[tracked]
-    pub span_table: SpanTable<'db>,
-
-    #[tracked]
-    pub span: SpanIndices,
+    pub span: AbsoluteSpan,
 }
 
 // -- Type alias --
@@ -159,10 +169,7 @@ pub struct TypeAliasAst<'db> {
     pub ty: Option<TypeRef<'db>>,
 
     #[tracked]
-    pub span_table: SpanTable<'db>,
-
-    #[tracked]
-    pub span: SpanIndices,
+    pub span: AbsoluteSpan,
 }
 
 // -- Const --
@@ -179,10 +186,7 @@ pub struct ConstAst<'db> {
     pub ty: Option<TypeRef<'db>>,
 
     #[tracked]
-    pub span_table: SpanTable<'db>,
-
-    #[tracked]
-    pub span: SpanIndices,
+    pub span: AbsoluteSpan,
 }
 
 // -- Static --
@@ -202,10 +206,7 @@ pub struct StaticAst<'db> {
     pub is_mut: bool,
 
     #[tracked]
-    pub span_table: SpanTable<'db>,
-
-    #[tracked]
-    pub span: SpanIndices,
+    pub span: AbsoluteSpan,
 }
 
 // -- Mod --
@@ -249,10 +250,7 @@ pub struct ModAst<'db> {
     pub inline_unexpanded_items: Option<Vec<ItemAst<'db>>>,
 
     #[tracked]
-    pub span_table: SpanTable<'db>,
-
-    #[tracked]
-    pub span: SpanIndices,
+    pub span: AbsoluteSpan,
 }
 
 /// Build a synthetic crate-root ModAst for a given file. The
@@ -270,8 +268,11 @@ pub fn crate_root_mod<'db>(db: &'db dyn crate::Db, file: crate::source::SourceFi
         Some(file),
         Vec::new(),
         None,
-        crate::span::SpanTable::new(db, file, vec![0, 0]),
-        SpanIndices { start: 0, end: 0 },
+        AbsoluteSpan {
+            file,
+            start: 0,
+            end: 0,
+        },
     )
 }
 
@@ -292,8 +293,11 @@ pub fn synthetic_child_mod<'db>(
         Some(file),
         Vec::new(),
         None,
-        crate::span::SpanTable::new(db, file, vec![0, 0]),
-        SpanIndices { start: 0, end: 0 },
+        AbsoluteSpan {
+            file,
+            start: 0,
+            end: 0,
+        },
     )
 }
 
@@ -351,10 +355,7 @@ pub struct UseGroupAst<'db> {
     pub imports: Vec<UseImport<'db>>,
 
     #[tracked]
-    pub span_table: SpanTable<'db>,
-
-    #[tracked]
-    pub span: SpanIndices,
+    pub span: AbsoluteSpan,
 }
 
 // -- MacroDef --
@@ -369,7 +370,7 @@ pub struct MacroDefAst<'db> {
     pub body_tokens: String,
 
     #[tracked]
-    pub span: SpanIndices,
+    pub span: AbsoluteSpan,
 }
 
 // -- MacroInvocation --
@@ -387,5 +388,5 @@ pub struct MacroInvocationAst<'db> {
     pub input_tokens: String,
 
     #[tracked]
-    pub span: SpanIndices,
+    pub span: AbsoluteSpan,
 }

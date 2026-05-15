@@ -115,14 +115,14 @@ fn query_log_demand_driven() {
 
         let log = db.take_query_log();
         expect![[r#"
-              salsa: expanded_module(Id(1400))
+              salsa: expanded_module(Id(1000))
               salsa: file_item_tree(Id(10))
             file_item_tree("lib.rs")
-              salsa: resolve_mod_tracked(Id(3c00))
-              salsa: expanded_module(Id(1401))
+              salsa: resolve_mod_tracked(Id(3800))
+              salsa: expanded_module(Id(1001))
               salsa: file_item_tree(Id(7))
             file_item_tree("cmd/mod.rs")
-              salsa: resolve_mod_tracked(Id(3c01))
+              salsa: resolve_mod_tracked(Id(3801))
             module_items("cmd/get.rs")
               salsa: file_item_tree(Id(6))
             file_item_tree("cmd/get.rs")"#]]
@@ -168,10 +168,10 @@ fn resolve_no_cross_module_parsing() {
 
         let log = db.take_query_log();
         expect![[r#"
-              salsa: expanded_module(Id(1400))
+              salsa: expanded_module(Id(1000))
               salsa: file_item_tree(Id(10))
             file_item_tree("lib.rs")
-              salsa: resolve_mod_tracked(Id(3c00))
+              salsa: resolve_mod_tracked(Id(3800))
             module_items("clients/mod.rs")
               salsa: file_item_tree(Id(5))
             file_item_tree("clients/mod.rs")"#]]

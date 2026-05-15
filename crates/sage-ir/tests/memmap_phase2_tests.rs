@@ -106,7 +106,7 @@ m!();
                 assert!(
                     matches!(
                         entries[0],
-                        MemmapEntry::Item(sage_ir::item::ItemAst::Error(_))
+                        MemmapEntry::Item(sage_ir::item::ItemAst::Error(..))
                             | MemmapEntry::Item(sage_ir::item::ItemAst::Impl(_))
                     ),
                     "expected anonymous impl entry, got {:?}",

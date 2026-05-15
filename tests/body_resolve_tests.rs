@@ -160,6 +160,74 @@ fn resolve_connection_read_frame() {
 }
 
 #[test]
+fn resolve_parse_new() {
+    run_sage_with(mini_redis_dir(), &[], |sage| {
+        let output = resolve_and_print(sage, &["parse"], "Parse", "new");
+        expect![[r#"
+            locals:
+              0: frame
+              1: array
+              2: frame
+              3: array
+            {
+              let <bind:3> = match <local:0> {
+                <unresolved>(<bind:1>) => <local:1>
+                <bind:2> => return <ext std::prelude::v1::Err>(<ext std::format>!("protocol error; expected array, got {frame:?}").into())
+              };
+              <ext std::prelude::v1::Ok>(<def Parse> { parts: <local:3>.into_iter() })
+            }
+        "#]].assert_eq(&output);
+    });
+}
+
+#[test]
+fn resolve_parse_next_string() {
+    run_sage_with(mini_redis_dir(), &[], |sage| {
+        let output = resolve_and_print(sage, &["parse"], "Parse", "next_string");
+        expect![[r#"
+            locals:
+              0: self
+              1: s
+              2: data
+              3: s
+              4: frame
+            {
+              match <local:0>.next()? {
+                <unresolved>(<bind:1>) => <ext std::prelude::v1::Ok>(<local:1>)
+                <unresolved>(<bind:2>) => <ext std::str::from_utf8>(&<local:2>[..]).map(|<bind:3>| <local:3>.to_string()).map_err(|| String.into())
+                <bind:4> => <ext std::prelude::v1::Err>(<ext std::format>!(
+                            "protocol error; expected simple frame or bulk frame, got {frame:?}"
+                        ).into())
+              };
+            }
+        "#]].assert_eq(&output);
+    });
+}
+
+#[test]
+fn resolve_parse_next_bytes() {
+    run_sage_with(mini_redis_dir(), &[], |sage| {
+        let output = resolve_and_print(sage, &["parse"], "Parse", "next_bytes");
+        expect![[r#"
+            locals:
+              0: self
+              1: s
+              2: data
+              3: frame
+            {
+              match <local:0>.next()? {
+                <unresolved>(<bind:1>) => <ext std::prelude::v1::Ok>(<unresolved>(<local:1>.into_bytes()))
+                <unresolved>(<bind:2>) => <ext std::prelude::v1::Ok>(<local:2>)
+                <bind:3> => <ext std::prelude::v1::Err>(<ext std::format>!(
+                            "protocol error; expected simple frame or bulk frame, got {frame:?}"
+                        ).into())
+              };
+            }
+        "#]].assert_eq(&output);
+    });
+}
+
+#[test]
 fn query_log_body_resolve_demand_driven() {
     run_sage_with(mini_redis_dir(), &[], |sage| {
         sage.db.take_query_log();
@@ -178,5 +246,66 @@ fn query_log_body_resolve_demand_driven() {
             log.contains("cmd/get.rs"),
             "expected cmd/get.rs in query log:\n{log}"
         );
+    });
+}
+
+#[test]
+fn query_log_body_resolve_parse_demand_driven() {
+    run_sage_with(mini_redis_dir(), &[], |sage| {
+        sage.db.take_query_log();
+
+        let module = resolve_module_path(sage.db, sage.root, sage.source_root, &["parse"]).unwrap();
+        let method = find_method(sage.db, module, "Parse", "next_string");
+        let _resolved = resolve_body(sage.db, method, module, sage.source_root);
+
+        let log = sage.db.take_query_log();
+        expect![[r#"
+              salsa: expanded_module(Id(1000))
+              salsa: file_item_tree(Id(10))
+            file_item_tree("lib.rs")
+              salsa: resolve_mod_tracked(Id(3800))
+            module_items("parse.rs")
+              salsa: file_item_tree(Id(11))
+            file_item_tree("parse.rs")
+              salsa: resolve_body(Id(5800))
+              salsa: expanded_module(Id(1001))
+              salsa: resolve_mod_tracked(Id(3801))
+              salsa: expanded_module(Id(1002))
+              salsa: file_item_tree(Id(f))
+            file_item_tree("frame.rs")
+            tcx::extern_crate("Frame")
+            tcx::extern_crate("Ok")
+            tcx::extern_crate("std")
+            definition(extern(1, 0), "prelude")
+            tcx::module_children(1, 0)
+            tcx::is_module(1, 3)
+            definition(extern(1, 3), "v1")
+            tcx::module_children(1, 3)
+            tcx::is_module(1, 4)
+            tcx::module_children(1, 4)
+            tcx::extern_crate("Frame")
+            tcx::extern_crate("std")
+            tcx::module_children(1, 0)
+            tcx::is_module(3, 6573)
+            tcx::module_children(3, 6573)
+            tcx::extern_crate("Err")
+            tcx::extern_crate("std")
+            definition(extern(1, 0), "prelude")
+            tcx::module_children(1, 0)
+            tcx::is_module(1, 3)
+            definition(extern(1, 3), "v1")
+            tcx::module_children(1, 3)
+            tcx::is_module(1, 4)
+            tcx::module_children(1, 4)
+            tcx::extern_crate("format")
+            tcx::extern_crate("std")
+            definition(extern(1, 0), "prelude")
+            tcx::module_children(1, 0)
+            tcx::is_module(1, 3)
+            definition(extern(1, 3), "v1")
+            tcx::module_children(1, 3)
+            tcx::is_module(1, 4)
+            tcx::module_children(1, 4)"#]]
+        .assert_eq(&log);
     });
 }
