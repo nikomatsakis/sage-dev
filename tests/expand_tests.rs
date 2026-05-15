@@ -14,6 +14,30 @@ use sage_ir::resolve::{module_items, module_use_imports, resolve_module_path};
 
 use sage::driver::run_sage_with;
 
+fn normalize_def_indices(log: &str) -> String {
+    log.lines()
+        .map(|line| {
+            if line.contains("tcx::") || line.contains("definition(extern") {
+                let mut s = line.to_string();
+                // Replace the last numeric arg before `)` with `_`.
+                if let Some(comma) = s.rfind(", ") {
+                    if let Some(paren) = s[comma..].find(')') {
+                        let num_start = comma + 2;
+                        let num_end = comma + paren;
+                        if s[num_start..num_end].chars().all(|c| c.is_ascii_digit()) {
+                            s.replace_range(num_start..num_end, "_");
+                        }
+                    }
+                }
+                s
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn mini_redis_dir() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("test-fixtures/mini-redis")
@@ -225,8 +249,9 @@ fn expand_derives_cmd_get_full() {
         "#]]
         .assert_eq(&out);
 
-        // Verify demand-driven: only queries needed for this module + derive resolution
-        let log = sage.db.take_query_log();
+        // Verify demand-driven: only queries needed for this module + derive resolution.
+        // Normalize DefIndex values (which vary across toolchain builds).
+        let log = normalize_def_indices(&sage.db.take_query_log());
         expect![[r#"
               salsa: expanded_module(Id(1000))
               salsa: parse_source_file(Id(10))
@@ -243,13 +268,13 @@ fn expand_derives_cmd_get_full() {
             tcx::extern_crate("Debug")
             tcx::extern_crate("std")
             definition(extern(1, 0), "prelude")
-            tcx::module_children(1, 0)
-            tcx::is_module(1, 3)
+            tcx::module_children(1, _)
+            tcx::is_module(1, _)
             definition(extern(1, 3), "v1")
-            tcx::module_children(1, 3)
-            tcx::is_module(1, 4)
-            tcx::module_children(1, 4)
-            tcx::is_builtin_derive(2, 12719)
+            tcx::module_children(1, _)
+            tcx::is_module(1, _)
+            tcx::module_children(1, _)
+            tcx::is_builtin_derive(2, _)
               salsa: expand_builtin(Id(5800))
             expand_builtin("Debug", "Get")"#]]
         .assert_eq(&log);
