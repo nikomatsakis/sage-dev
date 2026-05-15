@@ -25,7 +25,17 @@
 use crate::item::{ItemAst, MacroDefAst};
 use crate::module::{CrateNum, DefIndex};
 use crate::name::Name;
+use crate::span::AbsoluteSpan;
 use crate::types::Path;
+
+/// A macro invocation's input tokens, created during parsing/lowering.
+/// Has stable salsa identity from the parse site — never mutated.
+#[salsa::tracked(debug)]
+pub struct MacroInput<'db> {
+    #[returns(ref)]
+    pub tokens: String,
+    pub span: AbsoluteSpan<'db>,
+}
 
 /// A single entry in the MEM-map.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
@@ -69,23 +79,21 @@ pub struct MacroUse<'db> {
     /// The invocation's path (e.g. `foo::bar::m`).
     pub path: Path<'db>,
 
-    /// The argument tokens from `m!(...)` (outer delimiters stripped).
-    /// Empty for no-arg invocations. Property of the invocation, not of
-    /// any candidate def — so it lives here, not on `Expansion`.
-    pub input_tokens: String,
+    /// The tracked input tokens — stable salsa identity from the parse site.
+    pub input: MacroInput<'db>,
 
-    /// Resolution and expansion state.
-    pub state: MacroUseState<'db>,
+    /// Expansions discovered so far. Starts empty; grows as the fixpoint
+    /// loop resolves callees and expands them. Each expansion pairs a
+    /// callee with the entries it produced.
+    pub expansions: Vec<Expansion<'db>>,
 }
 
-/// Resolution state for a `MacroUse`.
+/// Resolution state for a `MacroUse` — used only by the validator to
+/// distinguish "never resolved" from "resolved but produced no entries".
 ///
-/// Monotonic progression:
-/// ```text
-/// Unresolved ──► Resolved(callees)    (callees don't introduce names)
-///            └► Expanded(branches)    (one branch per callee)
-/// ```
-/// Once in `Resolved` or `Expanded`, a MacroUse never regresses.
+/// This is a computed property derived from `MacroUse.expansions`:
+/// - `expansions.is_empty()` → Unresolved
+/// - `expansions.len() >= 1` → Expanded
 #[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub enum MacroUseState<'db> {
     /// Path hasn't resolved yet (still iterating), or converged without
@@ -109,6 +117,17 @@ pub enum MacroUseState<'db> {
     /// (time-travel / cross-level ambiguity); each branch is
     /// independently usable, and the validator reports `AmbiguousMacro`.
     Expanded(Vec<Expansion<'db>>),
+}
+
+impl<'db> MacroUse<'db> {
+    /// Compute the state for validation purposes.
+    pub fn state(&self) -> MacroUseState<'db> {
+        if self.expansions.is_empty() {
+            MacroUseState::Unresolved
+        } else {
+            MacroUseState::Expanded(self.expansions.clone())
+        }
+    }
 }
 
 /// One branch of an expanded `MacroUse`.

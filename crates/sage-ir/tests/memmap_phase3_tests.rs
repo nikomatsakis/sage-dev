@@ -226,6 +226,110 @@ pub(crate) use m;
 }
 
 // ---------------------------------------------------------------------------
+// T4: Macro expansion redefines its own resolution path
+//
+// `baz::m!()` resolves `baz` via `use foo::*` (foo exports baz).
+// `m` expands to `mod baz { pub struct X; }`, which shadows the
+// glob-imported `baz`. This is the self-referential time-travel case.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn t4_macro_redefines_own_resolution_path() {
+    let db = Database::default();
+    db.attach(|db| {
+        let (source_root, root_module) = setup_files(
+            db,
+            &[
+                (
+                    "lib.rs",
+                    r#"
+mod foo;
+use foo::*;
+baz::m!();
+"#,
+                ),
+                (
+                    "foo.rs",
+                    r#"
+pub mod baz;
+"#,
+                ),
+                (
+                    "foo/baz.rs",
+                    r#"
+macro_rules! m { () => { mod baz { pub struct X; } } }
+pub(crate) use m;
+pub struct X;
+"#,
+                ),
+            ],
+        );
+
+        let errors = memmap_errors(db, root_module, source_root);
+        let has_time_travel = errors
+            .iter()
+            .any(|e| matches!(e, MemmapError::TimeTravelViolation { .. }));
+        assert!(
+            has_time_travel,
+            "macro expanding to redefine its own resolution path (baz) should be time-travel, got: {:?}",
+            errors
+        );
+    });
+}
+
+// ---------------------------------------------------------------------------
+// T5: A different macro introduces a module that shadows a glob import
+//
+// `baz` is available via `use foo::*`. `n!()` expands to `mod baz`,
+// which shadows the glob-imported `baz`. Unlike T4, the macro that
+// creates the conflict (`n`) is unrelated to `baz::m`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn t5_other_macro_shadows_glob_imported_module() {
+    let db = Database::default();
+    db.attach(|db| {
+        let (source_root, root_module) = setup_files(
+            db,
+            &[
+                (
+                    "lib.rs",
+                    r#"
+mod foo;
+use foo::*;
+n!();
+"#,
+                ),
+                (
+                    "foo.rs",
+                    r#"
+pub mod baz;
+macro_rules! n { () => { mod baz { pub struct FromN; } } }
+pub(crate) use n;
+"#,
+                ),
+                (
+                    "foo/baz.rs",
+                    r#"
+pub struct X;
+"#,
+                ),
+            ],
+        );
+
+        let errors = memmap_errors(db, root_module, source_root);
+        let has_time_travel = errors
+            .iter()
+            .any(|e| matches!(e, MemmapError::TimeTravelViolation { .. }));
+        assert!(
+            has_time_travel,
+            "n!() expanding to mod baz should conflict with glob-imported baz, got: {:?}",
+            errors
+        );
+    });
+}
+
+// ---------------------------------------------------------------------------
 // No errors for valid code
 // ---------------------------------------------------------------------------
 

@@ -1,9 +1,9 @@
-//! Seeding MEM-map entries from `file_item_tree` items.
+//! Seeding MEM-map entries from `parse_source_file` items.
 //!
 //! Transforms `Vec<ItemAst>` (from lowering) into `Vec<MemmapEntry>`. Never
-//! touches tree-sitter — all parsing happens in `file_item_tree`. This
+//! touches tree-sitter — all parsing happens in `parse_source_file`. This
 //! separation provides the incremental firewall: body-only edits don't
-//! invalidate the memmap because `file_item_tree` produces the same
+//! invalidate the memmap because `parse_source_file` produces the same
 //! tracked-struct identities when only body fields change.
 //!
 //! Seeding is a pure transform:
@@ -28,7 +28,7 @@ use crate::types::UseKind;
 
 use super::data::*;
 
-/// Seed MEM-map entries from file_item_tree items.
+/// Seed MEM-map entries from parse_source_file items.
 pub(super) fn seed_from_items<'db>(
     db: &'db dyn Db,
     items: &[ItemAst<'db>],
@@ -40,10 +40,11 @@ pub(super) fn seed_from_items<'db>(
                 entries.push(MemmapEntry::MacroDef(def));
             }
             ItemAst::MacroInvocation(inv) => {
+                let input = MacroInput::new(db, inv.input_tokens(db).clone(), inv.span(db));
                 entries.push(MemmapEntry::MacroUse(MacroUse {
                     path: inv.path(db),
-                    input_tokens: inv.input_tokens(db).clone(),
-                    state: MacroUseState::Unresolved,
+                    input,
+                    expansions: Vec::new(),
                 }));
             }
             ItemAst::Use(group) => {

@@ -1,142 +1,148 @@
 //! Macro resolution and expansion within the MEM-map.
 //!
-//! Snapshot-based: entries are cloned before mutation so resolution
-//! reads the snapshot while expansion mutates live entries.
+//! `expand_macro` is a salsa tracked query that produces a
+//! `MacroExpansion` (text + provenance). The fixpoint loop parses
+//! and seeds the result into `MemmapEntry`s.
 //!
-//! Phase 4: `expand_macro` routes through `file_item_tree` on a
-//! synthetic SourceFile, producing real `Item` tracked structs for
-//! everything introduced by expansion. Inline `mod foo { .. }` bodies
-//! are recursively lowered by `lower_mod` exactly like source-level
-//! modules, so `LocalInline`'s `mod_item.items` is populated with
-//! proper IR nodes.
+//! The loop iterates until no new callees are discovered:
+//! each pass resolves macro paths, expands new callees, and
+//! recursively processes nested `MacroUse`s in expansion output.
 
 use crate::Db;
-use crate::item::MacroDefAst;
-use crate::lower::file_item_tree;
 use crate::module::ModSymbol;
 use crate::resolve::SourceRoot;
-use crate::source::SourceFile;
+use crate::span::{MacroExpansion, ParseSource};
 
 use super::data::*;
 use super::resolve_path::resolve_macro_path;
 use super::seed::seed_from_items;
 
-/// Maximum macro expansion depth (same as rustc's default).
+/// Maximum nesting depth for macro expansion (same as rustc's default).
 const MAX_EXPANSION_DEPTH: usize = 128;
 
-/// Resolve and expand all unresolved `MacroUse` entries in `entries`.
+/// Resolve and expand all `MacroUse` entries in `entries`, iterating
+/// until no new callees are discovered.
 pub(super) fn resolve_and_expand_macros<'db>(
     db: &'db dyn Db,
     module: ModSymbol<'db>,
     source_root: SourceRoot,
     entries: &mut Vec<MemmapEntry<'db>>,
-    depth: usize,
 ) {
-    let snapshot: Vec<MemmapEntry<'db>> = entries.clone();
-    resolve_with_snapshot(db, module, source_root, entries, &snapshot, depth);
+    loop {
+        let snapshot: Vec<MemmapEntry<'db>> = entries.clone();
+        let changed = resolve_expand_pass(db, module, source_root, entries, &snapshot, 0);
+        if !changed {
+            break;
+        }
+    }
 }
 
-/// Inner worker: resolve and expand macros in `entries`, using
-/// `root_entries` as the resolution context.
-fn resolve_with_snapshot<'db>(
+/// Single pass: walk all `MacroUse` entries (including nested ones inside
+/// expansions), resolve paths, expand new callees. Returns true if any
+/// new expansion was added. `depth` tracks nesting level — expansion
+/// stops at `MAX_EXPANSION_DEPTH`.
+fn resolve_expand_pass<'db>(
     db: &'db dyn Db,
     module: ModSymbol<'db>,
     source_root: SourceRoot,
     entries: &mut Vec<MemmapEntry<'db>>,
     root_entries: &[MemmapEntry<'db>],
     depth: usize,
-) {
+) -> bool {
     if depth >= MAX_EXPANSION_DEPTH {
-        // Depth cap: leave anything still Unresolved as-is; validator
-        // reports UnresolvedMacro.
-        return;
+        return false;
     }
+
+    let mut changed = false;
 
     for i in 0..entries.len() {
         if let MemmapEntry::MacroUse(mu) = &entries[i] {
-            if !matches!(mu.state, MacroUseState::Unresolved) {
-                continue;
-            }
             let path = mu.path;
-            let input_tokens = mu.input_tokens.clone();
+            let input = mu.input;
+            let existing_callees: Vec<MacroCallee<'db>> =
+                mu.expansions.iter().map(|e| e.callee).collect();
 
             let callees = resolve_macro_path(db, module, source_root, root_entries, path);
-            match callees.len() {
-                0 => {
-                    // Stay Unresolved — next fixpoint iteration may succeed.
+
+            let new_callees: Vec<MacroCallee<'db>> = callees
+                .into_iter()
+                .filter(|c| !existing_callees.contains(c))
+                .collect();
+
+            if new_callees.is_empty() {
+                // Recurse into existing expansions to resolve nested macros.
+                // Pass the top-level root_entries so nested macros can find
+                // definitions from the enclosing module scope.
+                if let MemmapEntry::MacroUse(mu) = &mut entries[i] {
+                    for exp in &mut mu.expansions {
+                        if resolve_expand_pass(
+                            db,
+                            module,
+                            source_root,
+                            &mut exp.entries,
+                            root_entries,
+                            depth + 1,
+                        ) {
+                            changed = true;
+                        }
+                    }
                 }
-                1 => {
-                    let callee = callees[0];
-                    let def = match callee {
-                        MacroCallee::Rules(def) => def,
-                        // Phase 3 infrastructure — builtins/proc-macros
-                        // aren't classified yet.
-                        MacroCallee::Builtin(_) | MacroCallee::Proc { .. } => continue,
-                    };
-                    let mut expanded = expand_macro(db, def, &input_tokens);
-                    resolve_with_snapshot(
-                        db,
-                        module,
-                        source_root,
-                        &mut expanded,
-                        root_entries,
-                        depth + 1,
-                    );
-                    let expansion = Expansion {
-                        callee,
-                        entries: expanded,
-                    };
-                    entries[i] = MemmapEntry::MacroUse(MacroUse {
-                        path,
-                        input_tokens,
-                        state: MacroUseState::Expanded(vec![expansion]),
-                    });
-                }
-                _ => {
-                    // Multiple candidates — record them as Resolved(callees).
-                    // The validator reports this as AmbiguousMacro.
-                    entries[i] = MemmapEntry::MacroUse(MacroUse {
-                        path,
-                        input_tokens,
-                        state: MacroUseState::Resolved(callees),
-                    });
-                }
+                continue;
             }
+
+            let mut new_expansions: Vec<Expansion<'db>> = Vec::new();
+            for callee in &new_callees {
+                let expansion_result = expand_macro(db, *callee, input);
+                let text = expansion_result.text(db);
+                let expanded_entries = if text.is_empty() {
+                    Vec::new()
+                } else {
+                    let parse_source = ParseSource::MacroExpansion(expansion_result);
+                    let items = parse_source.parse(db);
+                    seed_from_items(db, items)
+                };
+                new_expansions.push(Expansion {
+                    callee: *callee,
+                    entries: expanded_entries,
+                });
+            }
+
+            if let MemmapEntry::MacroUse(mu) = &mut entries[i] {
+                mu.expansions.extend(new_expansions);
+            }
+            changed = true;
         }
     }
+
+    changed
 }
 
-/// Expand a macro's body into `MemmapEntry` values.
+/// Expand a macro invocation with a specific callee.
 ///
-/// `input_tokens` is accepted for forward compatibility with real
-/// `macro_rules!` matching, but the current expander ignores it — the
-/// body is used as the verbatim expansion.
+/// Returns a `MacroExpansion` with provenance linking back to the
+/// invocation site. Memoized by salsa — identical `(callee, input)`
+/// pairs share the same expansion result.
 ///
-/// Routes through `file_item_tree` on a synthetic SourceFile so the
-/// expanded items are real tracked structs (Struct, Enum, ModAst,
-/// etc.), not `ItemAst::Error` placeholders. Inline `mod foo { .. }`
-/// bodies inside the expansion are handled by `lower_mod`'s normal
-/// recursion — nothing special needed here.
+/// Does NOT parse or seed entries — the fixpoint loop handles that
+/// via `ParseSource::parse()` and `seed_from_items`.
+#[salsa::tracked]
 pub fn expand_macro<'db>(
     db: &'db dyn Db,
-    macro_def: MacroDefAst<'db>,
-    _input_tokens: &str,
-) -> Vec<MemmapEntry<'db>> {
-    let body = macro_def.body_tokens(db);
-    if body.is_empty() {
-        return Vec::new();
-    }
-
-    // Synthetic SourceFile: the path encodes the macro's identity so
-    // repeated expansions of the same macro can share the input. The
-    // text is the macro body — Phase 4 ignores `_input_tokens` and
-    // uses the body verbatim.
-    let synthetic_path = format!("<macro:{}>", macro_def.name(db).text(db));
-    let file = SourceFile::new(db, synthetic_path, body.clone());
-
-    let items = file_item_tree(db, file);
-
-    // Convert items → memmap entries via the same seeder used for
-    // real source files.
-    seed_from_items(db, items)
+    callee: MacroCallee<'db>,
+    input: MacroInput<'db>,
+) -> MacroExpansion<'db> {
+    let text = match callee {
+        MacroCallee::Rules(def) => {
+            let body = def.body_tokens(db);
+            if body.is_empty() {
+                String::new()
+            } else {
+                body.clone()
+            }
+        }
+        MacroCallee::Builtin(_) | MacroCallee::Proc { .. } => {
+            String::new()
+        }
+    };
+    MacroExpansion::new(db, input, text)
 }

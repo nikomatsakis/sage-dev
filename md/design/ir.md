@@ -82,7 +82,7 @@ Key item types:
 - `UseGroupAst` — a `use` declaration desugared to flat imports
 - `MacroDefAst` — `macro_rules!` definition
 - `MacroInvocationAst` — `m!()` at item position
-- `ItemAst::Error(SpanIndices)` — bare variant for unrecognized
+- `ItemAst::Error(AbsoluteSpan)` — bare variant for unrecognized
   syntax; not a tracked struct
 
 ### `ModAst`
@@ -98,8 +98,7 @@ pub struct ModAst<'db> {
     pub file: Option<SourceFile>,
     #[tracked] #[returns(ref)] pub attrs: Vec<Attr<'db>>,
     #[tracked] #[returns(ref)] pub inline_unexpanded_items: Option<Vec<ItemAst<'db>>>,
-    #[tracked] pub span_table: SpanTable<'db>,
-    #[tracked] pub span: SpanIndices,
+    #[tracked] pub span: AbsoluteSpan,
 }
 ```
 
@@ -122,7 +121,7 @@ inputs produce the same id (see `resolve_mod_tracked` in
 Most callers don't read `inline_unexpanded_items` directly. The
 helper `ModAst::unexpanded_items(db)` returns the pre-expansion
 item list — inline body if present, otherwise the file's
-`file_item_tree`, otherwise empty. Use `inline_unexpanded_items`
+`parse_source_file`, otherwise empty. Use `inline_unexpanded_items`
 only when you need to distinguish inline syntax from file syntax
 (e.g. `Display` for `mod foo { ... }` vs. `mod foo;`).
 
@@ -146,13 +145,9 @@ of `Named(Name)`, `Glob`, or `Unnamed`. `UseGroupAst` holds a
 
 ## Syntactic bodies (`body.rs`)
 
-Function bodies live in a **Stash** — a flat byte buffer for
-`Copy`-only data with thin handles (`Ptr<T>`, `Slice<T>`). This
-avoids per-node salsa overhead.
-
-`FunctionBody = Stashed<Ptr<Body>>`. The `Stashed` wrapper
-implements `PartialEq` via byte comparison — if the body didn't
-change, salsa skips downstream invalidation.
+Function bodies live in a [Stash](./stash.md) — a flat byte buffer
+for `Copy`-only data with thin handles (`Ptr<T>`, `Slice<T>`).
+`FunctionBody = Stashed<Ptr<Body>>`.
 
 Key types: `Expr`/`ExprKind`, `Stmt`/`StmtKind`, `Pat`/`PatKind`.
 Paths are unresolved `Path` values. Bindings are `Name` values.
@@ -274,7 +269,7 @@ guarantees:
   `Vec<MacroCallee>` of candidates. Safe to call from inside
   `expanded_module` because it never re-enters the current
   module's expanded-module query — it walks via items
-  (`file_item_tree`) for first-segment lookups.
+  (`parse_source_file`) for first-segment lookups.
 - **Post-construction** (`resolve_name`): used by body resolution,
   display, and IDE-style queries. Returns exactly one `Symbol` or
   an error. Flattens the whole tree (entries at any
@@ -315,7 +310,7 @@ collision (high bit set for ext, payload packs `(cn, di)`).
 
 `memmap::expand::expand_macro` produces `Vec<MemmapEntry>` by
 creating a synthetic `SourceFile` for the macro body and calling
-`file_item_tree` on it. Expanded items are real tracked structs —
+`parse_source_file` on it. Expanded items are real tracked structs —
 `StructAst`, `FnAst`, inline `ModAst` with populated `items`,
 etc. — so downstream queries work uniformly for both source-level
 and macro-introduced items.
@@ -388,9 +383,6 @@ Display format:
 - `<bind:3>` — binding introduction in a pattern
 - `<unresolved>` — resolution failed
 
-## Spans (`span.rs`)
+## Spans
 
-`SpanIndices { start: u32, end: u32 }` — byte offsets, 8 bytes,
-`Copy`. `SpanTable` maps spans back to their `SourceFile`.
-Semantic queries that don't need locations never read the span
-table.
+See [Spans](./spans.md).

@@ -8,7 +8,7 @@
 //!
 //! ```text
 //! Source text
-//!   → tree-sitter [in file_item_tree only] → Vec<ItemAst>
+//!   → tree-sitter [in parse_source_file only] → Vec<ItemAst>
 //!                                               ↓
 //!                                       expanded_module (Item → MemmapEntry, resolve, expand)
 //!                                               ↓
@@ -17,7 +17,7 @@
 //!
 //! # Key design decisions
 //!
-//! - **No direct tree-sitter in seeding**: `expanded_module` reads only from `file_item_tree`,
+//! - **No direct tree-sitter in seeding**: `expanded_module` reads only from `parse_source_file`,
 //!   which provides the incremental firewall — body-only edits don't invalidate the memmap.
 //! - **Snapshot-based expansion**: macros are resolved against a snapshot of entries to avoid
 //!   reading while mutating.
@@ -53,7 +53,7 @@ pub struct ExpandedModule<'db> {
     pub entries: Vec<MemmapEntry<'db>>,
 }
 
-/// Compute the MEM-map for a local module. Seeds from `file_item_tree`
+/// Compute the MEM-map for a local module. Seeds from `parse_source_file`
 /// (for file-backed modules) or from the ModAst's inline `items` field
 /// (for `mod foo { ... }`), then resolves and expands macros.
 ///
@@ -67,7 +67,7 @@ pub fn expanded_module<'db>(
     let items = module.unexpanded_items(db);
     let mut entries = seed::seed_from_items(db, &items);
 
-    expand::resolve_and_expand_macros(db, ModSymbol::ast(module), source_root, &mut entries, 0);
+    expand::resolve_and_expand_macros(db, ModSymbol::ast(module), source_root, &mut entries);
 
     ExpandedModule::new(db, entries)
 }

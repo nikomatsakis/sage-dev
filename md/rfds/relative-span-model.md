@@ -70,7 +70,7 @@ The item's `AbsoluteSpan` does change, but `AbsoluteSpan` is only read by positi
 ### `SpanTable` is removed
 
 Its two roles are taken over by simpler mechanisms:
-- **File identity:** carried directly on items as `source_file: SourceFile`. (When macro expansion as a tracked query lands, this becomes `input_bytes: InputBytes<'db>`.)
+- **File identity:** carried directly on items as `source_file: SourceFile`. (When [macro expansion as a tracked query](./macro-expansion-tracked-query.md) lands, this becomes `parse_source: ParseSource<'db>`.)
 - **Byte offset storage:** replaced by `AbsoluteSpan` (item-level) + `RelativeSpan` (everything inside an item: signatures, bodies, resolved bodies). No indirection table needed.
 
 ### Lowering changes
@@ -130,9 +130,15 @@ All uses are now `AbsoluteSpan` or `RelativeSpan`. Remove the old type.
 
 Add `ItemAst::absolute_span(db)` and `ItemAst::source_file(db)` helper methods.
 
-## Future: `InputBytes`
+## Future: `ParseSource`
 
+<<<<<<< HEAD
+When [macro expansion as a tracked query](./macro-expansion-tracked-query.md) lands, `source_file: SourceFile` on items becomes `parse_source: ParseSource<'db>`. That's a mechanical replacement — the span model is unaffected.
+||||||| 3204e9a
+When [macro expansion as a tracked query](./macro-expansion-tracked-query.md) lands, `source_file: SourceFile` on items becomes `input_bytes: InputBytes<'db>`. That's a mechanical replacement — the span model is unaffected.
+=======
 When macro expansion as a tracked query lands, `source_file: SourceFile` on items becomes `input_bytes: InputBytes<'db>`. That's a mechanical replacement — the span model is unaffected.
+>>>>>>> nikomatsakis/main
 
 ## Dependents
 

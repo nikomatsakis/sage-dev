@@ -3,7 +3,7 @@ use crate::body::*;
 use crate::item::*;
 use crate::name::Name;
 use crate::source::SourceFile;
-use crate::span::{AbsoluteSpan, RelativeSpan};
+use crate::span::{AbsoluteSpan, ParseSource, RelativeSpan};
 use crate::types::*;
 
 use sage_stash::{Stash, Stashed};
@@ -273,9 +273,9 @@ fn make_ref_self<'db>(db: &'db dyn Db) -> TypeRef<'db> {
     )
 }
 
-fn gen_abs_span<'db>(db: &'db dyn Db) -> AbsoluteSpan {
+fn gen_abs_span<'db>(db: &'db dyn Db) -> AbsoluteSpan<'db> {
     AbsoluteSpan {
-        file: gen_source_file(db),
+        source: ParseSource::SourceFile(gen_source_file(db)),
         start: 0,
         end: 0,
     }

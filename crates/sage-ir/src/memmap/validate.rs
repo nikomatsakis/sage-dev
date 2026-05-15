@@ -99,10 +99,8 @@ fn collect_all_names<'db>(
             }
             MemmapEntry::Glob { .. } => {}
             MemmapEntry::MacroUse(mu) => {
-                if let MacroUseState::Expanded(exps) = &mu.state {
-                    for exp in exps {
-                        collect_all_names(db, &exp.entries, out);
-                    }
+                for exp in &mu.expansions {
+                    collect_all_names(db, &exp.entries, out);
                 }
             }
         }
@@ -112,21 +110,14 @@ fn collect_all_names<'db>(
 fn collect_macro_errors<'db>(entries: &[MemmapEntry<'db>], errors: &mut Vec<MemmapError<'db>>) {
     for entry in entries {
         if let MemmapEntry::MacroUse(mu) = entry {
-            match &mu.state {
-                MacroUseState::Unresolved => {
-                    errors.push(MemmapError::UnresolvedMacro { path: mu.path });
-                }
-                MacroUseState::Resolved(callees) if callees.len() > 1 => {
+            if mu.expansions.is_empty() {
+                errors.push(MemmapError::UnresolvedMacro { path: mu.path });
+            } else {
+                if mu.expansions.len() > 1 {
                     errors.push(MemmapError::AmbiguousMacro { path: mu.path });
                 }
-                MacroUseState::Resolved(_) => {}
-                MacroUseState::Expanded(exps) => {
-                    if exps.len() > 1 {
-                        errors.push(MemmapError::AmbiguousMacro { path: mu.path });
-                    }
-                    for exp in exps {
-                        collect_macro_errors(&exp.entries, errors);
-                    }
+                for exp in &mu.expansions {
+                    collect_macro_errors(&exp.entries, errors);
                 }
             }
         }
@@ -161,16 +152,14 @@ fn collect_unresolved_redirects_globs<'db>(
                 }
             }
             MemmapEntry::MacroUse(mu) => {
-                if let MacroUseState::Expanded(exps) = &mu.state {
-                    for exp in exps {
-                        collect_unresolved_redirects_globs(
-                            db,
-                            module,
-                            &exp.entries,
-                            source_root,
-                            out,
-                        );
-                    }
+                for exp in &mu.expansions {
+                    collect_unresolved_redirects_globs(
+                        db,
+                        module,
+                        &exp.entries,
+                        source_root,
+                        out,
+                    );
                 }
             }
             _ => {}
@@ -203,10 +192,8 @@ fn collect_expanded_names<'db>(
 ) {
     for entry in entries {
         if let MemmapEntry::MacroUse(mu) = entry {
-            if let MacroUseState::Expanded(exps) = &mu.state {
-                for exp in exps {
-                    collect_all_names(db, &exp.entries, out);
-                }
+            for exp in &mu.expansions {
+                collect_all_names(db, &exp.entries, out);
             }
         }
     }

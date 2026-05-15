@@ -24,7 +24,7 @@
 use expect_test::Expect;
 use sage_ir::db::Database;
 use sage_ir::item::ModAst;
-use sage_ir::memmap::{MacroUseState, MemmapEntry, memmap_errors, module_memmap};
+use sage_ir::memmap::{MemmapEntry, memmap_errors, module_memmap};
 use sage_ir::module::{ModSymbol, ModSymbolData};
 use sage_ir::name::Name;
 use sage_ir::resolve::{
@@ -366,13 +366,14 @@ fn fmt_entry(db: &dyn sage_ir::Db, entry: &MemmapEntry, indent: usize, out: &mut
             out.push_str(&format!(
                 "MacroUse path={} state={}\n",
                 fmt_path(db, mu.path),
-                fmt_macro_use_state(db, &mu.state, indent + 1)
+                fmt_macro_use_state(db, &mu.state(), indent + 1)
             ));
         }
     }
 }
 
-fn fmt_macro_use_state(db: &dyn sage_ir::Db, state: &MacroUseState, indent: usize) -> String {
+fn fmt_macro_use_state(db: &dyn sage_ir::Db, state: &sage_ir::memmap::MacroUseState, indent: usize) -> String {
+    use sage_ir::memmap::MacroUseState;
     match state {
         MacroUseState::Unresolved => "Unresolved".to_owned(),
         MacroUseState::Resolved(callees) => {

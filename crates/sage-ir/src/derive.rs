@@ -2,7 +2,7 @@ pub mod builtins;
 
 use crate::Db;
 use crate::item::*;
-use crate::lower::file_item_tree;
+use crate::lower::parse_source_file;
 use crate::module::{CrateNum, DefIndex, ModSymbol};
 use crate::name::Name;
 use crate::resolve::{MacroKind, Namespace, SourceRoot, definition_in_ns, resolve_name};
@@ -166,7 +166,7 @@ fn extract_item_source<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Option<Strin
         ItemAst::Enum(e) => e.span(db),
         _ => return None,
     };
-    let text = span.file.text(db);
+    let text = span.source.text(db);
     let start = span.start as usize;
     let end = span.end as usize;
     if end <= text.len() {
@@ -179,7 +179,7 @@ fn extract_item_source<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Option<Strin
 /// Lower expanded source text through tree-sitter into IR items.
 fn lower_expanded_source<'db>(db: &'db dyn Db, text: &str) -> Vec<ItemAst<'db>> {
     let file = SourceFile::new(db, "<proc-macro-expansion>".to_owned(), text.to_owned());
-    file_item_tree(db, file).clone()
+    parse_source_file(db, file).clone()
 }
 
 /// Extract individual derive names from a `#[derive(A, B, C)]` attribute's args.

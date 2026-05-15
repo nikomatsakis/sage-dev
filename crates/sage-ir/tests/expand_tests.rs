@@ -110,22 +110,22 @@ fn query_log_demand_driven() {
         // not the target module itself.
         let module = resolve_module_path(db, root_module, source_root, &["cmd", "get"]).unwrap();
 
-        // Now read the target module's items — this triggers file_item_tree for cmd/get.rs
+        // Now read the target module's items — this triggers parse_source_file for cmd/get.rs
         let _items = module_items(db, module);
 
         let log = db.take_query_log();
         expect![[r#"
               salsa: expanded_module(Id(1000))
-              salsa: file_item_tree(Id(10))
-            file_item_tree("lib.rs")
+              salsa: parse_source_file(Id(10))
+            parse_source_file("lib.rs")
               salsa: resolve_mod_tracked(Id(3800))
               salsa: expanded_module(Id(1001))
-              salsa: file_item_tree(Id(7))
-            file_item_tree("cmd/mod.rs")
+              salsa: parse_source_file(Id(7))
+            parse_source_file("cmd/mod.rs")
               salsa: resolve_mod_tracked(Id(3801))
             module_items("cmd/get.rs")
-              salsa: file_item_tree(Id(6))
-            file_item_tree("cmd/get.rs")"#]]
+              salsa: parse_source_file(Id(6))
+            parse_source_file("cmd/get.rs")"#]]
         .assert_eq(&log);
     });
 }
@@ -163,18 +163,18 @@ fn resolve_no_cross_module_parsing() {
         // resolve_module_path only parses lib.rs (to find mod clients)
         let module = resolve_module_path(db, root_module, source_root, &["clients"]).unwrap();
 
-        // Read the module's items to trigger file_item_tree for clients/mod.rs
+        // Read the module's items to trigger parse_source_file for clients/mod.rs
         let _items = module_items(db, module);
 
         let log = db.take_query_log();
         expect![[r#"
               salsa: expanded_module(Id(1000))
-              salsa: file_item_tree(Id(10))
-            file_item_tree("lib.rs")
+              salsa: parse_source_file(Id(10))
+            parse_source_file("lib.rs")
               salsa: resolve_mod_tracked(Id(3800))
             module_items("clients/mod.rs")
-              salsa: file_item_tree(Id(5))
-            file_item_tree("clients/mod.rs")"#]]
+              salsa: parse_source_file(Id(5))
+            parse_source_file("clients/mod.rs")"#]]
         .assert_eq(&log);
     });
 }

@@ -9,14 +9,29 @@ use crate::body::*;
 use crate::item::*;
 use crate::name::Name;
 use crate::source::SourceFile;
-use crate::span::{AbsoluteSpan, RelativeSpan};
+use crate::span::{AbsoluteSpan, MacroExpansion, ParseSource, RelativeSpan};
 use crate::types::*;
 
-/// Parse a source file and return its top-level items.
+/// Tracked wrapper: parse a real source file.
 #[salsa::tracked(returns(ref))]
-pub fn file_item_tree<'db>(db: &'db dyn Db, file: SourceFile) -> Vec<ItemAst<'db>> {
-    db.log_query(format!("file_item_tree(\"{}\")", file.path(db)));
-    let text = file.text(db);
+pub fn parse_source_file<'db>(db: &'db dyn Db, file: SourceFile) -> Vec<ItemAst<'db>> {
+    db.log_query(format!("parse_source_file(\"{}\")", file.path(db)));
+    parse_source_text(db, ParseSource::SourceFile(file), file.text(db))
+}
+
+/// Tracked wrapper: parse macro expansion output.
+#[salsa::tracked(returns(ref))]
+pub fn parse_macro_expansion<'db>(db: &'db dyn Db, exp: MacroExpansion<'db>) -> Vec<ItemAst<'db>> {
+    parse_source_text(db, ParseSource::MacroExpansion(exp), exp.text(db))
+}
+
+/// Untracked core: parse Rust source text into items.
+/// Takes a ParseSource for stamping onto AbsoluteSpans during lowering.
+pub fn parse_source_text<'db>(
+    db: &'db dyn Db,
+    source: ParseSource<'db>,
+    text: &'db str,
+) -> Vec<ItemAst<'db>> {
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(&tree_sitter_rust::LANGUAGE.into())
@@ -24,7 +39,7 @@ pub fn file_item_tree<'db>(db: &'db dyn Db, file: SourceFile) -> Vec<ItemAst<'db
     let tree = parser.parse(text, None).expect("tree-sitter parse failed");
     let mut cx = LowerCtx {
         db,
-        file,
+        source,
         text,
         item_start: 0,
     };
@@ -39,7 +54,7 @@ enum AttrNodeKind {
 
 struct LowerCtx<'db> {
     db: &'db dyn Db,
-    file: SourceFile,
+    source: ParseSource<'db>,
     text: &'db str,
     item_start: u32,
 }
@@ -53,9 +68,9 @@ impl<'db> LowerCtx<'db> {
         Name::new(self.db, self.node_text(node).to_owned())
     }
 
-    fn abs_span(&self, node: Node<'_>) -> AbsoluteSpan {
+    fn abs_span(&self, node: Node<'_>) -> AbsoluteSpan<'db> {
         AbsoluteSpan {
-            file: self.file,
+            source: self.source,
             start: node.start_byte() as u32,
             end: node.end_byte() as u32,
         }

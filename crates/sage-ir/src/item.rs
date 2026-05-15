@@ -1,7 +1,7 @@
 use crate::body::FunctionBody;
 use crate::name::Name;
 use crate::source::SourceFile;
-use crate::span::AbsoluteSpan;
+use crate::span::{AbsoluteSpan, ParseSource};
 use crate::types::{Attr, FieldDef, Param, Path, TypeRef, UseImport, VariantDef};
 
 /// Thin enum over all item kinds. `Copy` because salsa tracked struct
@@ -21,11 +21,11 @@ pub enum ItemAst<'db> {
     MacroDef(MacroDefAst<'db>),
     MacroInvocation(MacroInvocationAst<'db>),
     /// Unrecognized or unsupported item node.
-    Error(AbsoluteSpan),
+    Error(AbsoluteSpan<'db>),
 }
 
 impl<'db> ItemAst<'db> {
-    pub fn absolute_span(&self, db: &'db dyn crate::Db) -> AbsoluteSpan {
+    pub fn absolute_span(&self, db: &'db dyn crate::Db) -> AbsoluteSpan<'db> {
         match *self {
             ItemAst::Function(f) => f.span(db),
             ItemAst::Struct(s) => s.span(db),
@@ -43,8 +43,12 @@ impl<'db> ItemAst<'db> {
         }
     }
 
-    pub fn source_file(&self, db: &'db dyn crate::Db) -> SourceFile {
-        self.absolute_span(db).file
+    pub fn parse_source(&self, db: &'db dyn crate::Db) -> ParseSource<'db> {
+        self.absolute_span(db).source
+    }
+
+    pub fn source_file(&self, db: &'db dyn crate::Db) -> Option<SourceFile> {
+        self.absolute_span(db).file()
     }
 }
 
@@ -76,7 +80,7 @@ pub struct FnAst<'db> {
     pub body: FunctionBody<'db>,
 
     #[tracked]
-    pub span: AbsoluteSpan,
+    pub span: AbsoluteSpan<'db>,
 }
 
 // -- Struct --
@@ -94,7 +98,7 @@ pub struct StructAst<'db> {
     pub fields: Vec<FieldDef<'db>>,
 
     #[tracked]
-    pub span: AbsoluteSpan,
+    pub span: AbsoluteSpan<'db>,
 }
 
 // -- Enum --
@@ -112,7 +116,7 @@ pub struct EnumAst<'db> {
     pub variants: Vec<VariantDef<'db>>,
 
     #[tracked]
-    pub span: AbsoluteSpan,
+    pub span: AbsoluteSpan<'db>,
 }
 
 // -- Trait --
@@ -130,7 +134,7 @@ pub struct TraitAst<'db> {
     pub items: Vec<ItemAst<'db>>,
 
     #[tracked]
-    pub span: AbsoluteSpan,
+    pub span: AbsoluteSpan<'db>,
 }
 
 // -- Impl --
@@ -152,7 +156,7 @@ pub struct ImplAst<'db> {
     pub items: Vec<ItemAst<'db>>,
 
     #[tracked]
-    pub span: AbsoluteSpan,
+    pub span: AbsoluteSpan<'db>,
 }
 
 // -- Type alias --
@@ -169,7 +173,7 @@ pub struct TypeAliasAst<'db> {
     pub ty: Option<TypeRef<'db>>,
 
     #[tracked]
-    pub span: AbsoluteSpan,
+    pub span: AbsoluteSpan<'db>,
 }
 
 // -- Const --
@@ -186,7 +190,7 @@ pub struct ConstAst<'db> {
     pub ty: Option<TypeRef<'db>>,
 
     #[tracked]
-    pub span: AbsoluteSpan,
+    pub span: AbsoluteSpan<'db>,
 }
 
 // -- Static --
@@ -206,7 +210,7 @@ pub struct StaticAst<'db> {
     pub is_mut: bool,
 
     #[tracked]
-    pub span: AbsoluteSpan,
+    pub span: AbsoluteSpan<'db>,
 }
 
 // -- Mod --
@@ -241,7 +245,7 @@ pub struct ModAst<'db> {
 
     /// Inline module body, before macro expansion. `Some(items)` for
     /// `mod foo { ... }`, `None` for `mod foo;` (file-based) and for
-    /// the crate root (whose contents come from `file_item_tree(file)`).
+    /// the crate root (whose contents come from `parse_source_file(file)`).
     ///
     /// Most callers want [`ModAst::unexpanded_items`], which unifies
     /// the inline and file-backed cases.
@@ -250,12 +254,12 @@ pub struct ModAst<'db> {
     pub inline_unexpanded_items: Option<Vec<ItemAst<'db>>>,
 
     #[tracked]
-    pub span: AbsoluteSpan,
+    pub span: AbsoluteSpan<'db>,
 }
 
 /// Build a synthetic crate-root ModAst for a given file. The
 /// crate root has no declaring `mod` site, no parent, and inherits
-/// its contents from `file_item_tree(file)`.
+/// its contents from `parse_source_file(file)`.
 ///
 /// Wrapped in a `#[salsa::tracked]` function so callers can use it
 /// from outside another tracked context (e.g. test setup).
@@ -269,7 +273,7 @@ pub fn crate_root_mod<'db>(db: &'db dyn crate::Db, file: crate::source::SourceFi
         Vec::new(),
         None,
         AbsoluteSpan {
-            file,
+            source: ParseSource::SourceFile(file),
             start: 0,
             end: 0,
         },
@@ -294,7 +298,7 @@ pub fn synthetic_child_mod<'db>(
         Vec::new(),
         None,
         AbsoluteSpan {
-            file,
+            source: ParseSource::SourceFile(file),
             start: 0,
             end: 0,
         },
@@ -308,7 +312,7 @@ impl<'db> ModAst<'db> {
     ///
     /// For inline modules (`mod foo { ... }`), reads
     /// `inline_unexpanded_items`. For file-backed modules (crate
-    /// root, `mod foo;`), parses the file via `file_item_tree`. For
+    /// root, `mod foo;`), parses the file via `parse_source_file`. For
     /// raw declaration-site ModAsts (no parent, no file, no inline
     /// items), returns an empty list.
     ///
@@ -319,7 +323,7 @@ impl<'db> ModAst<'db> {
         if let Some(items) = self.inline_unexpanded_items(db) {
             items.clone()
         } else if let Some(file) = self.file(db) {
-            crate::lower::file_item_tree(db, file).clone()
+            crate::lower::parse_source_file(db, file).clone()
         } else {
             Vec::new()
         }
@@ -355,7 +359,7 @@ pub struct UseGroupAst<'db> {
     pub imports: Vec<UseImport<'db>>,
 
     #[tracked]
-    pub span: AbsoluteSpan,
+    pub span: AbsoluteSpan<'db>,
 }
 
 // -- MacroDef --
@@ -370,7 +374,7 @@ pub struct MacroDefAst<'db> {
     pub body_tokens: String,
 
     #[tracked]
-    pub span: AbsoluteSpan,
+    pub span: AbsoluteSpan<'db>,
 }
 
 // -- MacroInvocation --
@@ -388,5 +392,5 @@ pub struct MacroInvocationAst<'db> {
     pub input_tokens: String,
 
     #[tracked]
-    pub span: AbsoluteSpan,
+    pub span: AbsoluteSpan<'db>,
 }
