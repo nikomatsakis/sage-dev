@@ -11,7 +11,6 @@
 //!     `expanded_module` / `definition`.
 
 use crate::Db;
-use crate::item::ModAst;
 use crate::item::{ItemAst, MacroDefAst};
 use crate::module::{ModExt, ModSymbol, ModSymbolData};
 use crate::name::Name;
@@ -78,7 +77,7 @@ fn memmap_first_segment<'db>(
 /// inside `expanded_module` because it never re-enters `expanded_module`
 /// on the current module. Trades off: it can't see names introduced
 /// by macro expansion at the current module (they aren't in
-/// `file_item_tree`), only in already-constructed target modules.
+/// `parse_source_file`), only in already-constructed target modules.
 ///
 /// Used by `resolve_macro_path` when resolving glob-target modules
 /// during macro-path resolution. Callers in non-ctime contexts should
@@ -222,25 +221,23 @@ fn resolve_macro_path_to_defs<'db>(
             // 2. Look inside expansion subtrees.
             for entry in entries {
                 if let MemmapEntry::MacroUse(mu) = entry {
-                    if let MacroUseState::Expanded(exps) = &mu.state {
-                        for exp in exps {
-                            for sub_entry in &exp.entries {
-                                if let MemmapEntry::Item(ItemAst::Mod(_)) = sub_entry {
-                                    if let Some(m) = item_as_child_module(
-                                        db,
-                                        sub_entry,
-                                        first,
-                                        source_root,
-                                        module,
-                                    ) {
-                                        let mut defs = Vec::new();
-                                        if let Some(def) =
-                                            walk_path_to_macro(db, m, source_root, rest)
-                                        {
-                                            defs.push(def);
-                                        }
-                                        return defs;
+                    for exp in &mu.expansions {
+                        for sub_entry in &exp.entries {
+                            if let MemmapEntry::Item(ItemAst::Mod(_)) = sub_entry {
+                                if let Some(m) = item_as_child_module(
+                                    db,
+                                    sub_entry,
+                                    first,
+                                    source_root,
+                                    module,
+                                ) {
+                                    let mut defs = Vec::new();
+                                    if let Some(def) =
+                                        walk_path_to_macro(db, m, source_root, rest)
+                                    {
+                                        defs.push(def);
                                     }
+                                    return defs;
                                 }
                             }
                         }
@@ -304,10 +301,8 @@ fn collect_named_macro_defs<'db>(
                 }
             }
             MemmapEntry::MacroUse(mu) => {
-                if let MacroUseState::Expanded(exps) = &mu.state {
-                    for exp in exps {
-                        collect_named_macro_defs(db, &exp.entries, name, out);
-                    }
+                for exp in &mu.expansions {
+                    collect_named_macro_defs(db, &exp.entries, name, out);
                 }
             }
             _ => {}

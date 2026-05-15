@@ -1,27 +1,27 @@
 //! Phase 1 behavior tests: ItemAst::MacroDef and ItemAst::MacroInvocation variants.
 //!
-//! Verifies that `file_item_tree` produces the new macro variants,
+//! Verifies that `parse_source_file` produces the new macro variants,
 //! that `item_name` returns None for them (preserving `definition()` semantics),
 //! and that Display impls render them correctly.
 
 use sage_ir::db::Database;
 use sage_ir::item::ItemAst;
-use sage_ir::lower::file_item_tree;
+use sage_ir::lower::parse_source_file;
 use sage_ir::resolve::item_name;
 use sage_ir::source::SourceFile;
 use salsa::Database as _;
 
 fn parse<'db>(db: &'db Database, code: &str) -> Vec<ItemAst<'db>> {
     let file = SourceFile::new(db, "lib.rs".to_owned(), code.to_owned());
-    file_item_tree(db, file).clone()
+    parse_source_file(db, file).clone()
 }
 
 // ---------------------------------------------------------------------------
-// file_item_tree produces ItemAst::MacroDef for macro_rules!
+// parse_source_file produces ItemAst::MacroDef for macro_rules!
 // ---------------------------------------------------------------------------
 
 #[test]
-fn file_item_tree_produces_macro_def() {
+fn parse_source_file_produces_macro_def() {
     let db = Database::default();
     db.attach(|db| {
         let items = parse(db, "macro_rules! m { () => {} }");
@@ -39,11 +39,11 @@ fn file_item_tree_produces_macro_def() {
 }
 
 // ---------------------------------------------------------------------------
-// file_item_tree produces ItemAst::MacroInvocation for m!()
+// parse_source_file produces ItemAst::MacroInvocation for m!()
 // ---------------------------------------------------------------------------
 
 #[test]
-fn file_item_tree_produces_macro_invocation() {
+fn parse_source_file_produces_macro_invocation() {
     let db = Database::default();
     db.attach(|db| {
         let items = parse(db, "m!();");
@@ -67,7 +67,7 @@ fn file_item_tree_produces_macro_invocation() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn file_item_tree_multi_segment_macro_path() {
+fn parse_source_file_multi_segment_macro_path() {
     let db = Database::default();
     db.attach(|db| {
         let items = parse(db, "foo::bar::m!();");

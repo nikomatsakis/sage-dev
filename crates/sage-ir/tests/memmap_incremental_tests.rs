@@ -17,7 +17,9 @@ fn check_log(actual: &str, expected: Expect) {
     let filtered: String = actual
         .lines()
         .filter(|l| {
-            l.contains("file_item_tree")
+            l.contains("parse_source_file")
+                || l.contains("parse_macro_expansion")
+                || l.contains("expand_macro")
                 || l.contains("expanded_module")
                 || l.contains("module_items")
         })
@@ -45,16 +47,16 @@ fn baseline_initial_memmap_computation() {
             &log,
             expect![[r#"
                   salsa: expanded_module(Id(1400))
-                  salsa: file_item_tree(Id(0))
-                file_item_tree("lib.rs")
-                  salsa: file_item_tree(Id(1))
-                file_item_tree("<macro:m>")"#]],
+                  salsa: parse_source_file(Id(0))
+                parse_source_file("lib.rs")
+                  salsa: expand_macro(Id(2c00))
+                  salsa: parse_macro_expansion(Id(3000))"#]],
         );
     });
 }
 
 /// Snapshot the query log when a function body changes.
-/// After Phase 2: expanded_module does NOT re-execute — only file_item_tree does.
+/// After Phase 2: expanded_module does NOT re-execute — only parse_source_file does.
 /// This is the key incremental improvement: body edits don't invalidate the memmap.
 #[test]
 fn baseline_body_change_behavior() {
@@ -88,8 +90,8 @@ fn baseline_body_change_behavior() {
         check_log(
             &log,
             expect![[r#"
-                  salsa: file_item_tree(Id(0))
-                file_item_tree("lib.rs")"#]],
+                  salsa: parse_source_file(Id(0))
+                parse_source_file("lib.rs")"#]],
         );
     });
 }
@@ -128,7 +130,7 @@ fn baseline_sibling_module_isolation() {
 
 // ===========================================================================
 // Phase 2 incremental tests: verify the key improvements from using
-// file_item_tree as the incremental firewall.
+// parse_source_file as the incremental firewall.
 // ===========================================================================
 
 /// Body-only edits don't invalidate the memmap.
@@ -157,8 +159,8 @@ fn body_change_does_not_invalidate_memmap() {
         let log = db.take_query_log();
 
         assert!(
-            log.contains("file_item_tree"),
-            "file_item_tree should re-execute after body change, got log:\n{log}"
+            log.contains("parse_source_file"),
+            "parse_source_file should re-execute after body change, got log:\n{log}"
         );
         assert!(
             !log.contains("expanded_module"),
@@ -194,8 +196,8 @@ fn signature_change_invalidates_memmap() {
         let log = db.take_query_log();
 
         assert!(
-            log.contains("file_item_tree"),
-            "file_item_tree should re-execute, got log:\n{log}"
+            log.contains("parse_source_file"),
+            "parse_source_file should re-execute, got log:\n{log}"
         );
         assert!(
             log.contains("expanded_module"),
@@ -236,13 +238,13 @@ fn adding_use_statement_invalidates_memmap() {
     });
 }
 
-/// `expanded_module` calls `file_item_tree` exactly once (no double-parse).
+/// `expanded_module` calls `parse_source_file` exactly once (no double-parse).
 ///
-/// Before Phase 2, `seed_from_cst` parsed tree-sitter AND `file_item_tree`
+/// Before Phase 2, `seed_from_cst` parsed tree-sitter AND `parse_source_file`
 /// was memoized separately — effectively two parses. After Phase 2, only
-/// `file_item_tree` parses the source.
+/// `parse_source_file` parses the source.
 #[test]
-fn module_memmap_calls_file_item_tree_only_once() {
+fn module_memmap_calls_parse_source_file_only_once() {
     let db = Database::default();
     db.attach(|db| {
         let file = SourceFile::new(
@@ -256,14 +258,14 @@ fn module_memmap_calls_file_item_tree_only_once() {
         let _ = module_memmap(db, root_module, source_root);
         let log = db.take_query_log();
 
-        // Count file_item_tree invocations for lib.rs. There should be exactly one.
+        // Count parse_source_file invocations for lib.rs. There should be exactly one.
         let count = log
             .lines()
-            .filter(|l| l.contains("file_item_tree(\"lib.rs\")"))
+            .filter(|l| l.contains("parse_source_file(\"lib.rs\")"))
             .count();
         assert_eq!(
             count, 1,
-            "expected exactly 1 file_item_tree call for lib.rs, got {count}. Log:\n{log}"
+            "expected exactly 1 parse_source_file call for lib.rs, got {count}. Log:\n{log}"
         );
     });
 }
@@ -271,7 +273,7 @@ fn module_memmap_calls_file_item_tree_only_once() {
 /// A body change in sibling module `b` doesn't invalidate `module_memmap(a)`.
 ///
 /// Each module's memmap is keyed on its own `ModSymbol` tracked struct. Changes
-/// to `b.rs` only flow through `file_item_tree(b.rs)` → `module_memmap(b)` —
+/// to `b.rs` only flow through `parse_source_file(b.rs)` → `module_memmap(b)` —
 /// they never touch the `a` chain.
 #[test]
 fn body_change_in_sibling_module_does_not_invalidate_memmap() {
@@ -298,10 +300,10 @@ fn body_change_in_sibling_module_does_not_invalidate_memmap() {
         let _ = module_memmap(db, module_a, source_root);
         let log = db.take_query_log();
 
-        // Neither module_a's file_item_tree nor its memmap should re-execute.
+        // Neither module_a's parse_source_file nor its memmap should re-execute.
         assert!(
-            !log.contains("file_item_tree(\"a.rs\")"),
-            "file_item_tree(a.rs) should not re-run, got log:\n{log}"
+            !log.contains("parse_source_file(\"a.rs\")"),
+            "parse_source_file(a.rs) should not re-run, got log:\n{log}"
         );
         assert!(
             !log.contains("expanded_module"),

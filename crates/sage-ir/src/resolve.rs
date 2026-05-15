@@ -274,7 +274,7 @@ fn parent_dir_for(path: &str) -> String {
 // Use-imports query (cosmetic — kept as a free helper for tests/log).
 // ---------------------------------------------------------------------------
 
-/// Items declared in a module (from `file_item_tree` or the inline
+/// Items declared in a module (from `parse_source_file` or the inline
 /// items list for local modules; empty for external).
 pub fn module_items<'db>(db: &'db dyn Db, module: ModSymbol<'db>) -> Vec<ItemAst<'db>> {
     db.log_query(format!("module_items({})", module_label(db, module)));
@@ -405,7 +405,7 @@ impl<'db> ModSymbol<'db> {
         name: Name<'db>,
         ns: Namespace,
     ) -> Result<Symbol<'db>, ResolutionError> {
-        use crate::memmap::{MacroUseState, MemmapEntry, expanded_module};
+        use crate::memmap::{MemmapEntry, expanded_module};
 
         let frame_kind = match ns {
             Namespace::Type => 0,
@@ -481,19 +481,17 @@ impl<'db> ModSymbol<'db> {
                         }
                     }
                     MemmapEntry::MacroUse(mu) => {
-                        if let MacroUseState::Expanded(exps) = &mu.state {
-                            for exp in exps {
-                                walk(
-                                    db,
-                                    module,
-                                    source_root,
-                                    &exp.entries,
-                                    name,
-                                    ns,
-                                    named,
-                                    glob_matches,
-                                );
-                            }
+                        for exp in &mu.expansions {
+                            walk(
+                                db,
+                                module,
+                                source_root,
+                                &exp.entries,
+                                name,
+                                ns,
+                                named,
+                                glob_matches,
+                            );
                         }
                     }
                 }

@@ -12,7 +12,7 @@ and **body resolution** (paths and locals inside function bodies).
 graph TD
     SF["SourceFile<br><i>salsa input: path + text</i>"]
     TS["tree-sitter parse"]
-    FIT["file_item_tree(file)<br><i>→ Vec&lt;ItemAst&gt;</i>"]
+    FIT["parse_source_file(file)<br><i>→ Vec&lt;ItemAst&gt;</i>"]
     EM["expanded_module(ModAst)<br><i>→ ExpandedModule</i><br>(seed + expand macros)"]
     RN["resolve_name(ModSymbol, name, ns)<br><i>→ Symbol</i>"]
     RB["resolve_body(FnAst, ModSymbol, ...)<br><i>→ ResolvedBody</i>"]
@@ -81,7 +81,7 @@ It's immutable within a session — dependency metadata doesn't change.
 ## Tree-sitter
 
 Sage uses tree-sitter-rust for parsing. The CST is not stored —
-`file_item_tree` re-parses source text and lowers to tracked structs
+`parse_source_file` re-parses source text and lowers to tracked structs
 in one pass. Tree-sitter is fast enough that this is cheap, and the
 salsa tracked structs provide the real incrementality boundary.
 

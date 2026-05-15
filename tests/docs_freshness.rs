@@ -54,6 +54,8 @@ const RETIRED: &[(&str, &str)] = &[
     ("SymbolSource", "SymbolData"),
     // Memmap rename.
     ("ModuleMemmap", "ExpandedModule"),
+    // Parsing rename.
+    ("file_item_tree", "parse_source_file"),
 ];
 
 /// Files under `md/design/` are scanned. RFDs are explicitly skipped

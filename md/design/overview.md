@@ -139,7 +139,7 @@ reusing what's cached.
 ```mermaid
 flowchart TD
     Input["Workspace input<br/>(SourceFile inputs, SourceRoot)"]
-    Parse["file_item_tree(file)<br/>→ Vec&lt;ItemAst&gt;"]
+    Parse["parse_source_file(file)<br/>→ Vec&lt;ItemAst&gt;"]
     ExpMod["expanded_module(ModAst)<br/>iterative memmap: macros, use redirects, globs"]
     ResBody["resolve_body(FnAst)<br/>paths and locals → Symbol / LocalId"]
     Hover["(future) hover(file, line, col)<br/>containing_item → dispatch"]
@@ -165,7 +165,7 @@ with `ModSymbol::ast(...)` to start resolution.
 
 ### Parse layer
 
-`file_item_tree(file)` runs tree-sitter and lowers the CST to a
+`parse_source_file(file)` runs tree-sitter and lowers the CST to a
 `Vec<ItemAst>`. The CST is not stored. Tree-sitter is fast enough
 that we re-parse on text changes; salsa's incremental boundary
 sits at the *tracked struct* layer, not the CST.
@@ -180,7 +180,7 @@ later wraps them with parent/file context (see below).
 `MemmapEntry` values representing what names the module exports.
 Macro invocations expand here; `use foo::bar` becomes a `Redirect`;
 `use foo::*` becomes a `Glob`. The same machinery applies whether
-the module's contents come from a file (`file_item_tree`) or an
+the module's contents come from a file (`parse_source_file`) or an
 inline `mod foo { ... }` body (`mod_ast.items(db)`).
 
 External modules don't have an expanded module — their contents

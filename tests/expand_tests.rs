@@ -130,16 +130,16 @@ fn query_log_demand_driven_with_real_tcx() {
         let log = sage.db.take_query_log();
         expect![[r#"
               salsa: expanded_module(Id(1000))
-              salsa: file_item_tree(Id(10))
-            file_item_tree("lib.rs")
+              salsa: parse_source_file(Id(10))
+            parse_source_file("lib.rs")
               salsa: resolve_mod_tracked(Id(3800))
               salsa: expanded_module(Id(1001))
-              salsa: file_item_tree(Id(7))
-            file_item_tree("cmd/mod.rs")
+              salsa: parse_source_file(Id(7))
+            parse_source_file("cmd/mod.rs")
               salsa: resolve_mod_tracked(Id(3801))
             module_items("cmd/get.rs")
-              salsa: file_item_tree(Id(6))
-            file_item_tree("cmd/get.rs")"#]]
+              salsa: parse_source_file(Id(6))
+            parse_source_file("cmd/get.rs")"#]]
         .assert_eq(&log);
     });
 }
@@ -229,16 +229,16 @@ fn expand_derives_cmd_get_full() {
         let log = sage.db.take_query_log();
         expect![[r#"
               salsa: expanded_module(Id(1000))
-              salsa: file_item_tree(Id(10))
-            file_item_tree("lib.rs")
+              salsa: parse_source_file(Id(10))
+            parse_source_file("lib.rs")
               salsa: resolve_mod_tracked(Id(3800))
               salsa: expanded_module(Id(1001))
-              salsa: file_item_tree(Id(7))
-            file_item_tree("cmd/mod.rs")
+              salsa: parse_source_file(Id(7))
+            parse_source_file("cmd/mod.rs")
               salsa: resolve_mod_tracked(Id(3801))
             module_items("cmd/get.rs")
-              salsa: file_item_tree(Id(6))
-            file_item_tree("cmd/get.rs")
+              salsa: parse_source_file(Id(6))
+            parse_source_file("cmd/get.rs")
               salsa: expanded_module(Id(1002))
             tcx::extern_crate("Debug")
             tcx::extern_crate("std")

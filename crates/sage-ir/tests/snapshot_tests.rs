@@ -2,7 +2,7 @@ use std::path::Path;
 
 use expect_test::expect_file;
 use sage_ir::db::Database;
-use sage_ir::lower::file_item_tree;
+use sage_ir::lower::parse_source_file;
 use sage_ir::source::SourceFile;
 use salsa::Database as _;
 
@@ -37,7 +37,7 @@ fn mini_redis_signatures() {
             let rel = path.strip_prefix(&fixture_dir).unwrap();
             let text = std::fs::read_to_string(path).unwrap();
             let file = SourceFile::new(db, rel.display().to_string(), text);
-            let items = file_item_tree(db, file);
+            let items = parse_source_file(db, file);
 
             out.push_str(&format!("// --- {} ---\n", rel.display()));
             for item in items {
@@ -73,7 +73,7 @@ fn mini_redis_bodies() {
             let rel = path.strip_prefix(&fixture_dir).unwrap();
             let text = std::fs::read_to_string(path).unwrap();
             let file = SourceFile::new(db, rel.display().to_string(), text);
-            let items = file_item_tree(db, file);
+            let items = parse_source_file(db, file);
 
             out.push_str(&format!("// --- {} ---\n", rel.display()));
             for item in items {
