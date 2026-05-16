@@ -7,7 +7,7 @@
 
 use sage_stash::{AllocStashData, StashDirect};
 
-use crate::item::ItemAst;
+use crate::item::{ItemAst, StructAst};
 use crate::module::{CrateNum, DefIndex, ModExt, ModSymbol};
 
 /// A resolved symbol — local item or external definition.
@@ -38,6 +38,7 @@ impl SymExt {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub enum SymbolData<'db> {
     Ast(ItemAst<'db>),
+    TupleStructCtor(StructAst<'db>),
     Ext(SymExt),
 }
 
@@ -45,6 +46,12 @@ impl<'db> Symbol<'db> {
     pub fn ast(item: ItemAst<'db>) -> Self {
         Self {
             data: SymbolData::Ast(item),
+        }
+    }
+
+    pub fn tuple_struct_ctor(s: StructAst<'db>) -> Self {
+        Self {
+            data: SymbolData::TupleStructCtor(s),
         }
     }
 

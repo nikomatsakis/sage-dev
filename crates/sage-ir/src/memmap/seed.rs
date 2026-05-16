@@ -23,7 +23,7 @@
 //!     either dropped or transformed above.
 
 use crate::Db;
-use crate::item::ItemAst;
+use crate::item::{ItemAst, StructKind};
 use crate::types::UseKind;
 
 use super::data::*;
@@ -68,6 +68,11 @@ pub(super) fn seed_from_items<'db>(
             ItemAst::Error(..) => {}
             _ => {
                 entries.push(MemmapEntry::Item(item));
+                if let ItemAst::Struct(s) = item {
+                    if matches!(s.kind(db), StructKind::Tuple | StructKind::Unit) {
+                        entries.push(MemmapEntry::TupleStructCtor(s));
+                    }
+                }
             }
         }
     }

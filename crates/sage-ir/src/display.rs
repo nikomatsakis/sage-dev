@@ -851,6 +851,9 @@ fn fmt_res(f: &mut fmt::Formatter<'_>, res: &Res<'_>) -> fmt::Result {
                 let name = name.unwrap_or_else(|| "?".to_string());
                 write!(f, "<def {name}>")
             }
+            SymbolData::TupleStructCtor(s) => {
+                write!(f, "<ctor {}>", s.name(db).text(db))
+            }
             SymbolData::Ext(ext) => {
                 let path =
                     with_display_tcx(|tcx| tcx.def_path(ext.crate_num, ext.def_index)).flatten();

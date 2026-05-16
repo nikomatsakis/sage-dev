@@ -284,6 +284,9 @@ pub fn fmt_symbol(db: &dyn sage_ir::Db, sym: Symbol) -> String {
                 None => format!("<local {kind}>"),
             }
         }
+        SymbolData::TupleStructCtor(s) => {
+            format!("<ctor {}>", s.name(db).text(db))
+        }
         SymbolData::Ext(ext) => match db.tcx().def_path(ext.crate_num, ext.def_index) {
             Some(path) => format!("<ext {path}>"),
             None => format!("<ext {}:{}>", ext.crate_num.0, ext.def_index.0),
@@ -344,6 +347,10 @@ fn fmt_entry(db: &dyn sage_ir::Db, entry: &MemmapEntry, indent: usize, out: &mut
                 Some(n) => out.push_str(&format!("Item {n} kind={kind}\n")),
                 None => out.push_str(&format!("Item kind={kind}\n")),
             }
+        }
+        MemmapEntry::TupleStructCtor(s) => {
+            out.push_str(&pad);
+            out.push_str(&format!("TupleStructCtor {}\n", s.name(db).text(db)));
         }
         MemmapEntry::MacroDef(def) => {
             out.push_str(&pad);

@@ -91,6 +91,9 @@ fn collect_all_names<'db>(
                     }
                 }
             }
+            MemmapEntry::TupleStructCtor(s) => {
+                out.push((s.name(db), Namespace::Value));
+            }
             MemmapEntry::MacroDef(def) => {
                 out.push((def.name(db), Namespace::Macro(MacroKind::Bang)));
             }

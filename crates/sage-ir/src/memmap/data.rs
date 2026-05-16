@@ -22,7 +22,7 @@
 //! derivable from the variant shape (Item → `item_in_namespace`, MacroDef
 //! → `Macro(Bang)`, Redirect → resolve target).
 
-use crate::item::{ItemAst, MacroDefAst};
+use crate::item::{ItemAst, MacroDefAst, StructAst};
 use crate::module::{CrateNum, DefIndex};
 use crate::name::Name;
 use crate::span::AbsoluteSpan;
@@ -52,6 +52,11 @@ pub enum MemmapEntry<'db> {
     /// here — seeding transforms them into `Redirect`/`Glob`/`MacroUse`
     /// entries.
     Item(ItemAst<'db>),
+
+    /// Implicit constructor for a tuple struct or unit struct.
+    /// Lives in `Namespace::Value` only. The `StructAst` provides the
+    /// field types from which a callable signature is derived.
+    TupleStructCtor(StructAst<'db>),
 
     /// A `macro_rules!` definition. Name via `def.name()`. Always lives in
     /// `Namespace::Macro(Bang)`.

@@ -292,12 +292,15 @@ impl<'db> LowerCtx<'db> {
         );
         let span = self.abs_span(node);
 
-        let fields = node
-            .child_by_field_name("body")
-            .map(|body| self.lower_field_defs(body))
-            .unwrap_or_default();
+        let body = node.child_by_field_name("body");
+        let kind = match body {
+            None => StructKind::Unit,
+            Some(b) if b.kind() == "field_declaration_list" => StructKind::Braced,
+            Some(_) => StructKind::Tuple,
+        };
+        let fields = body.map(|b| self.lower_field_defs(b)).unwrap_or_default();
 
-        StructAst::new(self.db, name, attrs, fields, span)
+        StructAst::new(self.db, name, kind, attrs, fields, span)
     }
 
     fn lower_field_defs(&mut self, body: Node<'_>) -> Vec<FieldDef<'db>> {

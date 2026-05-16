@@ -85,9 +85,19 @@ pub struct FnAst<'db> {
 
 // -- Struct --
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub enum StructKind {
+    Tuple,
+    Unit,
+    Braced,
+}
+
 #[salsa::tracked(debug)]
 pub struct StructAst<'db> {
     pub name: Name<'db>,
+
+    #[tracked]
+    pub kind: StructKind,
 
     #[tracked]
     #[returns(ref)]

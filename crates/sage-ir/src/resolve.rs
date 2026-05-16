@@ -27,9 +27,9 @@ pub enum Namespace {
 /// Whether an item lives in the given namespace.
 pub(crate) fn item_in_namespace(_db: &dyn Db, item: ItemAst<'_>, ns: Namespace) -> bool {
     match item {
-        // Structs live in both Type (as a type name) and Value (as a
-        // constructor or unit value).
-        ItemAst::Struct(_) => matches!(ns, Namespace::Type | Namespace::Value),
+        // Structs live in Type only. The value-namespace entry for
+        // tuple/unit structs is handled by `MemmapEntry::TupleStructCtor`.
+        ItemAst::Struct(_) => matches!(ns, Namespace::Type),
 
         // Type-namespace-only items.
         ItemAst::Enum(_) | ItemAst::Trait(_) | ItemAst::TypeAlias(_) | ItemAst::Mod(_) => {
@@ -448,6 +448,14 @@ impl<'db> ModSymbol<'db> {
                     MemmapEntry::Item(item) => {
                         if item_name(db, *item) == Some(name) && item_in_namespace(db, *item, ns) {
                             let sym = Symbol::ast(*item);
+                            if !named.contains(&sym) {
+                                named.push(sym);
+                            }
+                        }
+                    }
+                    MemmapEntry::TupleStructCtor(s) => {
+                        if s.name(db) == name && matches!(ns, Namespace::Value) {
+                            let sym = Symbol::tuple_struct_ctor(*s);
                             if !named.contains(&sym) {
                                 named.push(sym);
                             }

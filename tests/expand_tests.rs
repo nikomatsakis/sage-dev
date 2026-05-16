@@ -230,7 +230,7 @@ fn expand_derives_cmd_get_full() {
                             ext.crate_num.0, ext.def_index.0
                         ));
                     }
-                    sage_ir::symbol::SymbolData::Ast(_) => {
+                    _ => {
                         out.push_str("proc_macro: Local\n");
                     }
                 },
