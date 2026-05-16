@@ -7,7 +7,10 @@
 
 use std::fmt;
 
+use sage_stash::{Ptr, Stash, StashData};
+
 use crate::item::*;
+use crate::sig_ast::{PathAst, PathSegmentAst, TypeRefAst, TypeRefAstKind};
 use crate::types::*;
 
 fn with_db(f: impl FnOnce(&dyn salsa::Database) -> fmt::Result) -> fmt::Result {
@@ -49,15 +52,22 @@ impl fmt::Display for FnAst<'_> {
                 f.write_str("unsafe ")?;
             }
             write!(f, "fn {}(", self.name(db).text(db))?;
-            for (i, p) in self.params(db).iter().enumerate() {
+            let sig = self.signature(db);
+            let sig_stash = sig.stash();
+            let sig_data = &sig_stash[*sig.root()];
+            for (i, p) in sig_stash[sig_data.params].iter().enumerate() {
                 if i > 0 {
                     f.write_str(", ")?;
                 }
-                fmt::Display::fmt(p, f)?;
+                if let Some(name) = p.name {
+                    write!(f, "{}: ", name.text(db))?;
+                }
+                sig_stash[p.ty].pretty(f, sig_stash, 0)?;
             }
             f.write_str(")")?;
-            if let Some(ret) = self.ret_type(db) {
-                write!(f, " -> {ret}")?;
+            if let Some(ret) = sig_data.ret_type {
+                f.write_str(" -> ")?;
+                sig_stash[ret].pretty(f, sig_stash, 0)?;
             }
             f.write_str(" ")?;
             let body = self.body(db);
@@ -76,8 +86,13 @@ impl fmt::Display for StructAst<'_> {
         with_db(|db| {
             write_attrs(f, self.attrs(db))?;
             writeln!(f, "struct {} {{", self.name(db).text(db))?;
-            for field in self.fields(db) {
-                writeln!(f, "  {field}")?;
+            let sig = self.signature(db);
+            let sig_stash = sig.stash();
+            let sig_data = &sig_stash[*sig.root()];
+            for field in &sig_stash[sig_data.fields] {
+                write!(f, "  {}: ", field.name.text(db))?;
+                sig_stash[field.ty].pretty(f, sig_stash, 0)?;
+                writeln!(f)?;
             }
             f.write_str("}")
         })
@@ -91,14 +106,19 @@ impl fmt::Display for EnumAst<'_> {
         with_db(|db| {
             write_attrs(f, self.attrs(db))?;
             writeln!(f, "enum {} {{", self.name(db).text(db))?;
-            for v in self.variants(db) {
-                let fields = v.fields(db);
+            let sig = self.signature(db);
+            let sig_stash = sig.stash();
+            let sig_data = &sig_stash[*sig.root()];
+            for v in &sig_stash[sig_data.variants] {
+                let fields = &sig_stash[v.fields];
                 if fields.is_empty() {
-                    writeln!(f, "  {}", v.name(db).text(db))?;
+                    writeln!(f, "  {}", v.name.text(db))?;
                 } else {
-                    writeln!(f, "  {} {{", v.name(db).text(db))?;
+                    writeln!(f, "  {} {{", v.name.text(db))?;
                     for field in fields {
-                        writeln!(f, "    {field}")?;
+                        write!(f, "    {}: ", field.name.text(db))?;
+                        sig_stash[field.ty].pretty(f, sig_stash, 0)?;
+                        writeln!(f)?;
                     }
                     writeln!(f, "  }}")?;
                 }
@@ -325,47 +345,6 @@ impl fmt::Display for Path<'_> {
     }
 }
 
-// -- Param --
-
-impl fmt::Display for Param<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        with_db(|db| {
-            if let Some(name) = self.name(db) {
-                write!(f, "{}: {}", name.text(db), self.ty(db))
-            } else {
-                write!(f, "{}", self.ty(db))
-            }
-        })
-    }
-}
-
-// -- FieldDef --
-
-impl fmt::Display for FieldDef<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        with_db(|db| write!(f, "{}: {}", self.name(db).text(db), self.ty(db)))
-    }
-}
-
-// -- VariantDef --
-
-impl fmt::Display for VariantDef<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        with_db(|db| {
-            let fields = self.fields(db);
-            if fields.is_empty() {
-                write!(f, "{}", self.name(db).text(db))
-            } else {
-                writeln!(f, "{} {{", self.name(db).text(db))?;
-                for field in fields {
-                    writeln!(f, "  {field}")?;
-                }
-                f.write_str("}")
-            }
-        })
-    }
-}
-
 // -- Attr --
 
 impl fmt::Display for Attr<'_> {
@@ -411,10 +390,7 @@ fn write_attrs(f: &mut fmt::Formatter<'_>, attrs: &[Attr<'_>]) -> fmt::Result {
 // PrettyPrint — trait for stash-allocated body types
 // ===========================================================================
 
-use sage_stash::{Ptr, Stash};
-
 use crate::body::*;
-use crate::sig_ast::{PathAst, PathSegmentAst, TypeRefAst, TypeRefAstKind};
 
 /// Pretty-print a stash-allocated value. Takes the stash as context.
 pub trait PrettyPrint<'db> {
@@ -805,8 +781,6 @@ impl<'db> PrettyPrint<'db> for ClosureParam<'db> {
         self.pat.pretty(f, s, indent)
     }
 }
-
-use sage_stash::StashData;
 
 // ===========================================================================
 // PrettyPrint — stash-allocated type refs and paths

@@ -43,31 +43,6 @@ pub enum Mutability {
     Mut,
 }
 
-/// A function parameter's signature-level data.
-#[salsa::tracked(debug)]
-pub struct Param<'db> {
-    pub name: Option<Name<'db>>,
-    pub ty: TypeRef<'db>,
-    pub span: RelativeSpan,
-}
-
-/// A struct/enum field.
-#[salsa::tracked(debug)]
-pub struct FieldDef<'db> {
-    pub name: Name<'db>,
-    pub ty: TypeRef<'db>,
-    pub span: RelativeSpan,
-}
-
-/// An enum variant.
-#[salsa::tracked(debug)]
-pub struct VariantDef<'db> {
-    pub name: Name<'db>,
-    #[returns(ref)]
-    pub fields: Vec<FieldDef<'db>>,
-    pub span: RelativeSpan,
-}
-
 /// The syntactic form of an attribute.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub enum AttrKind {

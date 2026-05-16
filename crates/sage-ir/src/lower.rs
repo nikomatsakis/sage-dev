@@ -558,6 +558,7 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
                     });
                 TypeRefAstKind::Slice(inner)
             }
+            "unit_type" => TypeRefAstKind::Tuple(stash.alloc_slice(&[])),
             "tuple_type" => {
                 let mut elems = Vec::new();
                 let mut cursor = node.walk();
@@ -621,6 +622,9 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
                     let mut type_args = Vec::new();
                     let mut cursor = args_node.walk();
                     for child in args_node.named_children(&mut cursor) {
+                        if child.kind() == "lifetime" {
+                            continue;
+                        }
                         let ty = self.lower_type_ref_to_stash(stash, child);
                         type_args.push(stash[ty]);
                     }
@@ -701,68 +705,10 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
             .children(&mut node.walk())
             .any(|c| c.kind() == "unsafe");
 
-        let params = node
-            .child_by_field_name("parameters")
-            .map(|p| self.lower_params(p))
-            .unwrap_or_default();
-
-        let ret_type = node
-            .child_by_field_name("return_type")
-            .map(|n| self.lower_type(n));
-
         let signature = self.lower_fn_sig_ast(node);
         let body = self.lower_body(node);
 
-        FnAst::new(
-            db, name, attrs, params, ret_type, signature, is_async, is_unsafe, body, span,
-        )
-    }
-
-    fn lower_params(&self, params_node: Node<'_>) -> Vec<Param<'db>> {
-        let db = self.db();
-        let mut params = Vec::new();
-        let mut cursor = params_node.walk();
-        for child in params_node.children(&mut cursor) {
-            match child.kind() {
-                "parameter" => {
-                    let name = child
-                        .child_by_field_name("pattern")
-                        .map(|n| self.intern_name(n));
-                    let ty = child
-                        .child_by_field_name("type")
-                        .map(|n| self.lower_type(n))
-                        .unwrap_or_else(|| self.make_error_type(child));
-                    params.push(Param::new(db, name, ty, self.rel_span(child)));
-                }
-                "self_parameter" => {
-                    let name = Some(Name::new(db, "self".to_owned()));
-                    let has_ref = child.children(&mut child.walk()).any(|c| c.kind() == "&");
-                    let is_mut = child
-                        .children(&mut child.walk())
-                        .any(|c| c.kind() == "mutable_specifier");
-                    let self_path = Path::new(
-                        db,
-                        vec![Name::new(db, "Self".to_owned())],
-                        self.rel_span(child),
-                    );
-                    let self_ty =
-                        TypeRef::new(db, TypeRefKind::Path(self_path), self.rel_span(child));
-                    let ty = if has_ref {
-                        let m = if is_mut {
-                            Mutability::Mut
-                        } else {
-                            Mutability::Shared
-                        };
-                        TypeRef::new(db, TypeRefKind::Reference(self_ty, m), self.rel_span(child))
-                    } else {
-                        self_ty
-                    };
-                    params.push(Param::new(db, name, ty, self.rel_span(child)));
-                }
-                _ => {}
-            }
-        }
-        params
+        FnAst::new(db, name, attrs, signature, is_async, is_unsafe, body, span)
     }
 
     fn lower_struct(&self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> StructAst<'db> {
@@ -779,30 +725,9 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
             Some(b) if b.kind() == "field_declaration_list" => StructKind::Braced,
             Some(_) => StructKind::Tuple,
         };
-        let fields = body.map(|b| self.lower_field_defs(b)).unwrap_or_default();
 
         let signature = self.lower_struct_sig_ast(node);
-        StructAst::new(db, name, kind, attrs, fields, signature, span)
-    }
-
-    fn lower_field_defs(&self, body: Node<'_>) -> Vec<FieldDef<'db>> {
-        let db = self.db();
-        let mut fields = Vec::new();
-        let mut cursor = body.walk();
-        for child in body.children(&mut cursor) {
-            if child.kind() == "field_declaration" {
-                let name = child
-                    .child_by_field_name("name")
-                    .map(|n| self.intern_name(n))
-                    .unwrap_or_else(|| Name::new(db, "?".to_owned()));
-                let ty = child
-                    .child_by_field_name("type")
-                    .map(|n| self.lower_type(n))
-                    .unwrap_or_else(|| self.make_error_type(child));
-                fields.push(FieldDef::new(db, name, ty, self.rel_span(child)));
-            }
-        }
-        fields
+        StructAst::new(db, name, kind, attrs, signature, span)
     }
 
     fn lower_enum(&self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> EnumAst<'db> {
@@ -810,26 +735,8 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
         let name = self.intern_name(node.child_by_field_name("name").expect("enum has no name"));
         let span = self.abs_span(node);
 
-        let mut variants = Vec::new();
-        if let Some(body) = node.child_by_field_name("body") {
-            let mut cursor = body.walk();
-            for child in body.children(&mut cursor) {
-                if child.kind() == "enum_variant" {
-                    let vname = child
-                        .child_by_field_name("name")
-                        .map(|n| self.intern_name(n))
-                        .unwrap_or_else(|| Name::new(db, "?".to_owned()));
-                    let fields = child
-                        .child_by_field_name("body")
-                        .map(|b| self.lower_field_defs(b))
-                        .unwrap_or_default();
-                    variants.push(VariantDef::new(db, vname, fields, self.rel_span(child)));
-                }
-            }
-        }
-
         let signature = self.lower_enum_sig_ast(node);
-        EnumAst::new(db, name, attrs, variants, signature, span)
+        EnumAst::new(db, name, attrs, signature, span)
     }
 
     fn lower_trait(&self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> TraitAst<'db> {

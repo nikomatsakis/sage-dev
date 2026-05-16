@@ -37,8 +37,8 @@ pub fn expand_builtin<'db>(
 
 /// `impl Debug for T { fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result { ... } }`
 fn expand_debug<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
-    let (type_name, _fields) = match item_info(db, item) {
-        Some(info) => info,
+    let type_name = match item_info(db, item) {
+        Some(name) => name,
         None => return Vec::new(),
     };
 
@@ -60,26 +60,20 @@ fn expand_debug<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
     });
     let body = Stashed::new(stash, body);
 
+    let signature = make_fn_sig(
+        db,
+        &[
+            (Some("self"), SigTy::RefSelf),
+            (Some("f"), SigTy::AbsPath(&["std", "fmt", "Formatter"])),
+        ],
+        Some(SigTy::AbsPath(&["std", "fmt", "Result"])),
+    );
+
     let fmt_fn = FnAst::new(
         db,
         Name::new(db, "fmt".to_owned()),
         Vec::new(), // attrs
-        vec![
-            Param::new(
-                db,
-                Some(Name::new(db, "self".to_owned())),
-                make_ref_self(db),
-                GEN_REL_SPAN,
-            ),
-            Param::new(
-                db,
-                Some(Name::new(db, "f".to_owned())),
-                make_abs_type_path(db, &["std", "fmt", "Formatter"]),
-                GEN_REL_SPAN,
-            ),
-        ],
-        Some(make_abs_type_path(db, &["std", "fmt", "Result"])),
-        make_empty_fn_sig(),
+        signature,
         false,
         false,
         body,
@@ -100,8 +94,8 @@ fn expand_debug<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
 
 /// `impl Clone for T { fn clone(&self) -> Self { ... } }`
 fn expand_clone<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
-    let (type_name, _fields) = match item_info(db, item) {
-        Some(info) => info,
+    let type_name = match item_info(db, item) {
+        Some(name) => name,
         None => return Vec::new(),
     };
 
@@ -119,18 +113,17 @@ fn expand_clone<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
     });
     let body = Stashed::new(stash, body);
 
+    let signature = make_fn_sig(
+        db,
+        &[(Some("self"), SigTy::RefSelf)],
+        Some(SigTy::Path(&["Self"])),
+    );
+
     let clone_fn = FnAst::new(
         db,
         Name::new(db, "clone".to_owned()),
         Vec::new(),
-        vec![Param::new(
-            db,
-            Some(Name::new(db, "self".to_owned())),
-            make_ref_self(db),
-            GEN_REL_SPAN,
-        )],
-        Some(make_type_path(db, &["Self"])),
-        make_empty_fn_sig(),
+        signature,
         false,
         false,
         body,
@@ -151,8 +144,8 @@ fn expand_clone<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
 
 /// `impl Default for T { fn default() -> Self { ... } }`
 fn expand_default<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
-    let (type_name, _fields) = match item_info(db, item) {
-        Some(info) => info,
+    let type_name = match item_info(db, item) {
+        Some(name) => name,
         None => return Vec::new(),
     };
 
@@ -170,13 +163,13 @@ fn expand_default<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>>
     });
     let body = Stashed::new(stash, body);
 
+    let signature = make_fn_sig(db, &[], Some(SigTy::Path(&["Self"])));
+
     let default_fn = FnAst::new(
         db,
         Name::new(db, "default".to_owned()),
         Vec::new(),
-        Vec::new(),
-        Some(make_type_path(db, &["Self"])),
-        make_empty_fn_sig(),
+        signature,
         false,
         false,
         body,
@@ -201,8 +194,8 @@ fn expand_marker<'db>(
     derive_name: Name<'db>,
     item: ItemAst<'db>,
 ) -> Vec<ImplAst<'db>> {
-    let (type_name, _fields) = match item_info(db, item) {
-        Some(info) => info,
+    let type_name = match item_info(db, item) {
+        Some(name) => name,
         None => return Vec::new(),
     };
 
@@ -233,11 +226,11 @@ fn expand_marker<'db>(
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Extract type name and fields from a struct or enum item.
-fn item_info<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Option<(Name<'db>, Vec<FieldDef<'db>>)> {
+/// Extract the type name from a struct or enum item.
+fn item_info<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Option<Name<'db>> {
     match item {
-        ItemAst::Struct(s) => Some((s.name(db), s.fields(db).to_vec())),
-        ItemAst::Enum(e) => Some((e.name(db), Vec::new())),
+        ItemAst::Struct(s) => Some(s.name(db)),
+        ItemAst::Enum(e) => Some(e.name(db)),
         _ => None,
     }
 }
@@ -253,32 +246,15 @@ fn make_path<'db>(db: &'db dyn Db, segments: &[&str]) -> Path<'db> {
     )
 }
 
+fn make_type_path<'db>(db: &'db dyn Db, segments: &[&str]) -> TypeRef<'db> {
+    TypeRef::new(db, TypeRefKind::Path(make_path(db, segments)), GEN_REL_SPAN)
+}
+
 /// Make an absolute path (`::foo::bar`) — prepends the empty sentinel segment.
 fn make_abs_path<'db>(db: &'db dyn Db, segments: &[&str]) -> Path<'db> {
     let mut segs = vec![Name::new(db, String::new())];
     segs.extend(segments.iter().map(|s| Name::new(db, (*s).to_owned())));
     Path::new(db, segs, GEN_REL_SPAN)
-}
-
-fn make_type_path<'db>(db: &'db dyn Db, segments: &[&str]) -> TypeRef<'db> {
-    TypeRef::new(db, TypeRefKind::Path(make_path(db, segments)), GEN_REL_SPAN)
-}
-
-fn make_abs_type_path<'db>(db: &'db dyn Db, segments: &[&str]) -> TypeRef<'db> {
-    TypeRef::new(
-        db,
-        TypeRefKind::Path(make_abs_path(db, segments)),
-        GEN_REL_SPAN,
-    )
-}
-
-fn make_ref_self<'db>(db: &'db dyn Db) -> TypeRef<'db> {
-    let self_ty = make_type_path(db, &["Self"]);
-    TypeRef::new(
-        db,
-        TypeRefKind::Reference(self_ty, Mutability::Shared),
-        GEN_REL_SPAN,
-    )
 }
 
 fn gen_abs_span<'db>(db: &'db dyn Db) -> AbsoluteSpan<'db> {
@@ -293,16 +269,94 @@ fn gen_source_file<'db>(db: &'db dyn Db) -> SourceFile {
     SourceFile::new(db, "<generated>".to_owned(), String::new())
 }
 
-fn make_empty_fn_sig<'db>() -> FnSigAst<'db> {
+enum SigTy<'a> {
+    Path(&'a [&'a str]),
+    AbsPath(&'a [&'a str]),
+    RefSelf,
+}
+
+fn make_fn_sig<'db>(
+    db: &'db dyn Db,
+    params: &[(Option<&str>, SigTy<'_>)],
+    ret: Option<SigTy<'_>>,
+) -> FnSigAst<'db> {
     let mut stash = Stash::new();
     let generics = stash.alloc_slice::<GenericParam<'db>>(&[]);
-    let params = stash.alloc_slice::<ParamAst<'db>>(&[]);
+    let param_asts: Vec<_> = params
+        .iter()
+        .map(|(name, ty)| {
+            let ty_ptr = alloc_sig_ty(db, &mut stash, ty);
+            ParamAst {
+                name: name.map(|n| Name::new(db, n.to_owned())),
+                ty: ty_ptr,
+                span: GEN_REL_SPAN,
+            }
+        })
+        .collect();
+    let params = stash.alloc_slice(&param_asts);
+    let ret_type = ret.map(|r| alloc_sig_ty(db, &mut stash, &r));
     let root = stash.alloc(FnSigAstData {
         generics,
         params,
-        ret_type: None,
+        ret_type,
     });
     Stashed::new(stash, root)
+}
+
+fn alloc_sig_ty<'db>(
+    db: &'db dyn Db,
+    stash: &mut Stash,
+    ty: &SigTy<'_>,
+) -> sage_stash::Ptr<TypeRefAst<'db>> {
+    match ty {
+        SigTy::Path(segments) => {
+            let segs: Vec<_> = segments
+                .iter()
+                .map(|s| PathSegmentAst {
+                    name: Name::new(db, (*s).to_owned()),
+                    type_args: stash.alloc_slice(&[]),
+                    span: GEN_REL_SPAN,
+                })
+                .collect();
+            let segs = stash.alloc_slice(&segs);
+            let path = stash.alloc(PathAst {
+                segments: segs,
+                span: GEN_REL_SPAN,
+            });
+            stash.alloc(TypeRefAst {
+                kind: TypeRefAstKind::Path(path),
+                span: GEN_REL_SPAN,
+            })
+        }
+        SigTy::AbsPath(segments) => {
+            let mut all_segs = vec![PathSegmentAst {
+                name: Name::new(db, String::new()),
+                type_args: stash.alloc_slice(&[]),
+                span: GEN_REL_SPAN,
+            }];
+            all_segs.extend(segments.iter().map(|s| PathSegmentAst {
+                name: Name::new(db, (*s).to_owned()),
+                type_args: stash.alloc_slice(&[]),
+                span: GEN_REL_SPAN,
+            }));
+            let segs = stash.alloc_slice(&all_segs);
+            let path = stash.alloc(PathAst {
+                segments: segs,
+                span: GEN_REL_SPAN,
+            });
+            stash.alloc(TypeRefAst {
+                kind: TypeRefAstKind::Path(path),
+                span: GEN_REL_SPAN,
+            })
+        }
+        SigTy::RefSelf => {
+            let inner = alloc_sig_ty(db, stash, &SigTy::Path(&["Self"]));
+            stash.alloc(TypeRefAst {
+                kind: TypeRefAstKind::Reference(inner, Mutability::Shared),
+                span: GEN_REL_SPAN,
+            })
+        }
+    }
 }
 
 fn make_empty_impl_sig<'db>() -> ImplSigAst<'db> {

@@ -275,7 +275,7 @@ fn expand_derives_cmd_get_full() {
             tcx::is_module(1, _)
             tcx::module_children(1, _)
             tcx::is_builtin_derive(2, _)
-              salsa: expand_builtin(Id(5800))
+              salsa: expand_builtin(Id(4c00))
             expand_builtin("Debug", "Get")"#]]
         .assert_eq(&log);
     });
@@ -471,17 +471,17 @@ fn expanded_items_are_valid_ir() {
             #[# [allow(clippy :: style , clippy :: complexity , clippy :: pedantic , clippy :: restriction , clippy :: perf , clippy :: deprecated , clippy :: nursery , clippy :: cargo , clippy :: suspicious_else_formatting , clippy :: almost_swapped ,)]
             #[# [automatically_derived]
             impl clap::FromArgMatches for Cli {
-              fn from_arg_matches(__clap_arg_matches: &clap::ArgMatches) -> ::std::result::Result {
+              fn from_arg_matches(__clap_arg_matches: &clap::ArgMatches) -> ::std::result::Result<Self, clap::Error> {
               Self::from_arg_matches_mut(&mut __clap_arg_matches.clone())
             }
-              fn from_arg_matches_mut(__clap_arg_matches: &mut clap::ArgMatches) -> ::std::result::Result {
+              fn from_arg_matches_mut(__clap_arg_matches: &mut clap::ArgMatches) -> ::std::result::Result<Self, clap::Error> {
               let v = Cli { port: __clap_arg_matches.remove_one()(String) };
               ::std::result::Result::Ok(v)
             }
-              fn update_from_arg_matches(self: &mut Self, __clap_arg_matches: &clap::ArgMatches) -> ::std::result::Result {
+              fn update_from_arg_matches(self: &mut Self, __clap_arg_matches: &clap::ArgMatches) -> ::std::result::Result<(), clap::Error> {
               self.update_from_arg_matches_mut(&mut __clap_arg_matches.clone())
             }
-              fn update_from_arg_matches_mut(self: &mut Self, __clap_arg_matches: &mut clap::ArgMatches) -> ::std::result::Result {
+              fn update_from_arg_matches_mut(self: &mut Self, __clap_arg_matches: &mut clap::ArgMatches) -> ::std::result::Result<(), clap::Error> {
               if __clap_arg_matches.contains_id(String) {
                 let port = &mut self.port;
                 Derefport = __clap_arg_matches.remove_one()(String)
@@ -493,7 +493,7 @@ fn expanded_items_are_valid_ir() {
             #[# [allow(clippy :: style , clippy :: complexity , clippy :: pedantic , clippy :: restriction , clippy :: perf , clippy :: deprecated , clippy :: nursery , clippy :: cargo , clippy :: suspicious_else_formatting , clippy :: almost_swapped ,)]
             #[# [automatically_derived]
             impl clap::Args for Cli {
-              fn group_id() -> Option {
+              fn group_id() -> Option<clap::Id> {
               Some(clap::Id::from(String))
             }
               fn augment_args(__clap_app: clap::Command) -> clap::Command {
@@ -595,17 +595,17 @@ fn snapshot_expanded_clap_parser() {
             #[# [allow(clippy :: style , clippy :: complexity , clippy :: pedantic , clippy :: restriction , clippy :: perf , clippy :: deprecated , clippy :: nursery , clippy :: cargo , clippy :: suspicious_else_formatting , clippy :: almost_swapped ,)]
             #[# [automatically_derived]
             impl clap::FromArgMatches for Cli {
-              fn from_arg_matches(__clap_arg_matches: &clap::ArgMatches) -> ::std::result::Result {
+              fn from_arg_matches(__clap_arg_matches: &clap::ArgMatches) -> ::std::result::Result<Self, clap::Error> {
               Self::from_arg_matches_mut(&mut __clap_arg_matches.clone())
             }
-              fn from_arg_matches_mut(__clap_arg_matches: &mut clap::ArgMatches) -> ::std::result::Result {
+              fn from_arg_matches_mut(__clap_arg_matches: &mut clap::ArgMatches) -> ::std::result::Result<Self, clap::Error> {
               let v = Cli { port: __clap_arg_matches.remove_one()(String) };
               ::std::result::Result::Ok(v)
             }
-              fn update_from_arg_matches(self: &mut Self, __clap_arg_matches: &clap::ArgMatches) -> ::std::result::Result {
+              fn update_from_arg_matches(self: &mut Self, __clap_arg_matches: &clap::ArgMatches) -> ::std::result::Result<(), clap::Error> {
               self.update_from_arg_matches_mut(&mut __clap_arg_matches.clone())
             }
-              fn update_from_arg_matches_mut(self: &mut Self, __clap_arg_matches: &mut clap::ArgMatches) -> ::std::result::Result {
+              fn update_from_arg_matches_mut(self: &mut Self, __clap_arg_matches: &mut clap::ArgMatches) -> ::std::result::Result<(), clap::Error> {
               if __clap_arg_matches.contains_id(String) {
                 let port = &mut self.port;
                 Derefport = __clap_arg_matches.remove_one()(String)
@@ -617,7 +617,7 @@ fn snapshot_expanded_clap_parser() {
             #[# [allow(clippy :: style , clippy :: complexity , clippy :: pedantic , clippy :: restriction , clippy :: perf , clippy :: deprecated , clippy :: nursery , clippy :: cargo , clippy :: suspicious_else_formatting , clippy :: almost_swapped ,)]
             #[# [automatically_derived]
             impl clap::Args for Cli {
-              fn group_id() -> Option {
+              fn group_id() -> Option<clap::Id> {
               Some(clap::Id::from(String))
             }
               fn augment_args(__clap_app: clap::Command) -> clap::Command {

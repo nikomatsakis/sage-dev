@@ -3,7 +3,7 @@ use crate::name::Name;
 use crate::sig_ast::*;
 use crate::source::SourceFile;
 use crate::span::{AbsoluteSpan, ParseSource};
-use crate::types::{Attr, FieldDef, Param, Path, TypeRef, UseImport, VariantDef};
+use crate::types::{Attr, Path, TypeRef, UseImport};
 
 /// Thin enum over all item kinds. `Copy` because salsa tracked struct
 /// handles are just IDs.
@@ -65,13 +65,6 @@ pub struct FnAst<'db> {
 
     #[tracked]
     #[returns(ref)]
-    pub params: Vec<Param<'db>>,
-
-    #[tracked]
-    pub ret_type: Option<TypeRef<'db>>,
-
-    #[tracked]
-    #[returns(ref)]
     pub signature: FnSigAst<'db>,
 
     #[tracked]
@@ -110,10 +103,6 @@ pub struct StructAst<'db> {
 
     #[tracked]
     #[returns(ref)]
-    pub fields: Vec<FieldDef<'db>>,
-
-    #[tracked]
-    #[returns(ref)]
     pub signature: StructSigAst<'db>,
 
     #[tracked]
@@ -129,10 +118,6 @@ pub struct EnumAst<'db> {
     #[tracked]
     #[returns(ref)]
     pub attrs: Vec<Attr<'db>>,
-
-    #[tracked]
-    #[returns(ref)]
-    pub variants: Vec<VariantDef<'db>>,
 
     #[tracked]
     #[returns(ref)]

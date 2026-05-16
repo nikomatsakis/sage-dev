@@ -267,7 +267,7 @@ fn query_log_body_resolve_parse_demand_driven() {
             module_items("parse.rs")
               salsa: parse_source_file(Id(11))
             parse_source_file("parse.rs")
-              salsa: resolve_body(Id(5800))
+              salsa: resolve_body(Id(4c00))
               salsa: expanded_module(Id(1001))
               salsa: resolve_mod_tracked(Id(3801))
               salsa: expanded_module(Id(1002))

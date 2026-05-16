@@ -481,9 +481,12 @@ pub fn resolve_body<'db>(
 
     // Push function params as the outermost scope.
     resolver.push_scope();
-    for param in function.params(db) {
-        if let Some(name) = param.name(db) {
-            resolver.add_binding(name, param.span(db));
+    let sig = function.signature(db);
+    let sig_stash = sig.stash();
+    let sig_data = &sig_stash[*sig.root()];
+    for param in &sig_stash[sig_data.params] {
+        if let Some(name) = param.name {
+            resolver.add_binding(name, param.span);
         }
     }
 
