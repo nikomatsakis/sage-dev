@@ -321,7 +321,7 @@ pub struct BoundVar {
 
 ### `Binder<T>`
 
-**Note:** The `AllocStashData` derive macro currently rejects type parameters. `Binder<'db, T>` requires either extending the macro to support one type parameter or writing a manual `unsafe impl StashData` / `impl AllocStashData`. The manual impl is straightforward since `Binder` is `Copy` when `T: Copy`, and `static_type_id()` can use `TypeId::of::<Binder<'static, T::Static>>()` (the same `'db` → `'static` erasure the macro does for lifetime params).
+**Note:** The `AllocStashData` derive macro rejects type parameters. `Binder<'db, T>` uses a manual `unsafe impl StashData` with `#[repr(C)]` and `PhantomData` for the lifetime.
 
 ```rust
 pub struct Binder<'db, T> {
@@ -383,34 +383,9 @@ pub struct EnumSymbol<'db> { data: EnumSymbolData<'db> }
 pub struct TraitSymbol<'db> { data: TraitSymbolData<'db> }
 ```
 
-Each follows the same template: `Copy` wrapper-of-enum, `From` impls from both arms, `data()` method.
+Each follows the same template: `Copy` wrapper-of-enum, `From` impls from both arms, `data()` method. A `define_kind_symbol!` macro generates the struct, enum, `From` impls, `data()`, and `Copy`/`Clone`/`Debug`/`PartialEq`/`Eq`/`Hash` derives for each kind.
 
-`SymbolData` is currently flat with three variants: `Ast(ItemAst)`, `TupleStructCtor(StructAst)`, `Ext(SymExt)`. It gains kind-level variants, absorbing the existing `TupleStructCtor`:
-
-```rust
-pub enum SymbolData<'db> {
-    Fn(FnSymbol<'db>),
-    Struct(StructSymbol<'db>),
-    TupleStructCtor(StructSymbol<'db>),
-    Enum(EnumSymbol<'db>),
-    Trait(TraitSymbol<'db>),
-    Mod(ModSymbol<'db>),
-    TypeAlias(TypeAliasSymbol<'db>),
-    Const(ConstSymbol<'db>),
-    Static(StaticSymbol<'db>),
-    // Macro definitions, use groups — no signatures, but kept for completeness
-    MacroDef(MacroDefSymbol<'db>),
-    Use(UseSymbol<'db>),
-    MacroInvocation(MacroInvocationSymbol<'db>),
-    Error,
-}
-```
-
-`TupleStructCtor` wraps `StructSymbol` (upgraded from wrapping raw `StructAst`). Existing code that matches on `SymbolData::TupleStructCtor(struct_ast)` migrates to `SymbolData::TupleStructCtor(struct_sym)` and calls `struct_sym.data()` when it needs the AST.
-
-The ext arm of each kind uses the same `SymExt { crate_num, def_index }` — we don't yet have per-kind ext leaves (`FnExt`, `StructExt`, etc.). That's fine; `SymExt` is just an opaque handle into `TcxDb`.
-
-**Macro to reduce boilerplate.** The wrappers are extremely repetitive. A declarative macro generates the struct, enum, `From` impls, `data()`, and `Copy`/`Clone`/`Debug`/`PartialEq`/`Eq`/`Hash` derives for each kind.
+The `SymbolData` enum migration (rewriting the flat `Ast`/`TupleStructCtor`/`Ext` enum to use per-kind variants, adding `SymExtKind`, and migrating all callers) is covered by the [per-kind symbol data RFD](./per-kind-symbol-data.md).
 
 ## Layer 3: Signature queries
 
@@ -492,6 +467,8 @@ struct SigLowerCtx<'a, 'db> {
     source_root: SourceRoot,
     /// Maps generic param names to their BoundVar (current binder only).
     generics: Vec<(Name<'db>, BoundVar)>,
+    /// The impl block's self type, if lowering a method. `Self` resolves to this.
+    self_type: Option<Ty<'db>>,
 }
 ```
 
@@ -741,7 +718,7 @@ The per-item signature stash is coarser than the previous per-field tracking (ch
 
 Every step follows **test-first**: write the tests, verify they fail (compile error or assertion failure), then write the implementation to make them pass. Tests use `expect_test` inline snapshots (for structural output) and the mini-redis fixture (for integration coverage), matching the patterns in the existing test suite.
 
-### Step A: Stash-allocated signature AST types
+### Step A: Stash-allocated signature AST types ✓
 
 **Types.** Add the new stash-allocated signature types: `TypeRefAst`, `TypeRefAstKind`, `PathAst`, `PathSegmentAst`, `GenericParam`, `ParamAst`, `FieldDefAst`, `VariantDefAst`. Add the per-item signature stash types: `FnSigAst`/`FnSigAstData`, `StructSigAst`/`StructSigAstData`, `EnumSigAst`/`EnumSigAstData`, `ImplSigAst`/`ImplSigAstData`, and minimal stashes for `TypeAliasAst`, `ConstAst`, `StaticAst`. Pure type definitions — no lowering yet.
 
@@ -752,7 +729,7 @@ Every step follows **test-first**: write the tests, verify they fail (compile er
 
 Write these tests first. They should compile (the types exist) and pass (pure construction). This validates the stash layout before any lowering touches it.
 
-### Step B: Body stash migration
+### Step B: Body stash migration (deferred)
 
 **Tests first.** Before changing any body types, write new tests (or extend existing `body_resolve_tests`) that assert on the *current* resolved body output for a snippet containing a cast, a let-with-type-annotation, and a closure with typed params. Capture the current output as a baseline snapshot. These tests pass against the old `TypeRef`-based body.
 
@@ -766,7 +743,7 @@ Note: `body_resolve.rs:390` reads `function.params(db)` to push parameter bindin
 
 **Verify.** Update the baseline snapshots to reflect the new types and confirm all existing tests (including mini-redis snapshot tests) still pass.
 
-### Step C: Signature lowering from tree-sitter
+### Step C: Signature lowering from tree-sitter ✓
 
 **Tests first.** Write tests for signature lowering — these should fail initially (the lowering doesn't exist yet):
 1. Parse `fn foo<T, U>(x: T, y: &U) -> bool` from a source string. Access `fn_ast.signature(db)`. Walk the stash to verify: generics has 2 entries (`T`, `U`), params has 2 entries with correct `TypeRefAst` types, return type is a path to `bool`.
@@ -778,7 +755,7 @@ Note: `body_resolve.rs:390` reads `function.params(db)` to push parameter bindin
 
 **Verify.** All new tests pass. All existing tests still pass (snapshot updates as needed for the field changes).
 
-### Step D: `Ty` types
+### Step D: `Ty` types ✓
 
 **Types.** Add `ty.rs` with `Ty`, `TyData`, `BoundVar`, `Binder`, `BoundVarInfo`, `BoundVarKind`, `Lifetime`, `Const`, `IntTy`, `UintTy`, `FloatTy`, `FnSig`, `StructSig`, `EnumSig`, `FieldSig`, `VariantSig`. All derive `AllocStashData`, `Copy`, etc.
 
@@ -789,7 +766,7 @@ Note: `body_resolve.rs:390` reads `function.params(db)` to push parameter bindin
 
 These are pure construction tests — they compile and pass immediately, validating the type layout.
 
-### Step E: Per-kind symbol wrappers
+### Step E: Per-kind symbol wrappers ✓
 
 **Tests first.** Write tests that construct `Symbol` values and round-trip through `data()`:
 1. Construct a `Symbol` from a `FnAst`, call `data()`, match on `SymbolData::Fn(fn_sym)`, verify `fn_sym.data()` yields `FnSymbolData::Ast(fn_ast)`.
@@ -803,7 +780,7 @@ These tests fail initially (the new `SymbolData` variants don't exist). Write th
 
 **Verify.** New tests pass. All existing tests still pass (including the tuple-struct-ctor tests from the previous RFD).
 
-### Step F: `SigLowerCtx` and signature queries
+### Step F: `SigLowerCtx` and signature queries ✓
 
 **Tests first.** Write tests that call the signature queries and assert on the resolved `Ty` output — these fail initially (the queries don't exist):
 1. `fn identity<T>(x: T) -> T` → `fn_signature` yields `Binder { bound_vars: [Type], value: FnSig { params: [BoundVar(0,0)], ret: BoundVar(0,0) } }`.
@@ -821,7 +798,7 @@ These tests fail initially (the new `SymbolData` variants don't exist). Write th
 
 **Verify.** All new tests pass. All existing tests still pass (including tuple-struct-ctor resolution tests).
 
-### Step G: `TyFolder` and instantiation
+### Step G: `TyFolder` and instantiation ✓
 
 **Tests first.** Write tests for the folder — these fail initially (the trait doesn't exist):
 1. **Plain copy.** Build a `Ty` tree in stash A (e.g., `Ref(Adt(sym, [Int(I32)]), Shared, Erased)`). Fold with an identity folder into stash B. Verify the result in stash B is structurally equal to the original.
@@ -834,7 +811,7 @@ These tests fail initially (the new `SymbolData` variants don't exist). Write th
 
 **Verify.** All new tests pass.
 
-### Step H: Remove legacy `params`/`ret_type` fields from `FnAst`
+### Step H: Remove legacy `params`/`ret_type` fields from `FnAst` ✓
 
 `FnAst` currently carries both the old per-field tracked fields (`params: Vec<Param<'db>>`, `ret_type: Option<TypeRef<'db>>`) and the new `signature: FnSigAst<'db>` field side by side. All signature consumers should now read from the `signature` stash.
 
@@ -842,7 +819,7 @@ These tests fail initially (the new `SymbolData` variants don't exist). Write th
 
 **Verify.** All existing tests still pass. The old salsa-tracked `Param` type in `types.rs` may become dead code — delete it if so.
 
-### Step I: Add `self_type` to `SigLowerCtx`
+### Step I: Add `self_type` to `SigLowerCtx` ✓
 
 `SigLowerCtx` currently has no way to resolve `Self` in method signatures inside impl blocks. Resolved decision #2 calls for an `Option<Ptr<Ty<'db>>>` self type, but it is not yet implemented.
 
@@ -850,13 +827,13 @@ These tests fail initially (the new `SymbolData` variants don't exist). Write th
 
 **Tests.** Write a test with `impl Foo { fn bar(&self) -> Self { ... } }` and verify the signature resolves `Self` to `Adt(Foo, [])`. Write a test for a generic impl: `impl<T> Wrapper<T> { fn get(&self) -> T }` and verify `Self` resolves to `Adt(Wrapper, [BoundVar(0,0)])`.
 
-### Step J: Extract `SymbolData` migration to per-kind-symbol-data RFD
+### Step J: Extract `SymbolData` migration to per-kind-symbol-data RFD ✓
 
 Layer 2 of this RFD defines both the per-kind wrapper types (`FnSymbol`, `StructSymbol`, ...) and the `SymbolData` enum migration. The [per-kind-symbol-data RFD](./per-kind-symbol-data.md) now covers the `SymbolData` migration as its own scope.
 
 **Implementation.** Remove the `SymbolData` enum definition, `TupleStructCtor` migration details, and caller-migration discussion from this RFD's Layer 2 section. Retain only the wrapper type definitions and the `define_kind_symbol!` macro. Update Step E in this plan to match — it should only cover adding the wrapper types, not rewriting `SymbolData` or migrating callers. Add a forward reference: "The `SymbolData` enum migration is covered by [per-kind-symbol-data](./per-kind-symbol-data.md)."
 
-### Step K: Update `Binder` note and mark completed steps
+### Step K: Update `Binder` note and mark completed steps ✓
 
 The note at the `Binder<T>` definition (Layer 1) describes the `AllocStashData` derive macro limitation as an open implementation choice. The manual `unsafe impl` approach was chosen (`#[repr(C)]` + `PhantomData`). Update the note to reflect the decision taken.
 
@@ -866,7 +843,7 @@ Mark steps A, D, E (wrappers only), F, and G as complete. Annotate steps B and C
 
 1. **Sig queries keyed on `*Ast`, dispatched by `*Symbol`.** The salsa tracked functions are keyed on `FnAst`, `StructAst`, etc. The per-kind symbol wrappers (`FnSymbol`, `StructSymbol`, ...) provide a convenience method that matches on the ast/ext arms and dispatches: ast → call the tracked function, ext → query `TcxDb`. This is the natural pattern.
 
-2. **`self` parameter.** `SigLowerCtx` takes an optional self type (`Option<Ptr<Ty<'db>>>`). When lowering methods inside an impl block, the caller passes the impl's self type; `Self` in the signature resolves to it, and `&self` becomes `&Self`. Outside of an impl (free functions), the self type is `None`.
+2. **`self` parameter.** `SigLowerCtx` holds `self_type: Option<Ty<'db>>`. The public `lower_fn_sig` function (non-salsa) accepts this; the `fn_signature` salsa query delegates with `None`. When lowering methods inside an impl block, the caller passes the impl's self type; `Self` in the signature resolves to it, and `&self` becomes `&Self`. The self type is copied from the caller's stash into the destination stash via the Identity folder.
 
 3. **Tuple struct constructors.** Handled by the [tuple struct constructors RFD](./tuple-struct-ctors.md). The expansion phase emits a `TupleStructCtor` memmap entry; the signature layer returns a `FnSig` for it derived from the struct's fields.
 
