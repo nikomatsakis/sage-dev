@@ -414,6 +414,7 @@ fn write_attrs(f: &mut fmt::Formatter<'_>, attrs: &[Attr<'_>]) -> fmt::Result {
 use sage_stash::{Ptr, Stash};
 
 use crate::body::*;
+use crate::sig_ast::{PathAst, PathSegmentAst, TypeRefAst, TypeRefAstKind};
 
 /// Pretty-print a stash-allocated value. Takes the stash as context.
 pub trait PrettyPrint<'db> {
@@ -476,7 +477,7 @@ impl<'db> PrettyPrint<'db> for ExprKind<'db> {
                 f.write_str("}")
             }
             ExprKind::Literal(lit) => write!(f, "{lit:?}"),
-            ExprKind::Path(p) => write!(f, "{p}"),
+            ExprKind::Path(p) => p.pretty(f, s, indent),
             ExprKind::Call(func, args) => {
                 func.pretty(f, s, indent)?;
                 f.write_str("(")?;
@@ -628,10 +629,12 @@ impl<'db> PrettyPrint<'db> for ExprKind<'db> {
             }
             ExprKind::Cast(expr, ty) => {
                 expr.pretty(f, s, indent)?;
-                write!(f, " as {ty}")
+                f.write_str(" as ")?;
+                ty.pretty(f, s, indent)
             }
             ExprKind::StructLit(path, fields) => with_db(|db| {
-                write!(f, "{path} {{")?;
+                path.pretty(f, s, indent)?;
+                f.write_str(" {")?;
                 for (i, fi) in s[*fields].iter().enumerate() {
                     if i > 0 {
                         f.write_str(",")?;
@@ -651,7 +654,10 @@ impl<'db> PrettyPrint<'db> for ExprKind<'db> {
                 }
                 Ok(())
             }
-            ExprKind::MacroCall(path, args) => with_db(|db| write!(f, "{path}!{}", args.text(db))),
+            ExprKind::MacroCall(path, args) => with_db(|db| {
+                path.pretty(f, s, indent)?;
+                write!(f, "!{}", args.text(db))
+            }),
             ExprKind::IfLet(pat, scrutinee, then, else_) => {
                 f.write_str("if let ")?;
                 pat.pretty(f, s, indent)?;
@@ -688,7 +694,8 @@ impl<'db> PrettyPrint<'db> for Stmt<'db> {
                 f.write_str("let ")?;
                 pat.pretty(f, s, indent)?;
                 if let Some(ty) = ty {
-                    write!(f, ": {ty}")?;
+                    f.write_str(": ")?;
+                    ty.pretty(f, s, indent)?;
                 }
                 if let Some(init) = init {
                     f.write_str(" = ")?;
@@ -722,7 +729,7 @@ impl<'db> PrettyPrint<'db> for PatKind<'db> {
                 }
                 f.write_str(name.text(db))
             }),
-            PatKind::Path(p) => write!(f, "{p}"),
+            PatKind::Path(p) => p.pretty(f, s, indent),
             PatKind::Tuple(pats) => {
                 f.write_str("(")?;
                 for (i, p) in s[*pats].iter().enumerate() {
@@ -734,7 +741,8 @@ impl<'db> PrettyPrint<'db> for PatKind<'db> {
                 f.write_str(")")
             }
             PatKind::Struct(path, fields) => with_db(|db| {
-                write!(f, "{path} {{")?;
+                path.pretty(f, s, indent)?;
+                f.write_str(" {")?;
                 for (i, fp) in s[*fields].iter().enumerate() {
                     if i > 0 {
                         f.write_str(",")?;
@@ -745,7 +753,8 @@ impl<'db> PrettyPrint<'db> for PatKind<'db> {
                 f.write_str(" }")
             }),
             PatKind::TupleStruct(path, pats) => {
-                write!(f, "{path}(")?;
+                path.pretty(f, s, indent)?;
+                f.write_str("(")?;
                 for (i, p) in s[*pats].iter().enumerate() {
                     if i > 0 {
                         f.write_str(", ")?;
@@ -798,6 +807,94 @@ impl<'db> PrettyPrint<'db> for ClosureParam<'db> {
 }
 
 use sage_stash::StashData;
+
+// ===========================================================================
+// PrettyPrint — stash-allocated type refs and paths
+// ===========================================================================
+
+impl<'db> PrettyPrint<'db> for TypeRefAst<'db> {
+    fn pretty(&self, f: &mut fmt::Formatter<'_>, s: &Stash, indent: usize) -> fmt::Result {
+        match self.kind {
+            TypeRefAstKind::Path(p) => s[p].pretty(f, s, indent),
+            TypeRefAstKind::Reference(inner, Mutability::Shared) => {
+                f.write_str("&")?;
+                s[inner].pretty(f, s, indent)
+            }
+            TypeRefAstKind::Reference(inner, Mutability::Mut) => {
+                f.write_str("&mut ")?;
+                s[inner].pretty(f, s, indent)
+            }
+            TypeRefAstKind::Slice(inner) => {
+                f.write_str("[")?;
+                s[inner].pretty(f, s, indent)?;
+                f.write_str("]")
+            }
+            TypeRefAstKind::Array(inner) => {
+                f.write_str("[")?;
+                s[inner].pretty(f, s, indent)?;
+                f.write_str("; _]")
+            }
+            TypeRefAstKind::Tuple(elems) => {
+                f.write_str("(")?;
+                for (i, elem) in s[elems].iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    elem.pretty(f, s, indent)?;
+                }
+                f.write_str(")")
+            }
+            TypeRefAstKind::Never => f.write_str("!"),
+            TypeRefAstKind::Infer => f.write_str("_"),
+            TypeRefAstKind::Error => f.write_str("{error}"),
+        }
+    }
+}
+
+impl<'db> PrettyPrint<'db> for PathAst<'db> {
+    fn pretty(&self, f: &mut fmt::Formatter<'_>, s: &Stash, indent: usize) -> fmt::Result {
+        with_db(|db| {
+            for (i, seg) in s[self.segments].iter().enumerate() {
+                if i > 0 {
+                    f.write_str("::")?;
+                }
+                f.write_str(seg.name.text(db))?;
+                let type_args = &s[seg.type_args];
+                if !type_args.is_empty() {
+                    f.write_str("<")?;
+                    for (j, arg) in type_args.iter().enumerate() {
+                        if j > 0 {
+                            f.write_str(", ")?;
+                        }
+                        arg.pretty(f, s, indent)?;
+                    }
+                    f.write_str(">")?;
+                }
+            }
+            Ok(())
+        })
+    }
+}
+
+impl<'db> PrettyPrint<'db> for PathSegmentAst<'db> {
+    fn pretty(&self, f: &mut fmt::Formatter<'_>, s: &Stash, indent: usize) -> fmt::Result {
+        with_db(|db| {
+            f.write_str(self.name.text(db))?;
+            let type_args = &s[self.type_args];
+            if !type_args.is_empty() {
+                f.write_str("<")?;
+                for (i, arg) in type_args.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    arg.pretty(f, s, indent)?;
+                }
+                f.write_str(">")?;
+            }
+            Ok(())
+        })
+    }
+}
 
 // ===========================================================================
 // PrettyPrint — resolved body types
@@ -1093,7 +1190,8 @@ impl<'db> PrettyPrint<'db> for RExprKind<'db> {
             }
             RExprKind::Cast(expr, ty) => {
                 expr.pretty(f, s, indent)?;
-                write!(f, " as {ty}")
+                f.write_str(" as ")?;
+                ty.pretty(f, s, indent)
             }
             RExprKind::StructLit(res, fields) => with_db(|db| {
                 fmt_res(f, res)?;
@@ -1134,7 +1232,8 @@ impl<'db> PrettyPrint<'db> for RStmt<'db> {
                 f.write_str("let ")?;
                 pat.pretty(f, s, indent)?;
                 if let Some(ty) = ty {
-                    write!(f, ": {ty}")?;
+                    f.write_str(": ")?;
+                    ty.pretty(f, s, indent)?;
                 }
                 if let Some(init) = init {
                     f.write_str(" = ")?;

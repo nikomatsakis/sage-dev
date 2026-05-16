@@ -7,6 +7,7 @@ use crate::module::ModSymbol;
 use crate::name::Name;
 use crate::resolve::{Namespace, SourceRoot, resolve_name};
 use crate::resolved::*;
+use crate::sig_ast::{PathAst, TypeRefAst, TypeRefAstKind};
 use crate::span::RelativeSpan;
 
 struct BodyResolver<'db> {
@@ -52,49 +53,136 @@ impl<'db> BodyResolver<'db> {
 
     // -- path resolution --
 
-    fn resolve_value_path(&self, path: crate::types::Path<'db>) -> Res<'db> {
-        self.resolve_path(path, Namespace::Value)
+    fn resolve_value_path(&self, path_ptr: Ptr<PathAst<'db>>) -> Res<'db> {
+        self.resolve_path_ast(path_ptr, Namespace::Value)
     }
 
-    fn resolve_type_path(&self, path: crate::types::Path<'db>) -> Res<'db> {
-        self.resolve_path(path, Namespace::Type)
+    fn resolve_type_path(&self, path_ptr: Ptr<PathAst<'db>>) -> Res<'db> {
+        self.resolve_path_ast(path_ptr, Namespace::Type)
     }
 
-    fn resolve_macro_path(&self, path: crate::types::Path<'db>) -> Res<'db> {
-        self.resolve_path(path, Namespace::Macro(crate::resolve::MacroKind::Bang))
+    fn resolve_macro_path(&self, path_ptr: Ptr<PathAst<'db>>) -> Res<'db> {
+        self.resolve_path_ast(path_ptr, Namespace::Macro(crate::resolve::MacroKind::Bang))
     }
 
-    fn resolve_path(&self, path: crate::types::Path<'db>, ns: Namespace) -> Res<'db> {
-        let segments = path.segments(self.db);
+    fn resolve_path_ast(&self, path_ptr: Ptr<PathAst<'db>>, ns: Namespace) -> Res<'db> {
+        let path = &self.src[path_ptr];
+        let segments = &self.src[path.segments];
         if segments.is_empty() {
             return Res::Err;
         }
 
         // Single-segment value path: check locals first.
         if segments.len() == 1 && ns == Namespace::Value {
-            if let Some(id) = self.lookup_local(segments[0]) {
+            if let Some(id) = self.lookup_local(segments[0].name) {
                 return Res::Local(id);
             }
         }
 
         // Single-segment: delegate to module-level resolve_name
-        // (includes extern/std prelude fallback).
         if segments.len() == 1 {
-            return match resolve_name(self.db, self.module, self.source_root, segments[0], ns) {
+            return match resolve_name(self.db, self.module, self.source_root, segments[0].name, ns)
+            {
                 Ok(sym) => Res::Def(sym),
                 Err(_) => Res::Err,
             };
         }
 
-        // Multi-segment: walk via ModSymbol::resolve_path so that
-        // macro-introduced modules in any segment are visible.
+        // Multi-segment: build a salsa Path for resolve_path compatibility.
+        let names: Vec<_> = segments.iter().map(|s| s.name).collect();
+        let salsa_path = crate::types::Path::new(self.db, names, path.span);
         match self
             .module
-            .resolve_path(self.db, self.source_root, path, ns)
+            .resolve_path(self.db, self.source_root, salsa_path, ns)
         {
             Ok(sym) => Res::Def(sym),
             Err(_) => Res::Err,
         }
+    }
+
+    // -- type ref deep copy (src stash → out stash) --
+
+    fn copy_type_ref(&mut self, ty: Ptr<TypeRefAst<'db>>) -> Ptr<TypeRefAst<'db>> {
+        let ty_data = self.src[ty];
+        let kind = match ty_data.kind {
+            TypeRefAstKind::Path(path) => TypeRefAstKind::Path(self.copy_path(path)),
+            TypeRefAstKind::Reference(inner, m) => {
+                TypeRefAstKind::Reference(self.copy_type_ref(inner), m)
+            }
+            TypeRefAstKind::Slice(inner) => TypeRefAstKind::Slice(self.copy_type_ref(inner)),
+            TypeRefAstKind::Array(inner) => TypeRefAstKind::Array(self.copy_type_ref(inner)),
+            TypeRefAstKind::Tuple(elems) => {
+                let copied: Vec<_> = self.src[elems]
+                    .iter()
+                    .map(|e| {
+                        let ptr = self.copy_type_ref_val(*e);
+                        self.out[ptr]
+                    })
+                    .collect();
+                TypeRefAstKind::Tuple(self.out.alloc_slice(&copied))
+            }
+            TypeRefAstKind::Never => TypeRefAstKind::Never,
+            TypeRefAstKind::Infer => TypeRefAstKind::Infer,
+            TypeRefAstKind::Error => TypeRefAstKind::Error,
+        };
+        self.out.alloc(TypeRefAst {
+            kind,
+            span: ty_data.span,
+        })
+    }
+
+    fn copy_type_ref_val(&mut self, ty: TypeRefAst<'db>) -> Ptr<TypeRefAst<'db>> {
+        let kind = match ty.kind {
+            TypeRefAstKind::Path(path) => TypeRefAstKind::Path(self.copy_path(path)),
+            TypeRefAstKind::Reference(inner, m) => {
+                TypeRefAstKind::Reference(self.copy_type_ref(inner), m)
+            }
+            TypeRefAstKind::Slice(inner) => TypeRefAstKind::Slice(self.copy_type_ref(inner)),
+            TypeRefAstKind::Array(inner) => TypeRefAstKind::Array(self.copy_type_ref(inner)),
+            TypeRefAstKind::Tuple(elems) => {
+                let copied: Vec<_> = self.src[elems]
+                    .iter()
+                    .map(|e| {
+                        let ptr = self.copy_type_ref_val(*e);
+                        self.out[ptr]
+                    })
+                    .collect();
+                TypeRefAstKind::Tuple(self.out.alloc_slice(&copied))
+            }
+            TypeRefAstKind::Never => TypeRefAstKind::Never,
+            TypeRefAstKind::Infer => TypeRefAstKind::Infer,
+            TypeRefAstKind::Error => TypeRefAstKind::Error,
+        };
+        self.out.alloc(TypeRefAst {
+            kind,
+            span: ty.span,
+        })
+    }
+
+    fn copy_path(&mut self, path: Ptr<PathAst<'db>>) -> Ptr<PathAst<'db>> {
+        let path_data = self.src[path];
+        let segs: Vec<_> = self.src[path_data.segments]
+            .iter()
+            .map(|seg| {
+                let type_args: Vec<_> = self.src[seg.type_args]
+                    .iter()
+                    .map(|a| {
+                        let ptr = self.copy_type_ref_val(*a);
+                        self.out[ptr]
+                    })
+                    .collect();
+                crate::sig_ast::PathSegmentAst {
+                    name: seg.name,
+                    type_args: self.out.alloc_slice(&type_args),
+                    span: seg.span,
+                }
+            })
+            .collect();
+        let segs = self.out.alloc_slice(&segs);
+        self.out.alloc(PathAst {
+            segments: segs,
+            span: path_data.span,
+        })
     }
 
     // -- expression resolution --
@@ -103,6 +191,7 @@ impl<'db> BodyResolver<'db> {
         let kind = match &expr.kind {
             ExprKind::Literal(lit) => RExprKind::Literal(*lit),
             ExprKind::Path(path) => RExprKind::Path(self.resolve_value_path(*path)),
+
             ExprKind::Block(stmts, tail) => {
                 self.push_scope();
                 let rstmts: Vec<_> = self.src[*stmts]
@@ -216,9 +305,10 @@ impl<'db> BodyResolver<'db> {
                     .iter()
                     .map(|p| {
                         let rp = self.resolve_pat(&self.src[p.pat]);
+                        let rty = p.ty.map(|t| self.copy_type_ref(t));
                         RClosureParam {
                             pat: rp,
-                            ty: p.ty,
+                            ty: rty,
                             span: p.span,
                         }
                     })
@@ -246,7 +336,10 @@ impl<'db> BodyResolver<'db> {
                 let ri = self.resolve_expr(&self.src[*idx]);
                 RExprKind::Index(ro, ri)
             }
-            ExprKind::Cast(expr, ty) => RExprKind::Cast(self.resolve_expr(&self.src[*expr]), *ty),
+            ExprKind::Cast(expr, ty) => {
+                let rty = self.copy_type_ref(*ty);
+                RExprKind::Cast(self.resolve_expr(&self.src[*expr]), rty)
+            }
             ExprKind::StructLit(path, fields) => {
                 let res = self.resolve_type_path(*path);
                 let rfields: Vec<_> = self.src[*fields]
@@ -289,8 +382,9 @@ impl<'db> BodyResolver<'db> {
             StmtKind::Let(pat, ty, init) => {
                 let rinit = init.map(|e| self.resolve_expr(&self.src[e]));
                 let rpat = self.resolve_pat(&self.src[*pat]);
+                let rty = ty.map(|t| self.copy_type_ref(t));
                 RStmt {
-                    kind: RStmtKind::Let(rpat, *ty, rinit),
+                    kind: RStmtKind::Let(rpat, rty, rinit),
                     span: stmt.span,
                 }
             }

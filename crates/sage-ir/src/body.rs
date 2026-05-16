@@ -1,8 +1,9 @@
 use sage_stash::{AllocStashData, Ptr, Slice, Stashed};
 
 use crate::name::Name;
+use crate::sig_ast::{PathAst, TypeRefAst};
 use crate::span::RelativeSpan;
-use crate::types::{Mutability, Path, TokenTree, TypeRef};
+use crate::types::{Mutability, TokenTree};
 
 /// A function body stored in a `Stash`.
 pub type FunctionBody<'db> = Stashed<Ptr<Body<'db>>>;
@@ -23,7 +24,7 @@ pub struct Expr<'db> {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub enum ExprKind<'db> {
     Literal(Literal),
-    Path(Path<'db>),
+    Path(Ptr<PathAst<'db>>),
     Block(Slice<Stmt<'db>>, Option<Ptr<Expr<'db>>>),
     Call(Ptr<Expr<'db>>, Slice<Expr<'db>>),
     MethodCall(Ptr<Expr<'db>>, Name<'db>, Slice<Expr<'db>>),
@@ -46,10 +47,10 @@ pub enum ExprKind<'db> {
     Tuple(Slice<Expr<'db>>),
     Array(Slice<Expr<'db>>),
     Index(Ptr<Expr<'db>>, Ptr<Expr<'db>>),
-    Cast(Ptr<Expr<'db>>, TypeRef<'db>),
-    StructLit(Path<'db>, Slice<FieldInit<'db>>),
+    Cast(Ptr<Expr<'db>>, Ptr<TypeRefAst<'db>>),
+    StructLit(Ptr<PathAst<'db>>, Slice<FieldInit<'db>>),
     Range(Option<Ptr<Expr<'db>>>, Option<Ptr<Expr<'db>>>),
-    MacroCall(Path<'db>, TokenTree<'db>),
+    MacroCall(Ptr<PathAst<'db>>, TokenTree<'db>),
     IfLet(
         Ptr<Pat<'db>>,
         Ptr<Expr<'db>>,
@@ -63,7 +64,7 @@ pub enum ExprKind<'db> {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct ClosureParam<'db> {
     pub pat: Ptr<Pat<'db>>,
-    pub ty: Option<TypeRef<'db>>,
+    pub ty: Option<Ptr<TypeRefAst<'db>>>,
     pub span: RelativeSpan,
 }
 
@@ -128,7 +129,11 @@ pub struct Stmt<'db> {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub enum StmtKind<'db> {
-    Let(Ptr<Pat<'db>>, Option<TypeRef<'db>>, Option<Ptr<Expr<'db>>>),
+    Let(
+        Ptr<Pat<'db>>,
+        Option<Ptr<TypeRefAst<'db>>>,
+        Option<Ptr<Expr<'db>>>,
+    ),
     Expr(Ptr<Expr<'db>>),
 }
 
@@ -142,10 +147,10 @@ pub struct Pat<'db> {
 pub enum PatKind<'db> {
     Wildcard,
     Bind(Name<'db>, Mutability),
-    Path(Path<'db>),
+    Path(Ptr<PathAst<'db>>),
     Tuple(Slice<Pat<'db>>),
-    Struct(Path<'db>, Slice<FieldPat<'db>>),
-    TupleStruct(Path<'db>, Slice<Pat<'db>>),
+    Struct(Ptr<PathAst<'db>>, Slice<FieldPat<'db>>),
+    TupleStruct(Ptr<PathAst<'db>>, Slice<Pat<'db>>),
     Ref(Ptr<Pat<'db>>, Mutability),
     Literal(Literal),
     Or(Slice<Pat<'db>>),

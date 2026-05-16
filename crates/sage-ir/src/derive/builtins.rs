@@ -2,6 +2,7 @@ use crate::Db;
 use crate::body::*;
 use crate::item::*;
 use crate::name::Name;
+use crate::sig_ast::*;
 use crate::source::SourceFile;
 use crate::span::{AbsoluteSpan, ParseSource, RelativeSpan};
 use crate::types::*;
@@ -78,6 +79,7 @@ fn expand_debug<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
             ),
         ],
         Some(make_abs_type_path(db, &["std", "fmt", "Result"])),
+        make_empty_fn_sig(),
         false,
         false,
         body,
@@ -89,6 +91,7 @@ fn expand_debug<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
         Vec::new(),
         self_ty,
         Some(trait_path),
+        make_empty_impl_sig(),
         vec![ItemAst::Function(fmt_fn)],
         gen_abs_span(db),
     );
@@ -127,6 +130,7 @@ fn expand_clone<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
             GEN_REL_SPAN,
         )],
         Some(make_type_path(db, &["Self"])),
+        make_empty_fn_sig(),
         false,
         false,
         body,
@@ -138,6 +142,7 @@ fn expand_clone<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
         Vec::new(),
         self_ty,
         Some(trait_path),
+        make_empty_impl_sig(),
         vec![ItemAst::Function(clone_fn)],
         gen_abs_span(db),
     );
@@ -171,6 +176,7 @@ fn expand_default<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>>
         Vec::new(),
         Vec::new(),
         Some(make_type_path(db, &["Self"])),
+        make_empty_fn_sig(),
         false,
         false,
         body,
@@ -182,6 +188,7 @@ fn expand_default<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>>
         Vec::new(),
         self_ty,
         Some(trait_path),
+        make_empty_impl_sig(),
         vec![ItemAst::Function(default_fn)],
         gen_abs_span(db),
     );
@@ -215,6 +222,7 @@ fn expand_marker<'db>(
         Vec::new(),
         self_ty,
         Some(trait_path),
+        make_empty_impl_sig(),
         Vec::new(),
         gen_abs_span(db),
     );
@@ -283,4 +291,31 @@ fn gen_abs_span<'db>(db: &'db dyn Db) -> AbsoluteSpan<'db> {
 
 fn gen_source_file<'db>(db: &'db dyn Db) -> SourceFile {
     SourceFile::new(db, "<generated>".to_owned(), String::new())
+}
+
+fn make_empty_fn_sig<'db>() -> FnSigAst<'db> {
+    let mut stash = Stash::new();
+    let generics = stash.alloc_slice::<GenericParam<'db>>(&[]);
+    let params = stash.alloc_slice::<ParamAst<'db>>(&[]);
+    let root = stash.alloc(FnSigAstData {
+        generics,
+        params,
+        ret_type: None,
+    });
+    Stashed::new(stash, root)
+}
+
+fn make_empty_impl_sig<'db>() -> ImplSigAst<'db> {
+    let mut stash = Stash::new();
+    let generics = stash.alloc_slice::<GenericParam<'db>>(&[]);
+    let self_ty = stash.alloc(TypeRefAst {
+        kind: TypeRefAstKind::Error,
+        span: GEN_REL_SPAN,
+    });
+    let root = stash.alloc(ImplSigAstData {
+        generics,
+        self_ty,
+        trait_path: None,
+    });
+    Stashed::new(stash, root)
 }

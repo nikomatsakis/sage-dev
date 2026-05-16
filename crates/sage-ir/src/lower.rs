@@ -2,12 +2,13 @@
 
 use tree_sitter::Node;
 
-use sage_stash::{Ptr, Stash, Stashed};
+use sage_stash::{Ptr, Slice, Stash, Stashed};
 
 use crate::Db;
 use crate::body::*;
 use crate::item::*;
 use crate::name::Name;
+use crate::sig_ast::*;
 use crate::source::SourceFile;
 use crate::span::{AbsoluteSpan, MacroExpansion, ParseSource, RelativeSpan};
 use crate::types::*;
@@ -37,12 +38,7 @@ pub fn parse_source_text<'db>(
         .set_language(&tree_sitter_rust::LANGUAGE.into())
         .expect("failed to set tree-sitter-rust language");
     let tree = parser.parse(text, None).expect("tree-sitter parse failed");
-    let mut cx = LowerCtx {
-        db,
-        source,
-        text,
-        item_start: 0,
-    };
+    let cx = LowerCtx { db, source, text };
     cx.lower_items(tree.root_node())
 }
 
@@ -52,11 +48,14 @@ enum AttrNodeKind {
     InnerDoc,
 }
 
+// ===========================================================================
+// LowerCtx — file-level, no item_start
+// ===========================================================================
+
 struct LowerCtx<'db> {
     db: &'db dyn Db,
     source: ParseSource<'db>,
     text: &'db str,
-    item_start: u32,
 }
 
 impl<'db> LowerCtx<'db> {
@@ -76,16 +75,7 @@ impl<'db> LowerCtx<'db> {
         }
     }
 
-    fn rel_span(&self, node: Node<'_>) -> RelativeSpan {
-        RelativeSpan {
-            start: node.start_byte() as u32 - self.item_start,
-            end: node.end_byte() as u32 - self.item_start,
-        }
-    }
-
-    // -- Items -------------------------------------------------------------
-
-    fn lower_items(&mut self, parent: Node<'_>) -> Vec<ItemAst<'db>> {
+    fn lower_items(&self, parent: Node<'_>) -> Vec<ItemAst<'db>> {
         let mut items = Vec::new();
         let mut pending_attr_nodes: Vec<(Node<'_>, AttrNodeKind)> = Vec::new();
         let mut cursor = parent.walk();
@@ -110,55 +100,99 @@ impl<'db> LowerCtx<'db> {
                     let attr_nodes = std::mem::take(&mut pending_attr_nodes);
                     let first_attr_start = attr_nodes.first().map(|(n, _)| n.start_byte() as u32);
                     let item_node_start = child.start_byte() as u32;
-                    self.item_start = first_attr_start.unwrap_or(item_node_start);
+                    let item_start = first_attr_start.unwrap_or(item_node_start);
+
+                    let icx = ItemLowerCtx {
+                        parent: self,
+                        item_start,
+                    };
 
                     let attrs: Vec<Attr<'db>> = attr_nodes
                         .iter()
                         .map(|(n, kind)| match kind {
-                            AttrNodeKind::Attr => self.lower_attr(*n),
+                            AttrNodeKind::Attr => icx.lower_attr(*n),
                             AttrNodeKind::OuterDoc => {
                                 let text = self.node_text(*n);
                                 let doc = text.strip_prefix("///").unwrap();
                                 let doc = doc.strip_prefix(' ').unwrap_or(doc).trim_end();
-                                self.make_doc_attr(*n, doc, false)
+                                icx.make_doc_attr(*n, doc, false)
                             }
                             AttrNodeKind::InnerDoc => {
                                 let text = self.node_text(*n);
                                 let doc = text.strip_prefix("//!").unwrap();
                                 let doc = doc.strip_prefix(' ').unwrap_or(doc).trim_end();
-                                self.make_doc_attr(*n, doc, true)
+                                icx.make_doc_attr(*n, doc, true)
                             }
                         })
                         .collect();
-                    items.push(self.lower_item(child, attrs));
+                    items.push(icx.lower_item(child, attrs));
                 }
             }
         }
         items
     }
+}
+
+// ===========================================================================
+// ItemLowerCtx — per-item, carries item_start on the stack
+// ===========================================================================
+
+struct ItemLowerCtx<'a, 'db> {
+    parent: &'a LowerCtx<'db>,
+    item_start: u32,
+}
+
+impl<'a, 'db> ItemLowerCtx<'a, 'db> {
+    fn db(&self) -> &'db dyn Db {
+        self.parent.db
+    }
+
+    fn node_text(&self, node: Node<'_>) -> &'db str {
+        self.parent.node_text(node)
+    }
+
+    fn intern_name(&self, node: Node<'_>) -> Name<'db> {
+        self.parent.intern_name(node)
+    }
+
+    fn abs_span(&self, node: Node<'_>) -> AbsoluteSpan {
+        AbsoluteSpan {
+            file: self.parent.file,
+            start: node.start_byte() as u32,
+            end: node.end_byte() as u32,
+        }
+    }
+
+    fn rel_span(&self, node: Node<'_>) -> RelativeSpan {
+        RelativeSpan {
+            start: node.start_byte() as u32 - self.item_start,
+            end: node.end_byte() as u32 - self.item_start,
+        }
+    }
+
+    // -- Attributes -----------------------------------------------------------
 
     fn lower_attr(&self, node: Node<'_>) -> Attr<'db> {
+        let db = self.db();
         let is_inner = node.kind() == "inner_attribute_item";
         let text = self.node_text(node);
-        // Strip #[ ] or #![ ]
         let inner = text
             .trim_start_matches("#![")
             .trim_start_matches("#[")
             .trim_end_matches(']')
             .trim();
-        // Split into path and args at first '('
         let (path_text, args_text) = match inner.find('(') {
             Some(i) => (&inner[..i], Some(&inner[i..])),
             None => (inner, None),
         };
         let path = Path::new(
-            self.db,
-            vec![Name::new(self.db, path_text.trim().to_owned())],
+            db,
+            vec![Name::new(db, path_text.trim().to_owned())],
             self.rel_span(node),
         );
-        let args = args_text.map(|a| TokenTree::new(self.db, a.to_owned(), self.rel_span(node)));
+        let args = args_text.map(|a| TokenTree::new(db, a.to_owned(), self.rel_span(node)));
         Attr::new(
-            self.db,
+            db,
             AttrKind::Normal,
             path,
             args,
@@ -168,18 +202,15 @@ impl<'db> LowerCtx<'db> {
     }
 
     fn make_doc_attr(&self, node: Node<'_>, text: &str, is_inner: bool) -> Attr<'db> {
+        let db = self.db();
         let path = Path::new(
-            self.db,
-            vec![Name::new(self.db, "doc".to_owned())],
+            db,
+            vec![Name::new(db, "doc".to_owned())],
             self.rel_span(node),
         );
-        let args = Some(TokenTree::new(
-            self.db,
-            text.to_owned(),
-            self.rel_span(node),
-        ));
+        let args = Some(TokenTree::new(db, text.to_owned(), self.rel_span(node)));
         Attr::new(
-            self.db,
+            db,
             AttrKind::DocComment,
             path,
             args,
@@ -188,7 +219,9 @@ impl<'db> LowerCtx<'db> {
         )
     }
 
-    fn lower_item(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> ItemAst<'db> {
+    // -- Item dispatch --------------------------------------------------------
+
+    fn lower_item(&self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> ItemAst<'db> {
         match node.kind() {
             "function_item" => ItemAst::Function(self.lower_function(node, attrs)),
             "struct_item" => ItemAst::Struct(self.lower_struct(node, attrs)),
@@ -207,7 +240,456 @@ impl<'db> LowerCtx<'db> {
         }
     }
 
-    fn lower_function(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> FnAst<'db> {
+    // -- Signature stash lowering helpers --------------------------------------
+
+    fn lower_generic_params_ast(
+        &self,
+        stash: &mut Stash,
+        node: Node<'_>,
+    ) -> Slice<GenericParam<'db>> {
+        let mut generics = Vec::new();
+        if let Some(tp_node) = node.child_by_field_name("type_parameters") {
+            let mut cursor = tp_node.walk();
+            for child in tp_node.named_children(&mut cursor) {
+                match child.kind() {
+                    "type_parameter" => {
+                        if let Some(name_node) = child.child_by_field_name("name") {
+                            generics.push(GenericParam::Type {
+                                name: self.intern_name(name_node),
+                                span: self.rel_span(child),
+                            });
+                        }
+                    }
+                    "lifetime_parameter" => {
+                        if let Some(name_node) = child.child_by_field_name("name") {
+                            generics.push(GenericParam::Lifetime {
+                                name: self.intern_name(name_node),
+                                span: self.rel_span(child),
+                            });
+                        }
+                    }
+                    "const_parameter" => {
+                        if let Some(name_node) = child.child_by_field_name("name") {
+                            let ty = child
+                                .child_by_field_name("type")
+                                .map(|n| self.lower_type_ref_to_stash(stash, n))
+                                .unwrap_or_else(|| {
+                                    stash.alloc(TypeRefAst {
+                                        kind: TypeRefAstKind::Error,
+                                        span: self.rel_span(child),
+                                    })
+                                });
+                            generics.push(GenericParam::Const {
+                                name: self.intern_name(name_node),
+                                ty,
+                                span: self.rel_span(child),
+                            });
+                        }
+                    }
+                    "constrained_type_parameter" => {
+                        if let Some(name_node) = child.child_by_field_name("left") {
+                            generics.push(GenericParam::Type {
+                                name: self.intern_name(name_node),
+                                span: self.rel_span(child),
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        stash.alloc_slice(&generics)
+    }
+
+    fn lower_fn_sig_ast(&self, node: Node<'_>) -> FnSigAst<'db> {
+        let db = self.db();
+        let mut stash = Stash::new();
+        let generics = self.lower_generic_params_ast(&mut stash, node);
+        let mut params = Vec::new();
+        if let Some(params_node) = node.child_by_field_name("parameters") {
+            let mut cursor = params_node.walk();
+            for child in params_node.children(&mut cursor) {
+                match child.kind() {
+                    "parameter" => {
+                        let name = child
+                            .child_by_field_name("pattern")
+                            .map(|n| self.intern_name(n));
+                        let ty = child
+                            .child_by_field_name("type")
+                            .map(|n| self.lower_type_ref_to_stash(&mut stash, n))
+                            .unwrap_or_else(|| {
+                                stash.alloc(TypeRefAst {
+                                    kind: TypeRefAstKind::Error,
+                                    span: self.rel_span(child),
+                                })
+                            });
+                        params.push(ParamAst {
+                            name,
+                            ty,
+                            span: self.rel_span(child),
+                        });
+                    }
+                    "self_parameter" => {
+                        let name = Some(Name::new(db, "self".to_owned()));
+                        let has_ref = child.children(&mut child.walk()).any(|c| c.kind() == "&");
+                        let is_mut = child
+                            .children(&mut child.walk())
+                            .any(|c| c.kind() == "mutable_specifier");
+                        let self_ty =
+                            self.make_simple_path_type(&mut stash, "Self", self.rel_span(child));
+                        let ty = if has_ref {
+                            let m = if is_mut {
+                                Mutability::Mut
+                            } else {
+                                Mutability::Shared
+                            };
+                            stash.alloc(TypeRefAst {
+                                kind: TypeRefAstKind::Reference(self_ty, m),
+                                span: self.rel_span(child),
+                            })
+                        } else {
+                            self_ty
+                        };
+                        params.push(ParamAst {
+                            name,
+                            ty,
+                            span: self.rel_span(child),
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let params = stash.alloc_slice(&params);
+        let ret_type = node
+            .child_by_field_name("return_type")
+            .map(|n| self.lower_type_ref_to_stash(&mut stash, n));
+        let root = stash.alloc(FnSigAstData {
+            generics,
+            params,
+            ret_type,
+        });
+        Stashed::new(stash, root)
+    }
+
+    fn lower_struct_sig_ast(&self, node: Node<'_>) -> StructSigAst<'db> {
+        let mut stash = Stash::new();
+        let generics = self.lower_generic_params_ast(&mut stash, node);
+        let mut fields = Vec::new();
+        if let Some(body) = node.child_by_field_name("body") {
+            let mut cursor = body.walk();
+            for child in body.children(&mut cursor) {
+                if child.kind() == "field_declaration" {
+                    let name = child
+                        .child_by_field_name("name")
+                        .map(|n| self.intern_name(n))
+                        .unwrap_or_else(|| Name::new(self.db(), "?".to_owned()));
+                    let ty = child
+                        .child_by_field_name("type")
+                        .map(|n| self.lower_type_ref_to_stash(&mut stash, n))
+                        .unwrap_or_else(|| {
+                            stash.alloc(TypeRefAst {
+                                kind: TypeRefAstKind::Error,
+                                span: self.rel_span(child),
+                            })
+                        });
+                    fields.push(FieldDefAst {
+                        name,
+                        ty,
+                        span: self.rel_span(child),
+                    });
+                }
+            }
+        }
+        let fields = stash.alloc_slice(&fields);
+        let root = stash.alloc(StructSigAstData { generics, fields });
+        Stashed::new(stash, root)
+    }
+
+    fn lower_enum_sig_ast(&self, node: Node<'_>) -> EnumSigAst<'db> {
+        let mut stash = Stash::new();
+        let generics = self.lower_generic_params_ast(&mut stash, node);
+        let mut variants = Vec::new();
+        if let Some(body) = node.child_by_field_name("body") {
+            let mut cursor = body.walk();
+            for child in body.children(&mut cursor) {
+                if child.kind() == "enum_variant" {
+                    let vname = child
+                        .child_by_field_name("name")
+                        .map(|n| self.intern_name(n))
+                        .unwrap_or_else(|| Name::new(self.db(), "?".to_owned()));
+                    let mut vfields = Vec::new();
+                    if let Some(vbody) = child.child_by_field_name("body") {
+                        let mut vc = vbody.walk();
+                        for fc in vbody.children(&mut vc) {
+                            if fc.kind() == "field_declaration" {
+                                let fname = fc
+                                    .child_by_field_name("name")
+                                    .map(|n| self.intern_name(n))
+                                    .unwrap_or_else(|| Name::new(self.db(), "?".to_owned()));
+                                let fty = fc
+                                    .child_by_field_name("type")
+                                    .map(|n| self.lower_type_ref_to_stash(&mut stash, n))
+                                    .unwrap_or_else(|| {
+                                        stash.alloc(TypeRefAst {
+                                            kind: TypeRefAstKind::Error,
+                                            span: self.rel_span(fc),
+                                        })
+                                    });
+                                vfields.push(FieldDefAst {
+                                    name: fname,
+                                    ty: fty,
+                                    span: self.rel_span(fc),
+                                });
+                            }
+                        }
+                    }
+                    let vfields = stash.alloc_slice(&vfields);
+                    variants.push(VariantDefAst {
+                        name: vname,
+                        fields: vfields,
+                        span: self.rel_span(child),
+                    });
+                }
+            }
+        }
+        let variants = stash.alloc_slice(&variants);
+        let root = stash.alloc(EnumSigAstData { generics, variants });
+        Stashed::new(stash, root)
+    }
+
+    fn lower_impl_sig_ast(&self, node: Node<'_>) -> ImplSigAst<'db> {
+        let mut stash = Stash::new();
+        let generics = self.lower_generic_params_ast(&mut stash, node);
+        let self_ty = node
+            .child_by_field_name("type")
+            .map(|n| self.lower_type_ref_to_stash(&mut stash, n))
+            .unwrap_or_else(|| {
+                stash.alloc(TypeRefAst {
+                    kind: TypeRefAstKind::Error,
+                    span: RelativeSpan { start: 0, end: 0 },
+                })
+            });
+        let trait_path = node
+            .child_by_field_name("trait")
+            .map(|n| self.lower_path_to_stash(&mut stash, n));
+        let root = stash.alloc(ImplSigAstData {
+            generics,
+            self_ty,
+            trait_path,
+        });
+        Stashed::new(stash, root)
+    }
+
+    fn lower_simple_ty_sig_ast(
+        &self,
+        node: Node<'_>,
+    ) -> (
+        Slice<GenericParam<'db>>,
+        Option<Ptr<TypeRefAst<'db>>>,
+        Stash,
+    ) {
+        let mut stash = Stash::new();
+        let generics = self.lower_generic_params_ast(&mut stash, node);
+        let ty = node
+            .child_by_field_name("type")
+            .map(|n| self.lower_type_ref_to_stash(&mut stash, n));
+        (generics, ty, stash)
+    }
+
+    fn lower_type_ref_to_stash(&self, stash: &mut Stash, node: Node<'_>) -> Ptr<TypeRefAst<'db>> {
+        let span = self.rel_span(node);
+        let kind = match node.kind() {
+            "type_identifier"
+            | "scoped_type_identifier"
+            | "generic_type"
+            | "scoped_identifier"
+            | "primitive_type"
+            | "abstract_type"
+            | "dynamic_type"
+            | "function_type"
+            | "macro_invocation"
+            | "bounded_type"
+            | "qualified_type"
+            | "pointer_type"
+            | "empty_type"
+            | "metavariable" => TypeRefAstKind::Path(self.lower_path_to_stash(stash, node)),
+            "reference_type" => {
+                let is_mut = node
+                    .children(&mut node.walk())
+                    .any(|c| c.kind() == "mutable_specifier");
+                let inner = node
+                    .child_by_field_name("type")
+                    .map(|n| self.lower_type_ref_to_stash(stash, n))
+                    .unwrap_or_else(|| {
+                        stash.alloc(TypeRefAst {
+                            kind: TypeRefAstKind::Error,
+                            span,
+                        })
+                    });
+                let m = if is_mut {
+                    Mutability::Mut
+                } else {
+                    Mutability::Shared
+                };
+                TypeRefAstKind::Reference(inner, m)
+            }
+            "array_type" => {
+                let inner = node
+                    .child_by_field_name("element")
+                    .map(|n| self.lower_type_ref_to_stash(stash, n))
+                    .unwrap_or_else(|| {
+                        stash.alloc(TypeRefAst {
+                            kind: TypeRefAstKind::Error,
+                            span,
+                        })
+                    });
+                TypeRefAstKind::Array(inner)
+            }
+            "slice_type" => {
+                let inner = node
+                    .child_by_field_name("element")
+                    .map(|n| self.lower_type_ref_to_stash(stash, n))
+                    .unwrap_or_else(|| {
+                        stash.alloc(TypeRefAst {
+                            kind: TypeRefAstKind::Error,
+                            span,
+                        })
+                    });
+                TypeRefAstKind::Slice(inner)
+            }
+            "tuple_type" => {
+                let mut elems = Vec::new();
+                let mut cursor = node.walk();
+                for child in node.children(&mut cursor) {
+                    if child.is_named() && child.kind() != "(" && child.kind() != ")" {
+                        let ty = self.lower_type_ref_to_stash(stash, child);
+                        elems.push(stash[ty]);
+                    }
+                }
+                TypeRefAstKind::Tuple(stash.alloc_slice(&elems))
+            }
+            "never_type" => TypeRefAstKind::Never,
+            "inferred_type" => TypeRefAstKind::Infer,
+            _ => TypeRefAstKind::Error,
+        };
+        stash.alloc(TypeRefAst { kind, span })
+    }
+
+    fn lower_path_to_stash(&self, stash: &mut Stash, node: Node<'_>) -> Ptr<PathAst<'db>> {
+        let mut segments = Vec::new();
+        self.collect_path_segments_to_stash(stash, node, &mut segments);
+        let segs = stash.alloc_slice(&segments);
+        stash.alloc(PathAst {
+            segments: segs,
+            span: self.rel_span(node),
+        })
+    }
+
+    fn collect_path_segments_to_stash(
+        &self,
+        stash: &mut Stash,
+        node: Node<'_>,
+        out: &mut Vec<PathSegmentAst<'db>>,
+    ) {
+        let db = self.db();
+        let empty_args = stash.alloc_slice::<TypeRefAst<'db>>(&[]);
+        match node.kind() {
+            "scoped_identifier" | "scoped_type_identifier" => {
+                if let Some(prefix) = node.child_by_field_name("path") {
+                    self.collect_path_segments_to_stash(stash, prefix, out);
+                } else if node.child(0).is_some_and(|c| c.kind() == "::") {
+                    out.push(PathSegmentAst {
+                        name: Name::new(db, String::new()),
+                        type_args: empty_args,
+                        span: self.rel_span(node),
+                    });
+                }
+                if let Some(name) = node.child_by_field_name("name") {
+                    out.push(PathSegmentAst {
+                        name: self.intern_name(name),
+                        type_args: empty_args,
+                        span: self.rel_span(name),
+                    });
+                }
+            }
+            "generic_type" => {
+                if let Some(ty) = node.child_by_field_name("type") {
+                    self.collect_path_segments_to_stash(stash, ty, out);
+                }
+                if let Some(args_node) = node.child_by_field_name("type_arguments") {
+                    let mut type_args = Vec::new();
+                    let mut cursor = args_node.walk();
+                    for child in args_node.named_children(&mut cursor) {
+                        let ty = self.lower_type_ref_to_stash(stash, child);
+                        type_args.push(stash[ty]);
+                    }
+                    let type_args = stash.alloc_slice(&type_args);
+                    if let Some(last) = out.last_mut() {
+                        last.type_args = type_args;
+                    }
+                }
+            }
+            "identifier" | "type_identifier" | "primitive_type" | "metavariable" => {
+                out.push(PathSegmentAst {
+                    name: self.intern_name(node),
+                    type_args: empty_args,
+                    span: self.rel_span(node),
+                });
+            }
+            "self" => out.push(PathSegmentAst {
+                name: Name::new(db, "self".to_owned()),
+                type_args: empty_args,
+                span: self.rel_span(node),
+            }),
+            "crate" => out.push(PathSegmentAst {
+                name: Name::new(db, "crate".to_owned()),
+                type_args: empty_args,
+                span: self.rel_span(node),
+            }),
+            "super" => out.push(PathSegmentAst {
+                name: Name::new(db, "super".to_owned()),
+                type_args: empty_args,
+                span: self.rel_span(node),
+            }),
+            _ => {
+                out.push(PathSegmentAst {
+                    name: Name::new(db, self.node_text(node).to_owned()),
+                    type_args: empty_args,
+                    span: self.rel_span(node),
+                });
+            }
+        }
+    }
+
+    fn make_simple_path_type(
+        &self,
+        stash: &mut Stash,
+        name: &str,
+        span: RelativeSpan,
+    ) -> Ptr<TypeRefAst<'db>> {
+        let db = self.db();
+        let empty_args = stash.alloc_slice::<TypeRefAst<'db>>(&[]);
+        let seg = PathSegmentAst {
+            name: Name::new(db, name.to_owned()),
+            type_args: empty_args,
+            span,
+        };
+        let segs = stash.alloc_slice(&[seg]);
+        let path = stash.alloc(PathAst {
+            segments: segs,
+            span,
+        });
+        stash.alloc(TypeRefAst {
+            kind: TypeRefAstKind::Path(path),
+            span,
+        })
+    }
+
+    // -- Item lowering --------------------------------------------------------
+
+    fn lower_function(&self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> FnAst<'db> {
+        let db = self.db();
         let name_node = node
             .child_by_field_name("name")
             .expect("function has no name");
@@ -228,14 +710,16 @@ impl<'db> LowerCtx<'db> {
             .child_by_field_name("return_type")
             .map(|n| self.lower_type(n));
 
+        let signature = self.lower_fn_sig_ast(node);
         let body = self.lower_body(node);
 
         FnAst::new(
-            self.db, name, attrs, params, ret_type, is_async, is_unsafe, body, span,
+            db, name, attrs, params, ret_type, signature, is_async, is_unsafe, body, span,
         )
     }
 
-    fn lower_params(&mut self, params_node: Node<'_>) -> Vec<Param<'db>> {
+    fn lower_params(&self, params_node: Node<'_>) -> Vec<Param<'db>> {
+        let db = self.db();
         let mut params = Vec::new();
         let mut cursor = params_node.walk();
         for child in params_node.children(&mut cursor) {
@@ -248,36 +732,32 @@ impl<'db> LowerCtx<'db> {
                         .child_by_field_name("type")
                         .map(|n| self.lower_type(n))
                         .unwrap_or_else(|| self.make_error_type(child));
-                    params.push(Param::new(self.db, name, ty, self.rel_span(child)));
+                    params.push(Param::new(db, name, ty, self.rel_span(child)));
                 }
                 "self_parameter" => {
-                    let name = Some(Name::new(self.db, "self".to_owned()));
+                    let name = Some(Name::new(db, "self".to_owned()));
                     let has_ref = child.children(&mut child.walk()).any(|c| c.kind() == "&");
                     let is_mut = child
                         .children(&mut child.walk())
                         .any(|c| c.kind() == "mutable_specifier");
                     let self_path = Path::new(
-                        self.db,
-                        vec![Name::new(self.db, "Self".to_owned())],
+                        db,
+                        vec![Name::new(db, "Self".to_owned())],
                         self.rel_span(child),
                     );
                     let self_ty =
-                        TypeRef::new(self.db, TypeRefKind::Path(self_path), self.rel_span(child));
+                        TypeRef::new(db, TypeRefKind::Path(self_path), self.rel_span(child));
                     let ty = if has_ref {
                         let m = if is_mut {
                             Mutability::Mut
                         } else {
                             Mutability::Shared
                         };
-                        TypeRef::new(
-                            self.db,
-                            TypeRefKind::Reference(self_ty, m),
-                            self.rel_span(child),
-                        )
+                        TypeRef::new(db, TypeRefKind::Reference(self_ty, m), self.rel_span(child))
                     } else {
                         self_ty
                     };
-                    params.push(Param::new(self.db, name, ty, self.rel_span(child)));
+                    params.push(Param::new(db, name, ty, self.rel_span(child)));
                 }
                 _ => {}
             }
@@ -285,7 +765,8 @@ impl<'db> LowerCtx<'db> {
         params
     }
 
-    fn lower_struct(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> StructAst<'db> {
+    fn lower_struct(&self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> StructAst<'db> {
+        let db = self.db();
         let name = self.intern_name(
             node.child_by_field_name("name")
                 .expect("struct has no name"),
@@ -300,10 +781,12 @@ impl<'db> LowerCtx<'db> {
         };
         let fields = body.map(|b| self.lower_field_defs(b)).unwrap_or_default();
 
-        StructAst::new(self.db, name, kind, attrs, fields, span)
+        let signature = self.lower_struct_sig_ast(node);
+        StructAst::new(db, name, kind, attrs, fields, signature, span)
     }
 
-    fn lower_field_defs(&mut self, body: Node<'_>) -> Vec<FieldDef<'db>> {
+    fn lower_field_defs(&self, body: Node<'_>) -> Vec<FieldDef<'db>> {
+        let db = self.db();
         let mut fields = Vec::new();
         let mut cursor = body.walk();
         for child in body.children(&mut cursor) {
@@ -311,18 +794,19 @@ impl<'db> LowerCtx<'db> {
                 let name = child
                     .child_by_field_name("name")
                     .map(|n| self.intern_name(n))
-                    .unwrap_or_else(|| Name::new(self.db, "?".to_owned()));
+                    .unwrap_or_else(|| Name::new(db, "?".to_owned()));
                 let ty = child
                     .child_by_field_name("type")
                     .map(|n| self.lower_type(n))
                     .unwrap_or_else(|| self.make_error_type(child));
-                fields.push(FieldDef::new(self.db, name, ty, self.rel_span(child)));
+                fields.push(FieldDef::new(db, name, ty, self.rel_span(child)));
             }
         }
         fields
     }
 
-    fn lower_enum(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> EnumAst<'db> {
+    fn lower_enum(&self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> EnumAst<'db> {
+        let db = self.db();
         let name = self.intern_name(node.child_by_field_name("name").expect("enum has no name"));
         let span = self.abs_span(node);
 
@@ -334,37 +818,40 @@ impl<'db> LowerCtx<'db> {
                     let vname = child
                         .child_by_field_name("name")
                         .map(|n| self.intern_name(n))
-                        .unwrap_or_else(|| Name::new(self.db, "?".to_owned()));
+                        .unwrap_or_else(|| Name::new(db, "?".to_owned()));
                     let fields = child
                         .child_by_field_name("body")
                         .map(|b| self.lower_field_defs(b))
                         .unwrap_or_default();
-                    variants.push(VariantDef::new(
-                        self.db,
-                        vname,
-                        fields,
-                        self.rel_span(child),
-                    ));
+                    variants.push(VariantDef::new(db, vname, fields, self.rel_span(child)));
                 }
             }
         }
 
-        EnumAst::new(self.db, name, attrs, variants, span)
+        let signature = self.lower_enum_sig_ast(node);
+        EnumAst::new(db, name, attrs, variants, signature, span)
     }
 
-    fn lower_trait(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> TraitAst<'db> {
+    fn lower_trait(&self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> TraitAst<'db> {
+        let db = self.db();
         let name = self.intern_name(node.child_by_field_name("name").expect("trait has no name"));
         let span = self.abs_span(node);
 
+        let mut stash = Stash::new();
+        let generics = self.lower_generic_params_ast(&mut stash, node);
+        let root = stash.alloc(TraitSigAstData { generics });
+        let signature = Stashed::new(stash, root);
+
         let items = node
             .child_by_field_name("body")
-            .map(|body| self.lower_items(body))
+            .map(|body| self.parent.lower_items(body))
             .unwrap_or_default();
 
-        TraitAst::new(self.db, name, attrs, items, span)
+        TraitAst::new(db, name, attrs, signature, items, span)
     }
 
-    fn lower_impl(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> ImplAst<'db> {
+    fn lower_impl(&self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> ImplAst<'db> {
+        let db = self.db();
         let span = self.abs_span(node);
 
         let self_ty = node
@@ -376,32 +863,49 @@ impl<'db> LowerCtx<'db> {
             .child_by_field_name("trait")
             .map(|n| self.lower_path(n));
 
+        let signature = self.lower_impl_sig_ast(node);
+
         let items = node
             .child_by_field_name("body")
-            .map(|body| self.lower_items(body))
+            .map(|body| self.parent.lower_items(body))
             .unwrap_or_default();
 
-        ImplAst::new(self.db, attrs, self_ty, trait_path, items, span)
+        ImplAst::new(db, attrs, self_ty, trait_path, signature, items, span)
     }
 
-    fn lower_type_alias(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> TypeAliasAst<'db> {
+    fn lower_type_alias(&self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> TypeAliasAst<'db> {
+        let db = self.db();
         let name = self.intern_name(
             node.child_by_field_name("name")
                 .expect("type alias has no name"),
         );
         let span = self.abs_span(node);
         let ty = node.child_by_field_name("type").map(|n| self.lower_type(n));
-        TypeAliasAst::new(self.db, name, attrs, ty, span)
+        let (generics, sig_ty, mut stash) = self.lower_simple_ty_sig_ast(node);
+        let root = stash.alloc(TypeAliasSigAstData {
+            generics,
+            ty: sig_ty,
+        });
+        let signature = Stashed::new(stash, root);
+        TypeAliasAst::new(db, name, attrs, ty, signature, span)
     }
 
-    fn lower_const(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> ConstAst<'db> {
+    fn lower_const(&self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> ConstAst<'db> {
+        let db = self.db();
         let name = self.intern_name(node.child_by_field_name("name").expect("const has no name"));
         let span = self.abs_span(node);
         let ty = node.child_by_field_name("type").map(|n| self.lower_type(n));
-        ConstAst::new(self.db, name, attrs, ty, span)
+        let mut stash = Stash::new();
+        let sig_ty = node
+            .child_by_field_name("type")
+            .map(|n| self.lower_type_ref_to_stash(&mut stash, n));
+        let root = stash.alloc(ConstSigAstData { ty: sig_ty });
+        let signature = Stashed::new(stash, root);
+        ConstAst::new(db, name, attrs, ty, signature, span)
     }
 
-    fn lower_static(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> StaticAst<'db> {
+    fn lower_static(&self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> StaticAst<'db> {
+        let db = self.db();
         let name = self.intern_name(
             node.child_by_field_name("name")
                 .expect("static has no name"),
@@ -411,22 +915,29 @@ impl<'db> LowerCtx<'db> {
         let is_mut = node
             .children(&mut node.walk())
             .any(|c| c.kind() == "mutable_specifier");
-        StaticAst::new(self.db, name, attrs, ty, is_mut, span)
+        let mut stash = Stash::new();
+        let sig_ty = node
+            .child_by_field_name("type")
+            .map(|n| self.lower_type_ref_to_stash(&mut stash, n));
+        let root = stash.alloc(StaticSigAstData { ty: sig_ty });
+        let signature = Stashed::new(stash, root);
+        StaticAst::new(db, name, attrs, ty, signature, is_mut, span)
     }
 
-    fn lower_mod(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> ModAst<'db> {
+    fn lower_mod(&self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> ModAst<'db> {
+        let db = self.db();
         let name = self.intern_name(node.child_by_field_name("name").expect("mod has no name"));
         let span = self.abs_span(node);
         let items = node
             .child_by_field_name("body")
-            .map(|body| self.lower_items(body));
-        ModAst::new(self.db, name, None, None, attrs, items, span)
+            .map(|body| self.parent.lower_items(body));
+        ModAst::new(db, name, None, None, attrs, items, span)
     }
 
-    fn lower_use(&mut self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> ItemAst<'db> {
+    fn lower_use(&self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> ItemAst<'db> {
+        let db = self.db();
         let span = self.abs_span(node);
         let mut imports = Vec::new();
-        // The use tree is the first named child after visibility/`use` keyword.
         let mut cursor = node.walk();
         for child in node.named_children(&mut cursor) {
             match child.kind() {
@@ -438,7 +949,7 @@ impl<'db> LowerCtx<'db> {
                 }
             }
         }
-        ItemAst::Use(UseGroupAst::new(self.db, attrs, imports, span))
+        ItemAst::Use(UseGroupAst::new(db, attrs, imports, span))
     }
 
     fn flatten_use_tree(
@@ -447,9 +958,9 @@ impl<'db> LowerCtx<'db> {
         prefix: &mut Vec<Name<'db>>,
         out: &mut Vec<UseImport<'db>>,
     ) {
+        let db = self.db();
         match node.kind() {
             "scoped_use_list" => {
-                // `foo::bar::{A, B}` — extend prefix from "path" child, recurse into "list"
                 let saved = prefix.len();
                 if let Some(path_node) = node.child_by_field_name("path") {
                     self.collect_path_segments(path_node, prefix);
@@ -466,7 +977,6 @@ impl<'db> LowerCtx<'db> {
                 }
             }
             "use_as_clause" => {
-                // `foo::Bar as Baz` or `foo::Bar as _`
                 let mut path_segs = prefix.to_vec();
                 if let Some(path_node) = node.child_by_field_name("path") {
                     self.collect_path_segments(path_node, &mut path_segs);
@@ -475,23 +985,20 @@ impl<'db> LowerCtx<'db> {
                 let alias_text = alias_node.map(|n| self.node_text(n));
                 let kind = match alias_text {
                     Some("_") => UseKind::Unnamed,
-                    Some(t) => UseKind::Named(Name::new(self.db, t.to_owned())),
+                    Some(t) => UseKind::Named(Name::new(db, t.to_owned())),
                     None => {
                         let last = path_segs
                             .last()
                             .copied()
-                            .unwrap_or_else(|| Name::new(self.db, "?".to_owned()));
+                            .unwrap_or_else(|| Name::new(db, "?".to_owned()));
                         UseKind::Named(last)
                     }
                 };
-                let path = Path::new(self.db, path_segs, self.rel_span(node));
-                out.push(UseImport::new(self.db, path, kind, self.rel_span(node)));
+                let path = Path::new(db, path_segs, self.rel_span(node));
+                out.push(UseImport::new(db, path, kind, self.rel_span(node)));
             }
             "use_wildcard" => {
-                // `foo::*` — the scoped part is in a child "path" if present
                 let mut path_segs = prefix.to_vec();
-                // In tree-sitter-rust 0.24, use_wildcard's path child has no
-                // field name. Find the first named child that isn't `::` or `*`.
                 let path_node = node.named_children(&mut node.walk()).find(|c| {
                     matches!(
                         c.kind(),
@@ -501,25 +1008,19 @@ impl<'db> LowerCtx<'db> {
                 if let Some(pn) = path_node {
                     self.collect_path_segments(pn, &mut path_segs);
                 }
-                let path = Path::new(self.db, path_segs, self.rel_span(node));
-                out.push(UseImport::new(
-                    self.db,
-                    path,
-                    UseKind::Glob,
-                    self.rel_span(node),
-                ));
+                let path = Path::new(db, path_segs, self.rel_span(node));
+                out.push(UseImport::new(db, path, UseKind::Glob, self.rel_span(node)));
             }
             "scoped_identifier" => {
-                // `foo::Bar` as a leaf in a use tree
                 let mut path_segs = prefix.to_vec();
                 self.collect_path_segments(node, &mut path_segs);
                 let last = path_segs
                     .last()
                     .copied()
-                    .unwrap_or_else(|| Name::new(self.db, "?".to_owned()));
-                let path = Path::new(self.db, path_segs, self.rel_span(node));
+                    .unwrap_or_else(|| Name::new(db, "?".to_owned()));
+                let path = Path::new(db, path_segs, self.rel_span(node));
                 out.push(UseImport::new(
-                    self.db,
+                    db,
                     path,
                     UseKind::Named(last),
                     self.rel_span(node),
@@ -529,49 +1030,47 @@ impl<'db> LowerCtx<'db> {
                 let name = self.intern_name(node);
                 let mut path_segs = prefix.to_vec();
                 path_segs.push(name);
-                let path = Path::new(self.db, path_segs, self.rel_span(node));
+                let path = Path::new(db, path_segs, self.rel_span(node));
                 out.push(UseImport::new(
-                    self.db,
+                    db,
                     path,
                     UseKind::Named(name),
                     self.rel_span(node),
                 ));
             }
             "self" => {
-                // `use foo::{self}` → imports the module itself under its name
                 let path_segs = prefix.to_vec();
                 let alias = prefix
                     .last()
                     .copied()
-                    .unwrap_or_else(|| Name::new(self.db, "self".to_owned()));
-                let path = Path::new(self.db, path_segs, self.rel_span(node));
+                    .unwrap_or_else(|| Name::new(db, "self".to_owned()));
+                let path = Path::new(db, path_segs, self.rel_span(node));
                 out.push(UseImport::new(
-                    self.db,
+                    db,
                     path,
                     UseKind::Named(alias),
                     self.rel_span(node),
                 ));
             }
             "crate" | "super" => {
-                let name = Name::new(self.db, node.kind().to_owned());
+                let name = Name::new(db, node.kind().to_owned());
                 let mut path_segs = prefix.to_vec();
                 path_segs.push(name);
-                let path = Path::new(self.db, path_segs, self.rel_span(node));
+                let path = Path::new(db, path_segs, self.rel_span(node));
                 out.push(UseImport::new(
-                    self.db,
+                    db,
                     path,
                     UseKind::Named(name),
                     self.rel_span(node),
                 ));
             }
             _ => {
-                // Fallback: treat as single identifier
-                let name = Name::new(self.db, self.node_text(node).to_owned());
+                let name = Name::new(db, self.node_text(node).to_owned());
                 let mut path_segs = prefix.to_vec();
                 path_segs.push(name);
-                let path = Path::new(self.db, path_segs, self.rel_span(node));
+                let path = Path::new(db, path_segs, self.rel_span(node));
                 out.push(UseImport::new(
-                    self.db,
+                    db,
                     path,
                     UseKind::Named(name),
                     self.rel_span(node),
@@ -580,18 +1079,19 @@ impl<'db> LowerCtx<'db> {
         }
     }
 
-    // -- Macros -------------------------------------------------------------
+    // -- Macros ---------------------------------------------------------------
 
     fn lower_macro_def_item(&self, node: Node<'_>) -> ItemAst<'db> {
+        let db = self.db();
         let name_node = match node.child_by_field_name("name") {
             Some(n) => n,
             None => return ItemAst::Error(self.abs_span(node)),
         };
         let name = self.intern_name(name_node);
         let span = self.abs_span(node);
-        let body_tokens = crate::ts_helpers::extract_macro_body_tokens(node, self.text);
+        let body_tokens = crate::ts_helpers::extract_macro_body_tokens(node, self.parent.text);
 
-        ItemAst::MacroDef(MacroDefAst::new(self.db, name, body_tokens, span))
+        ItemAst::MacroDef(MacroDefAst::new(db, name, body_tokens, span))
     }
 
     fn lower_expression_statement(&self, node: Node<'_>) -> ItemAst<'db> {
@@ -605,24 +1105,27 @@ impl<'db> LowerCtx<'db> {
     }
 
     fn lower_macro_invocation_item(&self, node: Node<'_>) -> ItemAst<'db> {
+        let db = self.db();
         let macro_node = match node.child_by_field_name("macro") {
             Some(n) => n,
             None => return ItemAst::Error(self.abs_span(node)),
         };
         let segments =
-            crate::ts_helpers::collect_macro_path_segments(self.db, macro_node, self.text);
+            crate::ts_helpers::collect_macro_path_segments(db, macro_node, self.parent.text);
         if segments.is_empty() {
             return ItemAst::Error(self.abs_span(node));
         }
         let span = self.abs_span(node);
-        let path = Path::new(self.db, segments, self.rel_span(node));
-        let input_tokens = crate::ts_helpers::extract_macro_invocation_tokens(node, self.text);
-        ItemAst::MacroInvocation(MacroInvocationAst::new(self.db, path, input_tokens, span))
+        let path = Path::new(db, segments, self.rel_span(node));
+        let input_tokens =
+            crate::ts_helpers::extract_macro_invocation_tokens(node, self.parent.text);
+        ItemAst::MacroInvocation(MacroInvocationAst::new(db, path, input_tokens, span))
     }
 
-    // -- Types -------------------------------------------------------------
+    // -- Types (salsa-tracked, for old fields) --------------------------------
 
-    fn lower_type(&mut self, node: Node<'_>) -> TypeRef<'db> {
+    fn lower_type(&self, node: Node<'_>) -> TypeRef<'db> {
+        let db = self.db();
         let span = self.rel_span(node);
         let kind = match node.kind() {
             "type_identifier"
@@ -676,36 +1179,36 @@ impl<'db> LowerCtx<'db> {
                         elems.push(self.lower_type(child));
                     }
                 }
-                TypeRefKind::Tuple(TupleTypeRef::new(self.db, elems))
+                TypeRefKind::Tuple(TupleTypeRef::new(db, elems))
             }
             "never_type" => TypeRefKind::Never,
             "inferred_type" => TypeRefKind::Infer,
             _ => TypeRefKind::Error,
         };
-        TypeRef::new(self.db, kind, span)
+        TypeRef::new(db, kind, span)
     }
 
     fn lower_path(&self, node: Node<'_>) -> Path<'db> {
+        let db = self.db();
         let mut segments = Vec::new();
         self.collect_path_segments(node, &mut segments);
-        Path::new(self.db, segments, self.rel_span(node))
+        Path::new(db, segments, self.rel_span(node))
     }
 
     fn collect_path_segments(&self, node: Node<'_>, out: &mut Vec<Name<'db>>) {
+        let db = self.db();
         match node.kind() {
             "scoped_identifier" | "scoped_type_identifier" => {
                 if let Some(prefix) = node.child_by_field_name("path") {
                     self.collect_path_segments(prefix, out);
                 } else if node.child(0).is_some_and(|c| c.kind() == "::") {
-                    // Leading `::` — emit empty sentinel for absolute path
-                    out.push(Name::new(self.db, String::new()));
+                    out.push(Name::new(db, String::new()));
                 }
                 if let Some(name) = node.child_by_field_name("name") {
                     out.push(self.intern_name(name));
                 }
             }
             "generic_type" => {
-                // Recurse into the type child, ignore type_arguments
                 if let Some(ty) = node.child_by_field_name("type") {
                     self.collect_path_segments(ty, out);
                 }
@@ -713,24 +1216,23 @@ impl<'db> LowerCtx<'db> {
             "identifier" | "type_identifier" | "primitive_type" | "metavariable" => {
                 out.push(self.intern_name(node));
             }
-            "self" => out.push(Name::new(self.db, "self".to_owned())),
-            "crate" => out.push(Name::new(self.db, "crate".to_owned())),
-            "super" => out.push(Name::new(self.db, "super".to_owned())),
+            "self" => out.push(Name::new(db, "self".to_owned())),
+            "crate" => out.push(Name::new(db, "crate".to_owned())),
+            "super" => out.push(Name::new(db, "super".to_owned())),
             _ => {
-                // Fallback: use full text as single segment
-                out.push(Name::new(self.db, self.node_text(node).to_owned()));
+                out.push(Name::new(db, self.node_text(node).to_owned()));
             }
         }
     }
 
     fn make_error_type(&self, node: Node<'_>) -> TypeRef<'db> {
-        TypeRef::new(self.db, TypeRefKind::Error, self.rel_span(node))
+        TypeRef::new(self.db(), TypeRefKind::Error, self.rel_span(node))
     }
 
-    // -- Body lowering -----------------------------------------------------
+    // -- Body lowering --------------------------------------------------------
 
     fn lower_body(&self, fn_node: Node<'_>) -> FunctionBody<'db> {
-        let mut bcx = BodyLowerCtx::new(self.db, self.text, self.item_start);
+        let mut bcx = BodyLowerCtx::new(self.db(), self.parent.text, self.item_start);
         let body_node = fn_node.child_by_field_name("body");
         let root_expr = body_node
             .map(|n| bcx.lower_expr(n))
@@ -786,42 +1288,173 @@ impl<'db> BodyLowerCtx<'db> {
         })
     }
 
-    fn lower_path(&self, node: Node<'_>) -> Path<'db> {
+    fn lower_path_ast(&mut self, node: Node<'_>) -> Ptr<PathAst<'db>> {
         let mut segments = Vec::new();
-        self.collect_path_segments(node, &mut segments);
-        Path::new(self.db, segments, self.rel_span(node))
+        self.collect_path_segments_ast(node, &mut segments);
+        let segs = self.stash.alloc_slice(&segments);
+        self.stash.alloc(PathAst {
+            segments: segs,
+            span: self.rel_span(node),
+        })
     }
 
-    fn collect_path_segments(&self, node: Node<'_>, out: &mut Vec<Name<'db>>) {
+    fn collect_path_segments_ast(&mut self, node: Node<'_>, out: &mut Vec<PathSegmentAst<'db>>) {
+        let empty_args = self.stash.alloc_slice::<TypeRefAst<'db>>(&[]);
         match node.kind() {
             "scoped_identifier" | "scoped_type_identifier" => {
                 if let Some(prefix) = node.child_by_field_name("path") {
-                    self.collect_path_segments(prefix, out);
+                    self.collect_path_segments_ast(prefix, out);
                 } else if node.child(0).is_some_and(|c| c.kind() == "::") {
-                    out.push(Name::new(self.db, String::new()));
+                    out.push(PathSegmentAst {
+                        name: Name::new(self.db, String::new()),
+                        type_args: empty_args,
+                        span: self.rel_span(node),
+                    });
                 }
                 if let Some(name) = node.child_by_field_name("name") {
-                    out.push(self.name(name));
+                    out.push(PathSegmentAst {
+                        name: self.name(name),
+                        type_args: empty_args,
+                        span: self.rel_span(name),
+                    });
                 }
             }
             "generic_type" => {
                 if let Some(ty) = node.child_by_field_name("type") {
-                    self.collect_path_segments(ty, out);
+                    self.collect_path_segments_ast(ty, out);
+                }
+                if let Some(args_node) = node.child_by_field_name("type_arguments") {
+                    let mut type_args = Vec::new();
+                    let mut cursor = args_node.walk();
+                    for child in args_node.named_children(&mut cursor) {
+                        type_args.push(self.lower_type_ref_ast(child));
+                    }
+                    let type_args = self.stash.alloc_slice(&type_args);
+                    if let Some(last) = out.last_mut() {
+                        last.type_args = type_args;
+                    }
                 }
             }
             "identifier" | "type_identifier" | "primitive_type" | "metavariable" => {
-                out.push(self.name(node));
+                out.push(PathSegmentAst {
+                    name: self.name(node),
+                    type_args: empty_args,
+                    span: self.rel_span(node),
+                });
             }
-            "self" => out.push(Name::new(self.db, "self".to_owned())),
-            "crate" => out.push(Name::new(self.db, "crate".to_owned())),
-            "super" => out.push(Name::new(self.db, "super".to_owned())),
+            "self" => out.push(PathSegmentAst {
+                name: Name::new(self.db, "self".to_owned()),
+                type_args: empty_args,
+                span: self.rel_span(node),
+            }),
+            "crate" => out.push(PathSegmentAst {
+                name: Name::new(self.db, "crate".to_owned()),
+                type_args: empty_args,
+                span: self.rel_span(node),
+            }),
+            "super" => out.push(PathSegmentAst {
+                name: Name::new(self.db, "super".to_owned()),
+                type_args: empty_args,
+                span: self.rel_span(node),
+            }),
             _ => {
-                out.push(Name::new(self.db, self.node_text(node).to_owned()));
+                out.push(PathSegmentAst {
+                    name: Name::new(self.db, self.node_text(node).to_owned()),
+                    type_args: empty_args,
+                    span: self.rel_span(node),
+                });
             }
         }
     }
 
-    // -- Expressions -------------------------------------------------------
+    fn lower_type_ref_ast(&mut self, node: Node<'_>) -> TypeRefAst<'db> {
+        let span = self.rel_span(node);
+        let kind = match node.kind() {
+            "type_identifier"
+            | "scoped_type_identifier"
+            | "generic_type"
+            | "scoped_identifier"
+            | "primitive_type"
+            | "abstract_type"
+            | "dynamic_type"
+            | "function_type"
+            | "macro_invocation"
+            | "bounded_type"
+            | "qualified_type"
+            | "pointer_type"
+            | "empty_type"
+            | "metavariable" => TypeRefAstKind::Path(self.lower_path_ast(node)),
+            "reference_type" => {
+                let is_mut = node
+                    .children(&mut node.walk())
+                    .any(|c| c.kind() == "mutable_specifier");
+                let inner = node
+                    .child_by_field_name("type")
+                    .map(|n| self.lower_type_ref_ast(n))
+                    .unwrap_or_else(|| self.make_error_type_ref(node));
+                let inner = self.stash.alloc(inner);
+                let mutability = if is_mut {
+                    Mutability::Mut
+                } else {
+                    Mutability::Shared
+                };
+                TypeRefAstKind::Reference(inner, mutability)
+            }
+            "array_type" => {
+                let inner = node
+                    .child_by_field_name("element")
+                    .map(|n| self.lower_type_ref_ast(n))
+                    .unwrap_or_else(|| self.make_error_type_ref(node));
+                let inner = self.stash.alloc(inner);
+                TypeRefAstKind::Array(inner)
+            }
+            "slice_type" => {
+                let inner = node
+                    .child_by_field_name("element")
+                    .map(|n| self.lower_type_ref_ast(n))
+                    .unwrap_or_else(|| self.make_error_type_ref(node));
+                let inner = self.stash.alloc(inner);
+                TypeRefAstKind::Slice(inner)
+            }
+            "tuple_type" => {
+                let mut elems = Vec::new();
+                let mut cursor = node.walk();
+                for child in node.children(&mut cursor) {
+                    if child.is_named() && child.kind() != "(" && child.kind() != ")" {
+                        elems.push(self.lower_type_ref_ast(child));
+                    }
+                }
+                TypeRefAstKind::Tuple(self.stash.alloc_slice(&elems))
+            }
+            "never_type" => TypeRefAstKind::Never,
+            "inferred_type" => TypeRefAstKind::Infer,
+            _ => TypeRefAstKind::Error,
+        };
+        TypeRefAst { kind, span }
+    }
+
+    fn make_error_type_ref(&self, node: Node<'_>) -> TypeRefAst<'db> {
+        TypeRefAst {
+            kind: TypeRefAstKind::Error,
+            span: self.rel_span(node),
+        }
+    }
+
+    fn make_error_path(&mut self, node: Node<'_>) -> Ptr<PathAst<'db>> {
+        let empty_args = self.stash.alloc_slice::<TypeRefAst<'db>>(&[]);
+        let seg = PathSegmentAst {
+            name: Name::new(self.db, "?".to_owned()),
+            type_args: empty_args,
+            span: self.rel_span(node),
+        };
+        let segs = self.stash.alloc_slice(&[seg]);
+        self.stash.alloc(PathAst {
+            segments: segs,
+            span: self.rel_span(node),
+        })
+    }
+
+    // -- Expressions ----------------------------------------------------------
 
     fn lower_expr(&mut self, node: Node<'_>) -> Ptr<Expr<'db>> {
         let span = self.rel_span(node);
@@ -832,7 +1465,9 @@ impl<'db> BodyLowerCtx<'db> {
             "string_literal" | "raw_string_literal" => ExprKind::Literal(Literal::String),
             "char_literal" => ExprKind::Literal(Literal::Char),
             "boolean_literal" => ExprKind::Literal(Literal::Bool(self.node_text(node) == "true")),
-            "identifier" | "scoped_identifier" | "self" => ExprKind::Path(self.lower_path(node)),
+            "identifier" | "scoped_identifier" | "self" => {
+                ExprKind::Path(self.lower_path_ast(node))
+            }
             "unit_expression" => ExprKind::Tuple(self.stash.alloc_slice(&[])),
             "tuple_expression" => {
                 let elems = self.lower_expr_children(node);
@@ -872,8 +1507,6 @@ impl<'db> BodyLowerCtx<'db> {
                 ExprKind::Field(obj, field)
             }
             "method_call_expression" | "generic_function" => {
-                // tree-sitter puts method calls as call_expression with field_expression inside,
-                // but also has a dedicated method node in some grammars. Handle both.
                 return self.lower_method_or_call(node);
             }
             "binary_expression" => {
@@ -1025,16 +1658,9 @@ impl<'db> BodyLowerCtx<'db> {
                     .unwrap_or_else(|| self.missing_expr(node));
                 let ty = node
                     .child_by_field_name("type")
-                    .map(|n| {
-                        TypeRef::new(
-                            self.db,
-                            TypeRefKind::Path(self.lower_path(n)),
-                            self.rel_span(n),
-                        )
-                    })
-                    .unwrap_or_else(|| {
-                        TypeRef::new(self.db, TypeRefKind::Error, self.rel_span(node))
-                    });
+                    .map(|n| self.lower_type_ref_ast(n))
+                    .unwrap_or_else(|| self.make_error_type_ref(node));
+                let ty = self.stash.alloc(ty);
                 ExprKind::Cast(expr, ty)
             }
             "struct_expression" => return self.lower_struct_lit(node),
@@ -1044,7 +1670,6 @@ impl<'db> BodyLowerCtx<'db> {
                     0 => (None, None),
                     1 => {
                         let c = self.lower_expr(children[0]);
-                        // Heuristic: if child starts at range start, it's the lower bound
                         if children[0].start_byte() == node.start_byte() {
                             (Some(c), None)
                         } else {
@@ -1062,14 +1687,8 @@ impl<'db> BodyLowerCtx<'db> {
             "macro_invocation" => {
                 let path = node
                     .child_by_field_name("macro")
-                    .map(|n| self.lower_path(n))
-                    .unwrap_or_else(|| {
-                        Path::new(
-                            self.db,
-                            vec![Name::new(self.db, "?".to_owned())],
-                            self.rel_span(node),
-                        )
-                    });
+                    .map(|n| self.lower_path_ast(n))
+                    .unwrap_or_else(|| self.make_error_path(node));
                 let args_node = node
                     .named_children(&mut node.walk())
                     .find(|c| c.kind() == "token_tree");
@@ -1085,9 +1704,7 @@ impl<'db> BodyLowerCtx<'db> {
                 );
                 ExprKind::MacroCall(path, args)
             }
-            // Catch-all: anything we don't handle becomes Missing
             "let_condition" => {
-                // `if let Some(x) = expr` — lower as the inner expression
                 let inner = node.named_children(&mut node.walk()).last();
                 return inner
                     .map(|n| self.lower_expr(n))
@@ -1101,7 +1718,6 @@ impl<'db> BodyLowerCtx<'db> {
                     .unwrap_or_else(|| self.missing_expr(node));
                 return body;
             }
-            // Skip non-expression nodes that appear in blocks
             "line_comment"
             | "block_comment"
             | "attribute_item"
@@ -1109,7 +1725,6 @@ impl<'db> BodyLowerCtx<'db> {
             | "empty_statement"
             | "use_declaration"
             | "const_item" => ExprKind::Missing,
-            // Catch-all
             _ => ExprKind::Missing,
         };
         self.stash.alloc(Expr { kind, span })
@@ -1135,7 +1750,6 @@ impl<'db> BodyLowerCtx<'db> {
         for (i, child) in children.iter().enumerate() {
             let is_last = i == children.len() - 1;
             match child.kind() {
-                // Skip non-statement nodes
                 "line_comment"
                 | "block_comment"
                 | "attribute_item"
@@ -1156,7 +1770,6 @@ impl<'db> BodyLowerCtx<'db> {
                     }
                 }
                 _ if is_last => {
-                    // Last expression without semicolon = tail
                     tail = Some(self.lower_expr(*child));
                 }
                 _ => {
@@ -1182,11 +1795,8 @@ impl<'db> BodyLowerCtx<'db> {
             .map(|n| self.lower_pat(n))
             .unwrap_or_else(|| self.missing_pat(node));
         let ty = node.child_by_field_name("type").map(|n| {
-            TypeRef::new(
-                self.db,
-                TypeRefKind::Path(self.lower_path(n)),
-                self.rel_span(n),
-            )
+            let ty_ref = self.lower_type_ref_ast(n);
+            self.stash.alloc(ty_ref)
         });
         let init = node
             .child_by_field_name("value")
@@ -1251,7 +1861,7 @@ impl<'db> BodyLowerCtx<'db> {
                         .map(|n| self.lower_pat(n))
                         .unwrap_or_else(|| self.missing_pat(child));
                     let guard = child
-                        .child_by_field_name("condition") // tree-sitter uses "condition" for guard
+                        .child_by_field_name("condition")
                         .map(|n| self.lower_expr(n));
                     let body = child
                         .child_by_field_name("value")
@@ -1299,9 +1909,6 @@ impl<'db> BodyLowerCtx<'db> {
     }
 
     fn lower_method_or_call(&mut self, node: Node<'_>) -> Ptr<Expr<'db>> {
-        // tree-sitter-rust doesn't have a dedicated method_call node;
-        // it's a call_expression whose function is a field_expression.
-        // Just lower as a regular call.
         let span = self.rel_span(node);
         let func = node
             .child_by_field_name("function")
@@ -1322,14 +1929,8 @@ impl<'db> BodyLowerCtx<'db> {
         let span = self.rel_span(node);
         let path = node
             .child_by_field_name("name")
-            .map(|n| self.lower_path(n))
-            .unwrap_or_else(|| {
-                Path::new(
-                    self.db,
-                    vec![Name::new(self.db, "?".to_owned())],
-                    self.rel_span(node),
-                )
-            });
+            .map(|n| self.lower_path_ast(n))
+            .unwrap_or_else(|| self.make_error_path(node));
         let mut fields = Vec::new();
         if let Some(body) = node.child_by_field_name("body") {
             let mut cursor = body.walk();
@@ -1350,8 +1951,9 @@ impl<'db> BodyLowerCtx<'db> {
                     });
                 } else if child.kind() == "shorthand_field_initializer" {
                     let name = self.name(child);
+                    let path = self.lower_path_ast(child);
                     let value = self.stash.alloc(Expr {
-                        kind: ExprKind::Path(self.lower_path(child)),
+                        kind: ExprKind::Path(path),
                         span: self.rel_span(child),
                     });
                     fields.push(FieldInit {
@@ -1369,12 +1971,11 @@ impl<'db> BodyLowerCtx<'db> {
         })
     }
 
-    // -- Patterns ----------------------------------------------------------
+    // -- Patterns -------------------------------------------------------------
 
     fn lower_pat(&mut self, node: Node<'_>) -> Ptr<Pat<'db>> {
         let span = self.rel_span(node);
         let kind = match node.kind() {
-            // match_pattern wraps the actual pattern in match arms
             "match_pattern" => {
                 return node
                     .named_child(0)
@@ -1397,28 +1998,16 @@ impl<'db> BodyLowerCtx<'db> {
             "tuple_struct_pattern" => {
                 let path = node
                     .child_by_field_name("type")
-                    .map(|n| self.lower_path(n))
-                    .unwrap_or_else(|| {
-                        Path::new(
-                            self.db,
-                            vec![Name::new(self.db, "?".to_owned())],
-                            self.rel_span(node),
-                        )
-                    });
+                    .map(|n| self.lower_path_ast(n))
+                    .unwrap_or_else(|| self.make_error_path(node));
                 let pats = self.lower_pat_children(node);
                 PatKind::TupleStruct(path, self.stash.alloc_slice(&pats))
             }
             "struct_pattern" => {
                 let path = node
                     .child_by_field_name("type")
-                    .map(|n| self.lower_path(n))
-                    .unwrap_or_else(|| {
-                        Path::new(
-                            self.db,
-                            vec![Name::new(self.db, "?".to_owned())],
-                            self.rel_span(node),
-                        )
-                    });
+                    .map(|n| self.lower_path_ast(n))
+                    .unwrap_or_else(|| self.make_error_path(node));
                 let mut field_pats = Vec::new();
                 let mut cursor = node.walk();
                 for child in node.named_children(&mut cursor) {
@@ -1431,7 +2020,6 @@ impl<'db> BodyLowerCtx<'db> {
                             .child_by_field_name("pattern")
                             .map(|n| self.lower_pat(n))
                             .unwrap_or_else(|| {
-                                // Shorthand: `Foo { x }` means `Foo { x: x }`
                                 self.stash.alloc(Pat {
                                     kind: PatKind::Bind(name, Mutability::Shared),
                                     span: self.rel_span(child),
@@ -1465,7 +2053,9 @@ impl<'db> BodyLowerCtx<'db> {
                 let pats = self.lower_pat_children(node);
                 PatKind::Or(self.stash.alloc_slice(&pats))
             }
-            "scoped_identifier" | "scoped_type_identifier" => PatKind::Path(self.lower_path(node)),
+            "scoped_identifier" | "scoped_type_identifier" => {
+                PatKind::Path(self.lower_path_ast(node))
+            }
             "integer_literal" => PatKind::Literal(Literal::Int),
             "string_literal" => PatKind::Literal(Literal::String),
             "boolean_literal" => PatKind::Literal(Literal::Bool(self.node_text(node) == "true")),

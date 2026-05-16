@@ -1,5 +1,6 @@
 use crate::body::FunctionBody;
 use crate::name::Name;
+use crate::sig_ast::*;
 use crate::source::SourceFile;
 use crate::span::{AbsoluteSpan, ParseSource};
 use crate::types::{Attr, FieldDef, Param, Path, TypeRef, UseImport, VariantDef};
@@ -70,6 +71,10 @@ pub struct FnAst<'db> {
     pub ret_type: Option<TypeRef<'db>>,
 
     #[tracked]
+    #[returns(ref)]
+    pub signature: FnSigAst<'db>,
+
+    #[tracked]
     pub is_async: bool,
 
     #[tracked]
@@ -108,6 +113,10 @@ pub struct StructAst<'db> {
     pub fields: Vec<FieldDef<'db>>,
 
     #[tracked]
+    #[returns(ref)]
+    pub signature: StructSigAst<'db>,
+
+    #[tracked]
     pub span: AbsoluteSpan<'db>,
 }
 
@@ -126,6 +135,10 @@ pub struct EnumAst<'db> {
     pub variants: Vec<VariantDef<'db>>,
 
     #[tracked]
+    #[returns(ref)]
+    pub signature: EnumSigAst<'db>,
+
+    #[tracked]
     pub span: AbsoluteSpan<'db>,
 }
 
@@ -138,6 +151,10 @@ pub struct TraitAst<'db> {
     #[tracked]
     #[returns(ref)]
     pub attrs: Vec<Attr<'db>>,
+
+    #[tracked]
+    #[returns(ref)]
+    pub signature: TraitSigAst<'db>,
 
     #[tracked]
     #[returns(ref)]
@@ -163,6 +180,10 @@ pub struct ImplAst<'db> {
 
     #[tracked]
     #[returns(ref)]
+    pub signature: ImplSigAst<'db>,
+
+    #[tracked]
+    #[returns(ref)]
     pub items: Vec<ItemAst<'db>>,
 
     #[tracked]
@@ -183,6 +204,10 @@ pub struct TypeAliasAst<'db> {
     pub ty: Option<TypeRef<'db>>,
 
     #[tracked]
+    #[returns(ref)]
+    pub signature: TypeAliasSigAst<'db>,
+
+    #[tracked]
     pub span: AbsoluteSpan<'db>,
 }
 
@@ -200,6 +225,10 @@ pub struct ConstAst<'db> {
     pub ty: Option<TypeRef<'db>>,
 
     #[tracked]
+    #[returns(ref)]
+    pub signature: ConstSigAst<'db>,
+
+    #[tracked]
     pub span: AbsoluteSpan<'db>,
 }
 
@@ -215,6 +244,10 @@ pub struct StaticAst<'db> {
 
     #[tracked]
     pub ty: Option<TypeRef<'db>>,
+
+    #[tracked]
+    #[returns(ref)]
+    pub signature: StaticSigAst<'db>,
 
     #[tracked]
     pub is_mut: bool,

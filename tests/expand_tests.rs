@@ -499,7 +499,7 @@ fn expanded_items_are_valid_ir() {
               fn augment_args(__clap_app: clap::Command) -> clap::Command {
               {
                 let __clap_app = __clap_app.group(clap::ArgGroup::new(String).multiple(Bool(true)).args({
-                  let members: [clap :: Id ; 1usize] = [clap::Id::from(String)];
+                  let members: [clap::Id; _] = [clap::Id::from(String)];
                   members
                 }));
                 let __clap_app = __clap_app.arg({
@@ -514,7 +514,7 @@ fn expanded_items_are_valid_ir() {
               fn augment_args_for_update(__clap_app: clap::Command) -> clap::Command {
               {
                 let __clap_app = __clap_app.group(clap::ArgGroup::new(String).multiple(Bool(true)).args({
-                  let members: [clap :: Id ; 1usize] = [clap::Id::from(String)];
+                  let members: [clap::Id; _] = [clap::Id::from(String)];
                   members
                 }));
                 let __clap_app = __clap_app.arg({
@@ -623,7 +623,7 @@ fn snapshot_expanded_clap_parser() {
               fn augment_args(__clap_app: clap::Command) -> clap::Command {
               {
                 let __clap_app = __clap_app.group(clap::ArgGroup::new(String).multiple(Bool(true)).args({
-                  let members: [clap :: Id ; 1usize] = [clap::Id::from(String)];
+                  let members: [clap::Id; _] = [clap::Id::from(String)];
                   members
                 }));
                 let __clap_app = __clap_app.arg({
@@ -638,7 +638,7 @@ fn snapshot_expanded_clap_parser() {
               fn augment_args_for_update(__clap_app: clap::Command) -> clap::Command {
               {
                 let __clap_app = __clap_app.group(clap::ArgGroup::new(String).multiple(Bool(true)).args({
-                  let members: [clap :: Id ; 1usize] = [clap::Id::from(String)];
+                  let members: [clap::Id; _] = [clap::Id::from(String)];
                   members
                 }));
                 let __clap_app = __clap_app.arg({
