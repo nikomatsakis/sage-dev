@@ -813,31 +813,39 @@ These tests fail initially (the new `SymbolData` variants don't exist). Write th
 
 ### Step H: Remove legacy `params`/`ret_type` fields from `FnAst` ✓
 
-`FnAst` currently carries both the old per-field tracked fields (`params: Vec<Param<'db>>`, `ret_type: Option<TypeRef<'db>>`) and the new `signature: FnSigAst<'db>` field side by side. All signature consumers should now read from the `signature` stash.
+Removed the legacy tracked fields that coexisted with the signature stash:
 
-**Implementation.** Remove `params` and `ret_type` from `FnAst`. Update all callers to read from the signature stash instead. Similarly audit `StructAst`, `EnumAst`, and other items for any legacy per-field tracked fields that are superseded by their signature stash.
+- **`FnAst`**: removed `params: Vec<Param<'db>>` and `ret_type: Option<TypeRef<'db>>`.
+- **`StructAst`**: removed `fields: Vec<FieldDef<'db>>`.
+- **`EnumAst`**: removed `variants: Vec<VariantDef<'db>>`.
+- **`types.rs`**: deleted the now-dead `Param`, `FieldDef`, `VariantDef` salsa-tracked structs and their `Display` impls.
+- **`display.rs`**: rewrote `FnAst`/`StructAst`/`EnumAst` Display impls to read from the signature stash via `PrettyPrint`.
+- **`body_resolve.rs`**: reads function params from the signature stash.
+- **`lower.rs`**: removed `lower_params` and `lower_field_defs` methods.
+- **`derive/builtins.rs`**: replaced `Param`/`TypeRef`-based `FnAst` construction with proper `FnSigAst` stash construction via a new `make_fn_sig` helper and `SigTy` enum. Simplified `item_info` to return just the name.
 
-**Verify.** All existing tests still pass. The old salsa-tracked `Param` type in `types.rs` may become dead code — delete it if so.
+**Bugs exposed by the migration.** Switching Display to render type arguments from the signature stash revealed two pre-existing bugs in `lower_type_ref_to_stash`: (1) `unit_type` (`()`) was not handled (fell through to `Error`); (2) `lifetime` nodes in type argument position (e.g., `Formatter<'_>`) also fell through to `Error`. Both fixed.
 
 ### Step I: Add `self_type` to `SigLowerCtx` ✓
 
-`SigLowerCtx` currently has no way to resolve `Self` in method signatures inside impl blocks. Resolved decision #2 calls for an `Option<Ptr<Ty<'db>>>` self type, but it is not yet implemented.
+Added `self_type: Option<Ty<'db>>` to `SigLowerCtx`. Introduced `lower_fn_sig`, a public non-salsa function that accepts the self type and the stash it lives in. The existing `fn_signature` salsa query delegates to it with `None`.
 
-**Implementation.** Add `self_type: Option<Ptr<Ty<'db>>>` to `SigLowerCtx`. In `lower_path_type`, check for the single-segment name `Self` (after generic params, before primitives) and return the self type if present. Callers that lower impl-block methods pass the impl's self type; free-function callers pass `None`. Update the `SigLowerCtx` definition in the Layer 3 design section to include this field.
+In `lower_path_type`, single-segment `Self` is checked after generic params and before primitives. The self type is copied from the caller's stash into the destination stash via the `Identity` folder so `Slice`/`Ptr` references remain valid.
 
-**Tests.** Write a test with `impl Foo { fn bar(&self) -> Self { ... } }` and verify the signature resolves `Self` to `Adt(Foo, [])`. Write a test for a generic impl: `impl<T> Wrapper<T> { fn get(&self) -> T }` and verify `Self` resolves to `Adt(Wrapper, [BoundVar(0,0)])`.
+**Tests (TDD).** Three tests written before the implementation:
+1. `impl Foo { fn make() -> Self }` — verifies `Self` return resolves to `Adt(Foo, [])`.
+2. `impl Foo { fn bar(&self) -> Self }` — verifies `&self` param resolves to `Ref(Adt(Foo, []), Shared, Erased)` and `Self` return resolves to `Adt(Foo, [])`.
+3. `impl<T> Wrapper<T> { fn into_self(&self) -> Self }` — verifies `Self` resolves to `Adt(Wrapper, [BoundVar(0,0)])`, preserving the generic args through the cross-stash copy.
+
+**Scope note.** Impl-level generic param propagation (e.g., bare `T` in a method signature resolving to the impl's `T`) is not yet supported — only `Self` resolution. The impl's generics are expressed through the self type's `BoundVar` args.
 
 ### Step J: Extract `SymbolData` migration to per-kind-symbol-data RFD ✓
 
-Layer 2 of this RFD defines both the per-kind wrapper types (`FnSymbol`, `StructSymbol`, ...) and the `SymbolData` enum migration. The [per-kind-symbol-data RFD](./per-kind-symbol-data.md) now covers the `SymbolData` migration as its own scope.
-
-**Implementation.** Remove the `SymbolData` enum definition, `TupleStructCtor` migration details, and caller-migration discussion from this RFD's Layer 2 section. Retain only the wrapper type definitions and the `define_kind_symbol!` macro. Update Step E in this plan to match — it should only cover adding the wrapper types, not rewriting `SymbolData` or migrating callers. Add a forward reference: "The `SymbolData` enum migration is covered by [per-kind-symbol-data](./per-kind-symbol-data.md)."
+Removed the `SymbolData` enum definition and `TupleStructCtor` migration details from Layer 2. Added a forward reference to the [per-kind symbol data RFD](./per-kind-symbol-data.md) which covers the enum migration as its own scope. Added a "Depended on by" link in the header.
 
 ### Step K: Update `Binder` note and mark completed steps ✓
 
-The note at the `Binder<T>` definition (Layer 1) describes the `AllocStashData` derive macro limitation as an open implementation choice. The manual `unsafe impl` approach was chosen (`#[repr(C)]` + `PhantomData`). Update the note to reflect the decision taken.
-
-Mark steps A, D, E (wrappers only), F, and G as complete. Annotate steps B and C with their current progress.
+Updated the `Binder<T>` note to reflect the chosen manual `unsafe impl` with `#[repr(C)]` + `PhantomData`. Updated the `SigLowerCtx` design definition to include `self_type`. Updated resolved decision #2 to match the `lower_fn_sig` API. Marked all completed steps.
 
 ## Resolved design decisions
 
