@@ -8,6 +8,7 @@ use sage_ir::resolve::SourceRoot;
 use sage_ir::sig_lower::*;
 use sage_ir::source::SourceFile;
 use sage_ir::ty::*;
+use sage_ir::types::Mutability;
 use salsa::Database as _;
 
 fn setup<'db>(db: &'db Database, src: &str) -> (SourceRoot, ModSymbol<'db>, Vec<ItemAst<'db>>) {
@@ -214,6 +215,194 @@ fn fn_no_return_type_is_unit() {
         match ret.data {
             TyData::Tuple(elems) => assert!(stash[elems].is_empty()),
             _ => panic!("expected unit tuple for no return type"),
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Self type resolution in impl blocks
+// ---------------------------------------------------------------------------
+
+fn find_impl_method<'db>(
+    db: &'db dyn salsa::Database,
+    items: &[ItemAst<'db>],
+    method_name: &str,
+) -> FnAst<'db> {
+    for item in items {
+        if let ItemAst::Impl(impl_ast) = item {
+            for sub in impl_ast.items(db) {
+                if let ItemAst::Function(f) = sub {
+                    if f.name(db).text(db) == method_name {
+                        return *f;
+                    }
+                }
+            }
+        }
+    }
+    panic!("method {method_name} not found in any impl block");
+}
+
+#[test]
+fn impl_method_self_return_resolves() {
+    let db = Database::default();
+    db.attach(|db| {
+        let (source_root, module, items) =
+            setup(db, "struct Foo {} impl Foo { fn make() -> Self {} }");
+
+        let method = find_impl_method(db, &items, "make");
+
+        // Build the self type: Adt(Foo, [])
+        let foo_struct = match items[0] {
+            ItemAst::Struct(s) => s,
+            _ => panic!("expected struct"),
+        };
+        let foo_sym = sage_ir::symbol::Symbol::ast(ItemAst::Struct(foo_struct));
+        let mut stash = sage_stash::Stash::new();
+        let empty_args = stash.alloc_slice::<Ty>(&[]);
+        let self_ty = Ty {
+            data: TyData::Adt(foo_sym, empty_args),
+        };
+
+        let sig = lower_fn_sig(db, method, module, source_root, Some(self_ty), &stash);
+        let sig_stash = sig.stash();
+        let fn_sig = &sig.root().value;
+
+        // Return type should be Adt(Foo, [])
+        let ret = &sig_stash[fn_sig.ret];
+        match ret.data {
+            TyData::Adt(sym, args) => {
+                assert_eq!(sym, foo_sym);
+                assert!(sig_stash[args].is_empty());
+            }
+            other => panic!("expected Adt(Foo, []), got {other:?}"),
+        }
+    });
+}
+
+#[test]
+fn impl_method_ref_self_param() {
+    let db = Database::default();
+    db.attach(|db| {
+        let (source_root, module, items) =
+            setup(db, "struct Foo {} impl Foo { fn bar(&self) -> Self {} }");
+
+        let method = find_impl_method(db, &items, "bar");
+
+        let foo_struct = match items[0] {
+            ItemAst::Struct(s) => s,
+            _ => panic!("expected struct"),
+        };
+        let foo_sym = sage_ir::symbol::Symbol::ast(ItemAst::Struct(foo_struct));
+        let mut stash = sage_stash::Stash::new();
+        let empty_args = stash.alloc_slice::<Ty>(&[]);
+        let self_ty = Ty {
+            data: TyData::Adt(foo_sym, empty_args),
+        };
+
+        let sig = lower_fn_sig(db, method, module, source_root, Some(self_ty), &stash);
+        let sig_stash = sig.stash();
+        let fn_sig = &sig.root().value;
+
+        // First param should be &Foo (i.e., Ref(Adt(Foo, []), Shared, Erased))
+        let params = &sig_stash[fn_sig.params];
+        assert_eq!(params.len(), 1);
+        match params[0].data {
+            TyData::Ref(inner, Mutability::Shared, Lifetime::Erased) => {
+                match sig_stash[inner].data {
+                    TyData::Adt(sym, args) => {
+                        assert_eq!(sym, foo_sym);
+                        assert!(sig_stash[args].is_empty());
+                    }
+                    other => panic!("expected Adt(Foo) inside &self, got {other:?}"),
+                }
+            }
+            other => panic!("expected &Foo for &self param, got {other:?}"),
+        }
+
+        // Return type should be Adt(Foo, [])
+        let ret = &sig_stash[fn_sig.ret];
+        match ret.data {
+            TyData::Adt(sym, _) => assert_eq!(sym, foo_sym),
+            other => panic!("expected Adt(Foo) return, got {other:?}"),
+        }
+    });
+}
+
+#[test]
+fn generic_impl_self_resolves_with_bound_vars() {
+    let db = Database::default();
+    db.attach(|db| {
+        let (source_root, module, items) = setup(
+            db,
+            "struct Wrapper<T> { val: T } impl<T> Wrapper<T> { fn into_self(&self) -> Self {} }",
+        );
+
+        let method = find_impl_method(db, &items, "into_self");
+
+        let wrapper_struct = match items[0] {
+            ItemAst::Struct(s) => s,
+            _ => panic!("expected struct"),
+        };
+        let wrapper_sym = sage_ir::symbol::Symbol::ast(ItemAst::Struct(wrapper_struct));
+
+        // Build self type: Adt(Wrapper, [BoundVar(0,0)])
+        // The impl has one generic param T, so self type uses BoundVar for it
+        let mut stash = sage_stash::Stash::new();
+        let bv = Ty {
+            data: TyData::BoundVar(BoundVar {
+                binder_index: 0,
+                param_index: 0,
+            }),
+        };
+        let args = stash.alloc_slice(&[bv]);
+        let self_ty = Ty {
+            data: TyData::Adt(wrapper_sym, args),
+        };
+
+        let sig = lower_fn_sig(db, method, module, source_root, Some(self_ty), &stash);
+        let sig_stash = sig.stash();
+        let fn_sig = &sig.root().value;
+
+        // &self param should be &Wrapper<BoundVar(0,0)>
+        let params = &sig_stash[fn_sig.params];
+        assert_eq!(params.len(), 1);
+        match params[0].data {
+            TyData::Ref(inner, Mutability::Shared, Lifetime::Erased) => {
+                match sig_stash[inner].data {
+                    TyData::Adt(sym, args) => {
+                        assert_eq!(sym, wrapper_sym);
+                        let type_args = &sig_stash[args];
+                        assert_eq!(type_args.len(), 1);
+                        assert!(matches!(
+                            type_args[0].data,
+                            TyData::BoundVar(BoundVar {
+                                binder_index: 0,
+                                param_index: 0
+                            })
+                        ));
+                    }
+                    other => panic!("expected Adt(Wrapper<T>) in &self, got {other:?}"),
+                }
+            }
+            other => panic!("expected &Wrapper<T>, got {other:?}"),
+        }
+
+        // Return type Self should be Adt(Wrapper, [BoundVar(0,0)])
+        let ret = &sig_stash[fn_sig.ret];
+        match ret.data {
+            TyData::Adt(sym, args) => {
+                assert_eq!(sym, wrapper_sym);
+                let type_args = &sig_stash[args];
+                assert_eq!(type_args.len(), 1);
+                assert!(matches!(
+                    type_args[0].data,
+                    TyData::BoundVar(BoundVar {
+                        binder_index: 0,
+                        param_index: 0
+                    })
+                ));
+            }
+            other => panic!("expected Adt(Wrapper<BoundVar>) for Self return, got {other:?}"),
         }
     });
 }

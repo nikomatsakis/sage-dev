@@ -27,6 +27,7 @@ struct SigLowerCtx<'a, 'db> {
     module: ModSymbol<'db>,
     source_root: SourceRoot,
     generics: Vec<(Name<'db>, BoundVar)>,
+    self_type: Option<Ty<'db>>,
 }
 
 impl<'a, 'db> SigLowerCtx<'a, 'db> {
@@ -97,6 +98,13 @@ impl<'a, 'db> SigLowerCtx<'a, 'db> {
                     return self.dst.alloc(Ty {
                         data: TyData::BoundVar(*bv),
                     });
+                }
+            }
+
+            // Self type in impl blocks?
+            if name.text(self.db) == "Self" {
+                if let Some(self_ty) = self.self_type {
+                    return self.dst.alloc(self_ty);
                 }
             }
 
@@ -246,12 +254,33 @@ pub fn fn_signature<'db>(
     module: ModSymbol<'db>,
     source_root: SourceRoot,
 ) -> Stashed<Binder<'db, FnSig<'db>>> {
+    lower_fn_sig(db, fn_ast, module, source_root, None, &Stash::new())
+}
+
+/// Lower a function signature with an optional self type for impl-block methods.
+///
+/// `self_type_src` is the stash that owns any `Slice`/`Ptr` data inside `self_type`.
+/// For free functions, pass `None` and an empty stash.
+pub fn lower_fn_sig<'db>(
+    db: &'db dyn Db,
+    fn_ast: FnAst<'db>,
+    module: ModSymbol<'db>,
+    source_root: SourceRoot,
+    self_type: Option<Ty<'db>>,
+    self_type_src: &Stash,
+) -> Stashed<Binder<'db, FnSig<'db>>> {
     let sig_ast = fn_ast.signature(db);
     let src = sig_ast.stash();
     let data = &src[*sig_ast.root()];
 
     let mut dst = Stash::new();
     let (generics_map, bound_vars) = build_generics_map(src, data.generics, &mut dst);
+
+    let copied_self_type = self_type.map(|ty| {
+        use crate::ty_fold::{Identity, TyFolder, default_fold_ty};
+        let mut folder = Identity::new(self_type_src, &mut dst);
+        default_fold_ty(&mut folder, ty)
+    });
 
     let mut cx = SigLowerCtx {
         db,
@@ -260,6 +289,7 @@ pub fn fn_signature<'db>(
         module,
         source_root,
         generics: generics_map,
+        self_type: copied_self_type,
     };
 
     let param_tys: Vec<_> = src[data.params]
@@ -307,6 +337,7 @@ pub fn struct_signature<'db>(
         module,
         source_root,
         generics: generics_map,
+        self_type: None,
     };
 
     let field_sigs: Vec<_> = src[data.fields]
@@ -344,6 +375,7 @@ pub fn enum_signature<'db>(
         module,
         source_root,
         generics: generics_map,
+        self_type: None,
     };
 
     let variant_sigs: Vec<_> = src[data.variants]
