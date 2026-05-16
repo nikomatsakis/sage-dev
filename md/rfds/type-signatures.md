@@ -7,6 +7,9 @@
 - [Relative span model](./relative-span-model.md) — `RelativeSpan` on signature types
 - [Tuple struct constructors](./tuple-struct-ctors.md) — `TupleStructCtor` memmap entry and `SymbolData` variant
 
+**Depended on by:**
+- [Per-kind symbol data](./per-kind-symbol-data.md) — `SymbolData` enum migration using the per-kind wrappers defined here
+
 ## Goal
 
 Introduce the `Ty` type representation, per-kind symbol wrappers (`FnSymbol`, `StructSymbol`, ...), and `signature` queries that produce resolved type information for items. This is the foundation for type checking — everything downstream (inference, field/method resolution, trait solving) consumes signatures.
@@ -830,6 +833,34 @@ These tests fail initially (the new `SymbolData` variants don't exist). Write th
 **Implementation.** Implement the `TyFolder` trait, `default_fold_ty`, `fold_slice`. Implement `Instantiate`.
 
 **Verify.** All new tests pass.
+
+### Step H: Remove legacy `params`/`ret_type` fields from `FnAst`
+
+`FnAst` currently carries both the old per-field tracked fields (`params: Vec<Param<'db>>`, `ret_type: Option<TypeRef<'db>>`) and the new `signature: FnSigAst<'db>` field side by side. All signature consumers should now read from the `signature` stash.
+
+**Implementation.** Remove `params` and `ret_type` from `FnAst`. Update all callers to read from the signature stash instead. Similarly audit `StructAst`, `EnumAst`, and other items for any legacy per-field tracked fields that are superseded by their signature stash.
+
+**Verify.** All existing tests still pass. The old salsa-tracked `Param` type in `types.rs` may become dead code — delete it if so.
+
+### Step I: Add `self_type` to `SigLowerCtx`
+
+`SigLowerCtx` currently has no way to resolve `Self` in method signatures inside impl blocks. Resolved decision #2 calls for an `Option<Ptr<Ty<'db>>>` self type, but it is not yet implemented.
+
+**Implementation.** Add `self_type: Option<Ptr<Ty<'db>>>` to `SigLowerCtx`. In `lower_path_type`, check for the single-segment name `Self` (after generic params, before primitives) and return the self type if present. Callers that lower impl-block methods pass the impl's self type; free-function callers pass `None`. Update the `SigLowerCtx` definition in the Layer 3 design section to include this field.
+
+**Tests.** Write a test with `impl Foo { fn bar(&self) -> Self { ... } }` and verify the signature resolves `Self` to `Adt(Foo, [])`. Write a test for a generic impl: `impl<T> Wrapper<T> { fn get(&self) -> T }` and verify `Self` resolves to `Adt(Wrapper, [BoundVar(0,0)])`.
+
+### Step J: Extract `SymbolData` migration to per-kind-symbol-data RFD
+
+Layer 2 of this RFD defines both the per-kind wrapper types (`FnSymbol`, `StructSymbol`, ...) and the `SymbolData` enum migration. The [per-kind-symbol-data RFD](./per-kind-symbol-data.md) now covers the `SymbolData` migration as its own scope.
+
+**Implementation.** Remove the `SymbolData` enum definition, `TupleStructCtor` migration details, and caller-migration discussion from this RFD's Layer 2 section. Retain only the wrapper type definitions and the `define_kind_symbol!` macro. Update Step E in this plan to match — it should only cover adding the wrapper types, not rewriting `SymbolData` or migrating callers. Add a forward reference: "The `SymbolData` enum migration is covered by [per-kind-symbol-data](./per-kind-symbol-data.md)."
+
+### Step K: Update `Binder` note and mark completed steps
+
+The note at the `Binder<T>` definition (Layer 1) describes the `AllocStashData` derive macro limitation as an open implementation choice. The manual `unsafe impl` approach was chosen (`#[repr(C)]` + `PhantomData`). Update the note to reflect the decision taken.
+
+Mark steps A, D, E (wrappers only), F, and G as complete. Annotate steps B and C with their current progress.
 
 ## Resolved design decisions
 
