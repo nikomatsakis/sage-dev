@@ -12,12 +12,14 @@ pub mod name;
 pub mod resolve;
 pub mod resolved;
 pub mod sig_ast;
+pub mod sig_lower;
 pub mod source;
 pub mod span;
 pub mod symbol;
 pub mod tcx;
 mod ts_helpers;
 pub mod ty;
+pub mod ty_fold;
 pub mod types;
 
 /// The salsa database trait for sage-ir.

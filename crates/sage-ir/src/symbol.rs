@@ -98,3 +98,90 @@ impl From<ModExt> for SymExt {
         SymExt::new(ext.crate_num, ext.def_index)
     }
 }
+
+// ---------------------------------------------------------------------------
+// Per-kind symbol wrappers
+// ---------------------------------------------------------------------------
+
+macro_rules! define_kind_symbol {
+    (
+        $(#[$meta:meta])*
+        $vis:vis struct $Name:ident, $AstTy:ty, $DataName:ident;
+    ) => {
+        $(#[$meta])*
+        #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+        $vis struct $Name<'db> {
+            data: $DataName<'db>,
+        }
+
+        #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+        enum $DataName<'db> {
+            Ast($AstTy),
+            Ext(SymExt),
+        }
+
+        impl<'db> $Name<'db> {
+            pub fn ast(ast: $AstTy) -> Self {
+                Self { data: $DataName::Ast(ast) }
+            }
+
+            pub fn ext(ext: SymExt) -> Self {
+                Self { data: $DataName::Ext(ext) }
+            }
+
+            pub fn as_ast(self) -> Option<$AstTy> {
+                match self.data {
+                    $DataName::Ast(ast) => Some(ast),
+                    $DataName::Ext(_) => None,
+                }
+            }
+
+            pub fn as_ext(self) -> Option<SymExt> {
+                match self.data {
+                    $DataName::Ast(_) => None,
+                    $DataName::Ext(ext) => Some(ext),
+                }
+            }
+        }
+
+        impl<'db> From<$AstTy> for $Name<'db> {
+            fn from(ast: $AstTy) -> Self {
+                Self::ast(ast)
+            }
+        }
+
+        impl From<SymExt> for $Name<'_> {
+            fn from(ext: SymExt) -> Self {
+                Self::ext(ext)
+            }
+        }
+    };
+}
+
+define_kind_symbol! {
+    pub struct FnSymbol, crate::item::FnAst<'db>, FnSymbolData;
+}
+
+define_kind_symbol! {
+    pub struct StructSymbol, crate::item::StructAst<'db>, StructSymbolData;
+}
+
+define_kind_symbol! {
+    pub struct EnumSymbol, crate::item::EnumAst<'db>, EnumSymbolData;
+}
+
+define_kind_symbol! {
+    pub struct TraitSymbol, crate::item::TraitAst<'db>, TraitSymbolData;
+}
+
+define_kind_symbol! {
+    pub struct TypeAliasSymbol, crate::item::TypeAliasAst<'db>, TypeAliasSymbolData;
+}
+
+define_kind_symbol! {
+    pub struct ConstSymbol, crate::item::ConstAst<'db>, ConstSymbolData;
+}
+
+define_kind_symbol! {
+    pub struct StaticSymbol, crate::item::StaticAst<'db>, StaticSymbolData;
+}
