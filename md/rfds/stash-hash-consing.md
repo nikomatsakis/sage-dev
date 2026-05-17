@@ -180,21 +180,100 @@ Note: the fingerprint-based `Ord` is consistent but non-semantic — it has no r
 
 ## Implementation plan
 
-### Step 1: `StashHasher` trait and hash-consed allocation
+Each phase compiles and passes tests independently.
 
-Add the `StashHasher` trait extending `Hasher`. Implement `InternHasher<H>`. Update `StashHash` to use `impl StashHasher` instead of `impl Hasher`. Update the `AllocStashData` derive to generate `StashHash` impls against `StashHasher`.
+### Phase 1: `StashHasher` trait and `StashHash` migration
 
-Unify `alloc` and `intern` into a single hash-consing path. Add inline FxHash storage at the tail of each buffer entry. Add the collision chain structure. Enforce minimum 4-byte alignment in `push_raw`.
+**Changes:**
+- Add the `StashHasher` trait (extending `Hasher`) to `sage-stash`.
+- Add `InternHasher<H>` — for now, a thin wrapper that panics on `stash_hash_ptr`/`stash_hash_slice` (no inline hashes exist yet). This lets the trait compile and be used for leaf types.
+- Change `StashHash` from `fn stash_hash<H: Hasher>(... state: &mut H)` to `fn stash_hash(... hasher: &mut impl StashHasher)`.
+- Update the blanket `StashDirect` impl, the manual `Ptr<T>`/`Slice<T>`/`Option<T>` impls, and all callers.
+- `Ptr<T>`/`Slice<T>` `StashHash` impls delegate to `hasher.stash_hash_ptr()`/`hasher.stash_hash_slice()` (which panic for now — they aren't called until Phase 3).
 
-Remove `StashEq` and `StashOrd` — standard `PartialEq`/`Ord` on index-based `Ptr` equality is now correct.
+**Tests:**
+- `stash_hasher_scalar`: hash a `u32` through `InternHasher<FxHasher>`, verify it produces the same value as hashing directly through `FxHasher`.
+- `stash_hasher_stash_direct`: hash a `StashDirect` type through `InternHasher`, verify it delegates to `Hash`.
 
-Verify all existing tests pass.
+### Phase 2: Derive macro generates `StashHash`
 
-### Step 2: `Fingerprint` and `Stashed` equality
+**Changes:**
+- Extend `AllocStashData` (and `InternStashData`) derive to emit a `StashHash` impl for the type. For each field: if the field type is `Ptr<T>`, emit `hasher.stash_hash_ptr(self.field, stash)`; if `Slice<T>`, emit `hasher.stash_hash_slice(self.field, stash)`; otherwise emit `self.field.hash(hasher)`.
+- This requires the derive macro to distinguish `Ptr`/`Slice` fields from others. Strategy: match on the path segments of the field type (the same approach used by serde and similar derives).
 
-Add `FingerprintHasher` using XXH3-128 with per-entry caching. Add the `Fingerprint` type. Compute fingerprints at `Stashed` construction. Change `Stashed::PartialEq`, `Stashed::Hash`, and `Stashed::Ord` to use the fingerprint exclusively.
+**Tests:**
+- `derived_stash_hash_leaf_struct`: define a test struct with only scalar fields (e.g., `Point { x: i32, y: i32 }`), hash it through `InternHasher<FxHasher>`, verify the result matches hashing each field sequentially through `FxHasher`.
+- `derived_stash_hash_with_ptr_field`: define a struct with a `Ptr` field. Constructing the `StashHash` impl should compile (the `stash_hash_ptr` call won't execute in this test since we don't call it).
 
-Remove `Stash::PartialEq` (byte comparison) — it is no longer used.
+### Phase 3: `Ptr` as `NonZeroU32`, `EntryIndex`/`BufOffset` newtypes, `DANGLING` removal
+
+**Changes:**
+- Introduce `EntryIndex(NonZeroU32)` newtype (stores index + 1). Change `Ptr<T>` and `Slice<T>` to use `EntryIndex` instead of raw `u32`.
+- Remove `Ptr::DANGLING`.
+- Introduce `BufOffset(u32)` newtype for buffer byte offsets.
+- Update `Entry`, `push_raw`, `Index` impls, and all internal code to use the newtypes.
+
+**Tests:**
+- `option_ptr_size`: `assert_eq!(size_of::<Option<Ptr<T>>>(), size_of::<Ptr<T>>())` — verifies niche optimization.
+- All existing alloc/intern/index tests continue to pass (regression).
+
+### Phase 4: Buffer layout and hash-consed allocation
+
+**Changes:**
+- Change `push_raw` to enforce `max(4, align_of::<T>())` minimum alignment.
+- Change buffer layout: append the FxHash (`u64`) at the tail of each entry after the data. Store `BufOffset` in each `Entry` for the inline hash location (or compute from entry offset + data size).
+- Build `InternHasher<FxHasher>` to read child inline hashes: `stash_hash_ptr` looks up the entry by `Ptr` index, reads the `u64` at the tail of that entry, writes those bytes. `stash_hash_slice` does the same.
+- Unify `alloc` and `intern` into a single method (e.g., `add` / `add_slice`). Every allocation: compute `StashHash` via `InternHasher<FxHasher>`, look up `(TypeId, hash)` in the intern hashmap, walk the collision chain comparing via `PartialEq`, return existing `Ptr` on match or allocate and insert on miss.
+- Add the collision chain structure (low-bit tagging on `BufOffset`, optional `next_offset` at the tail).
+- Update the `InternStashData` / `AllocStashData` trait bounds: both now require `StashHash + PartialEq`. The distinction between `alloc` and `intern` disappears — keep the old method names as aliases during migration if needed.
+
+**Tests:**
+- `hash_cons_dedup`: allocate the same `Point` value twice via the new unified path, assert the two `Ptr`s are equal (same index). This is the core hash-consing invariant — currently this test would *fail* with the old `alloc`.
+- `hash_cons_distinct`: allocate two different `Point` values, assert the `Ptr`s differ.
+- `hash_cons_slice_dedup`: allocate the same slice twice, assert the `Slice`s are equal.
+- `hash_cons_slice_distinct`: allocate different slices, assert the `Slice`s differ.
+- `hash_cons_compound_type`: define a struct with `Ptr` fields (e.g., `Pair { a: Ptr<Point>, b: Ptr<Point> }`). Allocate children first, then the parent twice with the same children — assert the parent `Ptr`s are equal.
+- `hash_cons_collision_chain`: force a hash collision (e.g., two types that produce the same FxHash — can be done by mocking or by finding a natural collision with crafted field values). Verify both values are stored and retrievable.
+- `intern_hasher_reads_inline_hash`: allocate a value, then hash it through `InternHasher<FxHasher>`, verify `stash_hash_ptr` returns the stored inline hash.
+- Update existing test `alloc_same_value_produces_distinct_ptrs` — this now produces *equal* ptrs (hash-consing). Rename to `alloc_same_value_deduplicates`.
+- Existing `intern_*` tests continue to pass unchanged.
+- Existing index/read-back tests continue to pass unchanged.
+
+### Phase 5: Remove `StashEq` and `StashOrd`
+
+**Changes:**
+- Remove the `StashEq`, `StashOrd` traits and all their impls (`Ptr<T>`, `Slice<T>`, `Option<T>`, `StashDirect` blanket).
+- Remove any callers of `stash_eq` / `stash_cmp` (grep the full codebase). With hash-consing, standard `PartialEq` (index-based for `Ptr`/`Slice`, derived for compounds) is correct.
+- Remove the `StashDirect` blankets for `StashEq`/`StashOrd` (keep the `StashHash` blanket and the marker trait).
+
+**Tests:**
+- Remove `stash_eq_*` tests that tested the old `StashEq` trait.
+- `ptr_eq_is_value_eq`: allocate two identical values, get two `Ptr`s, assert `p1 == p2` (index equality = value equality, the hash-consing guarantee).
+- `ptr_ne_is_value_ne`: allocate two different values, assert `p1 != p2`.
+- Full crate test suite passes.
+
+### Phase 6: `Fingerprint`, `FingerprintHasher`, and `Stashed` equality
+
+**Changes:**
+- Add `xxhash-rust` dependency (with `xxh3` feature) to `sage-stash`.
+- Add the `Fingerprint([u8; 16])` type with `Clone`, `PartialEq`, `Eq`, `PartialOrd`, `Ord`, `Hash`.
+- Add `FingerprintHasher` wrapping `XxHash128` + per-entry fingerprint cache. `stash_hash_ptr` checks cache by entry index; on miss, creates a sub-hasher, recurses, caches, writes fingerprint bytes into parent.
+- Add `fingerprint` field to `Stashed<T>`. Change `Stashed::new` to accept `T: StashHash`, compute the fingerprint via `FingerprintHasher`, store it.
+- Change `Stashed::PartialEq` to compare fingerprints.
+- Change `Stashed::Hash` to hash the fingerprint.
+- Add `Stashed::Ord` comparing fingerprints.
+- Remove `Stash::PartialEq` and `Stash::Hash` (byte-level) — no longer used.
+- Update `salsa::Update` impl for `Stashed<T>` if needed (it uses `PartialEq`, which now compares fingerprints).
+
+**Tests:**
+- `stashed_eq_same_content`: build two `Stashed<Ptr<Point>>` from independent stashes with the same logical content, assert equal. (Replaces the existing test, which relied on byte-level equality.)
+- `stashed_ne_different_content`: build two with different content, assert not equal.
+- `stashed_hash_consistent_with_eq`: two equal `Stashed` values produce the same `Hash` output.
+- `stashed_ord_consistent_with_eq`: two equal `Stashed` values compare `Ordering::Equal`.
+- `stashed_eq_compound_dag`: build a `Stashed` with a compound type that has shared DAG structure (same child `Ptr` referenced from multiple parents). Build the same structure in a second stash. Assert fingerprints are equal — verifying the `FingerprintHasher` cache handles DAG sharing correctly.
+- `stashed_eq_deep_tree`: build a `Stashed` with a deeply nested type (Ptr to struct containing Ptr to struct...). Assert two independent constructions are equal — exercises the recursive fingerprinting.
+- `fingerprint_deterministic`: compute the fingerprint of the same `Stashed` value twice, assert identical. (Sanity check that the hasher is deterministic.)
+- Existing `stashed_eq_*` and `stashed_slice_eq` tests continue to pass (behavior unchanged, implementation changed).
 
 ## Scope and non-goals
 
