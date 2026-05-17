@@ -1,4 +1,4 @@
-name: Xtask
+name: CI
 
 on:
   pull_request:
@@ -10,14 +10,16 @@ permissions:
   contents: read
 
 jobs:
-  # https://github.com/matklad/cargo-xtask
-  xtask:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-03-15
+          components: rustc-dev, rust-src, llvm-tools
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -25,4 +27,20 @@ jobs:
         run: |
           cargo install mdbook --locked
           cargo install mdbook-mermaid --locked
-      - run: cargo xtask ci
+      - run: cargo xtask ci lint
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          submodules: true
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-03-15
+          components: rustc-dev, rust-src, llvm-tools
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo xtask ci test

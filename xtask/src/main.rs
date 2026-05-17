@@ -12,7 +12,20 @@ fn main() -> Result<()> {
             codegen(check)
         }
         Some("tidy") => tidy(),
-        Some("ci") => ci(),
+        Some("ci") => {
+            match args.get(1).map(|s| s.as_str()) {
+                Some("lint") => ci_lint(),
+                Some("test") => ci_test(),
+                None => {
+                    ci_lint()?;
+                    ci_test()
+                }
+                Some(sub) => {
+                    eprintln!("unknown ci subcommand: {sub}");
+                    usage();
+                }
+            }
+        }
         Some(cmd) => {
             eprintln!("unknown command: {cmd}");
             usage();
@@ -22,7 +35,7 @@ fn main() -> Result<()> {
 }
 
 fn usage() -> ! {
-    eprintln!("usage: cargo xtask <codegen [--check] | tidy | ci>");
+    eprintln!("usage: cargo xtask <codegen [--check] | tidy | ci [lint|test]>");
     std::process::exit(1);
 }
 
@@ -62,12 +75,20 @@ fn tidy() -> Result<()> {
     Ok(())
 }
 
-/// Run all CI checks.
-fn ci() -> Result<()> {
+fn ci_lint() -> Result<()> {
     codegen(true)?;
     tidy()?;
     check_orphaned_chapters()?;
     check_book_build()?;
+    Ok(())
+}
+
+fn ci_test() -> Result<()> {
+    let sh = Shell::new()?;
+    let root = project_root();
+    let _dir = sh.push_dir(&root);
+    cmd!(sh, "cargo test --all --workspace").run()?;
+    println!("ci: all tests passed");
     Ok(())
 }
 

@@ -1,5 +1,6 @@
 #![feature(rustc_private)]
 #![feature(proc_macro_internals)]
+#![allow(internal_features)]
 
 extern crate rustc_driver;
 extern crate rustc_expand;
