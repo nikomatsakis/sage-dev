@@ -1,4 +1,4 @@
-use sage_stash::{AllocStashData, Ptr, Slice, Stashed};
+use sage_stash::{AllocStashData, Ptr, Slice, StashDirect, Stashed};
 
 use crate::name::Name;
 use crate::sig_ast::{PathAst, TypeRefAst};
@@ -92,6 +92,8 @@ pub enum Literal {
     Char,
 }
 
+impl StashDirect for Literal {}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum BinaryOp {
     Add,
@@ -114,12 +116,16 @@ pub enum BinaryOp {
     Ge,
 }
 
+impl StashDirect for BinaryOp {}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum UnaryOp {
     Not,
     Neg,
     Deref,
 }
+
+impl StashDirect for UnaryOp {}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct Stmt<'db> {

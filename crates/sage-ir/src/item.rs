@@ -1,3 +1,5 @@
+use sage_stash::StashDirect;
+
 use crate::body::FunctionBody;
 use crate::name::Name;
 use crate::sig_ast::*;
@@ -24,6 +26,8 @@ pub enum ItemAst<'db> {
     /// Unrecognized or unsupported item node.
     Error(AbsoluteSpan<'db>),
 }
+
+impl StashDirect for ItemAst<'_> {}
 
 impl<'db> ItemAst<'db> {
     pub fn absolute_span(&self, db: &'db dyn crate::Db) -> AbsoluteSpan<'db> {

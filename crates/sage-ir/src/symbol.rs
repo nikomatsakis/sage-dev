@@ -16,8 +16,6 @@ pub struct Symbol<'db> {
     data: SymbolData<'db>,
 }
 
-impl StashDirect for Symbol<'_> {}
-
 /// External symbol — a thin handle into rustc's metadata. Plain
 /// `Copy` struct, structural identity.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
@@ -41,6 +39,9 @@ pub enum SymbolData<'db> {
     TupleStructCtor(StructAst<'db>),
     Ext(SymExt),
 }
+
+impl StashDirect for SymbolData<'_> {}
+impl StashDirect for SymExt {}
 
 impl<'db> Symbol<'db> {
     pub fn ast(item: ItemAst<'db>) -> Self {

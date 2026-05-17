@@ -1,3 +1,5 @@
+use sage_stash::StashDirect;
+
 use crate::name::Name;
 use crate::span::RelativeSpan;
 
@@ -42,6 +44,8 @@ pub enum Mutability {
     Shared,
     Mut,
 }
+
+impl StashDirect for Mutability {}
 
 /// The syntactic form of an attribute.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
@@ -94,3 +98,5 @@ pub struct TokenTree<'db> {
     pub text: String,
     pub span: RelativeSpan,
 }
+
+impl StashDirect for TokenTree<'_> {}

@@ -3,7 +3,7 @@
 //! All types are stash-allocated (`Copy`, `AllocStashData`). They live in the
 //! same stash as the signature or body they belong to. No global interning.
 
-use sage_stash::{AllocStashData, Ptr, Slice, StashDirect};
+use sage_stash::{AllocStashData, Ptr, Slice};
 
 use crate::name::Name;
 use crate::symbol::Symbol;
@@ -54,8 +54,6 @@ pub enum IntTy {
     Isize,
 }
 
-impl StashDirect for IntTy {}
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub enum UintTy {
     U8,
@@ -66,15 +64,11 @@ pub enum UintTy {
     Usize,
 }
 
-impl StashDirect for UintTy {}
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub enum FloatTy {
     F32,
     F64,
 }
-
-impl StashDirect for FloatTy {}
 
 // ---------------------------------------------------------------------------
 // Lifetime
@@ -86,8 +80,6 @@ pub enum Lifetime {
     Static,
     Erased,
 }
-
-impl StashDirect for Lifetime {}
 
 // ---------------------------------------------------------------------------
 // Const
@@ -109,8 +101,6 @@ pub struct BoundVar {
     pub param_index: u32,
 }
 
-impl StashDirect for BoundVar {}
-
 // ---------------------------------------------------------------------------
 // Binder<T>
 // ---------------------------------------------------------------------------
@@ -123,13 +113,25 @@ pub struct Binder<'db, T> {
     _marker: std::marker::PhantomData<&'db ()>,
 }
 
-unsafe impl<'db, T: Copy + 'static> sage_stash::StashData<'db> for Binder<'db, T> {
+unsafe impl<'db, T: Copy + PartialEq + std::hash::Hash + sage_stash::StashHash + 'static>
+    sage_stash::StashData<'db> for Binder<'db, T>
+{
     fn static_type_id() -> std::any::TypeId {
         std::any::TypeId::of::<Binder<'static, T>>()
     }
 }
 
-impl<'db, T: Copy + 'static> AllocStashData<'db> for Binder<'db, T> {}
+impl<'db, T: Copy + PartialEq + std::hash::Hash + sage_stash::StashHash + 'static>
+    AllocStashData<'db> for Binder<'db, T>
+{
+}
+
+impl<'db, T: sage_stash::StashHash + std::hash::Hash> sage_stash::StashHash for Binder<'db, T> {
+    fn stash_hash(&self, stash: &sage_stash::Stash, hasher: &mut impl sage_stash::StashHasher) {
+        self.value.stash_hash(stash, hasher);
+        sage_stash::StashHash::stash_hash(&self.bound_vars, stash, hasher);
+    }
+}
 
 impl<'db, T> Binder<'db, T> {
     pub fn new(value: T, bound_vars: Slice<BoundVarInfo>) -> Self {
@@ -146,16 +148,12 @@ pub struct BoundVarInfo {
     pub kind: BoundVarKind,
 }
 
-impl StashDirect for BoundVarInfo {}
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub enum BoundVarKind {
     Type,
     Lifetime,
     Const,
 }
-
-impl StashDirect for BoundVarKind {}
 
 // ---------------------------------------------------------------------------
 // Signature types

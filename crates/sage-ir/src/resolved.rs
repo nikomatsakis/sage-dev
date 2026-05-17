@@ -1,4 +1,4 @@
-use sage_stash::{AllocStashData, Ptr, Slice, StashDirect, Stashed};
+use sage_stash::{AllocStashData, Ptr, Slice, Stashed};
 
 use crate::body::{BinaryOp, Literal, UnaryOp};
 use crate::name::Name;
@@ -18,13 +18,9 @@ pub enum Res<'db> {
     Err,
 }
 
-impl StashDirect for Res<'_> {}
-
 /// Identifies a local variable within a function body.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct LocalId(pub u32);
-
-impl StashDirect for LocalId {}
 
 /// Metadata about a local variable.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
@@ -32,8 +28,6 @@ pub struct LocalVar<'db> {
     pub name: Name<'db>,
     pub span: RelativeSpan,
 }
-
-impl StashDirect for LocalVar<'_> {}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct RBody<'db> {

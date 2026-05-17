@@ -4,3 +4,5 @@ pub struct Name<'db> {
     #[returns(ref)]
     pub text: String,
 }
+
+impl sage_stash::StashDirect for Name<'_> {}
