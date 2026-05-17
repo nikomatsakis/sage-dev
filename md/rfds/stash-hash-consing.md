@@ -1,6 +1,6 @@
 # RFD: Hash-consed stash with fingerprinted equality
 
-**Status:** Draft (revised)
+**Status:** Implemented
 
 **Depends on:**
 - [Module sym tree](./module-sym-tree.md) — stash architecture, `Stashed<T>`
@@ -173,10 +173,13 @@ Note: the fingerprint-based `Ord` is consistent but non-semantic — it has no r
 
 **Lazy computation.** The fingerprint is computed at `Stashed` construction, not during allocation. Most stash entries never become `Stashed` roots. The `FingerprintHasher` walks the reachable tree from the root, caching per-entry fingerprints (e.g., in an `FxHashMap<u32, Fingerprint>` or a `Vec<Option<Fingerprint>>` indexed by entry) to avoid re-traversing shared DAG substructure.
 
-## Current state (partially begun)
+## Implementation notes
 
-- The existing test `cross_stash_ptr_same_type_reads_wrong_data` documents current bad behavior (silently reading wrong data from the wrong stash).
-- The `StashHash` trait exists with manual impls for `Ptr<T>`, `Slice<T>`, `Option<T>`, and blanket impls for `StashDirect` types. The derive macro does not yet generate `StashHash` impls for compound types — this is new work required by this design.
+**Buffer layout deviation.** The design above specifies inline hashes embedded in the byte buffer with collision chains threaded via tagged `BufOffset`s. The implementation instead stores inline hashes in the `Entry` struct (same 8 bytes per entry, different location) and uses a `HashMap<(TypeId, u64, collision_index), EntryIndex>` for collision resolution. This is simpler but uses more memory per collision. See [Faster collision chains](./stash-faster-collision-chains.md) for the follow-up proposal to adopt the buffer-threaded design.
+
+**Derive macro calls `StashHash` for all fields.** The design says scalar fields call `self.field.hash(hasher)` and `Ptr`/`Slice` fields delegate to `stash_hash_ptr`/`stash_hash_slice`. The implementation calls `StashHash::stash_hash` uniformly for all fields — no type classification in the macro. This works because `StashHasher: Hasher` and the `StashDirect` blanket bridges `Hash` to `StashHash` for scalars.
+
+**`InternStashData` removed.** With all allocations hash-consed, the `alloc`/`intern` distinction is gone. `InternStashData` was removed; `AllocStashData` now requires `StashHash + PartialEq`. The `InternStashData` derive macro is kept as a legacy alias.
 
 ## Implementation plan
 
@@ -283,9 +286,10 @@ Each phase compiles and passes tests independently.
 - `Fingerprint` type and `Stashed::PartialEq`/`Hash`/`Ord` rewrite
 - Removal of `StashEq` (superseded by hash-consing + standard `PartialEq`)
 
-**Out of scope (deferred to a follow-up RFD):**
-- Debug-mode stash identity tagging on `Ptr`/`Slice` to catch cross-stash misuse
+**Out of scope (deferred to follow-up RFDs):**
+- Debug-mode stash identity tagging on `Ptr`/`Slice` to catch cross-stash misuse — see [stash-safety](./stash-safety.md)
 - Convenience APIs for cross-stash copying (`copy_into`, `instantiate_into`)
+- Buffer-threaded collision chains — see [stash-faster-collision-chains](./stash-faster-collision-chains.md)
 - Hardcoding a specific fingerprint algorithm — the design is algorithm-agnostic
 
 ## Open questions
