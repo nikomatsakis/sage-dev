@@ -155,9 +155,9 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
         self.parent.intern_name(node)
     }
 
-    fn abs_span(&self, node: Node<'_>) -> AbsoluteSpan {
+    fn abs_span(&self, node: Node<'_>) -> AbsoluteSpan<'db> {
         AbsoluteSpan {
-            file: self.parent.file,
+            source: self.parent.source,
             start: node.start_byte() as u32,
             end: node.end_byte() as u32,
         }

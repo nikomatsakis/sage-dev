@@ -1,6 +1,6 @@
 use sage_ir::db::Database;
 use sage_ir::item::*;
-use sage_ir::lower::file_item_tree;
+use sage_ir::lower::parse_source_file;
 use sage_ir::module::{CrateNum, DefIndex};
 use sage_ir::source::SourceFile;
 use sage_ir::symbol::*;
@@ -11,7 +11,7 @@ fn fn_symbol_from_ast() {
     let db = Database::default();
     db.attach(|db| {
         let file = SourceFile::new(db, "lib.rs".to_owned(), "fn foo() {}".to_owned());
-        let items = file_item_tree(db, file);
+        let items = parse_source_file(db, file);
         let fn_ast = match items[0] {
             ItemAst::Function(f) => f,
             _ => panic!("expected function"),
@@ -27,7 +27,7 @@ fn struct_symbol_from_ast() {
     let db = Database::default();
     db.attach(|db| {
         let file = SourceFile::new(db, "lib.rs".to_owned(), "struct Foo;".to_owned());
-        let items = file_item_tree(db, file);
+        let items = parse_source_file(db, file);
         let struct_ast = match items[0] {
             ItemAst::Struct(s) => s,
             _ => panic!("expected struct"),
@@ -51,7 +51,7 @@ fn trait_symbol_round_trip() {
     let db = Database::default();
     db.attach(|db| {
         let file = SourceFile::new(db, "lib.rs".to_owned(), "trait Foo {}".to_owned());
-        let items = file_item_tree(db, file);
+        let items = parse_source_file(db, file);
         let trait_ast = match items[0] {
             ItemAst::Trait(t) => t,
             _ => panic!("expected trait"),

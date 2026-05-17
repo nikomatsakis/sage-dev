@@ -2,7 +2,7 @@ mod common;
 
 use sage_ir::db::Database;
 use sage_ir::item::*;
-use sage_ir::lower::file_item_tree;
+use sage_ir::lower::parse_source_file;
 use sage_ir::module::ModSymbol;
 use sage_ir::resolve::SourceRoot;
 use sage_ir::sig_lower::*;
@@ -15,7 +15,7 @@ fn setup<'db>(db: &'db Database, src: &str) -> (SourceRoot, ModSymbol<'db>, Vec<
     let file = SourceFile::new(db, "lib.rs".to_owned(), src.to_owned());
     let source_root = SourceRoot::new(db, vec![file]);
     let root = ModSymbol::ast(ModAst::crate_root(db, file));
-    let items = file_item_tree(db, file).clone();
+    let items = parse_source_file(db, file).clone();
     (source_root, root, items)
 }
 

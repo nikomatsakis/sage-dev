@@ -2,7 +2,7 @@ mod common;
 
 use sage_ir::db::Database;
 use sage_ir::item::*;
-use sage_ir::lower::file_item_tree;
+use sage_ir::lower::parse_source_file;
 use sage_ir::sig_ast::*;
 use sage_ir::source::SourceFile;
 use salsa::Database as _;
@@ -16,7 +16,7 @@ fn fn_signature_generics_and_params() {
             "lib.rs".to_owned(),
             "fn foo<T, U>(x: T, y: &U) -> bool {}".to_owned(),
         );
-        let items = file_item_tree(db, file);
+        let items = parse_source_file(db, file);
         let func = match items[0] {
             ItemAst::Function(f) => f,
             _ => panic!("expected function"),
@@ -64,7 +64,7 @@ fn struct_signature_generics_and_fields() {
             "lib.rs".to_owned(),
             "struct Pair<A, B> { first: A, second: B }".to_owned(),
         );
-        let items = file_item_tree(db, file);
+        let items = parse_source_file(db, file);
         let s = match items[0] {
             ItemAst::Struct(s) => s,
             _ => panic!("expected struct"),
@@ -92,7 +92,7 @@ fn path_with_type_args() {
             "lib.rs".to_owned(),
             "fn bar(m: HashMap<String, Vec<u8>>) {}".to_owned(),
         );
-        let items = file_item_tree(db, file);
+        let items = parse_source_file(db, file);
         let func = match items[0] {
             ItemAst::Function(f) => f,
             _ => panic!("expected function"),
@@ -138,7 +138,7 @@ fn enum_signature_variants() {
             "lib.rs".to_owned(),
             "enum Color<T> { Red, Green { value: T }, Blue }".to_owned(),
         );
-        let items = file_item_tree(db, file);
+        let items = parse_source_file(db, file);
         let e = match items[0] {
             ItemAst::Enum(e) => e,
             _ => panic!("expected enum"),

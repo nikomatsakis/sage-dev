@@ -1,6 +1,6 @@
 use sage_ir::db::Database;
 use sage_ir::item::ItemAst;
-use sage_ir::lower::file_item_tree;
+use sage_ir::lower::parse_source_file;
 use sage_ir::name::Name;
 use sage_ir::source::SourceFile;
 use sage_ir::symbol::Symbol;
@@ -15,7 +15,7 @@ fn identity_fold() {
     let db = Database::default();
     db.attach(|db| {
         let file = SourceFile::new(db, "lib.rs".to_owned(), "struct Foo;".to_owned());
-        let items = file_item_tree(db, file);
+        let items = parse_source_file(db, file);
         let sym = match items[0] {
             ItemAst::Struct(s) => Symbol::ast(ItemAst::Struct(s)),
             _ => panic!("expected struct"),
@@ -166,7 +166,7 @@ fn instantiate_nested_type_args() {
             "lib.rs".to_owned(),
             "struct HashMap;\nstruct Vec;".to_owned(),
         );
-        let items = file_item_tree(db, file);
+        let items = parse_source_file(db, file);
         let hashmap_sym = Symbol::ast(items[0]);
         let vec_sym = Symbol::ast(items[1]);
 
