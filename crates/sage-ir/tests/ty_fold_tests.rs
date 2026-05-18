@@ -7,7 +7,7 @@ use sage_ir::symbol::Symbol;
 use sage_ir::ty::*;
 use sage_ir::ty_fold::*;
 use sage_ir::types::Mutability;
-use sage_stash::Stash;
+use sage_stash::{Stash, StashCopy};
 use salsa::Database as _;
 
 #[test]
@@ -36,8 +36,7 @@ fn identity_fold() {
         };
 
         let mut stash_b = Stash::new();
-        let mut folder = Identity::new(&stash_a, &mut stash_b);
-        let result = folder.fold_ty(ref_ty);
+        let result = ref_ty.stash_copy(&stash_a, &mut stash_b);
 
         match result.data {
             TyData::Ref(inner, Mutability::Shared, Lifetime::Erased) => match stash_b[inner].data {

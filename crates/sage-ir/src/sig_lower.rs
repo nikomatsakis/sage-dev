@@ -277,9 +277,8 @@ pub fn lower_fn_sig<'db>(
     let (generics_map, bound_vars) = build_generics_map(src, data.generics, &mut dst);
 
     let copied_self_type = self_type.map(|ty| {
-        use crate::ty_fold::{Identity, TyFolder, default_fold_ty};
-        let mut folder = Identity::new(self_type_src, &mut dst);
-        default_fold_ty(&mut folder, ty)
+        use sage_stash::StashCopy;
+        ty.stash_copy(self_type_src, &mut dst)
     });
 
     let mut cx = SigLowerCtx {

@@ -136,31 +136,6 @@ impl<'db> TyFolder<'db> for Instantiate<'_, 'db> {
 }
 
 // ---------------------------------------------------------------------------
-// Identity folder — copies types between stashes without transformation
-// ---------------------------------------------------------------------------
-
-pub struct Identity<'a> {
-    source: &'a Stash,
-    target: &'a mut Stash,
-}
-
-impl<'a> Identity<'a> {
-    pub fn new(source: &'a Stash, target: &'a mut Stash) -> Self {
-        Self { source, target }
-    }
-}
-
-impl<'db> TyFolder<'db> for Identity<'_> {
-    fn target(&mut self) -> &mut Stash {
-        self.target
-    }
-
-    fn source(&self) -> &Stash {
-        self.source
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Convenience: instantiate a Binder<FnSig> / Binder<StructSig>
 // ---------------------------------------------------------------------------
 
