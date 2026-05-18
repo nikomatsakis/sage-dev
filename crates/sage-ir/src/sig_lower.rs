@@ -31,60 +31,60 @@ struct SigLowerCtx<'a, 'db> {
 }
 
 impl<'a, 'db> SigLowerCtx<'a, 'db> {
-    fn lower_type_ref(&mut self, ty_ptr: Ptr<TypeRefAst<'db>>) -> Ptr<Ty<'db>> {
+    fn lower_ptr_type_ref(&mut self, ty_ptr: Ptr<TypeRefAst<'db>>) -> Ty<'db> {
         let ty = self.src[ty_ptr];
-        self.lower_type_ref_data(ty)
+        self.lower_type_ref(ty)
     }
 
-    fn lower_type_ref_data(&mut self, ty: TypeRefAst<'db>) -> Ptr<Ty<'db>> {
+    fn lower_type_ref(&mut self, ty: TypeRefAst<'db>) -> Ty<'db> {
         match ty.kind {
             TypeRefAstKind::Path(path_ptr) => self.lower_path_type(self.src[path_ptr]),
             TypeRefAstKind::Reference(inner, m) => {
-                let inner = self.lower_type_ref(inner);
-                self.dst.alloc(Ty {
+                let inner_ty = self.lower_ptr_type_ref(inner);
+                let inner = self.dst.alloc(inner_ty);
+                Ty {
                     data: TyData::Ref(inner, m, Lifetime::Erased),
-                })
+                }
             }
             TypeRefAstKind::Tuple(elems) => {
                 let tys: Vec<_> = self.src[elems]
                     .iter()
-                    .map(|e| {
-                        let ptr = self.lower_type_ref_data(*e);
-                        self.dst[ptr]
-                    })
+                    .map(|e| self.lower_type_ref(*e))
                     .collect();
                 let elems = self.dst.alloc_slice(&tys);
-                self.dst.alloc(Ty {
+                Ty {
                     data: TyData::Tuple(elems),
-                })
+                }
             }
             TypeRefAstKind::Slice(inner) => {
-                let inner = self.lower_type_ref(inner);
-                self.dst.alloc(Ty {
+                let inner_ty = self.lower_ptr_type_ref(inner);
+                let inner = self.dst.alloc(inner_ty);
+                Ty {
                     data: TyData::Slice(inner),
-                })
+                }
             }
             TypeRefAstKind::Array(inner) => {
-                let inner = self.lower_type_ref(inner);
-                self.dst.alloc(Ty {
+                let inner_ty = self.lower_ptr_type_ref(inner);
+                let inner = self.dst.alloc(inner_ty);
+                Ty {
                     data: TyData::Array(inner, Const::Literal(0)),
-                })
+                }
             }
-            TypeRefAstKind::Never => self.dst.alloc(Ty {
+            TypeRefAstKind::Never => Ty {
                 data: TyData::Never,
-            }),
-            TypeRefAstKind::Infer | TypeRefAstKind::Error => self.dst.alloc(Ty {
+            },
+            TypeRefAstKind::Infer | TypeRefAstKind::Error => Ty {
                 data: TyData::Error,
-            }),
+            },
         }
     }
 
-    fn lower_path_type(&mut self, path: PathAst<'db>) -> Ptr<Ty<'db>> {
+    fn lower_path_type(&mut self, path: PathAst<'db>) -> Ty<'db> {
         let segments = &self.src[path.segments];
         if segments.is_empty() {
-            return self.dst.alloc(Ty {
+            return Ty {
                 data: TyData::Error,
-            });
+            };
         }
 
         // Single-segment: check generic params first, then primitives, then resolve.
@@ -95,22 +95,22 @@ impl<'a, 'db> SigLowerCtx<'a, 'db> {
             // Generic param?
             for (gname, bv) in &self.generics {
                 if *gname == name {
-                    return self.dst.alloc(Ty {
+                    return Ty {
                         data: TyData::BoundVar(*bv),
-                    });
+                    };
                 }
             }
 
             // Self type in impl blocks?
             if name.text(self.db) == "Self" {
                 if let Some(self_ty) = self.self_type {
-                    return self.dst.alloc(self_ty);
+                    return self_ty;
                 }
             }
 
             // Primitive?
             if let Some(prim) = recognize_primitive(self.db, name) {
-                return self.dst.alloc(Ty { data: prim });
+                return Ty { data: prim };
             }
 
             // Resolve in module
@@ -122,12 +122,12 @@ impl<'a, 'db> SigLowerCtx<'a, 'db> {
                 name,
                 Namespace::Type,
             ) {
-                Ok(sym) => self.dst.alloc(Ty {
+                Ok(sym) => Ty {
                     data: TyData::Adt(sym, type_args),
-                }),
-                Err(_) => self.dst.alloc(Ty {
+                },
+                Err(_) => Ty {
                     data: TyData::Error,
-                }),
+                },
             };
         }
 
@@ -139,12 +139,12 @@ impl<'a, 'db> SigLowerCtx<'a, 'db> {
             .module
             .resolve_path(self.db, self.source_root, salsa_path, Namespace::Type)
         {
-            Ok(sym) => self.dst.alloc(Ty {
+            Ok(sym) => Ty {
                 data: TyData::Adt(sym, type_args),
-            }),
-            Err(_) => self.dst.alloc(Ty {
+            },
+            Err(_) => Ty {
                 data: TyData::Error,
-            }),
+            },
         }
     }
 
@@ -153,13 +153,7 @@ impl<'a, 'db> SigLowerCtx<'a, 'db> {
         if src_args.is_empty() {
             return self.dst.alloc_slice(&[]);
         }
-        let tys: Vec<_> = src_args
-            .iter()
-            .map(|a| {
-                let ptr = self.lower_type_ref_data(*a);
-                self.dst[ptr]
-            })
-            .collect();
+        let tys: Vec<_> = src_args.iter().map(|a| self.lower_type_ref(*a)).collect();
         self.dst.alloc_slice(&tys)
     }
 }
@@ -293,22 +287,20 @@ pub fn lower_fn_sig<'db>(
 
     let param_tys: Vec<_> = src[data.params]
         .iter()
-        .map(|p| {
-            let ptr = cx.lower_type_ref(p.ty);
-            cx.dst[ptr]
-        })
+        .map(|p| cx.lower_ptr_type_ref(p.ty))
         .collect();
     let params = cx.dst.alloc_slice(&param_tys);
 
-    let ret = match data.ret_type {
-        Some(ret_ptr) => cx.lower_type_ref(ret_ptr),
+    let ret_ty = match data.ret_type {
+        Some(ret_ptr) => cx.lower_ptr_type_ref(ret_ptr),
         None => {
             let unit = cx.dst.alloc_slice(&[]);
-            cx.dst.alloc(Ty {
+            Ty {
                 data: TyData::Tuple(unit),
-            })
+            }
         }
     };
+    let ret = cx.dst.alloc(ret_ty);
 
     let fn_sig = FnSig { params, ret };
     let binder = Binder::new(fn_sig, bound_vars);
@@ -342,7 +334,8 @@ pub fn struct_signature<'db>(
     let field_sigs: Vec<_> = src[data.fields]
         .iter()
         .map(|f| {
-            let ty = cx.lower_type_ref(f.ty);
+            let ty_val = cx.lower_ptr_type_ref(f.ty);
+            let ty = cx.dst.alloc(ty_val);
             FieldSig { name: f.name, ty }
         })
         .collect();
@@ -383,7 +376,8 @@ pub fn enum_signature<'db>(
             let field_sigs: Vec<_> = src[v.fields]
                 .iter()
                 .map(|f| {
-                    let ty = cx.lower_type_ref(f.ty);
+                    let ty_val = cx.lower_ptr_type_ref(f.ty);
+                    let ty = cx.dst.alloc(ty_val);
                     FieldSig { name: f.name, ty }
                 })
                 .collect();
