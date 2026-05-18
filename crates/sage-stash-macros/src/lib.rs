@@ -82,6 +82,8 @@ fn derive_arena_data_impl(input: TokenStream) -> TokenStream {
         quote! {}
     };
 
+    let stash_copy_body = generate_stash_copy_body(&input);
+
     quote! {
         unsafe impl<'db> ::sage_stash::StashData<'db> for #ty {
             fn static_type_id() -> ::core::any::TypeId {
@@ -98,6 +100,16 @@ fn derive_arena_data_impl(input: TokenStream) -> TokenStream {
                 hasher: &mut impl ::sage_stash::StashHasher,
             ) {
                 #stash_hash_body
+            }
+        }
+
+        impl #impl_generics ::sage_stash::StashCopy for #ty {
+            fn stash_copy(
+                &self,
+                source: &::sage_stash::Stash,
+                target: &mut ::sage_stash::Stash,
+            ) -> Self {
+                #stash_copy_body
             }
         }
     }
@@ -202,5 +214,102 @@ fn generate_stash_hash_fields(fields: &syn::Fields) -> proc_macro2::TokenStream 
             quote! { #(#stmts)* }
         }
         syn::Fields::Unit => quote! {},
+    }
+}
+
+// ---------------------------------------------------------------------------
+// StashCopy code generation
+// ---------------------------------------------------------------------------
+
+fn generate_stash_copy_body(input: &DeriveInput) -> proc_macro2::TokenStream {
+    match &input.data {
+        syn::Data::Struct(data) => generate_stash_copy_struct_fields(&data.fields),
+        syn::Data::Enum(data) => {
+            let arms: Vec<_> = data
+                .variants
+                .iter()
+                .map(|variant| {
+                    let variant_ident = &variant.ident;
+                    match &variant.fields {
+                        syn::Fields::Named(fields) => {
+                            let field_names: Vec<_> =
+                                fields.named.iter().map(|f| &f.ident).collect();
+                            let copy_exprs: Vec<_> = field_names
+                                .iter()
+                                .map(|fname| {
+                                    quote! { #fname: ::sage_stash::StashCopy::stash_copy(#fname, source, target) }
+                                })
+                                .collect();
+                            quote! {
+                                Self::#variant_ident { #(#field_names),* } => {
+                                    Self::#variant_ident { #(#copy_exprs),* }
+                                }
+                            }
+                        }
+                        syn::Fields::Unnamed(fields) => {
+                            let bindings: Vec<_> = (0..fields.unnamed.len())
+                                .map(|i| {
+                                    syn::Ident::new(
+                                        &format!("f{i}"),
+                                        proc_macro2::Span::call_site(),
+                                    )
+                                })
+                                .collect();
+                            let copy_exprs: Vec<_> = bindings
+                                .iter()
+                                .map(|binding| {
+                                    quote! { ::sage_stash::StashCopy::stash_copy(#binding, source, target) }
+                                })
+                                .collect();
+                            quote! {
+                                Self::#variant_ident(#(#bindings),*) => {
+                                    Self::#variant_ident(#(#copy_exprs),*)
+                                }
+                            }
+                        }
+                        syn::Fields::Unit => {
+                            quote! {
+                                Self::#variant_ident => Self::#variant_ident,
+                            }
+                        }
+                    }
+                })
+                .collect();
+            quote! {
+                match self {
+                    #(#arms)*
+                }
+            }
+        }
+        syn::Data::Union(_) => {
+            syn::Error::new_spanned(&input.ident, "StashCopy cannot be derived for unions")
+                .to_compile_error()
+        }
+    }
+}
+
+fn generate_stash_copy_struct_fields(fields: &syn::Fields) -> proc_macro2::TokenStream {
+    match fields {
+        syn::Fields::Named(named) => {
+            let field_copies: Vec<_> = named
+                .named
+                .iter()
+                .map(|f| {
+                    let fname = &f.ident;
+                    quote! { #fname: ::sage_stash::StashCopy::stash_copy(&self.#fname, source, target) }
+                })
+                .collect();
+            quote! { Self { #(#field_copies),* } }
+        }
+        syn::Fields::Unnamed(unnamed) => {
+            let field_copies: Vec<_> = (0..unnamed.unnamed.len())
+                .map(|i| {
+                    let idx = syn::Index::from(i);
+                    quote! { ::sage_stash::StashCopy::stash_copy(&self.#idx, source, target) }
+                })
+                .collect();
+            quote! { Self(#(#field_copies),*) }
+        }
+        syn::Fields::Unit => quote! { Self },
     }
 }

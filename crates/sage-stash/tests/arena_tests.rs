@@ -544,4 +544,49 @@ mod tests {
 
         assert_eq!(stashed1, stashed2);
     }
+
+    // -- StashCopy tests -----
+
+    #[test]
+    fn copy_into_simple() {
+        let mut src = Stash::new();
+        let p = src.alloc(Point { x: 10, y: 20 });
+        let stashed = Stashed::new(src, p);
+
+        let mut target = Stash::new();
+        let copied: Ptr<Point> = stashed.copy_into(&mut target);
+        assert_eq!(target[copied], Point { x: 10, y: 20 });
+    }
+
+    #[test]
+    fn copy_into_compound() {
+        #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+        struct Pair {
+            a: Ptr<Point>,
+            b: Ptr<Point>,
+        }
+
+        let mut src = Stash::new();
+        let a = src.alloc(Point { x: 1, y: 2 });
+        let b = src.alloc(Point { x: 3, y: 4 });
+        let pair = src.alloc(Pair { a, b });
+        let stashed = Stashed::new(src, pair);
+
+        let mut target = Stash::new();
+        let copied: Ptr<Pair> = stashed.copy_into(&mut target);
+        let p = target[copied];
+        assert_eq!(target[p.a], Point { x: 1, y: 2 });
+        assert_eq!(target[p.b], Point { x: 3, y: 4 });
+    }
+
+    #[test]
+    fn copy_into_with_slice() {
+        let mut src = Stash::new();
+        let pts = src.alloc_slice(&[Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]);
+        let stashed = Stashed::new(src, pts);
+
+        let mut target = Stash::new();
+        let copied: Slice<Point> = stashed.copy_into(&mut target);
+        assert_eq!(target[copied], [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]);
+    }
 }

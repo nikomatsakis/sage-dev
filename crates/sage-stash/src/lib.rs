@@ -278,6 +278,47 @@ impl StashDirect for i32 {}
 impl StashDirect for i64 {}
 
 // ---------------------------------------------------------------------------
+// StashCopy — deep-copy values between stashes
+// ---------------------------------------------------------------------------
+
+/// Deep-copy a value from one stash into another, recursing through
+/// `Ptr` and `Slice` fields so all referenced data is re-allocated
+/// in the target stash.
+pub trait StashCopy {
+    fn stash_copy(&self, source: &Stash, target: &mut Stash) -> Self;
+}
+
+impl<T: StashDirect> StashCopy for T {
+    fn stash_copy(&self, _source: &Stash, _target: &mut Stash) -> Self {
+        *self
+    }
+}
+
+impl<'db, T: StashData<'db> + StashCopy + AllocStashData<'db>> StashCopy for Ptr<T> {
+    fn stash_copy(&self, source: &Stash, target: &mut Stash) -> Self {
+        let value = source[*self];
+        let copied = value.stash_copy(source, target);
+        target.alloc(copied)
+    }
+}
+
+impl<'db, T: StashData<'db> + StashCopy + AllocStashData<'db>> StashCopy for Slice<T> {
+    fn stash_copy(&self, source: &Stash, target: &mut Stash) -> Self {
+        let values: Vec<_> = source[*self]
+            .iter()
+            .map(|v| v.stash_copy(source, target))
+            .collect();
+        target.alloc_slice(&values)
+    }
+}
+
+impl<T: StashCopy> StashCopy for Option<T> {
+    fn stash_copy(&self, source: &Stash, target: &mut Stash) -> Self {
+        self.as_ref().map(|v| v.stash_copy(source, target))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Fingerprint
 // ---------------------------------------------------------------------------
 
@@ -454,6 +495,13 @@ impl<T> Stashed<T> {
 
     pub fn stash(&self) -> &Stash {
         &self.stash
+    }
+
+    pub fn copy_into(&self, target: &mut Stash) -> T
+    where
+        T: StashCopy,
+    {
+        self.root.stash_copy(&self.stash, target)
     }
 }
 

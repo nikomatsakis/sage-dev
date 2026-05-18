@@ -133,6 +133,15 @@ impl<'db, T: sage_stash::StashHash + std::hash::Hash> sage_stash::StashHash for 
     }
 }
 
+impl<'db, T: sage_stash::StashCopy> sage_stash::StashCopy for Binder<'db, T> {
+    fn stash_copy(&self, source: &sage_stash::Stash, target: &mut sage_stash::Stash) -> Self {
+        Binder::new(
+            self.value.stash_copy(source, target),
+            self.bound_vars.stash_copy(source, target),
+        )
+    }
+}
+
 impl<'db, T> Binder<'db, T> {
     pub fn new(value: T, bound_vars: Slice<BoundVarInfo>) -> Self {
         Self {
