@@ -156,13 +156,7 @@ fn collect_unresolved_redirects_globs<'db>(
             }
             MemmapEntry::MacroUse(mu) => {
                 for exp in &mu.expansions {
-                    collect_unresolved_redirects_globs(
-                        db,
-                        module,
-                        &exp.entries,
-                        source_root,
-                        out,
-                    );
+                    collect_unresolved_redirects_globs(db, module, &exp.entries, source_root, out);
                 }
             }
             _ => {}

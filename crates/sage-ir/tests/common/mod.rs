@@ -379,7 +379,11 @@ fn fmt_entry(db: &dyn sage_ir::Db, entry: &MemmapEntry, indent: usize, out: &mut
     }
 }
 
-fn fmt_macro_use_state(db: &dyn sage_ir::Db, state: &sage_ir::memmap::MacroUseState, indent: usize) -> String {
+fn fmt_macro_use_state(
+    db: &dyn sage_ir::Db,
+    state: &sage_ir::memmap::MacroUseState,
+    indent: usize,
+) -> String {
     use sage_ir::memmap::MacroUseState;
     match state {
         MacroUseState::Unresolved => "Unresolved".to_owned(),

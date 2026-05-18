@@ -333,7 +333,10 @@ m!();
         // the same MacroExpansion identity (memoized by salsa)
         let exp0 = expand_macro(db, callee0, macro_uses[0].input);
         let exp0_again = expand_macro(db, callee0, macro_uses[0].input);
-        assert_eq!(exp0, exp0_again, "same callee+input should give same MacroExpansion");
+        assert_eq!(
+            exp0, exp0_again,
+            "same callee+input should give same MacroExpansion"
+        );
     });
 }
 

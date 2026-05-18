@@ -12,20 +12,18 @@ fn main() -> Result<()> {
             codegen(check)
         }
         Some("tidy") => tidy(),
-        Some("ci") => {
-            match args.get(1).map(|s| s.as_str()) {
-                Some("lint") => ci_lint(),
-                Some("test") => ci_test(),
-                None => {
-                    ci_lint()?;
-                    ci_test()
-                }
-                Some(sub) => {
-                    eprintln!("unknown ci subcommand: {sub}");
-                    usage();
-                }
+        Some("ci") => match args.get(1).map(|s| s.as_str()) {
+            Some("lint") => ci_lint(),
+            Some("test") => ci_test(),
+            None => {
+                ci_lint()?;
+                ci_test()
             }
-        }
+            Some(sub) => {
+                eprintln!("unknown ci subcommand: {sub}");
+                usage();
+            }
+        },
         Some(cmd) => {
             eprintln!("unknown command: {cmd}");
             usage();

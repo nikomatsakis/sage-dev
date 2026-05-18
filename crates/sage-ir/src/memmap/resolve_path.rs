@@ -224,16 +224,11 @@ fn resolve_macro_path_to_defs<'db>(
                     for exp in &mu.expansions {
                         for sub_entry in &exp.entries {
                             if let MemmapEntry::Item(ItemAst::Mod(_)) = sub_entry {
-                                if let Some(m) = item_as_child_module(
-                                    db,
-                                    sub_entry,
-                                    first,
-                                    source_root,
-                                    module,
-                                ) {
+                                if let Some(m) =
+                                    item_as_child_module(db, sub_entry, first, source_root, module)
+                                {
                                     let mut defs = Vec::new();
-                                    if let Some(def) =
-                                        walk_path_to_macro(db, m, source_root, rest)
+                                    if let Some(def) = walk_path_to_macro(db, m, source_root, rest)
                                     {
                                         defs.push(def);
                                     }

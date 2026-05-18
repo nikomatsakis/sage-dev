@@ -140,9 +140,7 @@ pub fn expand_macro<'db>(
                 body.clone()
             }
         }
-        MacroCallee::Builtin(_) | MacroCallee::Proc { .. } => {
-            String::new()
-        }
+        MacroCallee::Builtin(_) | MacroCallee::Proc { .. } => String::new(),
     };
     MacroExpansion::new(db, input, text)
 }
