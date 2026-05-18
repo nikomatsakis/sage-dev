@@ -4,9 +4,23 @@ use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::num::NonZeroU32;
 use std::ops::Index;
+#[cfg(debug_assertions)]
+use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
 pub use rustc_hash::FxHasher;
 pub use sage_stash_macros::AllocStashData;
+
+// ---------------------------------------------------------------------------
+// Debug-mode stash identity
+// ---------------------------------------------------------------------------
+
+#[cfg(debug_assertions)]
+static NEXT_STASH_ID: AtomicU32 = AtomicU32::new(1);
+
+#[cfg(debug_assertions)]
+fn next_stash_id() -> u32 {
+    NEXT_STASH_ID.fetch_add(1, AtomicOrdering::Relaxed)
+}
 
 // ---------------------------------------------------------------------------
 // Traits — arena-storable types
@@ -162,6 +176,8 @@ struct BufOffset(u32);
 #[derive(Debug)]
 pub struct Ptr<T> {
     index: EntryIndex,
+    #[cfg(debug_assertions)]
+    stash_id: u32,
     _marker: PhantomData<T>,
 }
 
@@ -194,6 +210,8 @@ impl<'db, T: StashData<'db> + StashHash> StashHash for Ptr<T> {
 #[derive(Debug)]
 pub struct Slice<T> {
     index: EntryIndex,
+    #[cfg(debug_assertions)]
+    stash_id: u32,
     _marker: PhantomData<T>,
 }
 
@@ -496,6 +514,8 @@ pub struct Stash {
     buf: Vec<u8>,
     entries: Vec<Entry>,
     intern_map: HashMap<InternKey, EntryIndex>,
+    #[cfg(debug_assertions)]
+    id: u32,
 }
 
 impl Stash {
@@ -504,6 +524,26 @@ impl Stash {
             buf: Vec::new(),
             entries: Vec::new(),
             intern_map: HashMap::new(),
+            #[cfg(debug_assertions)]
+            id: next_stash_id(),
+        }
+    }
+
+    fn make_ptr<T>(&self, index: EntryIndex) -> Ptr<T> {
+        Ptr {
+            index,
+            #[cfg(debug_assertions)]
+            stash_id: self.id,
+            _marker: PhantomData,
+        }
+    }
+
+    fn make_slice<T>(&self, index: EntryIndex) -> Slice<T> {
+        Slice {
+            index,
+            #[cfg(debug_assertions)]
+            stash_id: self.id,
+            _marker: PhantomData,
         }
     }
 
@@ -526,19 +566,13 @@ impl Stash {
                     debug_assert_eq!(entry.count, 1);
                     let existing = unsafe { self.read_one::<T>(entry.offset) };
                     if *existing == value {
-                        return Ptr {
-                            index: entry_idx,
-                            _marker: PhantomData,
-                        };
+                        return self.make_ptr(entry_idx);
                     }
                 }
                 None => {
                     let entry_idx = self.push_raw(&[value], type_id, content_hash);
                     self.intern_map.insert(key, entry_idx);
-                    return Ptr {
-                        index: entry_idx,
-                        _marker: PhantomData,
-                    };
+                    return self.make_ptr(entry_idx);
                 }
             }
         }
@@ -566,19 +600,13 @@ impl Stash {
                     let entry = &self.entries[entry_idx.get() as usize];
                     let existing = unsafe { self.read_slice::<T>(entry.offset, entry.count) };
                     if existing == values {
-                        return Slice {
-                            index: entry_idx,
-                            _marker: PhantomData,
-                        };
+                        return self.make_slice(entry_idx);
                     }
                 }
                 None => {
                     let entry_idx = self.push_raw(values, type_id, content_hash);
                     self.intern_map.insert(key, entry_idx);
-                    return Slice {
-                        index: entry_idx,
-                        _marker: PhantomData,
-                    };
+                    return self.make_slice(entry_idx);
                 }
             }
         }
@@ -638,6 +666,18 @@ impl Stash {
         );
         entry
     }
+
+    #[cfg(debug_assertions)]
+    fn validate_stash_id<T>(&self, handle_stash_id: u32) {
+        assert_eq!(
+            handle_stash_id,
+            self.id,
+            "stash identity mismatch: handle from stash {} used on stash {} (type `{}`)",
+            handle_stash_id,
+            self.id,
+            std::any::type_name::<T>(),
+        );
+    }
 }
 
 impl Default for Stash {
@@ -653,6 +693,8 @@ impl Default for Stash {
 impl<'db, T: StashData<'db>> Index<Ptr<T>> for Stash {
     type Output = T;
     fn index(&self, ptr: Ptr<T>) -> &T {
+        #[cfg(debug_assertions)]
+        self.validate_stash_id::<T>(ptr.stash_id);
         let entry = self.validate_entry::<T>(ptr.index, <T as StashData>::static_type_id());
         debug_assert_eq!(entry.count, 1);
         unsafe { self.read_one(entry.offset) }
@@ -662,6 +704,8 @@ impl<'db, T: StashData<'db>> Index<Ptr<T>> for Stash {
 impl<'db, T: StashData<'db>> Index<Slice<T>> for Stash {
     type Output = [T];
     fn index(&self, slice: Slice<T>) -> &[T] {
+        #[cfg(debug_assertions)]
+        self.validate_stash_id::<T>(slice.stash_id);
         let entry = self.validate_entry::<T>(slice.index, <T as StashData>::static_type_id());
         unsafe { self.read_slice(entry.offset, entry.count) }
     }

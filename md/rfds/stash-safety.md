@@ -1,6 +1,6 @@
 # RFD: Stash safety — cross-stash identity checking and convenience APIs
 
-**Status:** Draft
+**Status:** Step 1 implemented; Step 2 deferred
 
 **Depends on:**
 - [Hash-consed stash with fingerprinted equality](./stash-hash-consing.md) — hash-consing, `StashHasher`, `Fingerprint`

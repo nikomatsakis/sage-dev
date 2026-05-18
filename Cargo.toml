@@ -35,10 +35,6 @@ sage-stash = { version = "0.1.0", path = "crates/sage-stash" }
 rand = "0.10.1"
 
 [[bench]]
-name = "example_bench"
-harness = false
-
-[[bench]]
 name = "stash_bench"
 harness = false
 

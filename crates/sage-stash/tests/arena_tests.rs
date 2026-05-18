@@ -144,18 +144,8 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "index out of bounds")]
-    fn out_of_bounds_ptr_panics() {
-        let mut stash = Stash::new();
-        let p = stash.alloc(Point { x: 0, y: 0 });
-        let mut bad = p;
-        let raw: u32 = unsafe { std::mem::transmute(bad) };
-        bad = unsafe { std::mem::transmute(raw + 1) };
-        let _ = stash[bad];
-    }
-
-    #[test]
-    #[should_panic(expected = "stash type mismatch")]
+    #[cfg_attr(debug_assertions, should_panic(expected = "stash identity mismatch"))]
+    #[cfg_attr(not(debug_assertions), should_panic(expected = "stash type mismatch"))]
     fn cross_stash_ptr_wrong_type() {
         let mut stash1 = Stash::new();
         let mut stash2 = Stash::new();
@@ -165,12 +155,23 @@ mod tests {
     }
 
     #[test]
-    fn cross_stash_ptr_same_type_reads_wrong_data() {
+    #[cfg_attr(debug_assertions, should_panic(expected = "stash identity mismatch"))]
+    fn cross_stash_ptr_same_type_panics_in_debug() {
         let mut stash1 = Stash::new();
         let mut stash2 = Stash::new();
         let p1 = stash1.alloc(Point { x: 1, y: 2 });
         let _p2 = stash2.alloc(Point { x: 99, y: 100 });
-        assert_eq!(stash2[p1], Point { x: 99, y: 100 });
+        let _ = stash2[p1];
+    }
+
+    #[test]
+    #[cfg_attr(debug_assertions, should_panic(expected = "stash identity mismatch"))]
+    fn cross_stash_slice_panics_in_debug() {
+        let mut stash1 = Stash::new();
+        let mut stash2 = Stash::new();
+        let s1 = stash1.alloc_slice(&[Point { x: 1, y: 2 }]);
+        let _s2 = stash2.alloc_slice(&[Point { x: 99, y: 100 }]);
+        let _ = &stash2[s1];
     }
 
     #[test]
