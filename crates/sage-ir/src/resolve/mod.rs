@@ -381,7 +381,6 @@ fn module_frame_key(module: ModSymbol<'_>) -> u64 {
 }
 
 const FRAME_DEFINITION: u8 = 0;
-const FRAME_PATH_SYMBOL: u8 = 1;
 
 /// RAII guard that pushes a resolution frame on entry and pops on drop.
 struct FrameGuard {
@@ -563,15 +562,34 @@ impl<'db> ModSymbol<'db> {
         path: Path<'db>,
         final_ns: Namespace,
     ) -> Result<Symbol<'db>, ResolutionError> {
-        let Some(_guard) = FrameGuard::enter(
-            module_frame_key(self),
-            salsa::plumbing::AsId::as_id(&path),
-            FRAME_PATH_SYMBOL,
-        ) else {
-            return Err(ResolutionError::Unresolved);
-        };
-
         let segments = path.segments(db);
+        self.resolve_segments(db, source_root, segments, final_ns)
+    }
+
+    /// Walk a path and return the module it resolves to.
+    pub fn resolve_path_to_module(
+        self,
+        db: &'db dyn Db,
+        source_root: SourceRoot,
+        path: Path<'db>,
+    ) -> Result<ModSymbol<'db>, ResolutionError> {
+        let segments = path.segments(db);
+        self.resolve_segments_to_module(db, source_root, segments)
+    }
+
+    /// Resolve a slice of name segments to a symbol.
+    ///
+    /// For single-segment paths this is equivalent to `resolve_name` (full
+    /// fallback chain: module members → extern prelude → std prelude → intrinsics).
+    /// For multi-segment paths it dispatches the first segment then walks
+    /// the remainder.
+    pub fn resolve_segments(
+        self,
+        db: &'db dyn Db,
+        source_root: SourceRoot,
+        segments: &[Name<'db>],
+        final_ns: Namespace,
+    ) -> Result<Symbol<'db>, ResolutionError> {
         if segments.is_empty() {
             return Err(ResolutionError::Unresolved);
         }
@@ -594,22 +612,13 @@ impl<'db> ModSymbol<'db> {
         resolve_remainder(db, first_module, source_root, rest, final_ns)
     }
 
-    /// Walk a path and return the module it resolves to.
-    pub fn resolve_path_to_module(
+    /// Resolve a slice of name segments to a module.
+    pub fn resolve_segments_to_module(
         self,
         db: &'db dyn Db,
         source_root: SourceRoot,
-        path: Path<'db>,
+        segments: &[Name<'db>],
     ) -> Result<ModSymbol<'db>, ResolutionError> {
-        let Some(_guard) = FrameGuard::enter(
-            module_frame_key(self),
-            salsa::plumbing::AsId::as_id(&path),
-            FRAME_PATH_SYMBOL,
-        ) else {
-            return Err(ResolutionError::Unresolved);
-        };
-
-        let segments = path.segments(db);
         if segments.is_empty() {
             return Err(ResolutionError::Unresolved);
         }
@@ -620,12 +629,12 @@ impl<'db> ModSymbol<'db> {
     }
 
     /// Dispatch the first segment of a path.
-    fn dispatch_first_segment(
+    fn dispatch_first_segment<'s>(
         self,
         db: &'db dyn Db,
         source_root: SourceRoot,
-        segments: &'db [Name<'db>],
-    ) -> Result<(ModSymbol<'db>, &'db [Name<'db>]), ResolutionError> {
+        segments: &'s [Name<'db>],
+    ) -> Result<(ModSymbol<'db>, &'s [Name<'db>]), ResolutionError> {
         let first = segments[0];
         let first_text = first.text(db);
         let rest = &segments[1..];
