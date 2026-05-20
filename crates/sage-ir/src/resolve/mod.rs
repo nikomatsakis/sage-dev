@@ -219,17 +219,8 @@ pub fn resolve_module_path<'db>(
     source_root: SourceRoot,
     segments: &[&str],
 ) -> Option<ModSymbol<'db>> {
-    let mut current = root;
-    for seg_text in segments {
-        let name = Name::new(db, (*seg_text).to_owned());
-        // Use memmap-aware lookup so macro-created modules are visible.
-        let sym = current
-            .resolve_member(db, source_root, name, Namespace::Type)
-            .ok()
-            .or_else(|| definition(db, current, name))?;
-        current = symbol_to_module(db, sym, source_root, current)?;
-    }
-    Some(current)
+    let mut resolver = Resolver::new(db, source_root);
+    resolver.resolve_module_path(root, segments)
 }
 
 /// Extract the name from an item, if it has one.
@@ -299,9 +290,8 @@ pub fn module_use_imports<'db>(db: &'db dyn Db, module: ModSymbol<'db>) -> Vec<U
 
 /// Resolve a single name in a module's scope.
 ///
-/// This is a convenience wrapper for `resolve_path` when you already know
-/// you have a single-segment path. It's the same as building a one-segment
-/// `Path` and calling `resolve_path`, but avoids the allocation.
+/// Convenience function that creates a temporary `Resolver`. For repeated
+/// resolution calls, prefer creating a `Resolver` and calling its methods.
 pub fn resolve_name<'db>(
     db: &'db dyn Db,
     module: ModSymbol<'db>,
@@ -309,35 +299,310 @@ pub fn resolve_name<'db>(
     name: Name<'db>,
     ns: Namespace,
 ) -> Result<Symbol<'db>, ResolutionError> {
-    resolve_plain_name(db, module, source_root, name, ns)
+    let mut resolver = Resolver::new(db, source_root);
+    resolver.resolve_name(module, name, ns)
 }
 
-/// Core single-name resolution: module members → extern prelude → std prelude → intrinsics.
-fn resolve_plain_name<'db>(
-    db: &'db dyn Db,
+// ---------------------------------------------------------------------------
+// Resolver — stateful path resolver with cycle detection
+// ---------------------------------------------------------------------------
+
+/// An in-flight member lookup, used to detect cycles through mutual globs.
+#[derive(Clone, PartialEq, Eq)]
+struct InFlightQuery<'db> {
     module: ModSymbol<'db>,
+    name: Name<'db>,
+    ns: Namespace,
+}
+
+/// Stateful path resolver. Carries cycle-detection state so that mutual
+/// glob imports terminate instead of recursing infinitely.
+///
+/// Create one per top-level resolution request (e.g., per signature lowered
+/// or per body resolved). All resolution calls within that scope share the
+/// same cycle-detection context.
+pub struct Resolver<'db> {
+    db: &'db dyn Db,
     source_root: SourceRoot,
+    in_flight: Vec<InFlightQuery<'db>>,
+}
+
+impl<'db> Resolver<'db> {
+    pub fn new(db: &'db dyn Db, source_root: SourceRoot) -> Self {
+        Self {
+            db,
+            source_root,
+            in_flight: Vec::new(),
+        }
+    }
+
+    /// Resolve a single name in a module's scope.
+    ///
+    /// Full fallback chain: module members → extern prelude → std prelude → intrinsics.
+    pub fn resolve_name(
+        &mut self,
+        module: ModSymbol<'db>,
+        name: Name<'db>,
+        ns: Namespace,
+    ) -> Result<Symbol<'db>, ResolutionError> {
+        resolve_plain_name(self, module, name, ns)
+    }
+
+    /// Resolve a slice of name segments to a symbol.
+    pub fn resolve_segments(
+        &mut self,
+        module: ModSymbol<'db>,
+        segments: &[Name<'db>],
+        final_ns: Namespace,
+    ) -> Result<Symbol<'db>, ResolutionError> {
+        if segments.is_empty() {
+            return Err(ResolutionError::Unresolved);
+        }
+
+        if segments.len() == 1 {
+            return resolve_plain_name(self, module, segments[0], final_ns);
+        }
+
+        let (first_module, rest) = dispatch_first_segment(self, module, segments)?;
+
+        if rest.is_empty() {
+            return match first_module.data() {
+                ModSymbolData::Ext(ext) => Ok(Symbol::ext(SymExt::from(ext))),
+                ModSymbolData::Ast(_) => Err(ResolutionError::Unresolved),
+            };
+        }
+
+        resolve_remainder(self, first_module, rest, final_ns)
+    }
+
+    /// Resolve a salsa-interned Path to a symbol.
+    pub fn resolve_path(
+        &mut self,
+        module: ModSymbol<'db>,
+        path: Path<'db>,
+        final_ns: Namespace,
+    ) -> Result<Symbol<'db>, ResolutionError> {
+        let segments = path.segments(self.db);
+        self.resolve_segments(module, segments, final_ns)
+    }
+
+    /// Resolve a slice of name segments to a module.
+    pub fn resolve_segments_to_module(
+        &mut self,
+        module: ModSymbol<'db>,
+        segments: &[Name<'db>],
+    ) -> Result<ModSymbol<'db>, ResolutionError> {
+        if segments.is_empty() {
+            return Err(ResolutionError::Unresolved);
+        }
+
+        let (first_module, rest) = dispatch_first_segment(self, module, segments)?;
+        resolve_remainder_to_module(self, first_module, rest)
+    }
+
+    /// Resolve a salsa-interned Path to a module.
+    pub fn resolve_path_to_module(
+        &mut self,
+        module: ModSymbol<'db>,
+        path: Path<'db>,
+    ) -> Result<ModSymbol<'db>, ResolutionError> {
+        let segments = path.segments(self.db);
+        self.resolve_segments_to_module(module, segments)
+    }
+
+    /// Resolve a name in this module's direct contents (memmap-aware).
+    pub fn resolve_member(
+        &mut self,
+        module: ModSymbol<'db>,
+        name: Name<'db>,
+        ns: Namespace,
+    ) -> Result<Symbol<'db>, ResolutionError> {
+        resolve_member_impl(self, module, name, ns)
+    }
+
+    /// Resolve a module path from string segments (convenience for tests/debug).
+    pub fn resolve_module_path(
+        &mut self,
+        root: ModSymbol<'db>,
+        segments: &[&str],
+    ) -> Option<ModSymbol<'db>> {
+        let mut current = root;
+        for seg_text in segments {
+            let name = Name::new(self.db, (*seg_text).to_owned());
+            let sym = self
+                .resolve_member(current, name, Namespace::Type)
+                .ok()
+                .or_else(|| definition(self.db, current, name))?;
+            current = symbol_to_module(self.db, sym, self.source_root, current)?;
+        }
+        Some(current)
+    }
+
+    fn push_query(&mut self, query: InFlightQuery<'db>) -> bool {
+        if self.in_flight.contains(&query) {
+            return false;
+        }
+        self.in_flight.push(query);
+        true
+    }
+
+    fn pop_query(&mut self) {
+        self.in_flight.pop();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers used by Resolver
+// ---------------------------------------------------------------------------
+
+fn resolve_member_impl<'db>(
+    resolver: &mut Resolver<'db>,
+    module: ModSymbol<'db>,
     name: Name<'db>,
     ns: Namespace,
 ) -> Result<Symbol<'db>, ResolutionError> {
-    // 1 + 2: the module's own members (named > glob handled inside).
-    match module.resolve_member(db, source_root, name, ns) {
+    use crate::memmap::expanded_module;
+
+    let query = InFlightQuery { module, name, ns };
+    if !resolver.push_query(query) {
+        return Err(ResolutionError::Unresolved);
+    }
+
+    let db = resolver.db;
+    let source_root = resolver.source_root;
+
+    let result = match module.data() {
+        ModSymbolData::Ext(_) => {
+            definition_in_ns(db, module, name, ns).ok_or(ResolutionError::Unresolved)
+        }
+        ModSymbolData::Ast(ast) => {
+            let memmap = expanded_module(db, ast, source_root);
+            let mut named: Vec<Symbol<'db>> = Vec::new();
+            let mut glob_matches: Vec<Symbol<'db>> = Vec::new();
+
+            walk_entries(
+                resolver,
+                module,
+                memmap.entries(db),
+                name,
+                ns,
+                &mut named,
+                &mut glob_matches,
+            );
+
+            match named.len() {
+                1 => Ok(named[0]),
+                0 => match glob_matches.len() {
+                    0 => Err(ResolutionError::Unresolved),
+                    1 => Ok(glob_matches[0]),
+                    _ => Err(ResolutionError::Ambiguous),
+                },
+                _ => Err(ResolutionError::Ambiguous),
+            }
+        }
+    };
+
+    resolver.pop_query();
+    result
+}
+
+fn walk_entries<'db>(
+    resolver: &mut Resolver<'db>,
+    module: ModSymbol<'db>,
+    entries: &[crate::memmap::MemmapEntry<'db>],
+    name: Name<'db>,
+    ns: Namespace,
+    named: &mut Vec<Symbol<'db>>,
+    glob_matches: &mut Vec<Symbol<'db>>,
+) {
+    use crate::memmap::MemmapEntry;
+
+    let db = resolver.db;
+
+    for entry in entries {
+        match entry {
+            MemmapEntry::Item(item) => {
+                if item_name(db, *item) == Some(name) && item_in_namespace(db, *item, ns) {
+                    let sym = Symbol::ast(*item);
+                    if !named.contains(&sym) {
+                        named.push(sym);
+                    }
+                }
+            }
+            MemmapEntry::TupleStructCtor(s) => {
+                if s.name(db) == name && matches!(ns, Namespace::Value) {
+                    let sym = Symbol::tuple_struct_ctor(*s);
+                    if !named.contains(&sym) {
+                        named.push(sym);
+                    }
+                }
+            }
+            MemmapEntry::MacroDef(def) => {
+                if def.name(db) == name && matches!(ns, Namespace::Macro(_)) {
+                    let _ = def;
+                }
+            }
+            MemmapEntry::Redirect { name: n, target } => {
+                if *n == name {
+                    let segments = target.segments(db);
+                    if let Ok(sym) = resolver.resolve_segments(module, segments, ns) {
+                        if !named.contains(&sym) {
+                            named.push(sym);
+                        }
+                    }
+                }
+            }
+            MemmapEntry::Glob { path } => {
+                let segments = path.segments(db);
+                let Ok(target) = resolver.resolve_segments_to_module(module, segments) else {
+                    continue;
+                };
+                let sym = resolver.resolve_member(target, name, ns).ok();
+                if let Some(sym) = sym {
+                    if !glob_matches.contains(&sym) {
+                        glob_matches.push(sym);
+                    }
+                }
+            }
+            MemmapEntry::MacroUse(mu) => {
+                for exp in &mu.expansions {
+                    walk_entries(
+                        resolver,
+                        module,
+                        &exp.entries,
+                        name,
+                        ns,
+                        named,
+                        glob_matches,
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn resolve_plain_name<'db>(
+    resolver: &mut Resolver<'db>,
+    module: ModSymbol<'db>,
+    name: Name<'db>,
+    ns: Namespace,
+) -> Result<Symbol<'db>, ResolutionError> {
+    let db = resolver.db;
+
+    match resolver.resolve_member(module, name, ns) {
         Ok(sym) => return Ok(sym),
         Err(ResolutionError::Ambiguous) => return Err(ResolutionError::Ambiguous),
         Err(ResolutionError::Unresolved) => {}
     }
 
-    // 3. Extern prelude.
     if let Some(crate_num) = db.tcx().extern_crate(name.text(db)) {
         return Ok(Symbol::external(crate_num, crate::module::DefIndex(0)));
     }
 
-    // 4. Std prelude.
     if let Some(sym) = resolve_in_std_prelude(db, name, ns) {
         return Ok(sym);
     }
 
-    // 5. Intrinsics (lowest priority — shadowable by anything).
     if matches!(ns, Namespace::Type)
         && let Some(intrinsic) = Intrinsic::from_name(name.text(db))
     {
@@ -347,340 +612,54 @@ fn resolve_plain_name<'db>(
     Err(ResolutionError::Unresolved)
 }
 
-// ---------------------------------------------------------------------------
-// Cycle detection for MEM-map-aware path walking.
-// ---------------------------------------------------------------------------
+fn dispatch_first_segment<'db, 's>(
+    resolver: &mut Resolver<'db>,
+    module: ModSymbol<'db>,
+    segments: &'s [Name<'db>],
+) -> Result<(ModSymbol<'db>, &'s [Name<'db>]), ResolutionError> {
+    let db = resolver.db;
+    let source_root = resolver.source_root;
+    let first = segments[0];
+    let first_text = first.text(db);
+    let rest = &segments[1..];
 
-thread_local! {
-    /// In-flight resolution frames. Each frame is `(module_id_hash,
-    /// path_or_name_id, kind)` — duplicates short-circuit, preventing
-    /// infinite recursion through cyclic globs/redirects.
-    ///
-    /// `module_id_hash` is `(variant_tag, salsa_id_or_pair)` packed
-    /// into a `u64` because `ModSymbol` is no longer salsa-interned
-    /// and so doesn't have a salsa::Id of its own.
-    static IN_FLIGHT: std::cell::RefCell<Vec<(u64, salsa::Id, u8)>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-}
-
-fn module_frame_key(module: ModSymbol<'_>) -> u64 {
-    match module.data() {
-        ModSymbolData::Ast(ast) => {
-            let id_bits: u32 = salsa::plumbing::AsId::as_id(&ast)
-                .index()
-                .try_into()
-                .unwrap_or(u32::MAX);
-            // Tag = 0 for ast.
-            id_bits as u64
-        }
-        ModSymbolData::Ext(ext) => {
-            // Tag = 1 << 63 for ext; pack (cn, di) into the lower bits.
-            (1u64 << 63) | ((ext.crate_num.0 as u64) << 32) | (ext.def_index.0 as u64)
-        }
-    }
-}
-
-const FRAME_DEFINITION: u8 = 0;
-
-/// RAII guard that pushes a resolution frame on entry and pops on drop.
-struct FrameGuard {
-    active: bool,
-}
-
-impl FrameGuard {
-    fn enter(mod_key: u64, path_id: salsa::Id, kind: u8) -> Option<Self> {
-        let cycle = IN_FLIGHT.with(|cell| {
-            let mut borrowed = cell.borrow_mut();
-            if borrowed.contains(&(mod_key, path_id, kind)) {
-                true
-            } else {
-                borrowed.push((mod_key, path_id, kind));
-                false
+    match first_text.as_str() {
+        "" => {
+            if rest.is_empty() {
+                return Err(ResolutionError::Unresolved);
             }
-        });
-        if cycle {
-            None
-        } else {
-            Some(FrameGuard { active: true })
+            let crate_name = rest[0].text(db);
+            let cn = db
+                .tcx()
+                .extern_crate(crate_name)
+                .ok_or(ResolutionError::Unresolved)?;
+            let ext_mod = ModSymbol::ext(ModExt::new(cn, crate::module::DefIndex(0)));
+            Ok((ext_mod, &rest[1..]))
         }
-    }
-}
-
-impl Drop for FrameGuard {
-    fn drop(&mut self) {
-        if self.active {
-            IN_FLIGHT.with(|cell| {
-                cell.borrow_mut().pop();
-            });
-        }
-    }
-}
-
-/// Inherent resolution methods on `ModSymbol`.
-impl<'db> ModSymbol<'db> {
-    /// Resolve a name in this module's direct contents.
-    pub fn resolve_member(
-        self,
-        db: &'db dyn Db,
-        source_root: SourceRoot,
-        name: Name<'db>,
-        ns: Namespace,
-    ) -> Result<Symbol<'db>, ResolutionError> {
-        use crate::memmap::{MemmapEntry, expanded_module};
-
-        let frame_kind = match ns {
-            Namespace::Type => 0,
-            Namespace::Value => 1,
-            Namespace::Macro(MacroKind::Bang) => 2,
-            Namespace::Macro(MacroKind::Attr) => 3,
-            Namespace::Macro(MacroKind::Derive) => 4,
-        };
-        let Some(_guard) = FrameGuard::enter(
-            module_frame_key(self),
-            salsa::plumbing::AsId::as_id(&name),
-            FRAME_DEFINITION + frame_kind,
-        ) else {
-            return Err(ResolutionError::Unresolved);
-        };
-
-        let ast = match self.data() {
-            ModSymbolData::Ext(_) => {
-                return definition_in_ns(db, self, name, ns).ok_or(ResolutionError::Unresolved);
-            }
-            ModSymbolData::Ast(ast) => ast,
-        };
-
-        let memmap = expanded_module(db, ast, source_root);
-        let mut named: Vec<Symbol<'db>> = Vec::new();
-        let mut glob_matches: Vec<Symbol<'db>> = Vec::new();
-
-        fn walk<'db>(
-            db: &'db dyn Db,
-            module: ModSymbol<'db>,
-            source_root: SourceRoot,
-            entries: &[MemmapEntry<'db>],
-            name: Name<'db>,
-            ns: Namespace,
-            named: &mut Vec<Symbol<'db>>,
-            glob_matches: &mut Vec<Symbol<'db>>,
-        ) {
-            for entry in entries {
-                match entry {
-                    MemmapEntry::Item(item) => {
-                        if item_name(db, *item) == Some(name) && item_in_namespace(db, *item, ns) {
-                            let sym = Symbol::ast(*item);
-                            if !named.contains(&sym) {
-                                named.push(sym);
-                            }
-                        }
-                    }
-                    MemmapEntry::TupleStructCtor(s) => {
-                        if s.name(db) == name && matches!(ns, Namespace::Value) {
-                            let sym = Symbol::tuple_struct_ctor(*s);
-                            if !named.contains(&sym) {
-                                named.push(sym);
-                            }
-                        }
-                    }
-                    MemmapEntry::MacroDef(def) => {
-                        if def.name(db) == name && matches!(ns, Namespace::Macro(_)) {
-                            // No Symbol for local MacroDef yet; skip.
-                            let _ = def;
-                        }
-                    }
-                    MemmapEntry::Redirect { name: n, target } => {
-                        if *n == name {
-                            if let Ok(sym) = module.resolve_path(db, source_root, *target, ns) {
-                                if !named.contains(&sym) {
-                                    named.push(sym);
-                                }
-                            }
-                        }
-                    }
-                    MemmapEntry::Glob { path } => {
-                        let Ok(target) = module.resolve_path_to_module(db, source_root, *path)
-                        else {
-                            continue;
-                        };
-                        let sym = target.resolve_member(db, source_root, name, ns).ok();
-                        if let Some(sym) = sym {
-                            if !glob_matches.contains(&sym) {
-                                glob_matches.push(sym);
-                            }
-                        }
-                    }
-                    MemmapEntry::MacroUse(mu) => {
-                        for exp in &mu.expansions {
-                            walk(
-                                db,
-                                module,
-                                source_root,
-                                &exp.entries,
-                                name,
-                                ns,
-                                named,
-                                glob_matches,
-                            );
-                        }
-                    }
+        "crate" => Ok((module.crate_root(db), rest)),
+        "self" => Ok((module, rest)),
+        "super" => module
+            .parent(db)
+            .map(|p| (p, rest))
+            .ok_or(ResolutionError::Unresolved),
+        _ => {
+            if let Ok(sym) = resolver.resolve_member(module, first, Namespace::Type) {
+                if let Some(child_mod) = symbol_to_module(db, sym, source_root, module) {
+                    return Ok((child_mod, rest));
                 }
             }
-        }
-
-        walk(
-            db,
-            self,
-            source_root,
-            memmap.entries(db),
-            name,
-            ns,
-            &mut named,
-            &mut glob_matches,
-        );
-
-        match named.len() {
-            1 => Ok(named[0]),
-            0 => match glob_matches.len() {
-                0 => Err(ResolutionError::Unresolved),
-                1 => Ok(glob_matches[0]),
-                _ => Err(ResolutionError::Ambiguous),
-            },
-            _ => Err(ResolutionError::Ambiguous),
-        }
-    }
-
-    /// Walk a path and return the symbol it resolves to.
-    ///
-    /// For single-segment paths this is equivalent to `resolve_name` (full
-    /// fallback chain: module members → extern prelude → std prelude → intrinsics).
-    /// For multi-segment paths it dispatches the first segment then walks
-    /// the remainder.
-    pub fn resolve_path(
-        self,
-        db: &'db dyn Db,
-        source_root: SourceRoot,
-        path: Path<'db>,
-        final_ns: Namespace,
-    ) -> Result<Symbol<'db>, ResolutionError> {
-        let segments = path.segments(db);
-        self.resolve_segments(db, source_root, segments, final_ns)
-    }
-
-    /// Walk a path and return the module it resolves to.
-    pub fn resolve_path_to_module(
-        self,
-        db: &'db dyn Db,
-        source_root: SourceRoot,
-        path: Path<'db>,
-    ) -> Result<ModSymbol<'db>, ResolutionError> {
-        let segments = path.segments(db);
-        self.resolve_segments_to_module(db, source_root, segments)
-    }
-
-    /// Resolve a slice of name segments to a symbol.
-    ///
-    /// For single-segment paths this is equivalent to `resolve_name` (full
-    /// fallback chain: module members → extern prelude → std prelude → intrinsics).
-    /// For multi-segment paths it dispatches the first segment then walks
-    /// the remainder.
-    pub fn resolve_segments(
-        self,
-        db: &'db dyn Db,
-        source_root: SourceRoot,
-        segments: &[Name<'db>],
-        final_ns: Namespace,
-    ) -> Result<Symbol<'db>, ResolutionError> {
-        if segments.is_empty() {
-            return Err(ResolutionError::Unresolved);
-        }
-
-        // Single-segment: use the full resolve_plain_name chain.
-        if segments.len() == 1 {
-            return resolve_plain_name(db, self, source_root, segments[0], final_ns);
-        }
-
-        // Multi-segment: dispatch first segment then walk remainder.
-        let (first_module, rest) = self.dispatch_first_segment(db, source_root, segments)?;
-
-        if rest.is_empty() {
-            return match first_module.data() {
-                ModSymbolData::Ext(ext) => Ok(Symbol::ext(SymExt::from(ext))),
-                ModSymbolData::Ast(_) => Err(ResolutionError::Unresolved),
-            };
-        }
-
-        resolve_remainder(db, first_module, source_root, rest, final_ns)
-    }
-
-    /// Resolve a slice of name segments to a module.
-    pub fn resolve_segments_to_module(
-        self,
-        db: &'db dyn Db,
-        source_root: SourceRoot,
-        segments: &[Name<'db>],
-    ) -> Result<ModSymbol<'db>, ResolutionError> {
-        if segments.is_empty() {
-            return Err(ResolutionError::Unresolved);
-        }
-
-        let (first_module, rest) = self.dispatch_first_segment(db, source_root, segments)?;
-
-        resolve_remainder_to_module(db, first_module, source_root, rest)
-    }
-
-    /// Dispatch the first segment of a path.
-    fn dispatch_first_segment<'s>(
-        self,
-        db: &'db dyn Db,
-        source_root: SourceRoot,
-        segments: &'s [Name<'db>],
-    ) -> Result<(ModSymbol<'db>, &'s [Name<'db>]), ResolutionError> {
-        let first = segments[0];
-        let first_text = first.text(db);
-        let rest = &segments[1..];
-
-        match first_text.as_str() {
-            "" => {
-                if rest.is_empty() {
-                    return Err(ResolutionError::Unresolved);
-                }
-                let crate_name = rest[0].text(db);
-                let cn = db
-                    .tcx()
-                    .extern_crate(crate_name)
-                    .ok_or(ResolutionError::Unresolved)?;
+            if let Some(cn) = db.tcx().extern_crate(first_text) {
                 let ext_mod = ModSymbol::ext(ModExt::new(cn, crate::module::DefIndex(0)));
-                Ok((ext_mod, &rest[1..]))
+                return Ok((ext_mod, rest));
             }
-            "crate" => Ok((self.crate_root(db), rest)),
-            "self" => Ok((self, rest)),
-            "super" => self
-                .parent(db)
-                .map(|p| (p, rest))
-                .ok_or(ResolutionError::Unresolved),
-            _ => {
-                if let Ok(sym) = self.resolve_member(db, source_root, first, Namespace::Type) {
-                    if let Some(child_mod) = symbol_to_module(db, sym, source_root, self) {
-                        return Ok((child_mod, rest));
-                    }
-                }
-                if let Some(cn) = db.tcx().extern_crate(first_text) {
-                    let ext_mod = ModSymbol::ext(ModExt::new(cn, crate::module::DefIndex(0)));
-                    return Ok((ext_mod, rest));
-                }
-                Err(ResolutionError::Unresolved)
-            }
+            Err(ResolutionError::Unresolved)
         }
     }
 }
 
-/// Walk remaining path segments through modules, resolving the final one
-/// in `final_ns`. Exposed so callers that resolve the first segment via
-/// ribs (generics, Self, locals) can continue walking the tail.
-pub fn resolve_remainder<'db>(
-    db: &'db dyn Db,
+fn resolve_remainder<'db>(
+    resolver: &mut Resolver<'db>,
     start: ModSymbol<'db>,
-    source_root: SourceRoot,
     segments: &[Name<'db>],
     final_ns: Namespace,
 ) -> Result<Symbol<'db>, ResolutionError> {
@@ -695,9 +674,9 @@ pub fn resolve_remainder<'db>(
     for (i, seg) in segments.iter().enumerate() {
         let is_last = i == segments.len() - 1;
         let seg_ns = if is_last { final_ns } else { Namespace::Type };
-        let sym = current.resolve_member(db, source_root, *seg, seg_ns)?;
+        let sym = resolver.resolve_member(current, *seg, seg_ns)?;
         if !is_last {
-            current = symbol_to_module(db, sym, source_root, current)
+            current = symbol_to_module(resolver.db, sym, resolver.source_root, current)
                 .ok_or(ResolutionError::Unresolved)?;
         } else {
             return Ok(sym);
@@ -706,19 +685,16 @@ pub fn resolve_remainder<'db>(
     unreachable!("segments is non-empty and loop always returns on is_last")
 }
 
-/// Like `resolve_remainder`, but every segment is resolved in `Namespace::Type`
-/// and the result is a module.
-pub fn resolve_remainder_to_module<'db>(
-    db: &'db dyn Db,
+fn resolve_remainder_to_module<'db>(
+    resolver: &mut Resolver<'db>,
     start: ModSymbol<'db>,
-    source_root: SourceRoot,
     segments: &[Name<'db>],
 ) -> Result<ModSymbol<'db>, ResolutionError> {
     let mut current = start;
     for seg in segments {
-        let sym = current.resolve_member(db, source_root, *seg, Namespace::Type)?;
-        current =
-            symbol_to_module(db, sym, source_root, current).ok_or(ResolutionError::Unresolved)?;
+        let sym = resolver.resolve_member(current, *seg, Namespace::Type)?;
+        current = symbol_to_module(resolver.db, sym, resolver.source_root, current)
+            .ok_or(ResolutionError::Unresolved)?;
     }
     Ok(current)
 }
@@ -759,9 +735,8 @@ pub fn resolve_use_path_to_module_from_path<'db>(
     source_root: SourceRoot,
     path: Path<'db>,
 ) -> Option<ModSymbol<'db>> {
-    current_module
-        .resolve_path_to_module(db, source_root, path)
-        .ok()
+    let mut resolver = Resolver::new(db, source_root);
+    resolver.resolve_path_to_module(current_module, path).ok()
 }
 
 /// Try to convert a Symbol into a ModSymbol (for walking into child segments).

@@ -5,16 +5,15 @@ use crate::body::*;
 use crate::item::FnAst;
 use crate::module::ModSymbol;
 use crate::name::Name;
-use crate::resolve::{Namespace, SourceRoot, resolve_name};
+use crate::resolve::{Namespace, Resolver, SourceRoot};
 use crate::resolved::*;
 use crate::ribs::{RibEntry, Ribs};
 use crate::sig_ast::{PathAst, TypeRefAst, TypeRefAstKind};
 use crate::span::RelativeSpan;
 
 struct BodyResolver<'db> {
-    db: &'db dyn Db,
+    resolver: Resolver<'db>,
     module: ModSymbol<'db>,
-    source_root: SourceRoot,
     src: &'db Stash,
     out: Stash,
     locals: Vec<LocalVar<'db>>,
@@ -41,19 +40,19 @@ impl<'db> BodyResolver<'db> {
 
     // -- path resolution --
 
-    fn resolve_value_path(&self, path_ptr: Ptr<PathAst<'db>>) -> Res<'db> {
+    fn resolve_value_path(&mut self, path_ptr: Ptr<PathAst<'db>>) -> Res<'db> {
         self.resolve_path_ast(path_ptr, Namespace::Value)
     }
 
-    fn resolve_type_path(&self, path_ptr: Ptr<PathAst<'db>>) -> Res<'db> {
+    fn resolve_type_path(&mut self, path_ptr: Ptr<PathAst<'db>>) -> Res<'db> {
         self.resolve_path_ast(path_ptr, Namespace::Type)
     }
 
-    fn resolve_macro_path(&self, path_ptr: Ptr<PathAst<'db>>) -> Res<'db> {
+    fn resolve_macro_path(&mut self, path_ptr: Ptr<PathAst<'db>>) -> Res<'db> {
         self.resolve_path_ast(path_ptr, Namespace::Macro(crate::resolve::MacroKind::Bang))
     }
 
-    fn resolve_path_ast(&self, path_ptr: Ptr<PathAst<'db>>, ns: Namespace) -> Res<'db> {
+    fn resolve_path_ast(&mut self, path_ptr: Ptr<PathAst<'db>>, ns: Namespace) -> Res<'db> {
         let path = &self.src[path_ptr];
         let segments = &self.src[path.segments];
         if segments.is_empty() {
@@ -82,11 +81,7 @@ impl<'db> BodyResolver<'db> {
                         Res::Def(sym)
                     } else {
                         let names: Vec<_> = segments.iter().map(|s| s.name).collect();
-                        let salsa_path = crate::types::Path::new(self.db, names, path.span);
-                        match self
-                            .module
-                            .resolve_path(self.db, self.source_root, salsa_path, ns)
-                        {
+                        match self.resolver.resolve_segments(self.module, &names, ns) {
                             Ok(sym) => Res::Def(sym),
                             Err(_) => Res::Err,
                         }
@@ -96,20 +91,8 @@ impl<'db> BodyResolver<'db> {
         }
 
         // No rib hit — resolve via module-level resolution.
-        if rest.is_empty() {
-            return match resolve_name(self.db, self.module, self.source_root, first, ns) {
-                Ok(sym) => Res::Def(sym),
-                Err(_) => Res::Err,
-            };
-        }
-
-        // Multi-segment: build a salsa Path for resolve_path compatibility.
         let names: Vec<_> = segments.iter().map(|s| s.name).collect();
-        let salsa_path = crate::types::Path::new(self.db, names, path.span);
-        match self
-            .module
-            .resolve_path(self.db, self.source_root, salsa_path, ns)
-        {
+        match self.resolver.resolve_segments(self.module, &names, ns) {
             Ok(sym) => Res::Def(sym),
             Err(_) => Res::Err,
         }
@@ -485,9 +468,8 @@ pub fn resolve_body<'db>(
     let root_expr = &src_stash[body_data.root];
 
     let mut resolver = BodyResolver {
-        db,
+        resolver: Resolver::new(db, source_root),
         module,
-        source_root,
         src: src_stash,
         out: Stash::new(),
         locals: Vec::new(),

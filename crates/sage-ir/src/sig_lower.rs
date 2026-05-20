@@ -10,7 +10,7 @@ use crate::Db;
 use crate::item::{EnumAst, FnAst, StructAst};
 use crate::module::ModSymbol;
 use crate::name::Name;
-use crate::resolve::{Namespace, SourceRoot, resolve_name};
+use crate::resolve::{Namespace, Resolver, SourceRoot};
 use crate::ribs::{RibEntry, Ribs};
 use crate::sig_ast::*;
 use crate::symbol::{Intrinsic, Symbol, SymbolData};
@@ -21,11 +21,10 @@ use crate::ty::*;
 // ---------------------------------------------------------------------------
 
 struct SigLowerCtx<'a, 'db> {
-    db: &'db dyn Db,
+    resolver: Resolver<'db>,
+    module: ModSymbol<'db>,
     src: &'a Stash,
     dst: &'a mut Stash,
-    module: ModSymbol<'db>,
-    source_root: SourceRoot,
     ribs: Ribs<'db>,
 }
 
@@ -132,20 +131,10 @@ impl<'a, 'db> SigLowerCtx<'a, 'db> {
         }
 
         // No rib hit — resolve via module-level path resolution.
-        let sym = if rest.is_empty() {
-            resolve_name(
-                self.db,
-                self.module,
-                self.source_root,
-                first.name,
-                Namespace::Type,
-            )
-        } else {
-            let names: Vec<_> = segments.iter().map(|s| s.name).collect();
-            let salsa_path = crate::types::Path::new(self.db, names, path.span);
-            self.module
-                .resolve_path(self.db, self.source_root, salsa_path, Namespace::Type)
-        };
+        let names: Vec<_> = segments.iter().map(|s| s.name).collect();
+        let sym = self
+            .resolver
+            .resolve_segments(self.module, &names, Namespace::Type);
 
         match sym {
             Ok(sym) => self.symbol_to_ty(sym, type_args),
@@ -258,11 +247,10 @@ pub fn lower_fn_sig<'db>(
     }
 
     let mut cx = SigLowerCtx {
-        db,
+        resolver: Resolver::new(db, source_root),
+        module,
         src,
         dst: &mut dst,
-        module,
-        source_root,
         ribs,
     };
 
@@ -305,11 +293,10 @@ pub fn struct_signature<'db>(
     let bound_vars = build_generics_ribs(src, data.generics, &mut dst, &mut ribs);
 
     let mut cx = SigLowerCtx {
-        db,
+        resolver: Resolver::new(db, source_root),
+        module,
         src,
         dst: &mut dst,
-        module,
-        source_root,
         ribs,
     };
 
@@ -345,11 +332,10 @@ pub fn enum_signature<'db>(
     let bound_vars = build_generics_ribs(src, data.generics, &mut dst, &mut ribs);
 
     let mut cx = SigLowerCtx {
-        db,
+        resolver: Resolver::new(db, source_root),
+        module,
         src,
         dst: &mut dst,
-        module,
-        source_root,
         ribs,
     };
 

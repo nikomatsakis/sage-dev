@@ -5,7 +5,7 @@ use crate::item::ItemAst;
 use crate::module::{ModSymbol, ModSymbolData};
 use crate::name::Name;
 use crate::resolve::{
-    MacroKind, Namespace, SourceRoot, item_in_namespace, item_name,
+    MacroKind, Namespace, Resolver, SourceRoot, item_in_namespace, item_name,
     resolve_use_path_to_module_from_path,
 };
 use crate::types::Path;
@@ -173,12 +173,11 @@ fn target_resolves_to_nothing<'db>(
     // A redirect's target has no inherent namespace — try Type first,
     // then Value and Macro(Bang). If none resolves, the redirect is
     // truly unresolvable.
-    current_module
-        .resolve_path(db, source_root, path, Namespace::Type)
-        .or_else(|_| current_module.resolve_path(db, source_root, path, Namespace::Value))
-        .or_else(|_| {
-            current_module.resolve_path(db, source_root, path, Namespace::Macro(MacroKind::Bang))
-        })
+    let mut resolver = Resolver::new(db, source_root);
+    resolver
+        .resolve_path(current_module, path, Namespace::Type)
+        .or_else(|_| resolver.resolve_path(current_module, path, Namespace::Value))
+        .or_else(|_| resolver.resolve_path(current_module, path, Namespace::Macro(MacroKind::Bang)))
         .is_err()
 }
 
