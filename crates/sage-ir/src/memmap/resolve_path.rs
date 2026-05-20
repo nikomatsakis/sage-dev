@@ -16,7 +16,6 @@ use crate::module::{ModExt, ModSymbol, ModSymbolData};
 use crate::name::Name;
 use crate::resolve::{ResolutionError, SourceRoot, definition, symbol_to_module};
 use crate::symbol::Symbol;
-use crate::types::Path;
 
 use super::data::*;
 use super::expanded_module;
@@ -109,7 +108,7 @@ pub(super) fn resolve_macro_path<'db>(
     module: ModSymbol<'db>,
     source_root: SourceRoot,
     entries: &[MemmapEntry<'db>],
-    path: Path<'db>,
+    path: &[Name<'db>],
 ) -> Vec<MacroCallee<'db>> {
     let defs = resolve_macro_path_to_defs(db, module, source_root, entries, path);
     defs.into_iter().map(MacroCallee::Rules).collect()
@@ -120,9 +119,8 @@ fn resolve_macro_path_to_defs<'db>(
     module: ModSymbol<'db>,
     source_root: SourceRoot,
     entries: &[MemmapEntry<'db>],
-    path: Path<'db>,
+    segments: &[Name<'db>],
 ) -> Vec<MacroDefAst<'db>> {
-    let segments = path.segments(db);
     if segments.is_empty() {
         return Vec::new();
     }

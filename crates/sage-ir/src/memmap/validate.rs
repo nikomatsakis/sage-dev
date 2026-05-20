@@ -5,7 +5,6 @@ use crate::item::ItemAst;
 use crate::module::{ModSymbol, ModSymbolData};
 use crate::name::Name;
 use crate::resolve::{MacroKind, Namespace, Resolver, SourceRoot, item_in_namespace, item_name};
-use crate::types::Path;
 
 use super::data::*;
 use super::expanded_module;
@@ -14,8 +13,8 @@ use super::expanded_module;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MemmapError<'db> {
     DuplicateName { name: Name<'db>, ns: Namespace },
-    UnresolvedMacro { path: Path<'db> },
-    AmbiguousMacro { path: Path<'db> },
+    UnresolvedMacro { path: Vec<Name<'db>> },
+    AmbiguousMacro { path: Vec<Name<'db>> },
     TimeTravelViolation { name: Name<'db>, ns: Namespace },
     UnresolvedRedirect { name: Name<'db> },
     UnresolvedGlob { path: Vec<Name<'db>> },
@@ -111,10 +110,14 @@ fn collect_macro_errors<'db>(entries: &[MemmapEntry<'db>], errors: &mut Vec<Memm
     for entry in entries {
         if let MemmapEntry::MacroUse(mu) = entry {
             if mu.expansions.is_empty() {
-                errors.push(MemmapError::UnresolvedMacro { path: mu.path });
+                errors.push(MemmapError::UnresolvedMacro {
+                    path: mu.path.clone(),
+                });
             } else {
                 if mu.expansions.len() > 1 {
-                    errors.push(MemmapError::AmbiguousMacro { path: mu.path });
+                    errors.push(MemmapError::AmbiguousMacro {
+                        path: mu.path.clone(),
+                    });
                 }
                 for exp in &mu.expansions {
                     collect_macro_errors(&exp.entries, errors);

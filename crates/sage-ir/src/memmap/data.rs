@@ -26,7 +26,6 @@ use crate::item::{ItemAst, MacroDefAst, StructAst};
 use crate::module::{CrateNum, DefIndex};
 use crate::name::Name;
 use crate::span::AbsoluteSpan;
-use crate::types::Path;
 
 /// A macro invocation's input tokens, created during parsing/lowering.
 /// Has stable salsa identity from the parse site — never mutated.
@@ -84,8 +83,8 @@ pub enum MemmapEntry<'db> {
 /// A macro invocation at item position.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub struct MacroUse<'db> {
-    /// The invocation's path (e.g. `foo::bar::m`).
-    pub path: Path<'db>,
+    /// The invocation's path segments (e.g. `[foo, bar, m]`).
+    pub path: Vec<Name<'db>>,
 
     /// The tracked input tokens — stable salsa identity from the parse site.
     pub input: MacroInput<'db>,

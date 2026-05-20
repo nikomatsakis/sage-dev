@@ -57,12 +57,12 @@ fn resolve_expand_pass<'db>(
 
     for i in 0..entries.len() {
         if let MemmapEntry::MacroUse(mu) = &entries[i] {
-            let path = mu.path;
+            let path = mu.path.clone();
             let input = mu.input;
             let existing_callees: Vec<MacroCallee<'db>> =
                 mu.expansions.iter().map(|e| e.callee).collect();
 
-            let callees = resolve_macro_path(db, module, source_root, root_entries, path);
+            let callees = resolve_macro_path(db, module, source_root, root_entries, &path);
 
             let new_callees: Vec<MacroCallee<'db>> = callees
                 .into_iter()

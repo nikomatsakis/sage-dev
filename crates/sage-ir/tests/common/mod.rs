@@ -441,6 +441,20 @@ fn fmt_path(db: &dyn sage_ir::Db, path: sage_ir::types::Path) -> String {
         .join("::")
 }
 
+fn fmt_name_path(db: &dyn sage_ir::Db, path: &[sage_ir::name::Name]) -> String {
+    path.iter()
+        .map(|n| {
+            let text = n.text(db);
+            if text.is_empty() {
+                "::".to_owned()
+            } else {
+                text.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("::")
+}
+
 fn fmt_module(db: &dyn sage_ir::Db, module: ModSymbol) -> String {
     match module.data() {
         ModSymbolData::Ast(ast) => {
@@ -464,8 +478,12 @@ pub fn fmt_memmap_error(db: &dyn sage_ir::Db, err: &sage_ir::memmap::MemmapError
                 fmt_namespace(*ns)
             )
         }
-        UnresolvedMacro { path } => format!("UnresolvedMacro path={}", fmt_path(db, *path)),
-        AmbiguousMacro { path } => format!("AmbiguousMacro path={}", fmt_path(db, *path)),
+        UnresolvedMacro { path } => {
+            format!("UnresolvedMacro path={}", fmt_name_path(db, path))
+        }
+        AmbiguousMacro { path } => {
+            format!("AmbiguousMacro path={}", fmt_name_path(db, path))
+        }
         TimeTravelViolation { name, ns } => format!(
             "TimeTravelViolation name={} ns={}",
             name.text(db),
@@ -475,19 +493,7 @@ pub fn fmt_memmap_error(db: &dyn sage_ir::Db, err: &sage_ir::memmap::MemmapError
             format!("UnresolvedRedirect name={}", name.text(db))
         }
         UnresolvedGlob { path } => {
-            let formatted = path
-                .iter()
-                .map(|n| {
-                    let text = n.text(db);
-                    if text.is_empty() {
-                        "::".to_string()
-                    } else {
-                        text.to_string()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("::");
-            format!("UnresolvedGlob path={formatted}")
+            format!("UnresolvedGlob path={}", fmt_name_path(db, path))
         }
     }
 }
