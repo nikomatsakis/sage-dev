@@ -992,10 +992,9 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
             return ItemAst::Error(self.abs_span(node));
         }
         let span = self.abs_span(node);
-        let path = Path::new(db, segments, self.rel_span(node));
         let input_tokens =
             crate::ts_helpers::extract_macro_invocation_tokens(node, self.parent.text);
-        ItemAst::MacroInvocation(MacroInvocationAst::new(db, path, input_tokens, span))
+        ItemAst::MacroInvocation(MacroInvocationAst::new(db, segments, input_tokens, span))
     }
 
     // -- Types (salsa-tracked, for old fields) --------------------------------

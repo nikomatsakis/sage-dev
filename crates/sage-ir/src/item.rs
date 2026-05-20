@@ -5,7 +5,7 @@ use crate::name::Name;
 use crate::sig_ast::*;
 use crate::source::SourceFile;
 use crate::span::{AbsoluteSpan, ParseSource};
-use crate::types::{Attr, Path, TypeRef, UseImports};
+use crate::types::{Attr, TypeRef, UseImports};
 
 /// Thin enum over all item kinds. `Copy` because salsa tracked struct
 /// handles are just IDs.
@@ -408,7 +408,9 @@ pub struct MacroDefAst<'db> {
 /// An item-level macro invocation (e.g. `m!()` or `foo::bar::m!()`).
 #[salsa::tracked(debug)]
 pub struct MacroInvocationAst<'db> {
-    pub path: Path<'db>,
+    #[tracked]
+    #[returns(ref)]
+    pub path: Vec<Name<'db>>,
 
     /// The token stream passed to the macro at the invocation site — i.e.
     /// the contents of `m!(...)`, with the outer delimiter pair stripped.

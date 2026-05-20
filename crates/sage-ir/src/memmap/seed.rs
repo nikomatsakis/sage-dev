@@ -42,7 +42,7 @@ pub(super) fn seed_from_items<'db>(
             ItemAst::MacroInvocation(inv) => {
                 let input = MacroInput::new(db, inv.input_tokens(db).clone(), inv.span(db));
                 entries.push(MemmapEntry::MacroUse(MacroUse {
-                    path: inv.path(db).segments(db).to_vec(),
+                    path: inv.path(db).to_vec(),
                     input,
                     expansions: Vec::new(),
                 }));

@@ -305,7 +305,16 @@ impl fmt::Display for MacroDefAst<'_> {
 
 impl fmt::Display for MacroInvocationAst<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        with_db(|db| write!(f, "{}!()", self.path(db)))
+        with_db(|db| {
+            let segs = self.path(db);
+            for (i, seg) in segs.iter().enumerate() {
+                if i > 0 {
+                    f.write_str("::")?;
+                }
+                f.write_str(seg.text(db))?;
+            }
+            f.write_str("!()")
+        })
     }
 }
 
