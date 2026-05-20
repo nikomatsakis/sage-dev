@@ -2029,7 +2029,7 @@ fn to_error(self: &Self) -> crate::Error {
   format!("unexpected frame: {self}").into()
 }
 }
-impl PartialEq for Frame {
+impl PartialEq<&str> for Frame {
   fn eq(self: &Self, other: &&str) -> bool {
   match self {
     Frame::Simple(s) => s.eq(other)
@@ -2097,22 +2097,22 @@ fn get_line(src: &mut Cursor<&[u8; _]>) -> Result<&[u8; _], Error> {
   };
   Err(Error::Incomplete)
 }
-impl From for Error {
+impl From<String> for Error {
   fn from(src: String) -> Error {
   Error::Other(src.into())
 }
 }
-impl From for Error {
+impl From<&str> for Error {
   fn from(src: &str) -> Error {
   src.to_string().into()
 }
 }
-impl From for Error {
+impl From<FromUtf8Error> for Error {
   fn from(_src: FromUtf8Error) -> Error {
   String.into()
 }
 }
-impl From for Error {
+impl From<TryFromIntError> for Error {
   fn from(_src: TryFromIntError) -> Error {
   String.into()
 }
@@ -2285,12 +2285,12 @@ fn finish(self: &mut Self) -> Result<(), ParseError> {
   };
 }
 }
-impl From for ParseError {
+impl From<String> for ParseError {
   fn from(src: String) -> ParseError {
   ParseError::Other(src.into())
 }
 }
-impl From for ParseError {
+impl From<&str> for ParseError {
   fn from(src: &str) -> ParseError {
   src.to_string().into()
 }

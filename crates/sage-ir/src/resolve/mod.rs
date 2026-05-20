@@ -3,7 +3,7 @@ use crate::item::*;
 use crate::module::{ModExt, ModSymbol, ModSymbolData};
 use crate::name::Name;
 use crate::source::SourceFile;
-use crate::symbol::{SymExt, Symbol, SymbolData};
+use crate::symbol::{Intrinsic, SymExt, Symbol, SymbolData};
 use crate::types::{Path, UseImport};
 
 // ---------------------------------------------------------------------------
@@ -297,12 +297,23 @@ pub fn module_use_imports<'db>(db: &'db dyn Db, module: ModSymbol<'db>) -> Vec<U
 // Name resolution
 // ---------------------------------------------------------------------------
 
-/// Resolve a name in a module's scope.
+/// Resolve a single name in a module's scope.
 ///
-/// Layers `ModSymbol::resolve_member` (which handles the module's own
-/// contents — items, redirects, globs, with named > glob priority)
-/// with extern-prelude and std-prelude fallbacks.
+/// This is a convenience wrapper for `resolve_path` when you already know
+/// you have a single-segment path. It's the same as building a one-segment
+/// `Path` and calling `resolve_path`, but avoids the allocation.
 pub fn resolve_name<'db>(
+    db: &'db dyn Db,
+    module: ModSymbol<'db>,
+    source_root: SourceRoot,
+    name: Name<'db>,
+    ns: Namespace,
+) -> Result<Symbol<'db>, ResolutionError> {
+    resolve_plain_name(db, module, source_root, name, ns)
+}
+
+/// Core single-name resolution: module members → extern prelude → std prelude → intrinsics.
+fn resolve_plain_name<'db>(
     db: &'db dyn Db,
     module: ModSymbol<'db>,
     source_root: SourceRoot,
@@ -322,7 +333,18 @@ pub fn resolve_name<'db>(
     }
 
     // 4. Std prelude.
-    resolve_in_std_prelude(db, name, ns).ok_or(ResolutionError::Unresolved)
+    if let Some(sym) = resolve_in_std_prelude(db, name, ns) {
+        return Ok(sym);
+    }
+
+    // 5. Intrinsics (lowest priority — shadowable by anything).
+    if matches!(ns, Namespace::Type)
+        && let Some(intrinsic) = Intrinsic::from_name(name.text(db))
+    {
+        return Ok(Symbol::intrinsic(intrinsic));
+    }
+
+    Err(ResolutionError::Unresolved)
 }
 
 // ---------------------------------------------------------------------------
@@ -529,6 +551,11 @@ impl<'db> ModSymbol<'db> {
     }
 
     /// Walk a path and return the symbol it resolves to.
+    ///
+    /// For single-segment paths this is equivalent to `resolve_name` (full
+    /// fallback chain: module members → extern prelude → std prelude → intrinsics).
+    /// For multi-segment paths it dispatches the first segment then walks
+    /// the remainder.
     pub fn resolve_path(
         self,
         db: &'db dyn Db,
@@ -549,6 +576,12 @@ impl<'db> ModSymbol<'db> {
             return Err(ResolutionError::Unresolved);
         }
 
+        // Single-segment: use the full resolve_plain_name chain.
+        if segments.len() == 1 {
+            return resolve_plain_name(db, self, source_root, segments[0], final_ns);
+        }
+
+        // Multi-segment: dispatch first segment then walk remainder.
         let (first_module, rest) = self.dispatch_first_segment(db, source_root, segments)?;
 
         if rest.is_empty() {
@@ -558,19 +591,7 @@ impl<'db> ModSymbol<'db> {
             };
         }
 
-        let mut current = first_module;
-        for (i, seg) in rest.iter().enumerate() {
-            let is_last = i == rest.len() - 1;
-            let seg_ns = if is_last { final_ns } else { Namespace::Type };
-            let sym = current.resolve_member(db, source_root, *seg, seg_ns)?;
-            if !is_last {
-                current = symbol_to_module(db, sym, source_root, current)
-                    .ok_or(ResolutionError::Unresolved)?;
-            } else {
-                return Ok(sym);
-            }
-        }
-        unreachable!("rest is non-empty and loop always returns on is_last")
+        resolve_remainder(db, first_module, source_root, rest, final_ns)
     }
 
     /// Walk a path and return the module it resolves to.
@@ -595,13 +616,7 @@ impl<'db> ModSymbol<'db> {
 
         let (first_module, rest) = self.dispatch_first_segment(db, source_root, segments)?;
 
-        let mut current = first_module;
-        for seg in rest {
-            let sym = current.resolve_member(db, source_root, *seg, Namespace::Type)?;
-            current = symbol_to_module(db, sym, source_root, current)
-                .ok_or(ResolutionError::Unresolved)?;
-        }
-        Ok(current)
+        resolve_remainder_to_module(db, first_module, source_root, rest)
     }
 
     /// Dispatch the first segment of a path.
@@ -648,6 +663,55 @@ impl<'db> ModSymbol<'db> {
             }
         }
     }
+}
+
+/// Walk remaining path segments through modules, resolving the final one
+/// in `final_ns`. Exposed so callers that resolve the first segment via
+/// ribs (generics, Self, locals) can continue walking the tail.
+pub fn resolve_remainder<'db>(
+    db: &'db dyn Db,
+    start: ModSymbol<'db>,
+    source_root: SourceRoot,
+    segments: &[Name<'db>],
+    final_ns: Namespace,
+) -> Result<Symbol<'db>, ResolutionError> {
+    if segments.is_empty() {
+        return match start.data() {
+            ModSymbolData::Ext(ext) => Ok(Symbol::ext(SymExt::from(ext))),
+            ModSymbolData::Ast(_) => Err(ResolutionError::Unresolved),
+        };
+    }
+
+    let mut current = start;
+    for (i, seg) in segments.iter().enumerate() {
+        let is_last = i == segments.len() - 1;
+        let seg_ns = if is_last { final_ns } else { Namespace::Type };
+        let sym = current.resolve_member(db, source_root, *seg, seg_ns)?;
+        if !is_last {
+            current = symbol_to_module(db, sym, source_root, current)
+                .ok_or(ResolutionError::Unresolved)?;
+        } else {
+            return Ok(sym);
+        }
+    }
+    unreachable!("segments is non-empty and loop always returns on is_last")
+}
+
+/// Like `resolve_remainder`, but every segment is resolved in `Namespace::Type`
+/// and the result is a module.
+pub fn resolve_remainder_to_module<'db>(
+    db: &'db dyn Db,
+    start: ModSymbol<'db>,
+    source_root: SourceRoot,
+    segments: &[Name<'db>],
+) -> Result<ModSymbol<'db>, ResolutionError> {
+    let mut current = start;
+    for seg in segments {
+        let sym = current.resolve_member(db, source_root, *seg, Namespace::Type)?;
+        current =
+            symbol_to_module(db, sym, source_root, current).ok_or(ResolutionError::Unresolved)?;
+    }
+    Ok(current)
 }
 
 /// Resolve a name in the std prelude (`std::prelude::v1`).

@@ -7,6 +7,7 @@ use crate::module::ModSymbol;
 use crate::name::Name;
 use crate::resolve::{Namespace, SourceRoot, resolve_name};
 use crate::resolved::*;
+use crate::ribs::{RibEntry, Ribs};
 use crate::sig_ast::{PathAst, TypeRefAst, TypeRefAstKind};
 use crate::span::RelativeSpan;
 
@@ -17,38 +18,25 @@ struct BodyResolver<'db> {
     src: &'db Stash,
     out: Stash,
     locals: Vec<LocalVar<'db>>,
-    scopes: Vec<Vec<(Name<'db>, LocalId)>>,
+    ribs: Ribs<'db>,
 }
 
 impl<'db> BodyResolver<'db> {
     // -- scope operations --
 
     fn push_scope(&mut self) {
-        self.scopes.push(Vec::new());
+        self.ribs.push_scope();
     }
 
     fn pop_scope(&mut self) {
-        self.scopes.pop();
+        self.ribs.pop_scope();
     }
 
     fn add_binding(&mut self, name: Name<'db>, span: RelativeSpan) -> LocalId {
         let id = LocalId(self.locals.len() as u32);
         self.locals.push(LocalVar { name, span });
-        if let Some(scope) = self.scopes.last_mut() {
-            scope.push((name, id));
-        }
+        self.ribs.add(name, Namespace::Value, RibEntry::Local(id));
         id
-    }
-
-    fn lookup_local(&self, name: Name<'db>) -> Option<LocalId> {
-        for scope in self.scopes.iter().rev() {
-            for (n, id) in scope.iter().rev() {
-                if *n == name {
-                    return Some(*id);
-                }
-            }
-        }
-        None
     }
 
     // -- path resolution --
@@ -72,17 +60,44 @@ impl<'db> BodyResolver<'db> {
             return Res::Err;
         }
 
-        // Single-segment value path: check locals first.
-        if segments.len() == 1 && ns == Namespace::Value {
-            if let Some(id) = self.lookup_local(segments[0].name) {
-                return Res::Local(id);
-            }
+        let first = segments[0].name;
+        let rest = &segments[1..];
+
+        // Check ribs for the first segment.
+        if let Some(entry) = self.ribs.lookup(first, ns) {
+            return match entry {
+                RibEntry::Local(id) => {
+                    if rest.is_empty() {
+                        Res::Local(id)
+                    } else {
+                        Res::Err
+                    }
+                }
+                RibEntry::BoundVar(_) | RibEntry::SelfTy(_) => {
+                    // TODO: bound vars / Self in body expressions
+                    Res::Err
+                }
+                RibEntry::Sym(sym) => {
+                    if rest.is_empty() {
+                        Res::Def(sym)
+                    } else {
+                        let names: Vec<_> = segments.iter().map(|s| s.name).collect();
+                        let salsa_path = crate::types::Path::new(self.db, names, path.span);
+                        match self
+                            .module
+                            .resolve_path(self.db, self.source_root, salsa_path, ns)
+                        {
+                            Ok(sym) => Res::Def(sym),
+                            Err(_) => Res::Err,
+                        }
+                    }
+                }
+            };
         }
 
-        // Single-segment: delegate to module-level resolve_name
-        if segments.len() == 1 {
-            return match resolve_name(self.db, self.module, self.source_root, segments[0].name, ns)
-            {
+        // No rib hit — resolve via module-level resolution.
+        if rest.is_empty() {
+            return match resolve_name(self.db, self.module, self.source_root, first, ns) {
                 Ok(sym) => Res::Def(sym),
                 Err(_) => Res::Err,
             };
@@ -476,7 +491,7 @@ pub fn resolve_body<'db>(
         src: src_stash,
         out: Stash::new(),
         locals: Vec::new(),
-        scopes: Vec::new(),
+        ribs: Ribs::new(),
     };
 
     // Push function params as the outermost scope.

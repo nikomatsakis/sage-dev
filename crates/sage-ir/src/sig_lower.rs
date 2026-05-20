@@ -11,10 +11,10 @@ use crate::item::{EnumAst, FnAst, StructAst};
 use crate::module::ModSymbol;
 use crate::name::Name;
 use crate::resolve::{Namespace, SourceRoot, resolve_name};
+use crate::ribs::{RibEntry, Ribs};
 use crate::sig_ast::*;
-use crate::symbol::Symbol;
+use crate::symbol::{Intrinsic, Symbol, SymbolData};
 use crate::ty::*;
-use crate::types::Mutability;
 
 // ---------------------------------------------------------------------------
 // SigLowerCtx
@@ -26,8 +26,7 @@ struct SigLowerCtx<'a, 'db> {
     dst: &'a mut Stash,
     module: ModSymbol<'db>,
     source_root: SourceRoot,
-    generics: Vec<(Name<'db>, BoundVar)>,
-    self_type: Option<Ty<'db>>,
+    ribs: Ribs<'db>,
 }
 
 impl<'a, 'db> SigLowerCtx<'a, 'db> {
@@ -87,63 +86,82 @@ impl<'a, 'db> SigLowerCtx<'a, 'db> {
             };
         }
 
-        // Single-segment: check generic params first, then primitives, then resolve.
-        if segments.len() == 1 {
-            let seg = &segments[0];
-            let name = seg.name;
+        let first = &segments[0];
+        let rest = &segments[1..];
+        let type_args = self.lower_type_args(segments.last().unwrap());
 
-            // Generic param?
-            for (gname, bv) in &self.generics {
-                if *gname == name {
-                    return Ty {
-                        data: TyData::BoundVar(*bv),
-                    };
+        // Check ribs for the first segment (generic params, Self).
+        if let Some(entry) = self.ribs.lookup(first.name, Namespace::Type) {
+            return match entry {
+                RibEntry::BoundVar(bv) => {
+                    if rest.is_empty() {
+                        Ty {
+                            data: TyData::BoundVar(bv),
+                        }
+                    } else {
+                        // T::AssocType — not yet supported
+                        Ty {
+                            data: TyData::Error,
+                        }
+                    }
                 }
-            }
-
-            // Self type in impl blocks?
-            if name.text(self.db) == "Self" {
-                if let Some(self_ty) = self.self_type {
-                    return self_ty;
+                RibEntry::Sym(sym) => {
+                    if rest.is_empty() {
+                        self.symbol_to_ty(sym, type_args)
+                    } else {
+                        // Sym::Path — not yet supported in signatures
+                        Ty {
+                            data: TyData::Error,
+                        }
+                    }
                 }
-            }
-
-            // Primitive?
-            if let Some(prim) = recognize_primitive(self.db, name) {
-                return Ty { data: prim };
-            }
-
-            // Resolve in module
-            let type_args = self.lower_type_args(seg);
-            return match resolve_name(
-                self.db,
-                self.module,
-                self.source_root,
-                name,
-                Namespace::Type,
-            ) {
-                Ok(sym) => Ty {
-                    data: TyData::Adt(sym, type_args),
-                },
-                Err(_) => Ty {
+                RibEntry::SelfTy(self_ty) => {
+                    if rest.is_empty() {
+                        self_ty
+                    } else {
+                        // Self::Variant — not yet supported in signatures
+                        Ty {
+                            data: TyData::Error,
+                        }
+                    }
+                }
+                RibEntry::Local(_) => Ty {
                     data: TyData::Error,
                 },
             };
         }
 
-        // Multi-segment: resolve the path.
-        let names: Vec<_> = segments.iter().map(|s| s.name).collect();
-        let salsa_path = crate::types::Path::new(self.db, names, path.span);
-        let type_args = self.lower_type_args(segments.last().unwrap());
-        match self
-            .module
-            .resolve_path(self.db, self.source_root, salsa_path, Namespace::Type)
-        {
-            Ok(sym) => Ty {
-                data: TyData::Adt(sym, type_args),
-            },
+        // No rib hit — resolve via module-level path resolution.
+        let sym = if rest.is_empty() {
+            resolve_name(
+                self.db,
+                self.module,
+                self.source_root,
+                first.name,
+                Namespace::Type,
+            )
+        } else {
+            let names: Vec<_> = segments.iter().map(|s| s.name).collect();
+            let salsa_path = crate::types::Path::new(self.db, names, path.span);
+            self.module
+                .resolve_path(self.db, self.source_root, salsa_path, Namespace::Type)
+        };
+
+        match sym {
+            Ok(sym) => self.symbol_to_ty(sym, type_args),
             Err(_) => Ty {
                 data: TyData::Error,
+            },
+        }
+    }
+
+    fn symbol_to_ty(&self, sym: Symbol<'db>, type_args: sage_stash::Slice<Ty<'db>>) -> Ty<'db> {
+        match sym.data() {
+            SymbolData::Intrinsic(intrinsic) => Ty {
+                data: intrinsic_to_ty_data(intrinsic),
+            },
+            _ => Ty {
+                data: TyData::Adt(sym, type_args),
             },
         }
     }
@@ -158,26 +176,14 @@ impl<'a, 'db> SigLowerCtx<'a, 'db> {
     }
 }
 
-fn recognize_primitive<'db>(db: &'db dyn Db, name: Name<'db>) -> Option<TyData<'db>> {
-    match name.text(db).as_str() {
-        "bool" => Some(TyData::Bool),
-        "char" => Some(TyData::Char),
-        "str" => Some(TyData::Str),
-        "i8" => Some(TyData::Int(IntTy::I8)),
-        "i16" => Some(TyData::Int(IntTy::I16)),
-        "i32" => Some(TyData::Int(IntTy::I32)),
-        "i64" => Some(TyData::Int(IntTy::I64)),
-        "i128" => Some(TyData::Int(IntTy::I128)),
-        "isize" => Some(TyData::Int(IntTy::Isize)),
-        "u8" => Some(TyData::Uint(UintTy::U8)),
-        "u16" => Some(TyData::Uint(UintTy::U16)),
-        "u32" => Some(TyData::Uint(UintTy::U32)),
-        "u64" => Some(TyData::Uint(UintTy::U64)),
-        "u128" => Some(TyData::Uint(UintTy::U128)),
-        "usize" => Some(TyData::Uint(UintTy::Usize)),
-        "f32" => Some(TyData::Float(FloatTy::F32)),
-        "f64" => Some(TyData::Float(FloatTy::F64)),
-        _ => None,
+fn intrinsic_to_ty_data(intrinsic: Intrinsic) -> TyData<'static> {
+    match intrinsic {
+        Intrinsic::Bool => TyData::Bool,
+        Intrinsic::Char => TyData::Char,
+        Intrinsic::Str => TyData::Str,
+        Intrinsic::Int(i) => TyData::Int(i),
+        Intrinsic::Uint(u) => TyData::Uint(u),
+        Intrinsic::Float(f) => TyData::Float(f),
     }
 }
 
@@ -185,56 +191,28 @@ fn recognize_primitive<'db>(db: &'db dyn Db, name: Name<'db>) -> Option<TyData<'
 // Helpers: build bound vars from generic params
 // ---------------------------------------------------------------------------
 
-fn build_generics_map<'db>(
+fn build_generics_ribs<'db>(
     src: &Stash,
     generics: sage_stash::Slice<GenericParam<'db>>,
     dst: &mut Stash,
-) -> (Vec<(Name<'db>, BoundVar)>, sage_stash::Slice<BoundVarInfo>) {
+    ribs: &mut Ribs<'db>,
+) -> sage_stash::Slice<BoundVarInfo> {
     let params = &src[generics];
-    let mut map = Vec::new();
     let mut bound_vars = Vec::new();
     for (i, param) in params.iter().enumerate() {
-        match param {
-            GenericParam::Type { name, .. } => {
-                map.push((
-                    *name,
-                    BoundVar {
-                        binder_index: 0,
-                        param_index: i as u32,
-                    },
-                ));
-                bound_vars.push(BoundVarInfo {
-                    kind: BoundVarKind::Type,
-                });
-            }
-            GenericParam::Lifetime { name, .. } => {
-                map.push((
-                    *name,
-                    BoundVar {
-                        binder_index: 0,
-                        param_index: i as u32,
-                    },
-                ));
-                bound_vars.push(BoundVarInfo {
-                    kind: BoundVarKind::Lifetime,
-                });
-            }
-            GenericParam::Const { name, .. } => {
-                map.push((
-                    *name,
-                    BoundVar {
-                        binder_index: 0,
-                        param_index: i as u32,
-                    },
-                ));
-                bound_vars.push(BoundVarInfo {
-                    kind: BoundVarKind::Const,
-                });
-            }
-        }
+        let (name, kind) = match param {
+            GenericParam::Type { name, .. } => (*name, BoundVarKind::Type),
+            GenericParam::Lifetime { name, .. } => (*name, BoundVarKind::Lifetime),
+            GenericParam::Const { name, .. } => (*name, BoundVarKind::Const),
+        };
+        let bv = BoundVar {
+            binder_index: 0,
+            param_index: i as u32,
+        };
+        ribs.add(name, Namespace::Type, RibEntry::BoundVar(bv));
+        bound_vars.push(BoundVarInfo { kind });
     }
-    let bound_vars = dst.alloc_slice(&bound_vars);
-    (map, bound_vars)
+    dst.alloc_slice(&bound_vars)
 }
 
 // ---------------------------------------------------------------------------
@@ -268,12 +246,16 @@ pub fn lower_fn_sig<'db>(
     let data = &src[*sig_ast.root()];
 
     let mut dst = Stash::new();
-    let (generics_map, bound_vars) = build_generics_map(src, data.generics, &mut dst);
+    let mut ribs = Ribs::new();
+    ribs.push_scope();
+    let bound_vars = build_generics_ribs(src, data.generics, &mut dst, &mut ribs);
 
-    let copied_self_type = self_type.map(|ty| {
+    if let Some(ty) = self_type {
         use sage_stash::StashCopy;
-        ty.stash_copy(self_type_src, &mut dst)
-    });
+        let copied = ty.stash_copy(self_type_src, &mut dst);
+        let self_name = Name::new(db, "Self".to_owned());
+        ribs.add(self_name, Namespace::Type, RibEntry::SelfTy(copied));
+    }
 
     let mut cx = SigLowerCtx {
         db,
@@ -281,8 +263,7 @@ pub fn lower_fn_sig<'db>(
         dst: &mut dst,
         module,
         source_root,
-        generics: generics_map,
-        self_type: copied_self_type,
+        ribs,
     };
 
     let param_tys: Vec<_> = src[data.params]
@@ -319,7 +300,9 @@ pub fn struct_signature<'db>(
     let data = &src[*sig_ast.root()];
 
     let mut dst = Stash::new();
-    let (generics_map, bound_vars) = build_generics_map(src, data.generics, &mut dst);
+    let mut ribs = Ribs::new();
+    ribs.push_scope();
+    let bound_vars = build_generics_ribs(src, data.generics, &mut dst, &mut ribs);
 
     let mut cx = SigLowerCtx {
         db,
@@ -327,8 +310,7 @@ pub fn struct_signature<'db>(
         dst: &mut dst,
         module,
         source_root,
-        generics: generics_map,
-        self_type: None,
+        ribs,
     };
 
     let field_sigs: Vec<_> = src[data.fields]
@@ -358,7 +340,9 @@ pub fn enum_signature<'db>(
     let data = &src[*sig_ast.root()];
 
     let mut dst = Stash::new();
-    let (generics_map, bound_vars) = build_generics_map(src, data.generics, &mut dst);
+    let mut ribs = Ribs::new();
+    ribs.push_scope();
+    let bound_vars = build_generics_ribs(src, data.generics, &mut dst, &mut ribs);
 
     let mut cx = SigLowerCtx {
         db,
@@ -366,8 +350,7 @@ pub fn enum_signature<'db>(
         dst: &mut dst,
         module,
         source_root,
-        generics: generics_map,
-        self_type: None,
+        ribs,
     };
 
     let variant_sigs: Vec<_> = src[data.variants]

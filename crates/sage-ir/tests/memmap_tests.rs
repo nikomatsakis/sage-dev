@@ -106,7 +106,7 @@ fn p4_glob_beats_std_prelude() {
         let sym = result.unwrap();
         match sym.data() {
             SymbolData::Ast(_) | SymbolData::TupleStructCtor(_) => {}
-            SymbolData::Ext(_) => panic!("should resolve to local, not std prelude"),
+            _ => panic!("should resolve to local, not std prelude"),
         }
     });
 }

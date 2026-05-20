@@ -149,12 +149,16 @@ impl fmt::Display for ImplAst<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         with_db(|db| {
             write_attrs(f, self.attrs(db))?;
-            if let Some(trait_path) = self.trait_path(db) {
-                write!(f, "impl {trait_path} for {} {{", self.self_ty(db))?;
-            } else {
-                write!(f, "impl {} {{", self.self_ty(db))?;
+            let sig = self.signature(db);
+            let stash = sig.stash();
+            let data = &stash[*sig.root()];
+            f.write_str("impl ")?;
+            if let Some(trait_path) = data.trait_path {
+                stash[trait_path].pretty(f, stash, 0)?;
+                f.write_str(" for ")?;
             }
-            f.write_str("\n")?;
+            stash[data.self_ty].pretty(f, stash, 0)?;
+            f.write_str(" {\n")?;
             for item in self.items(db) {
                 writeln!(f, "  {item}")?;
             }
@@ -933,6 +937,7 @@ fn fmt_res(f: &mut fmt::Formatter<'_>, res: &Res<'_>) -> fmt::Result {
                     None => write!(f, "<ext {}:{}>", ext.crate_num.0, ext.def_index.0),
                 }
             }
+            SymbolData::Intrinsic(i) => write!(f, "<intrinsic {i:?}>"),
         },
         Res::Local(id) => write!(f, "<local:{}>", id.0),
         Res::Err => f.write_str("<unresolved>"),

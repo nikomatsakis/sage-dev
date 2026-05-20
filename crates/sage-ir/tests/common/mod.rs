@@ -291,6 +291,7 @@ pub fn fmt_symbol(db: &dyn sage_ir::Db, sym: Symbol) -> String {
             Some(path) => format!("<ext {path}>"),
             None => format!("<ext {}:{}>", ext.crate_num.0, ext.def_index.0),
         },
+        SymbolData::Intrinsic(i) => format!("<intrinsic {i:?}>"),
     }
 }
 

@@ -761,15 +761,6 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
         let db = self.db();
         let span = self.abs_span(node);
 
-        let self_ty = node
-            .child_by_field_name("type")
-            .map(|n| self.lower_type(n))
-            .unwrap_or_else(|| self.make_error_type(node));
-
-        let trait_path = node
-            .child_by_field_name("trait")
-            .map(|n| self.lower_path(n));
-
         let signature = self.lower_impl_sig_ast(node);
 
         let items = node
@@ -777,7 +768,7 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
             .map(|body| self.parent.lower_items(body))
             .unwrap_or_default();
 
-        ImplAst::new(db, attrs, self_ty, trait_path, signature, items, span)
+        ImplAst::new(db, attrs, signature, items, span)
     }
 
     fn lower_type_alias(&self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> TypeAliasAst<'db> {

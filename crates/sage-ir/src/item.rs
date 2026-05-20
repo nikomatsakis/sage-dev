@@ -162,12 +162,6 @@ pub struct ImplAst<'db> {
     pub attrs: Vec<Attr<'db>>,
 
     #[tracked]
-    pub self_ty: TypeRef<'db>,
-
-    #[tracked]
-    pub trait_path: Option<Path<'db>>,
-
-    #[tracked]
     #[returns(ref)]
     pub signature: ImplSigAst<'db>,
 

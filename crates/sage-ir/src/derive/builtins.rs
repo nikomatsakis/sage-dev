@@ -42,9 +42,6 @@ fn expand_debug<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
         None => return Vec::new(),
     };
 
-    let trait_path = make_abs_path(db, &["std", "fmt", "Debug"]);
-    let self_ty = make_type_path(db, &[type_name.text(db)]);
-
     // Build fmt method body: `f.debug_struct("TypeName").field("x", &self.x)...finish()`
     let mut stash = Stash::new();
     let body_expr = {
@@ -80,12 +77,15 @@ fn expand_debug<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
         gen_abs_span(db),
     );
 
+    let impl_sig = make_impl_sig(
+        db,
+        &SigTy::Path(&[type_name.text(db)]),
+        Some(&SigTy::AbsPath(&["std", "fmt", "Debug"])),
+    );
     let impl_item = ImplAst::new(
         db,
         Vec::new(),
-        self_ty,
-        Some(trait_path),
-        make_empty_impl_sig(),
+        impl_sig,
         vec![ItemAst::Function(fmt_fn)],
         gen_abs_span(db),
     );
@@ -98,9 +98,6 @@ fn expand_clone<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
         Some(name) => name,
         None => return Vec::new(),
     };
-
-    let trait_path = make_abs_path(db, &["core", "clone", "Clone"]);
-    let self_ty = make_type_path(db, &[type_name.text(db)]);
 
     let mut stash = Stash::new();
     let body_expr = stash.alloc(Expr {
@@ -130,12 +127,15 @@ fn expand_clone<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
         gen_abs_span(db),
     );
 
+    let impl_sig = make_impl_sig(
+        db,
+        &SigTy::Path(&[type_name.text(db)]),
+        Some(&SigTy::AbsPath(&["core", "clone", "Clone"])),
+    );
     let impl_item = ImplAst::new(
         db,
         Vec::new(),
-        self_ty,
-        Some(trait_path),
-        make_empty_impl_sig(),
+        impl_sig,
         vec![ItemAst::Function(clone_fn)],
         gen_abs_span(db),
     );
@@ -148,9 +148,6 @@ fn expand_default<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>>
         Some(name) => name,
         None => return Vec::new(),
     };
-
-    let trait_path = make_abs_path(db, &["core", "default", "Default"]);
-    let self_ty = make_type_path(db, &[type_name.text(db)]);
 
     let mut stash = Stash::new();
     let body_expr = stash.alloc(Expr {
@@ -176,12 +173,15 @@ fn expand_default<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>>
         gen_abs_span(db),
     );
 
+    let impl_sig = make_impl_sig(
+        db,
+        &SigTy::Path(&[type_name.text(db)]),
+        Some(&SigTy::AbsPath(&["core", "default", "Default"])),
+    );
     let impl_item = ImplAst::new(
         db,
         Vec::new(),
-        self_ty,
-        Some(trait_path),
-        make_empty_impl_sig(),
+        impl_sig,
         vec![ItemAst::Function(default_fn)],
         gen_abs_span(db),
     );
@@ -199,26 +199,22 @@ fn expand_marker<'db>(
         None => return Vec::new(),
     };
 
-    let trait_path = match derive_name.text(db).as_str() {
-        "Copy" => make_abs_path(db, &["core", "marker", "Copy"]),
-        "Eq" => make_abs_path(db, &["core", "cmp", "Eq"]),
-        "PartialEq" => make_abs_path(db, &["core", "cmp", "PartialEq"]),
-        "Hash" => make_abs_path(db, &["core", "hash", "Hash"]),
-        "PartialOrd" => make_abs_path(db, &["core", "cmp", "PartialOrd"]),
-        "Ord" => make_abs_path(db, &["core", "cmp", "Ord"]),
-        _ => make_path(db, &[derive_name.text(db)]),
+    let trait_segs: &[&str] = match derive_name.text(db).as_str() {
+        "Copy" => &["core", "marker", "Copy"],
+        "Eq" => &["core", "cmp", "Eq"],
+        "PartialEq" => &["core", "cmp", "PartialEq"],
+        "Hash" => &["core", "hash", "Hash"],
+        "PartialOrd" => &["core", "cmp", "PartialOrd"],
+        "Ord" => &["core", "cmp", "Ord"],
+        _ => &[],
     };
-    let self_ty = make_type_path(db, &[type_name.text(db)]);
-
-    let impl_item = ImplAst::new(
-        db,
-        Vec::new(),
-        self_ty,
-        Some(trait_path),
-        make_empty_impl_sig(),
-        Vec::new(),
-        gen_abs_span(db),
-    );
+    let trait_ty = if trait_segs.is_empty() {
+        SigTy::Path(&[derive_name.text(db)])
+    } else {
+        SigTy::AbsPath(trait_segs)
+    };
+    let impl_sig = make_impl_sig(db, &SigTy::Path(&[type_name.text(db)]), Some(&trait_ty));
+    let impl_item = ImplAst::new(db, Vec::new(), impl_sig, Vec::new(), gen_abs_span(db));
     vec![impl_item]
 }
 
@@ -233,28 +229,6 @@ fn item_info<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Option<Name<'db>> {
         ItemAst::Enum(e) => Some(e.name(db)),
         _ => None,
     }
-}
-
-fn make_path<'db>(db: &'db dyn Db, segments: &[&str]) -> Path<'db> {
-    Path::new(
-        db,
-        segments
-            .iter()
-            .map(|s| Name::new(db, (*s).to_owned()))
-            .collect(),
-        GEN_REL_SPAN,
-    )
-}
-
-fn make_type_path<'db>(db: &'db dyn Db, segments: &[&str]) -> TypeRef<'db> {
-    TypeRef::new(db, TypeRefKind::Path(make_path(db, segments)), GEN_REL_SPAN)
-}
-
-/// Make an absolute path (`::foo::bar`) — prepends the empty sentinel segment.
-fn make_abs_path<'db>(db: &'db dyn Db, segments: &[&str]) -> Path<'db> {
-    let mut segs = vec![Name::new(db, String::new())];
-    segs.extend(segments.iter().map(|s| Name::new(db, (*s).to_owned())));
-    Path::new(db, segs, GEN_REL_SPAN)
 }
 
 fn gen_abs_span<'db>(db: &'db dyn Db) -> AbsoluteSpan<'db> {
@@ -359,17 +333,25 @@ fn alloc_sig_ty<'db>(
     }
 }
 
-fn make_empty_impl_sig<'db>() -> ImplSigAst<'db> {
+fn make_impl_sig<'db>(
+    db: &'db dyn Db,
+    self_ty: &SigTy<'_>,
+    trait_path: Option<&SigTy<'_>>,
+) -> ImplSigAst<'db> {
     let mut stash = Stash::new();
     let generics = stash.alloc_slice::<GenericParam<'db>>(&[]);
-    let self_ty = stash.alloc(TypeRefAst {
-        kind: TypeRefAstKind::Error,
-        span: GEN_REL_SPAN,
+    let self_ty_ptr = alloc_sig_ty(db, &mut stash, self_ty);
+    let trait_path_ptr = trait_path.map(|tp| {
+        let ty_ptr = alloc_sig_ty(db, &mut stash, tp);
+        match stash[ty_ptr].kind {
+            TypeRefAstKind::Path(p) => p,
+            _ => unreachable!("trait path must be a path type"),
+        }
     });
     let root = stash.alloc(ImplSigAstData {
         generics,
-        self_ty,
-        trait_path: None,
+        self_ty: self_ty_ptr,
+        trait_path: trait_path_ptr,
     });
     Stashed::new(stash, root)
 }

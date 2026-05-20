@@ -11,6 +11,7 @@ pub mod module;
 pub mod name;
 pub mod resolve;
 pub mod resolved;
+pub mod ribs;
 pub mod sig_ast;
 pub mod sig_lower;
 pub mod source;
