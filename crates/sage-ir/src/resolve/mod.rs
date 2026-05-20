@@ -544,8 +544,7 @@ fn walk_entries<'db>(
             }
             MemmapEntry::Redirect { name: n, target } => {
                 if *n == name {
-                    let segments = target.segments(db);
-                    if let Ok(sym) = resolver.resolve_segments(module, segments, ns) {
+                    if let Ok(sym) = resolver.resolve_segments(module, target, ns) {
                         if !named.contains(&sym) {
                             named.push(sym);
                         }
@@ -553,8 +552,7 @@ fn walk_entries<'db>(
                 }
             }
             MemmapEntry::Glob { path } => {
-                let segments = path.segments(db);
-                let Ok(target) = resolver.resolve_segments_to_module(module, segments) else {
+                let Ok(target) = resolver.resolve_segments_to_module(module, path) else {
                     continue;
                 };
                 let sym = resolver.resolve_member(target, name, ns).ok();

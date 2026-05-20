@@ -4,10 +4,7 @@ use crate::Db;
 use crate::item::ItemAst;
 use crate::module::{ModSymbol, ModSymbolData};
 use crate::name::Name;
-use crate::resolve::{
-    MacroKind, Namespace, Resolver, SourceRoot, item_in_namespace, item_name,
-    resolve_use_path_to_module_from_path,
-};
+use crate::resolve::{MacroKind, Namespace, Resolver, SourceRoot, item_in_namespace, item_name};
 use crate::types::Path;
 
 use super::data::*;
@@ -21,7 +18,7 @@ pub enum MemmapError<'db> {
     AmbiguousMacro { path: Path<'db> },
     TimeTravelViolation { name: Name<'db>, ns: Namespace },
     UnresolvedRedirect { name: Name<'db> },
-    UnresolvedGlob { path: Path<'db> },
+    UnresolvedGlob { path: Vec<Name<'db>> },
 }
 
 pub fn memmap_errors<'db>(
@@ -137,8 +134,9 @@ fn collect_unresolved_redirects_globs<'db>(
     for entry in entries {
         match entry {
             MemmapEntry::Redirect { name, target } => {
-                if resolve_use_path_to_module_from_path(db, module, source_root, *target).is_none()
-                    && target_resolves_to_nothing(db, module, source_root, *target)
+                let mut resolver = Resolver::new(db, source_root);
+                if resolver.resolve_segments_to_module(module, target).is_err()
+                    && target_resolves_to_nothing(db, module, source_root, target)
                 {
                     let err = MemmapError::UnresolvedRedirect { name: *name };
                     if !out.contains(&err) {
@@ -147,8 +145,9 @@ fn collect_unresolved_redirects_globs<'db>(
                 }
             }
             MemmapEntry::Glob { path } => {
-                if resolve_use_path_to_module_from_path(db, module, source_root, *path).is_none() {
-                    let err = MemmapError::UnresolvedGlob { path: *path };
+                let mut resolver = Resolver::new(db, source_root);
+                if resolver.resolve_segments_to_module(module, path).is_err() {
+                    let err = MemmapError::UnresolvedGlob { path: path.clone() };
                     if !out.contains(&err) {
                         out.push(err);
                     }
@@ -168,16 +167,15 @@ fn target_resolves_to_nothing<'db>(
     db: &'db dyn Db,
     current_module: ModSymbol<'db>,
     source_root: SourceRoot,
-    path: Path<'db>,
+    segments: &[Name<'db>],
 ) -> bool {
-    // A redirect's target has no inherent namespace — try Type first,
-    // then Value and Macro(Bang). If none resolves, the redirect is
-    // truly unresolvable.
     let mut resolver = Resolver::new(db, source_root);
     resolver
-        .resolve_path(current_module, path, Namespace::Type)
-        .or_else(|_| resolver.resolve_path(current_module, path, Namespace::Value))
-        .or_else(|_| resolver.resolve_path(current_module, path, Namespace::Macro(MacroKind::Bang)))
+        .resolve_segments(current_module, segments, Namespace::Type)
+        .or_else(|_| resolver.resolve_segments(current_module, segments, Namespace::Value))
+        .or_else(|_| {
+            resolver.resolve_segments(current_module, segments, Namespace::Macro(MacroKind::Bang))
+        })
         .is_err()
 }
 
@@ -205,8 +203,8 @@ fn name_available_via_glob<'db>(
 ) -> bool {
     for entry in entries {
         if let MemmapEntry::Glob { path } = entry {
-            let Some(target) = resolve_use_path_to_module_from_path(db, module, source_root, *path)
-            else {
+            let mut resolver = Resolver::new(db, source_root);
+            let Ok(target) = resolver.resolve_segments_to_module(module, path) else {
                 continue;
             };
             let target_ast = match target.data() {

@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rust Trait Solver &mdash; Integration Analysis for SAGE</title>
+<style>
+  :root {
+    --bg: #1e1e2e;
+    --surface: #313244;
+    --overlay: #45475a;
+    --text: #cdd6f4;
+    --subtext: #a6adc8;
+    --blue: #89b4fa;
+    --green: #a6e3a1;
+    --red: #f38ba8;
+    --peach: #fab387;
+    --mauve: #cba6f7;
+    --teal: #94e2d5;
+    --yellow: #f9e2af;
+    --pink: #f5c2e7;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    padding: 2rem;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+  h1 { color: var(--mauve); font-size: 2rem; margin-bottom: 0.5rem; }
+  h2 { color: var(--blue); font-size: 1.5rem; margin-top: 2.5rem; margin-bottom: 1rem; border-bottom: 1px solid var(--overlay); padding-bottom: 0.4rem; }
+  h3 { color: var(--teal); font-size: 1.2rem; margin-top: 1.5rem; margin-bottom: 0.5rem; }
+  p { margin-bottom: 1rem; color: var(--subtext); }
+  a { color: var(--blue); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    background: var(--surface);
+    padding: 0.15em 0.4em;
+    border-radius: 4px;
+    font-size: 0.9em;
+    color: var(--peach);
+  }
+  pre {
+    background: var(--surface);
+    border: 1px solid var(--overlay);
+    border-radius: 8px;
+    padding: 1.2rem;
+    overflow-x: auto;
+    margin-bottom: 1.5rem;
+    font-size: 0.85rem;
+    line-height: 1.5;
+  }
+  pre code { background: none; padding: 0; color: var(--text); }
+  .verdict {
+    background: var(--surface);
+    border-left: 4px solid var(--mauve);
+    padding: 1.2rem;
+    border-radius: 0 8px 8px 0;
+    margin: 1.5rem 0;
+  }
+  .verdict-title { color: var(--mauve); font-weight: bold; margin-bottom: 0.5rem; }
+  .pro { color: var(--green); }
+  .con { color: var(--red); }
+  .neutral { color: var(--yellow); }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0 1.5rem; }
+  th, td { padding: 0.6rem 1rem; text-align: left; border-bottom: 1px solid var(--overlay); }
+  th { color: var(--blue); font-weight: 600; }
+  td { color: var(--subtext); }
+  .layer-diagram {
+    background: var(--surface);
+    border: 1px solid var(--overlay);
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin: 1.5rem 0;
+    font-family: monospace;
+    font-size: 0.85rem;
+    line-height: 1.6;
+    white-space: pre;
+    color: var(--text);
+  }
+  .section-nav {
+    background: var(--surface);
+    border-radius: 8px;
+    padding: 1rem 1.5rem;
+    margin-bottom: 2rem;
+  }
+  .section-nav a { margin-right: 1.2rem; font-size: 0.9rem; }
+  details { margin: 1rem 0; }
+  summary { cursor: pointer; color: var(--teal); font-weight: 500; padding: 0.3rem 0; }
+  summary:hover { color: var(--blue); }
+  .tag {
+    display: inline-block;
+    padding: 0.1em 0.6em;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    margin-right: 0.4rem;
+  }
+  .tag-hard { background: rgba(243,139,168,0.2); color: var(--red); }
+  .tag-medium { background: rgba(249,226,175,0.2); color: var(--yellow); }
+  .tag-easy { background: rgba(166,227,161,0.2); color: var(--green); }
+  .comparison { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin: 1.5rem 0; }
+  .comparison > div { background: var(--surface); border-radius: 8px; padding: 1.2rem; }
+  @media (max-width: 700px) { .comparison { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<h1>Rust Trait Solver: Integration Analysis for SAGE</h1>
+<p>An analysis of <code>rustc_next_trait_solver</code> and <code>rustc_type_ir</code>, evaluating whether to integrate them into SAGE vs. writing a custom solver.</p>
+
+<nav class="section-nav">
+  <a href="#architecture">Architecture</a>
+  <a href="#interner">Interner Trait</a>
+  <a href="#solver-delegate">SolverDelegate</a>
+  <a href="#entry-points">Entry Points</a>
+  <a href="#sage-gap">SAGE Gap Analysis</a>
+  <a href="#cost">Cost Comparison</a>
+  <a href="#verdict">Verdict</a>
+</nav>
+
+<!-- ============================================================ -->
+<h2 id="architecture">1. Architecture: The Three-Layer Cake</h2>
+
+<p>The "next-gen" trait solver is split into three crates with a clear dependency hierarchy:</p>
+
+<div class="layer-diagram">
+┌─────────────────────────────────────────────────────────────────┐
+│  <span style="color:var(--red)">rustc_trait_selection</span>                                         │
+│  Rustc-specific: wires the solver to TyCtxt, error reporting,   │
+│  obligation fulfillment. NOT reusable outside rustc.            │
+└─────────────────────────────┬───────────────────────────────────┘
+                              │ depends on
+┌─────────────────────────────▼───────────────────────────────────┐
+│  <span style="color:var(--green)">rustc_next_trait_solver</span>                                       │
+│  The actual solver engine. Generic over Interner.               │
+│  Performs: goal evaluation, normalization, coherence,            │
+│  candidate assembly, search graph (cycle detection).            │
+│  ~15k lines. This is the reusable part.                         │
+└─────────────────────────────┬───────────────────────────────────┘
+                              │ depends on
+┌─────────────────────────────▼───────────────────────────────────┐
+│  <span style="color:var(--blue)">rustc_type_ir</span>                                                  │
+│  Type IR definitions: TyKind, RegionKind, PredicateKind,        │
+│  Interner trait, InferCtxtLike, folding, visiting, relating.    │
+│  ~30k lines. The foundation everything builds on.               │
+└─────────────────────────────────────────────────────────────────┘
+</div>
+
+<p>The key insight: <code>rustc_next_trait_solver</code> is parameterized over an <code>Interner</code> trait. In theory, any project can implement <code>Interner</code> and plug in. In practice, the <code>Interner</code> trait surface is enormous.</p>
+
+<!-- ============================================================ -->
+<h2 id="interner">2. The <code>Interner</code> Trait: What You'd Need to Implement</h2>
+
+<p>The <code>Interner</code> trait lives at <code>compiler/rustc_type_ir/src/interner.rs</code>. It is the single most critical interface. Here's its shape:</p>
+
+<pre><code>pub trait Interner:
+    Sized + Copy
+    + IrPrint&lt;ty::AliasTy&lt;Self&gt;&gt;
+    + IrPrint&lt;ty::TraitRef&lt;Self&gt;&gt;
+    + IrPrint&lt;ty::FnSig&lt;Self&gt;&gt;
+    + ... // ~12 more IrPrint bounds
+{
+    // === ~25 DefId associated types ===
+    type DefId: DefId&lt;Self&gt;;
+    type TraitId: SpecificDefId&lt;Self&gt;;
+    type ImplId: SpecificDefId&lt;Self&gt;;
+    type AdtId: SpecificDefId&lt;Self&gt;;
+    type TraitAssocTyId: SpecificDefId&lt;Self&gt;;
+    type TraitAssocConstId: SpecificDefId&lt;Self&gt;;
+    type OpaqueTyId: SpecificDefId&lt;Self&gt;;
+    type FreeTyAliasId: SpecificDefId&lt;Self&gt;;
+    type InherentAssocTyId: SpecificDefId&lt;Self&gt;;
+    // ... many more
+
+    // === Core IR types ===
+    type Ty: Ty&lt;Self&gt;;
+    type Region: Region&lt;Self&gt;;
+    type Const: Const&lt;Self&gt;;
+    type GenericArgs: GenericArgs&lt;Self&gt;;
+    type GenericArg: GenericArg&lt;Self&gt;;
+    type ParamEnv: ParamEnv&lt;Self&gt;;
+    type Predicate: Predicate&lt;Self&gt;;
+    type Clause: Clause&lt;Self&gt;;
+
+    // === Query methods (the expensive part) ===
+    fn generics_of(self, def_id: Self::DefId) -&gt; Self::GenericsOf;
+    fn type_of(self, def_id: Self::DefId) -&gt; ty::EarlyBinder&lt;Self, Self::Ty&gt;;
+    fn predicates_of(self, def_id: Self::DefId)
+        -&gt; ty::EarlyBinder&lt;Self, impl IntoIterator&lt;Item = Self::Clause&gt;&gt;;
+    fn item_bounds(self, def_id: Self::DefId)
+        -&gt; ty::EarlyBinder&lt;Self, impl IntoIterator&lt;Item = Self::Clause&gt;&gt;;
+    fn explicit_super_predicates_of(self, def_id: Self::TraitId)
+        -&gt; ty::EarlyBinder&lt;Self, impl IntoIterator&lt;Item = (Self::Clause, Self::Span)&gt;&gt;;
+    fn impl_trait_ref(self, impl_def_id: Self::ImplId)
+        -&gt; ty::EarlyBinder&lt;Self, ty::TraitRef&lt;Self&gt;&gt;;
+
+    // === Impl enumeration (critical for solving) ===
+    fn for_each_relevant_impl&lt;R: VisitorResult&gt;(
+        self,
+        trait_def_id: Self::TraitId,
+        self_ty: Self::Ty,
+        f: impl FnMut(Self::ImplId) -&gt; R,
+    ) -&gt; R;
+    fn for_each_blanket_impl&lt;R: VisitorResult&gt;(
+        self,
+        trait_def_id: Self::TraitId,
+        f: impl FnMut(Self::ImplId) -&gt; R,
+    ) -&gt; R;
+
+    // === Trait properties ===
+    fn trait_is_auto(self, trait_def_id: Self::TraitId) -&gt; bool;
+    fn trait_is_coinductive(self, trait_def_id: Self::TraitId) -&gt; bool;
+    fn trait_is_dyn_compatible(self, trait_def_id: Self::TraitId) -&gt; bool;
+    fn trait_is_fundamental(self, def_id: Self::TraitId) -&gt; bool;
+    fn impl_polarity(self, impl_def_id: Self::ImplId) -&gt; ty::ImplPolarity;
+    fn impl_specializes(self, a: Self::ImplId, b: Self::ImplId) -&gt; bool;
+
+    // === Lang items (Sized, Copy, Fn, etc.) ===
+    fn require_trait_lang_item(self, lang_item: SolverTraitLangItem) -&gt; Self::TraitId;
+    fn require_projection_lang_item(self, lang_item: SolverProjectionLangItem)
+        -&gt; Self::TraitAssocTyId;
+
+    // === Opaque types, coroutines, const evaluation ===
+    fn opaque_types_defined_by(self, anchor: Self::LocalDefId) -&gt; Self::LocalDefIds;
+    fn coroutine_hidden_types(self, def_id: Self::CoroutineId) -&gt; ...;
+    fn fn_sig(self, def_id: Self::FunctionId) -&gt; ty::EarlyBinder&lt;...&gt;;
+
+    // ... ~100+ total associated types and methods
+}</code></pre>
+
+<h3>What makes this hard for SAGE</h3>
+
+<table>
+<tr><th>Requirement</th><th>SAGE Status</th><th>Difficulty</th></tr>
+<tr><td><code>~25 DefId</code> types with TryFrom conversions</td><td>SAGE has one <code>Symbol</code> type</td><td><span class="tag tag-medium">medium</span></td></tr>
+<tr><td><code>Ty</code> implementing <code>TypeFoldable</code>, <code>TypeVisitable</code>, <code>Relate</code>, <code>Flags</code></td><td>SAGE has <code>TyFolder</code>, would need adapter</td><td><span class="tag tag-hard">hard</span></td></tr>
+<tr><td><code>Region</code> (lifetimes)</td><td>SAGE erases lifetimes</td><td><span class="tag tag-hard">hard</span></td></tr>
+<tr><td><code>Const</code> with evaluation</td><td>SAGE has basic <code>Const</code>, no evaluator</td><td><span class="tag tag-medium">medium</span></td></tr>
+<tr><td><code>ParamEnv</code> (where clauses in scope)</td><td>Not yet parsed</td><td><span class="tag tag-medium">medium</span></td></tr>
+<tr><td><code>Predicate</code>/<code>Clause</code> types</td><td>Not yet represented</td><td><span class="tag tag-medium">medium</span></td></tr>
+<tr><td>Canonicalization machinery</td><td>Not present</td><td><span class="tag tag-hard">hard</span></td></tr>
+<tr><td>Universe/inference variable management</td><td>Not present</td><td><span class="tag tag-hard">hard</span></td></tr>
+<tr><td><code>for_each_relevant_impl</code></td><td>Impl tracking exists, needs indexing</td><td><span class="tag tag-medium">medium</span></td></tr>
+<tr><td>Lang items (Sized, Copy, Fn*)</td><td>Would need mapping layer</td><td><span class="tag tag-easy">easy</span></td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="solver-delegate">3. The <code>SolverDelegate</code> &amp; <code>InferCtxtLike</code> Traits</h2>
+
+<p>Beyond <code>Interner</code>, you also need to implement the inference context and solver delegate:</p>
+
+<h3><code>InferCtxtLike</code> &mdash; manages inference state</h3>
+<pre><code>pub trait InferCtxtLike: Sized {
+    type Interner: Interner;
+    fn cx(&self) -&gt; Self::Interner;
+
+    // Typing mode (analysis vs coherence)
+    fn typing_mode_raw(&self) -&gt; TypingMode&lt;Self::Interner&gt;;
+
+    // Universe management (for higher-ranked types)
+    fn universe(&self) -&gt; ty::UniverseIndex;
+    fn create_next_universe(&self) -&gt; ty::UniverseIndex;
+
+    // Inference variable operations
+    fn root_ty_var(&self, var: ty::TyVid) -&gt; ty::TyVid;
+    fn opportunistic_resolve_ty_var(&self, vid: ty::TyVid) -&gt; Ty;
+    fn next_region_infer(&self) -&gt; Region;
+
+    // Region constraint handling
+    fn sub_regions(&self, sub: Region, sup: Region, ...);
+
+    // Opaque type storage
+    fn register_hidden_type_in_storage(&self, ...);
+    fn clone_opaque_types_lookup_table(&self) -&gt; Vec&lt;...&gt;;
+}</code></pre>
+
+<h3><code>SolverDelegate</code> &mdash; solver callbacks</h3>
+<pre><code>pub trait SolverDelegate: Deref&lt;Target = Self::Infcx&gt; + Sized {
+    type Infcx: InferCtxtLike&lt;Interner = Self::Interner&gt;;
+    type Interner: Interner;
+
+    fn build_with_canonical&lt;V&gt;(
+        cx: Self::Interner,
+        canonical: &ty::CanonicalQueryInput&lt;Self::Interner, V&gt;,
+    ) -&gt; (Self, V, ty::CanonicalVarValues&lt;Self::Interner&gt;);
+
+    fn compute_goal_fast_path(...) -&gt; Option&lt;Certainty&gt;;
+    fn leak_check(&self, max_input_universe: UniverseIndex) -&gt; Result&lt;(), NoSolution&gt;;
+    fn evaluate_const(...) -&gt; Option&lt;Const&gt;;
+    fn well_formed_goals(...) -&gt; Option&lt;Vec&lt;Goal&lt;...&gt;&gt;&gt;;
+    fn fetch_eligible_assoc_item(...) -&gt; FetchEligibleAssocItemResponse&lt;...&gt;;
+    fn is_transmutable(...) -&gt; Result&lt;Certainty, NoSolution&gt;;
+}</code></pre>
+
+<p>The <code>SolverDelegate</code> is manageable (~12 methods), but it assumes you have a full inference context with canonicalization support. The hard part isn't the delegate itself &mdash; it's building the <code>InferCtxtLike</code> beneath it.</p>
+
+<!-- ============================================================ -->
+<h2 id="entry-points">4. Entry Points: How You Call the Solver</h2>
+
+<p>Once you've implemented the above, calling the solver is straightforward:</p>
+
+<pre><code>pub trait SolverDelegateEvalExt: SolverDelegate {
+    /// Evaluates a goal from **outside** of the trait solver.
+    fn evaluate_root_goal(
+        &self,
+        goal: Goal&lt;Self::Interner, &lt;Self::Interner as Interner&gt;::Predicate&gt;,
+        span: &lt;Self::Interner as Interner&gt;::Span,
+        stalled_on: Option&lt;GoalStalledOn&lt;Self::Interner&gt;&gt;,
+    ) -&gt; Result&lt;GoalEvaluation&lt;Self::Interner&gt;, NoSolution&gt;;
+
+    /// Fast check: can this goal possibly hold?
+    fn root_goal_may_hold_opaque_types_jank(
+        &self,
+        goal: Goal&lt;Self::Interner, &lt;Self::Interner as Interner&gt;::Predicate&gt;,
+    ) -&gt; bool;
+}</code></pre>
+
+<p>A <code>Goal</code> is simply:</p>
+<pre><code>pub struct Goal&lt;I: Interner, P&gt; {
+    pub param_env: I::ParamEnv,   // where clauses in scope
+    pub predicate: P,             // what to prove
+}</code></pre>
+
+<p>And predicates include:</p>
+<pre><code>enum ClauseKind&lt;I: Interner&gt; {
+    Trait(TraitPredicate&lt;I&gt;),           // T: Trait
+    Projection(ProjectionPredicate&lt;I&gt;), // &lt;T as Trait&gt;::Assoc == U
+    TypeOutlives(...),                   // T: 'a
+    RegionOutlives(...),                 // 'a: 'b
+    ConstArgHasType(...),
+    WellFormed(...),
+    ConstEvaluatable(...),
+}
+
+enum PredicateKind&lt;I: Interner&gt; {
+    Clause(ClauseKind&lt;I&gt;),
+    NormalizesTo(NormalizesTo&lt;I&gt;),      // normalize &lt;T as Trait&gt;::Assoc
+    AliasRelate(...),
+    Subtype(SubtypePredicate&lt;I&gt;),
+    Coerce(CoercePredicate&lt;I&gt;),
+    Ambiguous,
+}</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="sage-gap">5. SAGE Gap Analysis</h2>
+
+<p>Here's what SAGE currently has vs. what the solver needs:</p>
+
+<h3>What SAGE Has</h3>
+<ul style="color:var(--green); margin-left: 1.5rem; margin-bottom: 1rem;">
+  <li>Stash-allocated types with hash-consing (<code>Ty&lt;'db&gt;</code>, <code>Ptr</code>, <code>Slice</code>)</li>
+  <li>Binders and BoundVars for generic parameters</li>
+  <li>Type folding infrastructure (<code>TyFolder</code>, <code>Instantiate</code>)</li>
+  <li>Symbol resolution with module scoping</li>
+  <li>Trait and impl AST nodes with signature lowering</li>
+  <li>Salsa-based incremental computation</li>
+  <li>External crate metadata via <code>TcxDb</code> trait</li>
+</ul>
+
+<h3>What SAGE Is Missing</h3>
+<ul style="color:var(--red); margin-left: 1.5rem; margin-bottom: 1rem;">
+  <li>Where clause parsing and representation</li>
+  <li>Inference variables and unification</li>
+  <li>Universe management (for higher-ranked types)</li>
+  <li>Canonicalization (for caching queries across contexts)</li>
+  <li>Region/lifetime tracking (SAGE erases these)</li>
+  <li>Predicate/Clause IR types</li>
+  <li>ParamEnv (the set of assumptions in scope)</li>
+  <li>Impl indexing by self-type</li>
+  <li>Const evaluation</li>
+</ul>
+
+<h3>The Lifetime Problem</h3>
+<p>SAGE currently erases lifetimes. The rustc solver fundamentally requires them &mdash; <code>Region</code> is a core associated type on <code>Interner</code>, and region constraints are integral to the solving process. You'd need either:</p>
+<ol style="color:var(--subtext); margin-left: 1.5rem; margin-bottom: 1rem;">
+  <li>A stub <code>Region</code> type that acts as "always static" (lossy but workable for trait solving)</li>
+  <li>Full lifetime representation (major scope expansion)</li>
+</ol>
+
+<h3>The Stash vs. Global Interning Problem</h3>
+<p>SAGE uses per-signature stash allocation. The rustc solver expects <code>Copy</code> types that are globally interned (one <code>Interner</code> value = one interning context). This is a fundamental mismatch:</p>
+<ul style="color:var(--subtext); margin-left: 1.5rem; margin-bottom: 1rem;">
+  <li>Solver types must be <code>Copy + Hash + Eq</code> and valid across the entire solving session</li>
+  <li>SAGE's <code>Ty&lt;'db&gt;</code> is Copy but tied to a specific <code>Stash</code> lifetime</li>
+  <li>You'd need a global interning layer for types that participate in solving</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="cost">6. Cost Comparison</h2>
+
+<div class="comparison">
+<div>
+<h3 style="color:var(--green)">Option A: Use <code>rustc_next_trait_solver</code></h3>
+<p><strong>Effort to integrate:</strong></p>
+<ul style="color:var(--subtext); margin-left: 1rem; margin-bottom: 1rem;">
+  <li>Implement <code>Interner</code> (~100+ assoc types/methods)</li>
+  <li>Implement <code>InferCtxtLike</code> (~20 methods)</li>
+  <li>Implement <code>SolverDelegate</code> (~12 methods)</li>
+  <li>Build canonicalization layer</li>
+  <li>Build global interning layer for solver types</li>
+  <li>Bridge SAGE's stash types &harr; solver types</li>
+  <li>Add predicate/clause IR</li>
+  <li>Handle lifetimes (even if stubbed)</li>
+</ul>
+<p><strong>Estimated:</strong> 8&ndash;12 weeks of focused work</p>
+<p class="pro"><strong>Pro:</strong> Complete trait solving, specialization, coherence, normalization for free. Battle-tested on all of Rust.</p>
+<p class="pro"><strong>Pro:</strong> Stays correct as the language evolves.</p>
+<p class="con"><strong>Con:</strong> Enormous surface area to implement and maintain.</p>
+<p class="con"><strong>Con:</strong> Couples SAGE to rustc's internal IR shape (which changes frequently, no stability guarantee).</p>
+<p class="con"><strong>Con:</strong> You get everything &mdash; coroutines, transmute checking, opaque types &mdash; whether you want it or not.</p>
+</div>
+<div>
+<h3 style="color:var(--peach)">Option B: Write a Custom Solver</h3>
+<p><strong>What you'd build:</strong></p>
+<ul style="color:var(--subtext); margin-left: 1rem; margin-bottom: 1rem;">
+  <li>Predicate/Clause types in SAGE's IR</li>
+  <li>ParamEnv (list of where-clause assumptions)</li>
+  <li>Impl candidate assembly (index by self-type)</li>
+  <li>Unification engine (type inference)</li>
+  <li>Goal evaluation with cycle detection</li>
+  <li>Normalization for associated types</li>
+</ul>
+<p><strong>Estimated:</strong> 4&ndash;8 weeks for a "good enough" solver</p>
+<p class="pro"><strong>Pro:</strong> Fits SAGE's stash-allocated types natively.</p>
+<p class="pro"><strong>Pro:</strong> Only implement what you need (no coroutines, no transmute, no opaque types).</p>
+<p class="pro"><strong>Pro:</strong> No external dependency churn.</p>
+<p class="pro"><strong>Pro:</strong> Can integrate with salsa directly for incremental trait solving.</p>
+<p class="con"><strong>Con:</strong> Must handle correctness yourself (coherence, specialization, negative impls).</p>
+<p class="con"><strong>Con:</strong> Risks diverging from Rust semantics on edge cases.</p>
+<p class="con"><strong>Con:</strong> Associated type normalization is surprisingly complex.</p>
+</div>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="verdict">7. Assessment</h2>
+
+<div class="verdict">
+<div class="verdict-title">Key Questions to Ask</div>
+<ol style="color:var(--subtext); margin-left: 1.5rem;">
+  <li><strong>Does SAGE need to be sound for all Rust programs, or just "common" ones?</strong><br>
+    If you need full soundness (specialization, coherence, negative reasoning), the rustc solver is the only reliable path. If you're okay with "works for 95% of code," a custom solver is viable.</li>
+  <li><strong>Does SAGE need lifetime-aware trait solving?</strong><br>
+    If no (current state: lifetimes erased), a custom solver avoids the impedance mismatch entirely.</li>
+  <li><strong>How much does SAGE rely on external crate metadata?</strong><br>
+    The <code>TcxDb</code> already provides crate data. If you route trait/impl info through <code>TcxDb</code>, you can feed either solver. But the rustc solver expects information in its own shape (EarlyBinder, Clause, etc.).</li>
+  <li><strong>How fast does trait solving need to be, and does it need incremental caching?</strong><br>
+    The rustc solver's canonicalization enables cross-query caching. A salsa-backed custom solver gets incremental reuse at a different granularity.</li>
+</ol>
+</div>
+
+<div class="verdict">
+<div class="verdict-title">Bottom Line</div>
+<p>The rustc trait solver was designed to be reusable, but "reusable" here means "rust-analyzer could use it" &mdash; another project that already speaks rustc's type language. For SAGE, which has its own type representation, stash-based allocation, and no lifetime tracking, the integration cost is very high.</p>
+
+<p>A <strong>hybrid approach</strong> may be best:</p>
+<ol style="color:var(--subtext); margin-left: 1.5rem;">
+  <li><strong>Write a custom solver</strong> for SAGE's own trait/impl checking (local crate)</li>
+  <li><strong>Delegate to rustc</strong> (via <code>TcxDb</code>) for external crate trait queries where you need the "ground truth" answer about whether a type from an external crate satisfies a trait bound</li>
+</ol>
+<p>This gets you: native integration with SAGE's IR, incremental caching via salsa, correctness for external crates (by asking rustc), and no need to implement the 100+ method <code>Interner</code> trait.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2>Appendix: Key Source Files</h2>
+
+<table>
+<tr><th>File</th><th>What's There</th></tr>
+<tr><td><code>compiler/rustc_type_ir/src/interner.rs</code></td><td>The ~470-line <code>Interner</code> trait</td></tr>
+<tr><td><code>compiler/rustc_type_ir/src/infer_ctxt.rs</code></td><td><code>InferCtxtLike</code>, <code>TypingMode</code></td></tr>
+<tr><td><code>compiler/rustc_type_ir/src/inherent.rs</code></td><td><code>Ty</code>, <code>Region</code>, <code>Const</code> helper traits</td></tr>
+<tr><td><code>compiler/rustc_type_ir/src/ty_kind.rs</code></td><td><code>TyKind&lt;I&gt;</code> enum (all type variants)</td></tr>
+<tr><td><code>compiler/rustc_type_ir/src/predicate_kind.rs</code></td><td><code>PredicateKind</code>, <code>ClauseKind</code></td></tr>
+<tr><td><code>compiler/rustc_next_trait_solver/src/delegate.rs</code></td><td><code>SolverDelegate</code> trait (93 lines)</td></tr>
+<tr><td><code>compiler/rustc_next_trait_solver/src/solve/mod.rs</code></td><td>Solver module root, goal types</td></tr>
+<tr><td><code>compiler/rustc_next_trait_solver/src/solve/eval_ctxt/mod.rs</code></td><td><code>EvalCtxt</code>, <code>SolverDelegateEvalExt</code></td></tr>
+<tr><td><code>crates/sage-ir/src/ty.rs</code></td><td>SAGE's type representation</td></tr>
+<tr><td><code>crates/sage-ir/src/ty_fold.rs</code></td><td>SAGE's type folding</td></tr>
+<tr><td><code>crates/sage-ir/src/item.rs</code></td><td>SAGE's trait/impl AST</td></tr>
+<tr><td><code>crates/sage-ir/src/tcx/mod.rs</code></td><td>SAGE's rustc integration trait</td></tr>
+</table>
+
+</body>
+</html>

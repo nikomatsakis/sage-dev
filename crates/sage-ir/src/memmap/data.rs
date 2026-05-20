@@ -66,13 +66,16 @@ pub enum MemmapEntry<'db> {
     /// segment of `target`). Namespace is determined dynamically by
     /// resolving `target` at lookup time, because it depends on what the
     /// target ends up being (type, value, or macro).
-    Redirect { name: Name<'db>, target: Path<'db> },
+    Redirect {
+        name: Name<'db>,
+        target: Vec<Name<'db>>,
+    },
 
     /// A `use foo::*` glob import. `path` is the source module's path.
     /// Resolved to a module dynamically at lookup time — **not** during
     /// seeding, so globs whose target is created by macro expansion are
     /// picked up correctly.
-    Glob { path: Path<'db> },
+    Glob { path: Vec<Name<'db>> },
 
     /// A macro invocation with its resolution/expansion state.
     MacroUse(MacroUse<'db>),

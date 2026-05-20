@@ -26,12 +26,12 @@ use super::expanded_module;
 /// segments. Like `ModSymbol::dispatch_first_segment` but items-based —
 /// safe to call from inside `expanded_module` because it never goes
 /// through the MEM-map on the current module.
-fn memmap_first_segment<'db>(
+fn memmap_first_segment<'db, 's>(
     db: &'db dyn Db,
     current_module: ModSymbol<'db>,
     source_root: SourceRoot,
-    segments: &'db [Name<'db>],
-) -> Result<(ModSymbol<'db>, &'db [Name<'db>]), ResolutionError> {
+    segments: &'s [Name<'db>],
+) -> Result<(ModSymbol<'db>, &'s [Name<'db>]), ResolutionError> {
     let first = segments[0];
     let first_text = first.text(db);
     let rest = &segments[1..];
@@ -86,9 +86,8 @@ fn memmap_resolve_path_to_module<'db>(
     db: &'db dyn Db,
     current_module: ModSymbol<'db>,
     source_root: SourceRoot,
-    path: Path<'db>,
+    segments: &[Name<'db>],
 ) -> Option<ModSymbol<'db>> {
-    let segments = path.segments(db);
     if segments.is_empty() {
         return None;
     }
@@ -140,8 +139,7 @@ fn resolve_macro_path_to_defs<'db>(
         let mut globbed: Vec<MacroDefAst<'db>> = Vec::new();
         for entry in entries {
             if let MemmapEntry::Glob { path } = entry {
-                if let Some(target) = memmap_resolve_path_to_module(db, module, source_root, *path)
-                {
+                if let Some(target) = memmap_resolve_path_to_module(db, module, source_root, path) {
                     if let Some(def) = find_macro_in_module(db, target, name, source_root) {
                         globbed.push(def);
                     }
@@ -244,7 +242,7 @@ fn resolve_macro_path_to_defs<'db>(
             for entry in entries {
                 if let MemmapEntry::Glob { path: glob_path } = entry {
                     let Some(glob_target) =
-                        memmap_resolve_path_to_module(db, module, source_root, *glob_path)
+                        memmap_resolve_path_to_module(db, module, source_root, glob_path)
                     else {
                         continue;
                     };
@@ -335,7 +333,7 @@ fn walk_path_to_macro<'db>(
                     }
                     MemmapEntry::Redirect { name, target } => {
                         if *name == *seg {
-                            return resolve_redirect_to_macro(db, current, source_root, *target);
+                            return resolve_redirect_to_macro(db, current, source_root, target);
                         }
                     }
                     _ => {}
@@ -352,9 +350,8 @@ fn resolve_redirect_to_macro<'db>(
     db: &'db dyn Db,
     current_module: ModSymbol<'db>,
     source_root: SourceRoot,
-    path: Path<'db>,
+    segments: &[Name<'db>],
 ) -> Option<MacroDefAst<'db>> {
-    let segments = path.segments(db);
     if segments.is_empty() {
         return None;
     }

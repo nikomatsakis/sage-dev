@@ -474,6 +474,20 @@ pub fn fmt_memmap_error(db: &dyn sage_ir::Db, err: &sage_ir::memmap::MemmapError
         UnresolvedRedirect { name } => {
             format!("UnresolvedRedirect name={}", name.text(db))
         }
-        UnresolvedGlob { path } => format!("UnresolvedGlob path={}", fmt_path(db, *path)),
+        UnresolvedGlob { path } => {
+            let formatted = path
+                .iter()
+                .map(|n| {
+                    let text = n.text(db);
+                    if text.is_empty() {
+                        "::".to_string()
+                    } else {
+                        text.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("::");
+            format!("UnresolvedGlob path={formatted}")
+        }
     }
 }

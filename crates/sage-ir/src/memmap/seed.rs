@@ -53,12 +53,12 @@ pub(super) fn seed_from_items<'db>(
                         UseKind::Named(alias) => {
                             entries.push(MemmapEntry::Redirect {
                                 name: alias,
-                                target: import.path(db),
+                                target: import.path(db).segments(db).to_vec(),
                             });
                         }
                         UseKind::Glob => {
                             entries.push(MemmapEntry::Glob {
-                                path: import.path(db),
+                                path: import.path(db).segments(db).to_vec(),
                             });
                         }
                         UseKind::Unnamed => {}
