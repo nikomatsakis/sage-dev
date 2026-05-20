@@ -48,17 +48,19 @@ pub(super) fn seed_from_items<'db>(
                 }));
             }
             ItemAst::Use(group) => {
-                for import in group.imports(db) {
-                    match import.kind(db) {
+                let imports = group.imports(db);
+                let stash = imports.stash();
+                for import in &stash[*imports.root()] {
+                    match import.kind {
                         UseKind::Named(alias) => {
                             entries.push(MemmapEntry::Redirect {
                                 name: alias,
-                                target: import.path(db).segments(db).to_vec(),
+                                target: stash[import.path].to_vec(),
                             });
                         }
                         UseKind::Glob => {
                             entries.push(MemmapEntry::Glob {
-                                path: import.path(db).segments(db).to_vec(),
+                                path: stash[import.path].to_vec(),
                             });
                         }
                         UseKind::Unnamed => {}

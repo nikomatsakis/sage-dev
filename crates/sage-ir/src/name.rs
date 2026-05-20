@@ -6,3 +6,11 @@ pub struct Name<'db> {
 }
 
 impl sage_stash::StashDirect for Name<'_> {}
+
+unsafe impl<'db> sage_stash::StashData<'db> for Name<'db> {
+    fn static_type_id() -> std::any::TypeId {
+        std::any::TypeId::of::<Name<'static>>()
+    }
+}
+
+impl<'db> sage_stash::AllocStashData<'db> for Name<'db> {}

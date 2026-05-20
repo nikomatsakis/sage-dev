@@ -243,31 +243,34 @@ impl fmt::Display for UseGroupAst<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         with_db(|db| {
             write_attrs(f, self.attrs(db))?;
-            for (i, import) in self.imports(db).iter().enumerate() {
+            let imports = self.imports(db);
+            let stash = imports.stash();
+            for (i, import) in stash[*imports.root()].iter().enumerate() {
                 if i > 0 {
                     writeln!(f)?;
                 }
-                fmt::Display::fmt(import, f)?;
-            }
-            Ok(())
-        })
-    }
-}
-
-impl fmt::Display for UseImport<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        with_db(|db| {
-            write!(f, "use {}", self.path(db))?;
-            match self.kind(db) {
-                UseKind::Named(name) => {
-                    // Only show `as X` if the alias differs from the last path segment
-                    let segs = self.path(db).segments(db);
-                    if segs.last().map(|s| s.text(db)) != Some(name.text(db)) {
-                        write!(f, " as {}", name.text(db))?;
+                let segs = &stash[import.path];
+                f.write_str("use ")?;
+                for (j, seg) in segs.iter().enumerate() {
+                    if j > 0 {
+                        f.write_str("::")?;
+                    }
+                    let text = seg.text(db);
+                    if text.is_empty() {
+                        f.write_str("::")?;
+                    } else {
+                        f.write_str(text)?;
                     }
                 }
-                UseKind::Glob => f.write_str("::*")?,
-                UseKind::Unnamed => f.write_str(" as _")?,
+                match import.kind {
+                    UseKind::Named(name) => {
+                        if segs.last().map(|s| s.text(db)) != Some(name.text(db)) {
+                            write!(f, " as {}", name.text(db))?;
+                        }
+                    }
+                    UseKind::Glob => f.write_str("::*")?,
+                    UseKind::Unnamed => f.write_str(" as _")?,
+                }
             }
             Ok(())
         })

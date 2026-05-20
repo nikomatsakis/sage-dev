@@ -4,7 +4,7 @@ use crate::module::{ModExt, ModSymbol, ModSymbolData};
 use crate::name::Name;
 use crate::source::SourceFile;
 use crate::symbol::{Intrinsic, SymExt, Symbol, SymbolData};
-use crate::types::{Path, UseImport};
+use crate::types::Path;
 
 // ---------------------------------------------------------------------------
 // Namespace
@@ -81,22 +81,6 @@ fn module_label(db: &dyn Db, module: ModSymbol<'_>) -> String {
         }
         ModSymbolData::Ext(ext) => format!("extern({}, {})", ext.crate_num.0, ext.def_index.0),
     }
-}
-
-/// Use imports declared in a local module.
-fn local_module_use_imports<'db>(db: &'db dyn Db, ast: ModAst<'db>) -> Vec<UseImport<'db>> {
-    let items = ast.unexpanded_items(db);
-    collect_use_imports(db, &items)
-}
-
-fn collect_use_imports<'db>(db: &'db dyn Db, items: &[ItemAst<'db>]) -> Vec<UseImport<'db>> {
-    let mut imports = Vec::new();
-    for item in items {
-        if let ItemAst::Use(group) = item {
-            imports.extend_from_slice(group.imports(db));
-        }
-    }
-    imports
 }
 
 /// Find a direct child definition by name.
@@ -271,15 +255,6 @@ pub fn module_items<'db>(db: &'db dyn Db, module: ModSymbol<'db>) -> Vec<ItemAst
     db.log_query(format!("module_items({})", module_label(db, module)));
     match module.data() {
         ModSymbolData::Ast(ast) => ast.unexpanded_items(db),
-        ModSymbolData::Ext(_) => Vec::new(),
-    }
-}
-
-/// Use imports declared in a module. Empty for external modules.
-pub fn module_use_imports<'db>(db: &'db dyn Db, module: ModSymbol<'db>) -> Vec<UseImport<'db>> {
-    db.log_query(format!("module_use_imports({})", module_label(db, module)));
-    match module.data() {
-        ModSymbolData::Ast(ast) => local_module_use_imports(db, ast),
         ModSymbolData::Ext(_) => Vec::new(),
     }
 }

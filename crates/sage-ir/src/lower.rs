@@ -835,18 +835,28 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
     fn lower_use(&self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> ItemAst<'db> {
         let db = self.db();
         let span = self.abs_span(node);
-        let mut imports = Vec::new();
+        let mut raw_imports = Vec::new();
         let mut cursor = node.walk();
         for child in node.named_children(&mut cursor) {
             match child.kind() {
                 "visibility_modifier" => {}
                 _ => {
                     let mut prefix = Vec::new();
-                    self.flatten_use_tree(child, &mut prefix, &mut imports);
+                    self.flatten_use_tree(child, &mut prefix, &mut raw_imports);
                     break;
                 }
             }
         }
+        let mut stash = sage_stash::Stash::new();
+        let import_asts: Vec<_> = raw_imports
+            .into_iter()
+            .map(|(path_segs, kind, span)| {
+                let path = stash.alloc_slice(&path_segs);
+                UseImportAst { path, kind, span }
+            })
+            .collect();
+        let imports_slice = stash.alloc_slice(&import_asts);
+        let imports = sage_stash::Stashed::new(stash, imports_slice);
         ItemAst::Use(UseGroupAst::new(db, attrs, imports, span))
     }
 
@@ -854,7 +864,7 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
         &self,
         node: Node<'_>,
         prefix: &mut Vec<Name<'db>>,
-        out: &mut Vec<UseImport<'db>>,
+        out: &mut Vec<(Vec<Name<'db>>, UseKind<'db>, RelativeSpan)>,
     ) {
         let db = self.db();
         match node.kind() {
@@ -892,8 +902,7 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
                         UseKind::Named(last)
                     }
                 };
-                let path = Path::new(db, path_segs, self.rel_span(node));
-                out.push(UseImport::new(db, path, kind, self.rel_span(node)));
+                out.push((path_segs, kind, self.rel_span(node)));
             }
             "use_wildcard" => {
                 let mut path_segs = prefix.to_vec();
@@ -906,8 +915,7 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
                 if let Some(pn) = path_node {
                     self.collect_path_segments(pn, &mut path_segs);
                 }
-                let path = Path::new(db, path_segs, self.rel_span(node));
-                out.push(UseImport::new(db, path, UseKind::Glob, self.rel_span(node)));
+                out.push((path_segs, UseKind::Glob, self.rel_span(node)));
             }
             "scoped_identifier" => {
                 let mut path_segs = prefix.to_vec();
@@ -916,25 +924,13 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
                     .last()
                     .copied()
                     .unwrap_or_else(|| Name::new(db, "?".to_owned()));
-                let path = Path::new(db, path_segs, self.rel_span(node));
-                out.push(UseImport::new(
-                    db,
-                    path,
-                    UseKind::Named(last),
-                    self.rel_span(node),
-                ));
+                out.push((path_segs, UseKind::Named(last), self.rel_span(node)));
             }
             "identifier" | "type_identifier" => {
                 let name = self.intern_name(node);
                 let mut path_segs = prefix.to_vec();
                 path_segs.push(name);
-                let path = Path::new(db, path_segs, self.rel_span(node));
-                out.push(UseImport::new(
-                    db,
-                    path,
-                    UseKind::Named(name),
-                    self.rel_span(node),
-                ));
+                out.push((path_segs, UseKind::Named(name), self.rel_span(node)));
             }
             "self" => {
                 let path_segs = prefix.to_vec();
@@ -942,37 +938,19 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
                     .last()
                     .copied()
                     .unwrap_or_else(|| Name::new(db, "self".to_owned()));
-                let path = Path::new(db, path_segs, self.rel_span(node));
-                out.push(UseImport::new(
-                    db,
-                    path,
-                    UseKind::Named(alias),
-                    self.rel_span(node),
-                ));
+                out.push((path_segs, UseKind::Named(alias), self.rel_span(node)));
             }
             "crate" | "super" => {
                 let name = Name::new(db, node.kind().to_owned());
                 let mut path_segs = prefix.to_vec();
                 path_segs.push(name);
-                let path = Path::new(db, path_segs, self.rel_span(node));
-                out.push(UseImport::new(
-                    db,
-                    path,
-                    UseKind::Named(name),
-                    self.rel_span(node),
-                ));
+                out.push((path_segs, UseKind::Named(name), self.rel_span(node)));
             }
             _ => {
                 let name = Name::new(db, self.node_text(node).to_owned());
                 let mut path_segs = prefix.to_vec();
                 path_segs.push(name);
-                let path = Path::new(db, path_segs, self.rel_span(node));
-                out.push(UseImport::new(
-                    db,
-                    path,
-                    UseKind::Named(name),
-                    self.rel_span(node),
-                ));
+                out.push((path_segs, UseKind::Named(name), self.rel_span(node)));
             }
         }
     }

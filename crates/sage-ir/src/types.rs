@@ -1,4 +1,4 @@
-use sage_stash::StashDirect;
+use sage_stash::{AllocStashData, Slice, StashDirect, Stashed};
 
 use crate::name::Name;
 use crate::span::RelativeSpan;
@@ -56,17 +56,20 @@ pub enum AttrKind {
     DocComment,
 }
 
-/// A single flattened use import (syntactic, not resolved).
-#[salsa::tracked(debug)]
-pub struct UseImport<'db> {
+/// A single flattened use import (stash-allocated).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub struct UseImportAst<'db> {
     /// The full path as written, e.g. [foo, bar].
-    pub path: Path<'db>,
+    pub path: Slice<Name<'db>>,
     pub kind: UseKind<'db>,
     pub span: RelativeSpan,
 }
 
+/// The stashed collection of use imports for a `use` declaration.
+pub type UseImports<'db> = Stashed<Slice<UseImportAst<'db>>>;
+
 /// What a use import brings into scope.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update, AllocStashData)]
 pub enum UseKind<'db> {
     /// `use foo::bar` or `use foo::bar as baz` — imports under the given name.
     Named(Name<'db>),

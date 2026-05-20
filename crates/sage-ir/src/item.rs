@@ -5,7 +5,7 @@ use crate::name::Name;
 use crate::sig_ast::*;
 use crate::source::SourceFile;
 use crate::span::{AbsoluteSpan, ParseSource};
-use crate::types::{Attr, Path, TypeRef, UseImport};
+use crate::types::{Attr, Path, TypeRef, UseImports};
 
 /// Thin enum over all item kinds. `Copy` because salsa tracked struct
 /// handles are just IDs.
@@ -382,7 +382,7 @@ pub struct UseGroupAst<'db> {
 
     #[tracked]
     #[returns(ref)]
-    pub imports: Vec<UseImport<'db>>,
+    pub imports: UseImports<'db>,
 
     #[tracked]
     pub span: AbsoluteSpan<'db>,

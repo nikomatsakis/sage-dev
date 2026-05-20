@@ -2,9 +2,10 @@ use std::path::Path;
 
 use expect_test::expect;
 use sage_ir::db::Database;
+use sage_ir::item::ItemAst;
 use sage_ir::item::ModAst;
 use sage_ir::module::ModSymbol;
-use sage_ir::resolve::{SourceRoot, module_items, module_use_imports, resolve_module_path};
+use sage_ir::resolve::{SourceRoot, module_items, resolve_module_path};
 use sage_ir::source::SourceFile;
 use salsa::Database as _;
 
@@ -78,10 +79,12 @@ fn resolve_cmd_get_use_imports() {
         let (source_root, root_module) = setup_mini_redis(db);
         let module = resolve_module_path(db, root_module, source_root, &["cmd", "get"]).unwrap();
 
-        let imports = module_use_imports(db, module);
+        let items = module_items(db, module);
         let mut out = String::new();
-        for import in imports {
-            out.push_str(&format!("{import}\n"));
+        for item in &items {
+            if let ItemAst::Use(group) = item {
+                out.push_str(&format!("{group}\n"));
+            }
         }
 
         expect![[r#"
