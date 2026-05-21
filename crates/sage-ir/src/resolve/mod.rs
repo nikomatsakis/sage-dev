@@ -4,7 +4,6 @@ use crate::module::{ModExt, ModSymbol, ModSymbolData};
 use crate::name::Name;
 use crate::source::SourceFile;
 use crate::symbol::{Intrinsic, SymExt, Symbol, SymbolData};
-use crate::types::Path;
 
 // ---------------------------------------------------------------------------
 // Namespace
@@ -350,17 +349,6 @@ impl<'db> Resolver<'db> {
         resolve_remainder(self, first_module, rest, final_ns)
     }
 
-    /// Resolve a salsa-interned Path to a symbol.
-    pub fn resolve_path(
-        &mut self,
-        module: ModSymbol<'db>,
-        path: Path<'db>,
-        final_ns: Namespace,
-    ) -> Result<Symbol<'db>, ResolutionError> {
-        let segments = path.segments(self.db);
-        self.resolve_segments(module, segments, final_ns)
-    }
-
     /// Resolve a slice of name segments to a module.
     pub fn resolve_segments_to_module(
         &mut self,
@@ -373,16 +361,6 @@ impl<'db> Resolver<'db> {
 
         let (first_module, rest) = dispatch_first_segment(self, module, segments)?;
         resolve_remainder_to_module(self, first_module, rest)
-    }
-
-    /// Resolve a salsa-interned Path to a module.
-    pub fn resolve_path_to_module(
-        &mut self,
-        module: ModSymbol<'db>,
-        path: Path<'db>,
-    ) -> Result<ModSymbol<'db>, ResolutionError> {
-        let segments = path.segments(self.db);
-        self.resolve_segments_to_module(module, segments)
     }
 
     /// Resolve a name in this module's direct contents (memmap-aware).
@@ -699,17 +677,6 @@ fn resolve_in_std_prelude<'db>(
     raw.into_iter()
         .find(|c| c.name == *name_text && c.namespace == ns)
         .map(|c| Symbol::external(c.crate_num, c.def_index))
-}
-
-/// Post-construction wrapper around `ModSymbol::resolve_path_to_module`.
-pub fn resolve_use_path_to_module_from_path<'db>(
-    db: &'db dyn Db,
-    current_module: ModSymbol<'db>,
-    source_root: SourceRoot,
-    path: Path<'db>,
-) -> Option<ModSymbol<'db>> {
-    let mut resolver = Resolver::new(db, source_root);
-    resolver.resolve_path_to_module(current_module, path).ok()
 }
 
 /// Try to convert a Symbol into a ModSymbol (for walking into child segments).

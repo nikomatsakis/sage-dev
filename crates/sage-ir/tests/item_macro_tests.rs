@@ -56,7 +56,7 @@ fn parse_source_file_produces_macro_invocation() {
             })
             .expect("expected ItemAst::MacroInvocation");
 
-        let segments = inv.path(db).segments(db);
+        let segments = inv.path(db);
         assert_eq!(segments.len(), 1);
         assert_eq!(segments[0].text(db).as_str(), "m");
     });
@@ -80,7 +80,7 @@ fn parse_source_file_multi_segment_macro_path() {
             })
             .expect("expected ItemAst::MacroInvocation");
 
-        let segments = inv.path(db).segments(db);
+        let segments = inv.path(db);
         let texts: Vec<&str> = segments.iter().map(|s| s.text(db).as_str()).collect();
         assert_eq!(texts, vec!["foo", "bar", "m"]);
     });

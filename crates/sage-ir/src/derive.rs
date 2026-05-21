@@ -36,7 +36,7 @@ pub fn expand_derives<'db>(
         if attr.kind(db) != AttrKind::Normal {
             continue;
         }
-        let path_segs = attr.path(db).segments(db);
+        let path_segs = attr.path(db);
         if path_segs.len() != 1 || path_segs[0].text(db) != "derive" {
             continue;
         }

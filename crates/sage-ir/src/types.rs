@@ -3,14 +3,6 @@ use sage_stash::{AllocStashData, Slice, StashDirect, Stashed};
 use crate::name::Name;
 use crate::span::RelativeSpan;
 
-/// A path as written in source: `std::collections::HashMap`.
-#[salsa::tracked(debug)]
-pub struct Path<'db> {
-    #[returns(ref)]
-    pub segments: Vec<Name<'db>>,
-    pub span: RelativeSpan,
-}
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub enum Mutability {
     Shared,
@@ -57,7 +49,8 @@ pub struct Attr<'db> {
     pub kind: AttrKind,
     /// For normal attrs: the path (`derive`, `cfg`, etc.).
     /// For doc comments: path is `doc`.
-    pub path: Path<'db>,
+    #[returns(ref)]
+    pub path: Vec<Name<'db>>,
     /// For normal attrs: the arguments inside parens, if any.
     /// For doc comments: the comment text.
     pub args: Option<TokenTree<'db>>,

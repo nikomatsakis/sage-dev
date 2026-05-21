@@ -362,18 +362,18 @@ fn fmt_entry(db: &dyn sage_ir::Db, entry: &MemmapEntry, indent: usize, out: &mut
             out.push_str(&format!(
                 "Redirect {} target={}\n",
                 name.text(db),
-                fmt_path(db, *target)
+                fmt_name_path(db, target)
             ));
         }
         MemmapEntry::Glob { path } => {
             out.push_str(&pad);
-            out.push_str(&format!("Glob path={}\n", fmt_path(db, *path)));
+            out.push_str(&format!("Glob path={}\n", fmt_name_path(db, path)));
         }
         MemmapEntry::MacroUse(mu) => {
             out.push_str(&pad);
             out.push_str(&format!(
                 "MacroUse path={} state={}\n",
-                fmt_path(db, mu.path),
+                fmt_name_path(db, &mu.path),
                 fmt_macro_use_state(db, &mu.state(), indent + 1)
             ));
         }
@@ -424,21 +424,6 @@ fn fmt_callee(db: &dyn sage_ir::Db, callee: &sage_ir::memmap::MacroCallee) -> St
             format!("Proc({},{})", crate_num.0, def_index.0)
         }
     }
-}
-
-fn fmt_path(db: &dyn sage_ir::Db, path: sage_ir::types::Path) -> String {
-    path.segments(db)
-        .iter()
-        .map(|s| {
-            let text = s.text(db);
-            if text.is_empty() {
-                "::".to_owned()
-            } else {
-                text.clone()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("::")
 }
 
 fn fmt_name_path(db: &dyn sage_ir::Db, path: &[sage_ir::name::Name]) -> String {

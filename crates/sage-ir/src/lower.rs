@@ -185,11 +185,7 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
             Some(i) => (&inner[..i], Some(&inner[i..])),
             None => (inner, None),
         };
-        let path = Path::new(
-            db,
-            vec![Name::new(db, path_text.trim().to_owned())],
-            self.rel_span(node),
-        );
+        let path = vec![Name::new(db, path_text.trim().to_owned())];
         let args = args_text.map(|a| TokenTree::new(db, a.to_owned(), self.rel_span(node)));
         Attr::new(
             db,
@@ -203,11 +199,7 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
 
     fn make_doc_attr(&self, node: Node<'_>, text: &str, is_inner: bool) -> Attr<'db> {
         let db = self.db();
-        let path = Path::new(
-            db,
-            vec![Name::new(db, "doc".to_owned())],
-            self.rel_span(node),
-        );
+        let path = vec![Name::new(db, "doc".to_owned())];
         let args = Some(TokenTree::new(db, text.to_owned(), self.rel_span(node)));
         Attr::new(
             db,

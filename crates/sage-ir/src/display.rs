@@ -330,22 +330,6 @@ impl fmt::Display for MacroInvocationAst<'_> {
     }
 }
 
-// -- Path --
-
-impl fmt::Display for Path<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        with_db(|db| {
-            for (i, seg) in self.segments(db).iter().enumerate() {
-                if i > 0 {
-                    f.write_str("::")?;
-                }
-                f.write_str(seg.text(db))?;
-            }
-            Ok(())
-        })
-    }
-}
-
 // -- Attr --
 
 impl fmt::Display for Attr<'_> {
@@ -370,7 +354,12 @@ impl fmt::Display for Attr<'_> {
                 } else {
                     f.write_str("#[")?;
                 }
-                write!(f, "{}", self.path(db))?;
+                for (i, seg) in self.path(db).iter().enumerate() {
+                    if i > 0 {
+                        f.write_str("::")?;
+                    }
+                    f.write_str(seg.text(db))?;
+                }
                 if let Some(args) = self.args(db) {
                     write!(f, "{}", args.text(db))?;
                 }
