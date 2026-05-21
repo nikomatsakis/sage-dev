@@ -11,34 +11,6 @@ pub struct Path<'db> {
     pub span: RelativeSpan,
 }
 
-/// Unresolved type as written in source.
-#[salsa::tracked(debug)]
-pub struct TypeRef<'db> {
-    pub kind: TypeRefKind<'db>,
-    pub span: RelativeSpan,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
-pub enum TypeRefKind<'db> {
-    Path(Path<'db>),
-    Reference(TypeRef<'db>, Mutability),
-    Slice(TypeRef<'db>),
-    Array(TypeRef<'db>),
-    Tuple(TupleTypeRef<'db>),
-    Never,
-    Infer,
-    /// Lowering encountered an unexpected or unsupported node.
-    Error,
-}
-
-/// Wrapper for tuple type refs — salsa tracked structs can't hold Vec directly
-/// in an enum variant, so we use a separate tracked struct.
-#[salsa::tracked(debug)]
-pub struct TupleTypeRef<'db> {
-    #[returns(ref)]
-    pub elements: Vec<TypeRef<'db>>,
-}
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub enum Mutability {
     Shared,

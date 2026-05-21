@@ -174,8 +174,12 @@ impl fmt::Display for TypeAliasAst<'_> {
         with_db(|db| {
             write_attrs(f, self.attrs(db))?;
             write!(f, "type {}", self.name(db).text(db))?;
-            if let Some(ty) = self.ty(db) {
-                write!(f, " = {ty}")?;
+            let sig = self.signature(db);
+            let stash = sig.stash();
+            let data = &stash[*sig.root()];
+            if let Some(ty) = data.ty {
+                f.write_str(" = ")?;
+                stash[ty].pretty(f, stash, 0)?;
             }
             Ok(())
         })
@@ -189,8 +193,12 @@ impl fmt::Display for ConstAst<'_> {
         with_db(|db| {
             write_attrs(f, self.attrs(db))?;
             write!(f, "const {}", self.name(db).text(db))?;
-            if let Some(ty) = self.ty(db) {
-                write!(f, ": {ty}")?;
+            let sig = self.signature(db);
+            let stash = sig.stash();
+            let data = &stash[*sig.root()];
+            if let Some(ty) = data.ty {
+                f.write_str(": ")?;
+                stash[ty].pretty(f, stash, 0)?;
             }
             Ok(())
         })
@@ -209,8 +217,12 @@ impl fmt::Display for StaticAst<'_> {
                 f.write_str("static ")?;
             }
             write!(f, "{}", self.name(db).text(db))?;
-            if let Some(ty) = self.ty(db) {
-                write!(f, ": {ty}")?;
+            let sig = self.signature(db);
+            let stash = sig.stash();
+            let data = &stash[*sig.root()];
+            if let Some(ty) = data.ty {
+                f.write_str(": ")?;
+                stash[ty].pretty(f, stash, 0)?;
             }
             Ok(())
         })
@@ -314,33 +326,6 @@ impl fmt::Display for MacroInvocationAst<'_> {
                 f.write_str(seg.text(db))?;
             }
             f.write_str("!()")
-        })
-    }
-}
-
-// -- TypeRef --
-
-impl fmt::Display for TypeRef<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        with_db(|db| match self.kind(db) {
-            TypeRefKind::Path(p) => write!(f, "{p}"),
-            TypeRefKind::Reference(inner, Mutability::Shared) => write!(f, "&{inner}"),
-            TypeRefKind::Reference(inner, Mutability::Mut) => write!(f, "&mut {inner}"),
-            TypeRefKind::Slice(inner) => write!(f, "[{inner}]"),
-            TypeRefKind::Array(inner) => write!(f, "[{inner}; _]"),
-            TypeRefKind::Tuple(tup) => {
-                f.write_str("(")?;
-                for (i, elem) in tup.elements(db).iter().enumerate() {
-                    if i > 0 {
-                        f.write_str(", ")?;
-                    }
-                    write!(f, "{elem}")?;
-                }
-                f.write_str(")")
-            }
-            TypeRefKind::Never => f.write_str("!"),
-            TypeRefKind::Infer => f.write_str("_"),
-            TypeRefKind::Error => f.write_str("{error}"),
         })
     }
 }

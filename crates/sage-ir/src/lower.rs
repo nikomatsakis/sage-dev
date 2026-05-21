@@ -778,28 +778,26 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
                 .expect("type alias has no name"),
         );
         let span = self.abs_span(node);
-        let ty = node.child_by_field_name("type").map(|n| self.lower_type(n));
         let (generics, sig_ty, mut stash) = self.lower_simple_ty_sig_ast(node);
         let root = stash.alloc(TypeAliasSigAstData {
             generics,
             ty: sig_ty,
         });
         let signature = Stashed::new(stash, root);
-        TypeAliasAst::new(db, name, attrs, ty, signature, span)
+        TypeAliasAst::new(db, name, attrs, signature, span)
     }
 
     fn lower_const(&self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> ConstAst<'db> {
         let db = self.db();
         let name = self.intern_name(node.child_by_field_name("name").expect("const has no name"));
         let span = self.abs_span(node);
-        let ty = node.child_by_field_name("type").map(|n| self.lower_type(n));
         let mut stash = Stash::new();
         let sig_ty = node
             .child_by_field_name("type")
             .map(|n| self.lower_type_ref_to_stash(&mut stash, n));
         let root = stash.alloc(ConstSigAstData { ty: sig_ty });
         let signature = Stashed::new(stash, root);
-        ConstAst::new(db, name, attrs, ty, signature, span)
+        ConstAst::new(db, name, attrs, signature, span)
     }
 
     fn lower_static(&self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> StaticAst<'db> {
@@ -809,7 +807,6 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
                 .expect("static has no name"),
         );
         let span = self.abs_span(node);
-        let ty = node.child_by_field_name("type").map(|n| self.lower_type(n));
         let is_mut = node
             .children(&mut node.walk())
             .any(|c| c.kind() == "mutable_specifier");
@@ -819,7 +816,7 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
             .map(|n| self.lower_type_ref_to_stash(&mut stash, n));
         let root = stash.alloc(StaticSigAstData { ty: sig_ty });
         let signature = Stashed::new(stash, root);
-        StaticAst::new(db, name, attrs, ty, signature, is_mut, span)
+        StaticAst::new(db, name, attrs, signature, is_mut, span)
     }
 
     fn lower_mod(&self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> ModAst<'db> {
@@ -997,79 +994,6 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
         ItemAst::MacroInvocation(MacroInvocationAst::new(db, segments, input_tokens, span))
     }
 
-    // -- Types (salsa-tracked, for old fields) --------------------------------
-
-    fn lower_type(&self, node: Node<'_>) -> TypeRef<'db> {
-        let db = self.db();
-        let span = self.rel_span(node);
-        let kind = match node.kind() {
-            "type_identifier"
-            | "scoped_type_identifier"
-            | "generic_type"
-            | "scoped_identifier"
-            | "primitive_type"
-            | "abstract_type"
-            | "dynamic_type"
-            | "function_type"
-            | "macro_invocation"
-            | "bounded_type"
-            | "qualified_type"
-            | "pointer_type"
-            | "empty_type"
-            | "metavariable" => TypeRefKind::Path(self.lower_path(node)),
-            "reference_type" => {
-                let is_mut = node
-                    .children(&mut node.walk())
-                    .any(|c| c.kind() == "mutable_specifier");
-                let inner = node
-                    .child_by_field_name("type")
-                    .map(|n| self.lower_type(n))
-                    .unwrap_or_else(|| self.make_error_type(node));
-                let mutability = if is_mut {
-                    Mutability::Mut
-                } else {
-                    Mutability::Shared
-                };
-                TypeRefKind::Reference(inner, mutability)
-            }
-            "array_type" => {
-                let inner = node
-                    .child_by_field_name("element")
-                    .map(|n| self.lower_type(n))
-                    .unwrap_or_else(|| self.make_error_type(node));
-                TypeRefKind::Array(inner)
-            }
-            "slice_type" => {
-                let inner = node
-                    .child_by_field_name("element")
-                    .map(|n| self.lower_type(n))
-                    .unwrap_or_else(|| self.make_error_type(node));
-                TypeRefKind::Slice(inner)
-            }
-            "tuple_type" => {
-                let mut elems = Vec::new();
-                let mut cursor = node.walk();
-                for child in node.children(&mut cursor) {
-                    if child.is_named() && child.kind() != "(" && child.kind() != ")" {
-                        elems.push(self.lower_type(child));
-                    }
-                }
-                TypeRefKind::Tuple(TupleTypeRef::new(db, elems))
-            }
-            "never_type" => TypeRefKind::Never,
-            "inferred_type" => TypeRefKind::Infer,
-            _ => TypeRefKind::Error,
-        };
-        TypeRef::new(db, kind, span)
-    }
-
-    fn lower_path(&self, node: Node<'_>) -> Path<'db> {
-        let db = self.db();
-        let mut segments = Vec::new();
-        self.collect_path_segments(node, &mut segments);
-        Path::new(db, segments, self.rel_span(node))
-    }
-
     fn collect_path_segments(&self, node: Node<'_>, out: &mut Vec<Name<'db>>) {
         let db = self.db();
         match node.kind() {
@@ -1098,10 +1022,6 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
                 out.push(Name::new(db, self.node_text(node).to_owned()));
             }
         }
-    }
-
-    fn make_error_type(&self, node: Node<'_>) -> TypeRef<'db> {
-        TypeRef::new(self.db(), TypeRefKind::Error, self.rel_span(node))
     }
 
     // -- Body lowering --------------------------------------------------------

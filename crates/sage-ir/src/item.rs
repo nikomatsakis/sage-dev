@@ -5,7 +5,7 @@ use crate::name::Name;
 use crate::sig_ast::*;
 use crate::source::SourceFile;
 use crate::span::{AbsoluteSpan, ParseSource};
-use crate::types::{Attr, TypeRef, UseImports};
+use crate::types::{Attr, UseImports};
 
 /// Thin enum over all item kinds. `Copy` because salsa tracked struct
 /// handles are just IDs.
@@ -184,9 +184,6 @@ pub struct TypeAliasAst<'db> {
     pub attrs: Vec<Attr<'db>>,
 
     #[tracked]
-    pub ty: Option<TypeRef<'db>>,
-
-    #[tracked]
     #[returns(ref)]
     pub signature: TypeAliasSigAst<'db>,
 
@@ -205,9 +202,6 @@ pub struct ConstAst<'db> {
     pub attrs: Vec<Attr<'db>>,
 
     #[tracked]
-    pub ty: Option<TypeRef<'db>>,
-
-    #[tracked]
     #[returns(ref)]
     pub signature: ConstSigAst<'db>,
 
@@ -224,9 +218,6 @@ pub struct StaticAst<'db> {
     #[tracked]
     #[returns(ref)]
     pub attrs: Vec<Attr<'db>>,
-
-    #[tracked]
-    pub ty: Option<TypeRef<'db>>,
 
     #[tracked]
     #[returns(ref)]
