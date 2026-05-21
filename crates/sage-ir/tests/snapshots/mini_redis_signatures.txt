@@ -363,7 +363,7 @@ fn unsubscribe(self: &mut Self, channels: &[String; _]) -> crate::Result<()> {
 }
 }
 impl Iterator for SubscriberIterator {
-  type Item = crate::Result
+  type Item = crate::Result<Message>
   fn next(self: &mut Self) -> Option<crate::Result<Message>> {
   self.rt.block_on(self.inner.next_message()).transpose()
 }
@@ -382,7 +382,7 @@ enum Command {
   Get
   Set
 }
-type Message = (Command, oneshot::Sender)
+type Message = (Command, oneshot::Sender<Result<Option<Bytes>>>)
 /// Receive commands sent through the channel and forward them to client. The
 /// response is returned back to the caller via a `oneshot`.
 fn run(client: Client, rx: Receiver<Message>) {
@@ -1306,7 +1306,7 @@ struct Unsubscribe {
 /// `broadcast::Receiver`. We use `stream!` to create a `Stream` that consumes
 /// messages. Because `stream!` values cannot be named, we box the stream using
 /// a trait object.
-type Messages = Pin
+type Messages = Pin<Box<dyn Stream<Item = Bytes> + Send>>
 impl Subscribe {
   /// Creates a new `Subscribe` command to listen on the specified channels.
 fn new(channels: Vec<String>) -> Subscribe {
@@ -2189,11 +2189,11 @@ const DEFAULT_PORT: u16
 /// and handled during normal execution when a partial frame is received on a
 /// socket. `std::error::Error` is implemented for `parse::Error` which allows
 /// it to be converted to `Box<dyn std::error::Error>`.
-type Error = Box
+type Error = Box<dyn std::error::Error + Send + Sync>
 /// A specialized `Result` type for mini-redis operations.
 ///
 /// This is defined as a convenience.
-type Result = std::result::Result
+type Result = std::result::Result<T, Error>
 
 // --- parse.rs ---
 use crate::Frame

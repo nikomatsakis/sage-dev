@@ -49,8 +49,8 @@ fn baseline_initial_memmap_computation() {
                   salsa: expanded_module(Id(1400))
                   salsa: parse_source_file(Id(0))
                 parse_source_file("lib.rs")
-                  salsa: expand_macro(Id(2c00))
-                  salsa: parse_macro_expansion(Id(3000))"#]],
+                  salsa: expand_macro(Id(2800))
+                  salsa: parse_macro_expansion(Id(2c00))"#]],
         );
     });
 }

@@ -10,7 +10,7 @@ use std::path::Path;
 use expect_test::expect;
 use sage_ir::Db;
 use sage_ir::item::ItemAst;
-use sage_ir::resolve::{module_items, module_use_imports, resolve_module_path};
+use sage_ir::resolve::{module_items, resolve_module_path};
 
 use sage::driver::run_sage_with;
 
@@ -75,10 +75,12 @@ fn resolve_use_imports_with_real_tcx() {
         let module =
             resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
 
-        let imports = module_use_imports(sage.db, module);
+        let items = module_items(sage.db, module);
         let mut out = String::new();
-        for import in imports {
-            out.push_str(&format!("{import}\n"));
+        for item in items {
+            if let ItemAst::Use(group) = item {
+                out.push_str(&format!("{group}\n"));
+            }
         }
 
         expect![[r#"
@@ -156,11 +158,11 @@ fn query_log_demand_driven_with_real_tcx() {
               salsa: expanded_module(Id(1000))
               salsa: parse_source_file(Id(10))
             parse_source_file("lib.rs")
-              salsa: resolve_mod_tracked(Id(3800))
+              salsa: resolve_mod_tracked(Id(2c00))
               salsa: expanded_module(Id(1001))
               salsa: parse_source_file(Id(7))
             parse_source_file("cmd/mod.rs")
-              salsa: resolve_mod_tracked(Id(3801))
+              salsa: resolve_mod_tracked(Id(2c01))
             module_items("cmd/get.rs")
               salsa: parse_source_file(Id(6))
             parse_source_file("cmd/get.rs")"#]]
@@ -178,13 +180,11 @@ fn expand_no_derives() {
             let has_derive = match item {
                 ItemAst::Struct(s) => s.attrs(sage.db).iter().any(|a| {
                     a.path(sage.db)
-                        .segments(sage.db)
                         .first()
                         .is_some_and(|s| s.text(sage.db) == "derive")
                 }),
                 ItemAst::Enum(e) => e.attrs(sage.db).iter().any(|a| {
                     a.path(sage.db)
-                        .segments(sage.db)
                         .first()
                         .is_some_and(|s| s.text(sage.db) == "derive")
                 }),
@@ -256,11 +256,11 @@ fn expand_derives_cmd_get_full() {
               salsa: expanded_module(Id(1000))
               salsa: parse_source_file(Id(10))
             parse_source_file("lib.rs")
-              salsa: resolve_mod_tracked(Id(3800))
+              salsa: resolve_mod_tracked(Id(2c00))
               salsa: expanded_module(Id(1001))
               salsa: parse_source_file(Id(7))
             parse_source_file("cmd/mod.rs")
-              salsa: resolve_mod_tracked(Id(3801))
+              salsa: resolve_mod_tracked(Id(2c01))
             module_items("cmd/get.rs")
               salsa: parse_source_file(Id(6))
             parse_source_file("cmd/get.rs")
@@ -275,7 +275,7 @@ fn expand_derives_cmd_get_full() {
             tcx::is_module(1, _)
             tcx::module_children(1, _)
             tcx::is_builtin_derive(2, _)
-              salsa: expand_builtin(Id(4c00))
+              salsa: expand_builtin(Id(4000))
             expand_builtin("Debug", "Get")"#]]
         .assert_eq(&log);
     });

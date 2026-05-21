@@ -121,11 +121,11 @@ fn query_log_demand_driven() {
               salsa: expanded_module(Id(1000))
               salsa: parse_source_file(Id(10))
             parse_source_file("lib.rs")
-              salsa: resolve_mod_tracked(Id(3800))
+              salsa: resolve_mod_tracked(Id(2c00))
               salsa: expanded_module(Id(1001))
               salsa: parse_source_file(Id(7))
             parse_source_file("cmd/mod.rs")
-              salsa: resolve_mod_tracked(Id(3801))
+              salsa: resolve_mod_tracked(Id(2c01))
             module_items("cmd/get.rs")
               salsa: parse_source_file(Id(6))
             parse_source_file("cmd/get.rs")"#]]
@@ -174,7 +174,7 @@ fn resolve_no_cross_module_parsing() {
               salsa: expanded_module(Id(1000))
               salsa: parse_source_file(Id(10))
             parse_source_file("lib.rs")
-              salsa: resolve_mod_tracked(Id(3800))
+              salsa: resolve_mod_tracked(Id(2c00))
             module_items("clients/mod.rs")
               salsa: parse_source_file(Id(5))
             parse_source_file("clients/mod.rs")"#]]
