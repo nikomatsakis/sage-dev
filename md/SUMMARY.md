@@ -15,6 +15,7 @@
     - [Stash Safety](./rfds/stash-safety.md)
     - [Per-Kind Symbol Data](./rfds/per-kind-symbol-data.md)
     - [Faster Collision Chains](./rfds/stash-faster-collision-chains.md)
+    - [Stash-allocated MEM-map](./rfds/memmap-stash-allocation.md)
   - [Completed](./rfds/completed.md)
     - [Initial Setup](./rfds/initial-setup.md)
     - [Relative Span Model](./rfds/relative-span-model.md)
