@@ -32,7 +32,7 @@ fn check(files: &[(&str, &str)], path: &str, expected: Expect) {
 
         let expanded = dump_expanded_module(db, root, source_root, path)
             .expect("path should resolve to a module");
-        let rendered = fmt_memmap_entries(db, expanded.entries(db), 0);
+        let rendered = fmt_memmap_entries(db, expanded.stash(db), expanded.entries(db), 0);
         expected.assert_eq(&rendered);
     });
 }

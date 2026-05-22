@@ -430,13 +430,16 @@ fn resolve_member_impl<'db>(
         }
         ModSymbolData::Ast(ast) => {
             let memmap = expanded_module(db, ast, source_root);
+            let stash = memmap.stash(db);
+            let entries = memmap.entries(db);
             let mut named: Vec<Symbol<'db>> = Vec::new();
             let mut glob_matches: Vec<Symbol<'db>> = Vec::new();
 
             walk_entries(
                 resolver,
                 module,
-                memmap.entries(db),
+                stash,
+                entries,
                 name,
                 ns,
                 &mut named,
@@ -462,7 +465,8 @@ fn resolve_member_impl<'db>(
 fn walk_entries<'db>(
     resolver: &mut Resolver<'db>,
     module: ModSymbol<'db>,
-    entries: &[crate::memmap::MemmapEntry<'db>],
+    stash: &sage_stash::Stash,
+    entries: sage_stash::Slice<crate::memmap::MemmapEntry<'db>>,
     name: Name<'db>,
     ns: Namespace,
     named: &mut Vec<Symbol<'db>>,
@@ -472,7 +476,7 @@ fn walk_entries<'db>(
 
     let db = resolver.db;
 
-    for entry in entries {
+    for entry in &stash[entries] {
         match entry {
             MemmapEntry::Item(item) => {
                 if item_name(db, *item) == Some(name) && item_in_namespace(db, *item, ns) {
@@ -497,7 +501,8 @@ fn walk_entries<'db>(
             }
             MemmapEntry::Redirect { name: n, target } => {
                 if *n == name {
-                    if let Ok(sym) = resolver.resolve_segments(module, target, ns) {
+                    let target_vec: Vec<_> = stash[*target].to_vec();
+                    if let Ok(sym) = resolver.resolve_segments(module, &target_vec, ns) {
                         if !named.contains(&sym) {
                             named.push(sym);
                         }
@@ -505,7 +510,8 @@ fn walk_entries<'db>(
                 }
             }
             MemmapEntry::Glob { path } => {
-                let Ok(target) = resolver.resolve_segments_to_module(module, path) else {
+                let path_vec: Vec<_> = stash[*path].to_vec();
+                let Ok(target) = resolver.resolve_segments_to_module(module, &path_vec) else {
                     continue;
                 };
                 let sym = resolver.resolve_member(target, name, ns).ok();
@@ -516,11 +522,12 @@ fn walk_entries<'db>(
                 }
             }
             MemmapEntry::MacroUse(mu) => {
-                for exp in &mu.expansions {
+                for exp in &stash[mu.expansions] {
                     walk_entries(
                         resolver,
                         module,
-                        &exp.entries,
+                        stash,
+                        exp.entries,
                         name,
                         ns,
                         named,

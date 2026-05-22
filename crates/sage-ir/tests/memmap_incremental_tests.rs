@@ -333,6 +333,6 @@ fn external_module_memmap_is_empty() {
         let ext_module = ModSymbol::external(CrateNum(1), DefIndex(0));
 
         let memmap = module_memmap(db, ext_module, source_root);
-        assert!(memmap.entries(db).is_empty());
+        assert!(memmap.stash(db)[memmap.entries(db)].is_empty());
     });
 }

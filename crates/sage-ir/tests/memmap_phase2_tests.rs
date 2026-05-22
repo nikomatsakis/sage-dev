@@ -13,6 +13,7 @@ use sage_ir::resolve::{Namespace, SourceRoot, resolve_name};
 use sage_ir::source::SourceFile;
 use sage_ir::span::ParseSource;
 use sage_ir::symbol::SymbolData;
+use sage_stash::Stash;
 
 use salsa::Database as _;
 
@@ -91,31 +92,29 @@ m!();
 
         // m!() expands to an impl — no new names introduced
         let memmap = module_memmap(db, root_module, source_root);
-        let macro_uses: Vec<_> = memmap
-            .entries(db)
+        let stash = memmap.stash(db);
+        let entries = memmap.entries(db);
+        let macro_uses: Vec<_> = stash[entries]
             .iter()
             .filter_map(|e| match e {
-                MemmapEntry::MacroUse(mu) => Some(mu),
+                MemmapEntry::MacroUse(mu) => Some(*mu),
                 _ => None,
             })
             .collect();
         assert_eq!(macro_uses.len(), 1);
-        let exps = &macro_uses[0].expansions;
+        let exps = &stash[macro_uses[0].expansions];
         assert!(!exps.is_empty(), "expected expansions, got empty");
-        // One branch, one Item(Impl-placeholder) entry.
         assert_eq!(exps.len(), 1);
-        let entries = &exps[0].entries;
-        assert_eq!(entries.len(), 1);
-        // Phase 1: impls are synthesized as Item(Error) placeholders;
-        // Phase 4 will route through parse_source_file for real impls.
+        let exp_entries = &stash[exps[0].entries];
+        assert_eq!(exp_entries.len(), 1);
         assert!(
             matches!(
-                entries[0],
+                exp_entries[0],
                 MemmapEntry::Item(sage_ir::item::ItemAst::Error(..))
                     | MemmapEntry::Item(sage_ir::item::ItemAst::Impl(_))
             ),
             "expected anonymous impl entry, got {:?}",
-            entries[0]
+            exp_entries[0]
         );
     });
 }
@@ -137,20 +136,21 @@ m!();
         );
 
         let memmap = module_memmap(db, root_module, source_root);
-        let macro_uses: Vec<_> = memmap
-            .entries(db)
+        let stash = memmap.stash(db);
+        let entries = memmap.entries(db);
+        let macro_uses: Vec<_> = stash[entries]
             .iter()
             .filter_map(|e| match e {
-                MemmapEntry::MacroUse(mu) => Some(mu),
+                MemmapEntry::MacroUse(mu) => Some(*mu),
                 _ => None,
             })
             .collect();
         assert_eq!(macro_uses.len(), 1);
-        let exps = &macro_uses[0].expansions;
+        let exps = &stash[macro_uses[0].expansions];
         assert!(!exps.is_empty(), "expected expansions, got empty");
         assert_eq!(exps.len(), 1);
         assert!(
-            exps[0].entries.is_empty(),
+            stash[exps[0].entries].is_empty(),
             "empty macro should expand to nothing"
         );
     });
@@ -243,19 +243,20 @@ m!();
         );
 
         let memmap = module_memmap(db, root_module, source_root);
-        let macro_uses: Vec<_> = memmap
-            .entries(db)
+        let stash = memmap.stash(db);
+        let entries = memmap.entries(db);
+        let macro_uses: Vec<_> = stash[entries]
             .iter()
             .filter_map(|e| match e {
-                MemmapEntry::MacroUse(mu) => Some(mu),
+                MemmapEntry::MacroUse(mu) => Some(*mu),
                 _ => None,
             })
             .collect();
         assert_eq!(macro_uses.len(), 1);
-        let exps = &macro_uses[0].expansions;
+        let exps = &stash[macro_uses[0].expansions];
         assert_eq!(exps.len(), 1);
 
-        for entry in &exps[0].entries {
+        for entry in &stash[exps[0].entries] {
             if let MemmapEntry::Item(item) = entry {
                 let span = item.absolute_span(db);
                 assert!(
@@ -279,7 +280,9 @@ fn real_file_items_carry_source_file_provenance() {
         let (source_root, root_module) = setup_single(db, "struct Real;");
 
         let memmap = module_memmap(db, root_module, source_root);
-        for entry in memmap.entries(db) {
+        let stash = memmap.stash(db);
+        let entries = memmap.entries(db);
+        for entry in &stash[entries] {
             if let MemmapEntry::Item(item) = entry {
                 let span = item.absolute_span(db);
                 assert!(
@@ -310,23 +313,24 @@ m!();
         );
 
         let memmap = module_memmap(db, root_module, source_root);
-        let macro_uses: Vec<_> = memmap
-            .entries(db)
+        let stash = memmap.stash(db);
+        let entries = memmap.entries(db);
+        let macro_uses: Vec<_> = stash[entries]
             .iter()
             .filter_map(|e| match e {
-                MemmapEntry::MacroUse(mu) => Some(mu),
+                MemmapEntry::MacroUse(mu) => Some(*mu),
                 _ => None,
             })
             .collect();
         assert_eq!(macro_uses.len(), 2, "should have two macro invocations");
 
         // Both should be expanded
-        assert!(!macro_uses[0].expansions.is_empty());
-        assert!(!macro_uses[1].expansions.is_empty());
+        assert!(!stash[macro_uses[0].expansions].is_empty());
+        assert!(!stash[macro_uses[1].expansions].is_empty());
 
         // Both expansions should use the same callee
-        let callee0 = macro_uses[0].expansions[0].callee;
-        let callee1 = macro_uses[1].expansions[0].callee;
+        let callee0 = stash[macro_uses[0].expansions][0].callee;
+        let callee1 = stash[macro_uses[1].expansions][0].callee;
         assert_eq!(callee0, callee1);
 
         // Call expand_macro directly with same callee+input — should return
@@ -361,16 +365,17 @@ m!();
         );
 
         let memmap = module_memmap(db, root_module, source_root);
-        let mu = memmap
-            .entries(db)
+        let stash = memmap.stash(db);
+        let entries = memmap.entries(db);
+        let mu = stash[entries]
             .iter()
             .find_map(|e| match e {
-                MemmapEntry::MacroUse(mu) if !mu.expansions.is_empty() => Some(mu),
+                MemmapEntry::MacroUse(mu) if !stash[mu.expansions].is_empty() => Some(*mu),
                 _ => None,
             })
             .expect("should have an expanded macro use");
 
-        let callee = mu.expansions[0].callee;
+        let callee = stash[mu.expansions][0].callee;
         let expansion = expand_macro(db, callee, mu.input);
         let ps = ParseSource::MacroExpansion(expansion);
         assert!(
@@ -415,10 +420,6 @@ outer!();
 fn fixpoint_expansion_enables_sibling_resolution() {
     let db = Database::default();
     db.attach(|db| {
-        // `define_m!()` expands to a macro_rules definition for `m`.
-        // `m!()` can only resolve after `define_m!()` has expanded.
-        // The old single-pass approach would fail this because the
-        // snapshot is taken before any expansion.
         let (source_root, root_module) = setup_single(
             db,
             r#"
@@ -455,18 +456,21 @@ m!();
         );
 
         let memmap = module_memmap(db, root_module, source_root);
-        // The recursive expansion should hit the depth limit somewhere
-        // in the tree. Phase 1 collapsed the old `Error` variant into
-        // `Unresolved` — a MacroUse that remains Unresolved after
-        // expansion has finished is the signal we're looking for.
-        fn has_unresolved_inside_expansion(entries: &[MemmapEntry]) -> bool {
-            for entry in entries {
+        let stash = memmap.stash(db);
+        let entries = memmap.entries(db);
+
+        fn has_unresolved_inside_expansion(
+            stash: &Stash,
+            entries: sage_stash::Slice<MemmapEntry>,
+        ) -> bool {
+            for entry in &stash[entries] {
                 if let MemmapEntry::MacroUse(mu) = entry {
-                    if mu.expansions.is_empty() {
+                    let exps = &stash[mu.expansions];
+                    if exps.is_empty() {
                         return true;
                     }
-                    for exp in &mu.expansions {
-                        if has_unresolved_inside_expansion(&exp.entries) {
+                    for exp in exps {
+                        if has_unresolved_inside_expansion(stash, exp.entries) {
                             return true;
                         }
                     }
@@ -475,7 +479,7 @@ m!();
             false
         }
         assert!(
-            has_unresolved_inside_expansion(memmap.entries(db)),
+            has_unresolved_inside_expansion(stash, entries),
             "recursive macro should hit depth limit and leave some MacroUse Unresolved"
         );
     });
@@ -489,8 +493,6 @@ m!();
 fn three_level_expansion_chain() {
     let db = Database::default();
     db.attach(|db| {
-        // define_b!() → macro_rules! define_c, define_c!() → macro_rules! c,
-        // c!() → struct ThreeDeep. Each level must expand before the next resolves.
         let (source_root, root_module) = setup_single(
             db,
             r#"
@@ -513,21 +515,12 @@ c!();
 
 // ---------------------------------------------------------------------------
 // Macro expansion introduces a glob that makes another macro resolvable
-//
-// Known limitation: glob entries inside expansion output are not visible
-// to resolve_macro_path during the fixpoint loop. The glob from
-// setup_glob!() lives inside MacroUse.expansions, not at the top level
-// of the memmap entries. Fixing this requires resolve_macro_path to
-// walk expansion entries for globs/redirects.
 // ---------------------------------------------------------------------------
 
 #[test]
 fn expansion_introduces_glob_enabling_resolution() {
     let db = Database::default();
     db.attach(|db| {
-        // setup_glob!() expands to `use inner::*`. `inner` contains macro `m`.
-        // `m!()` can only resolve after `setup_glob!()` brings `m` into scope.
-        // Currently unresolved — see known limitation above.
         let (source_root, root_module) = setup_files(
             db,
             &[

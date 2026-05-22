@@ -14,6 +14,16 @@ use sage_ir::symbol::SymbolData;
 
 use salsa::Database as _;
 
+/// Helper: get entries as a slice from the memmap.
+fn get_entries<'db>(
+    db: &'db Database,
+    memmap: sage_ir::memmap::ExpandedModule<'db>,
+) -> &'db [MemmapEntry<'db>] {
+    let stash = memmap.stash(db);
+    let entries = memmap.entries(db);
+    &stash[entries]
+}
+
 /// Helper: create a single-file crate and return (source_root, root_module).
 fn setup_single_file<'db>(db: &'db Database, code: &str) -> (SourceRoot, ModSymbol<'db>) {
     let file = SourceFile::new(db, "lib.rs".to_owned(), code.to_owned());
@@ -190,7 +200,7 @@ fn memmap_contains_declared_items() {
         );
 
         let memmap = module_memmap(db, root_module, source_root);
-        let entries = memmap.entries(db);
+        let entries = get_entries(db, memmap);
         // Should have named entries for Foo (type+value), bar (value), baz (type)
         assert!(
             entries.len() >= 3,
@@ -225,8 +235,8 @@ fn memmap_records_glob_stems() {
         );
 
         let memmap = module_memmap(db, root_module, source_root);
-        let has_glob = memmap
-            .entries(db)
+        let entries = get_entries(db, memmap);
+        let has_glob = entries
             .iter()
             .any(|e| matches!(e, MemmapEntry::Glob { .. }));
         assert!(has_glob, "memmap should contain a glob stem");
@@ -312,12 +322,11 @@ fn tuple_struct_emits_ctor_entry() {
         let source_root = SourceRoot::new(db, vec![file]);
         let root_module = ModSymbol::ast(ModAst::crate_root(db, file));
         let memmap = module_memmap(db, root_module, source_root);
-        let has_item = memmap
-            .entries(db)
+        let entries = get_entries(db, memmap);
+        let has_item = entries
             .iter()
             .any(|e| matches!(e, MemmapEntry::Item(ItemAst::Struct(_))));
-        let has_ctor = memmap
-            .entries(db)
+        let has_ctor = entries
             .iter()
             .any(|e| matches!(e, MemmapEntry::TupleStructCtor(_)));
         assert!(has_item, "should have Item(Struct) entry");
@@ -333,8 +342,8 @@ fn unit_struct_emits_ctor_entry() {
         let source_root = SourceRoot::new(db, vec![file]);
         let root_module = ModSymbol::ast(ModAst::crate_root(db, file));
         let memmap = module_memmap(db, root_module, source_root);
-        let has_ctor = memmap
-            .entries(db)
+        let entries = get_entries(db, memmap);
+        let has_ctor = entries
             .iter()
             .any(|e| matches!(e, MemmapEntry::TupleStructCtor(_)));
         assert!(has_ctor, "unit struct should have TupleStructCtor entry");
@@ -349,8 +358,8 @@ fn braced_struct_no_ctor_entry() {
         let source_root = SourceRoot::new(db, vec![file]);
         let root_module = ModSymbol::ast(ModAst::crate_root(db, file));
         let memmap = module_memmap(db, root_module, source_root);
-        let has_ctor = memmap
-            .entries(db)
+        let entries = get_entries(db, memmap);
+        let has_ctor = entries
             .iter()
             .any(|e| matches!(e, MemmapEntry::TupleStructCtor(_)));
         assert!(

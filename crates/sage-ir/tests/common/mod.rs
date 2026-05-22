@@ -1,23 +1,4 @@
 //! Shared fixture-based test harness for MEM-map and resolution tests.
-//!
-//! Tests declare one or more files with `//- /path` marker lines; each
-//! assertion method creates a fresh database, builds the fixture, runs the
-//! query, and compares the rendered output to an `expect_test::Expect`.
-//!
-//! # Example
-//!
-//! ```ignore
-//! t(r#"
-//!     //- /lib.rs
-//!     struct X;
-//! "#)
-//! .resolve("X", Namespace::Type, expect!["<local Struct X>"])
-//! .errors(expect![""]);
-//! ```
-//!
-//! Because each method re-builds the database, calls are independent — tests
-//! don't have to worry about query-log interference between assertions. This
-//! is cheap in practice: fixtures are small and setup is microseconds.
 
 #![allow(dead_code)]
 
@@ -32,19 +13,13 @@ use sage_ir::resolve::{
 };
 use sage_ir::source::SourceFile;
 use sage_ir::symbol::{Symbol, SymbolData};
+use sage_stash::{Slice, Stash};
 use salsa::Database as _;
 
 // ---------------------------------------------------------------------------
 // Fixture parsing
 // ---------------------------------------------------------------------------
 
-/// Parse a fixture string into `(path, text)` pairs.
-///
-/// Files are separated by `//- /path` marker lines. Everything before the
-/// first marker is discarded. Common leading indentation is stripped from
-/// each file body so fixtures can be written indented inside raw strings.
-///
-/// Single-file fixtures without any marker are treated as `/lib.rs`.
 pub fn parse_fixture(src: &str) -> Vec<(String, String)> {
     let mut files: Vec<(String, String)> = Vec::new();
     let mut current: Option<(String, Vec<String>)> = None;
@@ -65,7 +40,6 @@ pub fn parse_fixture(src: &str) -> Vec<(String, String)> {
         files.push((path, dedent(&body)));
     }
 
-    // No marker at all → treat whole thing as lib.rs.
     if files.is_empty() {
         files.push(("lib.rs".to_owned(), src.to_owned()));
     }
@@ -74,8 +48,6 @@ pub fn parse_fixture(src: &str) -> Vec<(String, String)> {
 }
 
 fn dedent(lines: &[String]) -> String {
-    // Strip leading/trailing blank lines and compute common indent on
-    // non-blank lines.
     let start = lines.iter().position(|l| !l.trim().is_empty()).unwrap_or(0);
     let end = lines
         .iter()
@@ -107,30 +79,21 @@ fn dedent(lines: &[String]) -> String {
 // TestCrate — fluent entry point
 // ---------------------------------------------------------------------------
 
-/// Entry point — parses the fixture and returns a builder.
 pub fn t(fixture: &str) -> TestCrate {
     TestCrate {
         files: parse_fixture(fixture),
     }
 }
 
-/// Fluent test builder.
-///
-/// Each assertion method creates a fresh database and re-builds the fixture,
-/// so calls on the same `TestCrate` are independent.
 pub struct TestCrate {
     files: Vec<(String, String)>,
 }
 
 impl TestCrate {
-    /// Assert that `resolve_name(root, name, ns)` produces the expected
-    /// rendered symbol (or error string).
     pub fn resolve(&self, name: &str, ns: Namespace, expect: Expect) -> &Self {
         self.resolve_in(&[], name, ns, expect)
     }
 
-    /// Like `resolve`, but resolves against a submodule identified by a
-    /// path like `["inner", "deeper"]` from the crate root.
     pub fn resolve_in(
         &self,
         module_path: &[&str],
@@ -158,8 +121,6 @@ impl TestCrate {
         self
     }
 
-    /// Assert on `memmap_errors` aggregated across every module reachable
-    /// from the crate root. An empty string means "no errors".
     pub fn errors(&self, expect: Expect) -> &Self {
         let db = Database::default();
         db.attach(|db| {
@@ -174,8 +135,6 @@ impl TestCrate {
         self
     }
 
-    /// Pretty-print the memmap of a module identified by a path like
-    /// `[]` (root) or `["inner"]`.
     pub fn memmap(&self, module_path: &[&str], expect: Expect) -> &Self {
         let db = Database::default();
         db.attach(|db| {
@@ -189,7 +148,9 @@ impl TestCrate {
                 }
             };
             let memmap = module_memmap(db, module, source_root);
-            let rendered = fmt_memmap_entries(db, memmap.entries(db), 0);
+            let stash = memmap.stash(db);
+            let entries = memmap.entries(db);
+            let rendered = fmt_memmap_entries(db, stash, entries, 0);
             expect.assert_eq(&rendered);
         });
         self
@@ -207,7 +168,6 @@ impl TestCrate {
             .collect();
         let source_root = SourceRoot::new(db, source_files.clone());
 
-        // Crate root: prefer lib.rs, fall back to main.rs.
         let lib_file = source_files
             .iter()
             .find(|f| {
@@ -251,7 +211,9 @@ impl TestCrate {
 
         // Recurse into child modules declared by this module.
         let memmap = module_memmap(db, module, source_root);
-        for entry in memmap.entries(db) {
+        let stash = memmap.stash(db);
+        let entries = memmap.entries(db);
+        for entry in &stash[entries] {
             if let MemmapEntry::Item(sage_ir::item::ItemAst::Mod(mod_item)) = entry {
                 if let Some(child) =
                     sage_ir::resolve::resolve_mod(db, module, *mod_item, source_root)
@@ -327,10 +289,15 @@ pub fn fmt_namespace(ns: Namespace) -> &'static str {
     }
 }
 
-pub fn fmt_memmap_entries(db: &dyn sage_ir::Db, entries: &[MemmapEntry], indent: usize) -> String {
+pub fn fmt_memmap_entries(
+    db: &dyn sage_ir::Db,
+    stash: &Stash,
+    entries: Slice<MemmapEntry>,
+    indent: usize,
+) -> String {
     let mut out = String::new();
-    for entry in entries {
-        fmt_entry(db, entry, indent, &mut out);
+    for entry in &stash[entries] {
+        fmt_entry(db, stash, entry, indent, &mut out);
     }
     if !out.is_empty() && out.ends_with('\n') {
         out.pop();
@@ -338,7 +305,13 @@ pub fn fmt_memmap_entries(db: &dyn sage_ir::Db, entries: &[MemmapEntry], indent:
     out
 }
 
-fn fmt_entry(db: &dyn sage_ir::Db, entry: &MemmapEntry, indent: usize, out: &mut String) {
+fn fmt_entry(
+    db: &dyn sage_ir::Db,
+    stash: &Stash,
+    entry: &MemmapEntry,
+    indent: usize,
+    out: &mut String,
+) {
     let pad = "  ".repeat(indent);
     match entry {
         MemmapEntry::Item(item) => {
@@ -359,22 +332,25 @@ fn fmt_entry(db: &dyn sage_ir::Db, entry: &MemmapEntry, indent: usize, out: &mut
         }
         MemmapEntry::Redirect { name, target } => {
             out.push_str(&pad);
+            let target_slice = &stash[*target];
             out.push_str(&format!(
                 "Redirect {} target={}\n",
                 name.text(db),
-                fmt_name_path(db, target)
+                fmt_name_path(db, target_slice)
             ));
         }
         MemmapEntry::Glob { path } => {
             out.push_str(&pad);
-            out.push_str(&format!("Glob path={}\n", fmt_name_path(db, path)));
+            let path_slice = &stash[*path];
+            out.push_str(&format!("Glob path={}\n", fmt_name_path(db, path_slice)));
         }
         MemmapEntry::MacroUse(mu) => {
             out.push_str(&pad);
+            let path_slice = &stash[mu.path];
             out.push_str(&format!(
                 "MacroUse path={} state={}\n",
-                fmt_name_path(db, &mu.path),
-                fmt_macro_use_state(db, &mu.state(), indent + 1)
+                fmt_name_path(db, path_slice),
+                fmt_macro_use_state(db, stash, &mu.state(stash), indent + 1)
             ));
         }
     }
@@ -382,6 +358,7 @@ fn fmt_entry(db: &dyn sage_ir::Db, entry: &MemmapEntry, indent: usize, out: &mut
 
 fn fmt_macro_use_state(
     db: &dyn sage_ir::Db,
+    stash: &Stash,
     state: &sage_ir::memmap::MacroUseState,
     indent: usize,
 ) -> String {
@@ -400,7 +377,7 @@ fn fmt_macro_use_state(
                     "branch callee={} {{\n",
                     fmt_callee(db, &exp.callee)
                 ));
-                s.push_str(&fmt_memmap_entries(db, &exp.entries, indent + 1));
+                s.push_str(&fmt_memmap_entries(db, stash, exp.entries, indent + 1));
                 s.push('\n');
                 s.push_str(&"  ".repeat(indent));
                 s.push_str("}\n");

@@ -28,6 +28,8 @@ pub enum ItemAst<'db> {
 }
 
 impl StashDirect for ItemAst<'_> {}
+impl StashDirect for StructAst<'_> {}
+impl StashDirect for MacroDefAst<'_> {}
 
 impl<'db> ItemAst<'db> {
     pub fn absolute_span(&self, db: &'db dyn crate::Db) -> AbsoluteSpan<'db> {

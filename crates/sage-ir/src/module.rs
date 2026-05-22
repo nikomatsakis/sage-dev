@@ -6,15 +6,21 @@
 //! id (per-resolution-site); identity for the external arm is structural
 //! (`(CrateNum, DefIndex)`). Neither `ModSymbol` nor `ModExt` are interned.
 
+use sage_stash::StashDirect;
+
 use crate::source::SourceFile;
 
 /// Opaque crate number (matches rustc's CrateNum).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub struct CrateNum(pub u32);
 
+impl StashDirect for CrateNum {}
+
 /// Opaque definition index within a crate.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub struct DefIndex(pub u32);
+
+impl StashDirect for DefIndex {}
 
 /// External module — a thin handle into rustc's crate metadata.
 ///

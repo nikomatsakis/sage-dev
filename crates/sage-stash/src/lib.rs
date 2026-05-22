@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::num::NonZeroU32;
-use std::ops::Index;
+use std::ops::{Index, IndexMut};
 #[cfg(debug_assertions)]
 use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
@@ -704,6 +704,36 @@ impl Stash {
         }
     }
 
+    unsafe fn read_one_mut<T: Copy>(&mut self, offset: u32) -> &mut T {
+        unsafe { &mut *(self.buf.as_mut_ptr().add(offset as usize) as *mut T) }
+    }
+
+    unsafe fn read_slice_mut<T: Copy>(&mut self, offset: u32, count: u32) -> &mut [T] {
+        if count == 0 {
+            return &mut [];
+        }
+        unsafe {
+            std::slice::from_raw_parts_mut(
+                self.buf.as_mut_ptr().add(offset as usize) as *mut T,
+                count as usize,
+            )
+        }
+    }
+
+    /// Allocate a new slice consisting of the contents of `existing` plus
+    /// one appended element. Returns a fresh `Slice` handle (the original
+    /// handle remains valid and unchanged).
+    pub fn append_one<'db, T: AllocStashData<'db>>(
+        &mut self,
+        existing: Slice<T>,
+        element: T,
+    ) -> Slice<T> {
+        let old = &self[existing];
+        let mut values: Vec<T> = old.to_vec();
+        values.push(element);
+        self.alloc_slice(&values)
+    }
+
     fn validate_entry<T>(&self, index: EntryIndex, expected_type_id: TypeId) -> &Entry {
         let entry = &self.entries[index.get() as usize];
         assert_eq!(
@@ -756,6 +786,28 @@ impl<'db, T: StashData<'db>> Index<Slice<T>> for Stash {
         self.validate_stash_id::<T>(slice.stash_id);
         let entry = self.validate_entry::<T>(slice.index, <T as StashData>::static_type_id());
         unsafe { self.read_slice(entry.offset, entry.count) }
+    }
+}
+
+impl<'db, T: StashData<'db>> IndexMut<Ptr<T>> for Stash {
+    fn index_mut(&mut self, ptr: Ptr<T>) -> &mut T {
+        #[cfg(debug_assertions)]
+        self.validate_stash_id::<T>(ptr.stash_id);
+        let entry = self.validate_entry::<T>(ptr.index, <T as StashData>::static_type_id());
+        debug_assert_eq!(entry.count, 1);
+        let offset = entry.offset;
+        unsafe { self.read_one_mut(offset) }
+    }
+}
+
+impl<'db, T: StashData<'db>> IndexMut<Slice<T>> for Stash {
+    fn index_mut(&mut self, slice: Slice<T>) -> &mut [T] {
+        #[cfg(debug_assertions)]
+        self.validate_stash_id::<T>(slice.stash_id);
+        let entry = self.validate_entry::<T>(slice.index, <T as StashData>::static_type_id());
+        let offset = entry.offset;
+        let count = entry.count;
+        unsafe { self.read_slice_mut(offset, count) }
     }
 }
 

@@ -106,8 +106,8 @@ fn derive_arena_data_impl(input: TokenStream) -> TokenStream {
         impl #impl_generics ::sage_stash::StashCopy for #ty {
             fn stash_copy(
                 &self,
-                source: &::sage_stash::Stash,
-                target: &mut ::sage_stash::Stash,
+                __stash_src: &::sage_stash::Stash,
+                __stash_dst: &mut ::sage_stash::Stash,
             ) -> Self {
                 #stash_copy_body
             }
@@ -237,7 +237,7 @@ fn generate_stash_copy_body(input: &DeriveInput) -> proc_macro2::TokenStream {
                             let copy_exprs: Vec<_> = field_names
                                 .iter()
                                 .map(|fname| {
-                                    quote! { #fname: ::sage_stash::StashCopy::stash_copy(#fname, source, target) }
+                                    quote! { #fname: ::sage_stash::StashCopy::stash_copy(#fname, __stash_src, __stash_dst) }
                                 })
                                 .collect();
                             quote! {
@@ -258,7 +258,7 @@ fn generate_stash_copy_body(input: &DeriveInput) -> proc_macro2::TokenStream {
                             let copy_exprs: Vec<_> = bindings
                                 .iter()
                                 .map(|binding| {
-                                    quote! { ::sage_stash::StashCopy::stash_copy(#binding, source, target) }
+                                    quote! { ::sage_stash::StashCopy::stash_copy(#binding, __stash_src, __stash_dst) }
                                 })
                                 .collect();
                             quote! {
@@ -296,7 +296,7 @@ fn generate_stash_copy_struct_fields(fields: &syn::Fields) -> proc_macro2::Token
                 .iter()
                 .map(|f| {
                     let fname = &f.ident;
-                    quote! { #fname: ::sage_stash::StashCopy::stash_copy(&self.#fname, source, target) }
+                    quote! { #fname: ::sage_stash::StashCopy::stash_copy(&self.#fname, __stash_src, __stash_dst) }
                 })
                 .collect();
             quote! { Self { #(#field_copies),* } }
@@ -305,7 +305,7 @@ fn generate_stash_copy_struct_fields(fields: &syn::Fields) -> proc_macro2::Token
             let field_copies: Vec<_> = (0..unnamed.unnamed.len())
                 .map(|i| {
                     let idx = syn::Index::from(i);
-                    quote! { ::sage_stash::StashCopy::stash_copy(&self.#idx, source, target) }
+                    quote! { ::sage_stash::StashCopy::stash_copy(&self.#idx, __stash_src, __stash_dst) }
                 })
                 .collect();
             quote! { Self(#(#field_copies),*) }
