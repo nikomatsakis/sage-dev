@@ -1,9 +1,8 @@
 //! `TyFolder`: cross-stash type mapping with binder instantiation.
 
-use sage_stash::{Ptr, Slice, Stash};
+use sage_stash::{Slice, Stash};
 
 use crate::ty::*;
-use crate::types::Mutability;
 
 // ---------------------------------------------------------------------------
 // TyFolder trait
@@ -24,7 +23,7 @@ pub trait TyFolder<'db> {
 pub fn default_fold_ty<'db>(folder: &mut impl TyFolder<'db>, ty: Ty<'db>) -> Ty<'db> {
     let data = match ty.data {
         TyData::Adt(sym, args) => {
-            let args = fold_slice(folder, args);
+            let args = fold_generic_arg_slice(folder, args);
             TyData::Adt(sym, args)
         }
         TyData::Ref(inner, m, lt) => {
@@ -63,6 +62,22 @@ pub fn fold_slice<'db>(folder: &mut impl TyFolder<'db>, slice: Slice<Ty<'db>>) -
     folder.target().alloc_slice(&tys)
 }
 
+pub fn fold_generic_arg_slice<'db>(
+    folder: &mut impl TyFolder<'db>,
+    slice: Slice<GenericArg<'db>>,
+) -> Slice<GenericArg<'db>> {
+    let src_args: Vec<_> = folder.source()[slice].to_vec();
+    let args: Vec<_> = src_args
+        .iter()
+        .map(|arg| match arg {
+            GenericArg::Type(ty) => GenericArg::Type(folder.fold_ty(*ty)),
+            GenericArg::Lifetime(lt) => GenericArg::Lifetime(*lt),
+            GenericArg::Const(c) => GenericArg::Const(*c),
+        })
+        .collect();
+    folder.target().alloc_slice(&args)
+}
+
 // ---------------------------------------------------------------------------
 // Fold helpers for signature types
 // ---------------------------------------------------------------------------
@@ -99,11 +114,11 @@ pub fn fold_struct_sig<'db>(
 pub struct Instantiate<'a, 'db> {
     source: &'a Stash,
     target: &'a mut Stash,
-    args: Vec<Ty<'db>>,
+    args: Vec<GenericArg<'db>>,
 }
 
 impl<'a, 'db> Instantiate<'a, 'db> {
-    pub fn new(source: &'a Stash, target: &'a mut Stash, args: Vec<Ty<'db>>) -> Self {
+    pub fn new(source: &'a Stash, target: &'a mut Stash, args: Vec<GenericArg<'db>>) -> Self {
         Self {
             source,
             target,
@@ -123,7 +138,14 @@ impl<'db> TyFolder<'db> for Instantiate<'_, 'db> {
 
     fn fold_ty(&mut self, ty: Ty<'db>) -> Ty<'db> {
         match ty.data {
-            TyData::BoundVar(bv) if bv.binder_index == 0 => self.args[bv.param_index as usize],
+            TyData::BoundVar(bv) if bv.binder_index == 0 => {
+                match self.args[bv.param_index as usize] {
+                    GenericArg::Type(ty) => ty,
+                    _ => Ty {
+                        data: TyData::Error,
+                    },
+                }
+            }
             TyData::BoundVar(bv) => Ty {
                 data: TyData::BoundVar(BoundVar {
                     binder_index: bv.binder_index - 1,
@@ -143,7 +165,7 @@ pub fn instantiate_fn_sig<'db>(
     source: &Stash,
     target: &mut Stash,
     binder: &Binder<'db, FnSig<'db>>,
-    args: Vec<Ty<'db>>,
+    args: Vec<GenericArg<'db>>,
 ) -> FnSig<'db> {
     let mut folder = Instantiate::new(source, target, args);
     fold_fn_sig(&mut folder, binder.value)
@@ -153,7 +175,7 @@ pub fn instantiate_struct_sig<'db>(
     source: &Stash,
     target: &mut Stash,
     binder: &Binder<'db, StructSig<'db>>,
-    args: Vec<Ty<'db>>,
+    args: Vec<GenericArg<'db>>,
 ) -> StructSig<'db> {
     let mut folder = Instantiate::new(source, target, args);
     fold_struct_sig(&mut folder, binder.value)

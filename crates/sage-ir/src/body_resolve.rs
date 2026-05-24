@@ -8,7 +8,7 @@ use crate::name::Name;
 use crate::resolve::{Namespace, Resolver, SourceRoot};
 use crate::resolved::*;
 use crate::ribs::{RibEntry, Ribs};
-use crate::sig_ast::{PathAst, TypeRefAst, TypeRefAstKind};
+use crate::sig_ast::{GenericArgAst, PathAst, TypeRefAst, TypeRefAstKind};
 use crate::span::RelativeSpan;
 
 struct BodyResolver<'db> {
@@ -162,16 +162,19 @@ impl<'db> BodyResolver<'db> {
         let segs: Vec<_> = self.src[path_data.segments]
             .iter()
             .map(|seg| {
-                let type_args: Vec<_> = self.src[seg.type_args]
+                let generic_args: Vec<_> = self.src[seg.generic_args]
                     .iter()
-                    .map(|a| {
-                        let ptr = self.copy_type_ref_val(*a);
-                        self.out[ptr]
+                    .map(|a| match a {
+                        GenericArgAst::Type(ty_ref) => {
+                            let ptr = self.copy_type_ref_val(*ty_ref);
+                            GenericArgAst::Type(self.out[ptr])
+                        }
+                        GenericArgAst::Lifetime(name) => GenericArgAst::Lifetime(*name),
                     })
                     .collect();
                 crate::sig_ast::PathSegmentAst {
                     name: seg.name,
-                    type_args: self.out.alloc_slice(&type_args),
+                    generic_args: self.out.alloc_slice(&generic_args),
                     span: seg.span,
                 }
             })

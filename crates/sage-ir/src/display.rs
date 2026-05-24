@@ -10,7 +10,7 @@ use std::fmt;
 use sage_stash::{Ptr, Stash, StashData};
 
 use crate::item::*;
-use crate::sig_ast::{PathAst, PathSegmentAst, TypeRefAst, TypeRefAstKind};
+use crate::sig_ast::{GenericArgAst, PathAst, PathSegmentAst, TypeRefAst, TypeRefAstKind};
 use crate::types::*;
 
 fn with_db(f: impl FnOnce(&dyn salsa::Database) -> fmt::Result) -> fmt::Result {
@@ -823,10 +823,10 @@ impl<'db> PrettyPrint<'db> for PathAst<'db> {
                     f.write_str("::")?;
                 }
                 f.write_str(seg.name.text(db))?;
-                let type_args = &s[seg.type_args];
-                if !type_args.is_empty() {
+                let generic_args = &s[seg.generic_args];
+                if !generic_args.is_empty() {
                     f.write_str("<")?;
-                    for (j, arg) in type_args.iter().enumerate() {
+                    for (j, arg) in generic_args.iter().enumerate() {
                         if j > 0 {
                             f.write_str(", ")?;
                         }
@@ -844,10 +844,10 @@ impl<'db> PrettyPrint<'db> for PathSegmentAst<'db> {
     fn pretty(&self, f: &mut fmt::Formatter<'_>, s: &Stash, indent: usize) -> fmt::Result {
         with_db(|db| {
             f.write_str(self.name.text(db))?;
-            let type_args = &s[self.type_args];
-            if !type_args.is_empty() {
+            let generic_args = &s[self.generic_args];
+            if !generic_args.is_empty() {
                 f.write_str("<")?;
-                for (i, arg) in type_args.iter().enumerate() {
+                for (i, arg) in generic_args.iter().enumerate() {
                     if i > 0 {
                         f.write_str(", ")?;
                     }
@@ -856,6 +856,15 @@ impl<'db> PrettyPrint<'db> for PathSegmentAst<'db> {
                 f.write_str(">")?;
             }
             Ok(())
+        })
+    }
+}
+
+impl<'db> PrettyPrint<'db> for GenericArgAst<'db> {
+    fn pretty(&self, f: &mut fmt::Formatter<'_>, s: &Stash, indent: usize) -> fmt::Result {
+        with_db(|db| match self {
+            GenericArgAst::Type(ty_ref) => ty_ref.pretty(f, s, indent),
+            GenericArgAst::Lifetime(name) => f.write_str(name.text(db)),
         })
     }
 }

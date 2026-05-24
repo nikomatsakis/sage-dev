@@ -18,10 +18,10 @@ fn make_simple_path<'db>(
     name: Name<'db>,
     sp: RelativeSpan,
 ) -> Ptr<PathAst<'db>> {
-    let empty_args = stash.alloc_slice::<TypeRefAst<'db>>(&[]);
+    let empty_args = stash.alloc_slice::<GenericArgAst<'db>>(&[]);
     let seg = PathSegmentAst {
         name,
-        type_args: empty_args,
+        generic_args: empty_args,
         span: sp,
     };
     let segs = stash.alloc_slice(&[seg]);
@@ -125,16 +125,17 @@ fn path_segment_with_type_args() {
         };
 
         // HashMap<K, V>
-        let type_args = stash.alloc_slice(&[k_ty, v_ty]);
+        let generic_args =
+            stash.alloc_slice(&[GenericArgAst::Type(k_ty), GenericArgAst::Type(v_ty)]);
         let hashmap_seg = PathSegmentAst {
             name: Name::new(db, "HashMap".to_owned()),
-            type_args,
+            generic_args,
             span: span(0, 13),
         };
 
         let seg = stash.alloc(hashmap_seg);
         let stored = &stash[seg];
-        let args = &stash[stored.type_args];
+        let args = &stash[stored.generic_args];
         assert_eq!(args.len(), 2);
         assert_eq!(stored.name.text(db), "HashMap");
     });

@@ -87,7 +87,7 @@ impl<'a, 'db> SigLowerCtx<'a, 'db> {
 
         let first = &segments[0];
         let rest = &segments[1..];
-        let type_args = self.lower_type_args(segments.last().unwrap());
+        let type_args = self.lower_generic_args(segments.last().unwrap());
 
         // Check ribs for the first segment (generic params, Self).
         if let Some(entry) = self.ribs.lookup(first.name, Namespace::Type) {
@@ -144,24 +144,37 @@ impl<'a, 'db> SigLowerCtx<'a, 'db> {
         }
     }
 
-    fn symbol_to_ty(&self, sym: Symbol<'db>, type_args: sage_stash::Slice<Ty<'db>>) -> Ty<'db> {
+    fn symbol_to_ty(
+        &self,
+        sym: Symbol<'db>,
+        generic_args: sage_stash::Slice<GenericArg<'db>>,
+    ) -> Ty<'db> {
         match sym.data() {
             SymbolData::Intrinsic(intrinsic) => Ty {
                 data: intrinsic_to_ty_data(intrinsic),
             },
             _ => Ty {
-                data: TyData::Adt(sym, type_args),
+                data: TyData::Adt(sym, generic_args),
             },
         }
     }
 
-    fn lower_type_args(&mut self, seg: &PathSegmentAst<'db>) -> sage_stash::Slice<Ty<'db>> {
-        let src_args = &self.src[seg.type_args];
+    fn lower_generic_args(
+        &mut self,
+        seg: &PathSegmentAst<'db>,
+    ) -> sage_stash::Slice<GenericArg<'db>> {
+        let src_args = &self.src[seg.generic_args];
         if src_args.is_empty() {
             return self.dst.alloc_slice(&[]);
         }
-        let tys: Vec<_> = src_args.iter().map(|a| self.lower_type_ref(*a)).collect();
-        self.dst.alloc_slice(&tys)
+        let args: Vec<_> = src_args
+            .iter()
+            .map(|a| match a {
+                GenericArgAst::Type(ty_ref) => GenericArg::Type(self.lower_type_ref(*ty_ref)),
+                GenericArgAst::Lifetime(_name) => GenericArg::Lifetime(Lifetime::Erased),
+            })
+            .collect();
+        self.dst.alloc_slice(&args)
     }
 }
 

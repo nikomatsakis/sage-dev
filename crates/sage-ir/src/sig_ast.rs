@@ -153,6 +153,12 @@ pub struct PathAst<'db> {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct PathSegmentAst<'db> {
     pub name: Name<'db>,
-    pub type_args: Slice<TypeRefAst<'db>>,
+    pub generic_args: Slice<GenericArgAst<'db>>,
     pub span: RelativeSpan,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub enum GenericArgAst<'db> {
+    Type(TypeRefAst<'db>),
+    Lifetime(Name<'db>),
 }

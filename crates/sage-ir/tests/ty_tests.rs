@@ -20,10 +20,10 @@ fn ty_adt_round_trip() {
         };
 
         let mut stash = Stash::new();
-        let i32_ty = stash.alloc(Ty {
+        let i32_ty = Ty {
             data: TyData::Int(IntTy::I32),
-        });
-        let args = stash.alloc_slice(&[stash[i32_ty]]);
+        };
+        let args = stash.alloc_slice(&[GenericArg::Type(i32_ty)]);
         let adt = stash.alloc(Ty {
             data: TyData::Adt(sym, args),
         });
@@ -32,7 +32,12 @@ fn ty_adt_round_trip() {
             TyData::Adt(s, a) => {
                 assert_eq!(s, sym);
                 assert_eq!(stash[a].len(), 1);
-                assert!(matches!(stash[a][0].data, TyData::Int(IntTy::I32)));
+                assert!(matches!(
+                    stash[a][0],
+                    GenericArg::Type(Ty {
+                        data: TyData::Int(IntTy::I32)
+                    })
+                ));
             }
             _ => panic!("expected Adt"),
         }

@@ -288,7 +288,7 @@ fn alloc_sig_ty<'db>(
                 .iter()
                 .map(|s| PathSegmentAst {
                     name: Name::new(db, (*s).to_owned()),
-                    type_args: stash.alloc_slice(&[]),
+                    generic_args: stash.alloc_slice(&[]),
                     span: GEN_REL_SPAN,
                 })
                 .collect();
@@ -305,12 +305,12 @@ fn alloc_sig_ty<'db>(
         SigTy::AbsPath(segments) => {
             let mut all_segs = vec![PathSegmentAst {
                 name: Name::new(db, String::new()),
-                type_args: stash.alloc_slice(&[]),
+                generic_args: stash.alloc_slice(&[]),
                 span: GEN_REL_SPAN,
             }];
             all_segs.extend(segments.iter().map(|s| PathSegmentAst {
                 name: Name::new(db, (*s).to_owned()),
-                type_args: stash.alloc_slice(&[]),
+                generic_args: stash.alloc_slice(&[]),
                 span: GEN_REL_SPAN,
             }));
             let segs = stash.alloc_slice(&all_segs);

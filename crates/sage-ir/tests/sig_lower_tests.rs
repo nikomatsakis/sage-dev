@@ -111,17 +111,20 @@ fn path_with_type_args() {
                 let segs = &stash[path.segments];
                 assert_eq!(segs.len(), 1);
                 assert_eq!(segs[0].name.text(db), "HashMap");
-                let type_args = &stash[segs[0].type_args];
-                assert_eq!(type_args.len(), 2);
-                match type_args[1].kind {
-                    TypeRefAstKind::Path(p2) => {
-                        let path2 = &stash[p2];
-                        let segs2 = &stash[path2.segments];
-                        assert_eq!(segs2[0].name.text(db), "Vec");
-                        let inner_args = &stash[segs2[0].type_args];
-                        assert_eq!(inner_args.len(), 1);
-                    }
-                    _ => panic!("expected path for Vec<u8>"),
+                let generic_args = &stash[segs[0].generic_args];
+                assert_eq!(generic_args.len(), 2);
+                match generic_args[1] {
+                    GenericArgAst::Type(ty_ref) => match ty_ref.kind {
+                        TypeRefAstKind::Path(p2) => {
+                            let path2 = &stash[p2];
+                            let segs2 = &stash[path2.segments];
+                            assert_eq!(segs2[0].name.text(db), "Vec");
+                            let inner_args = &stash[segs2[0].generic_args];
+                            assert_eq!(inner_args.len(), 1);
+                        }
+                        _ => panic!("expected path for Vec<u8>"),
+                    },
+                    _ => panic!("expected Type arg"),
                 }
             }
             _ => panic!("expected path type"),

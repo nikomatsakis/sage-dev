@@ -29,7 +29,7 @@ pub enum TyData<'db> {
     Str,
 
     // --- compound ---
-    Adt(Symbol<'db>, Slice<Ty<'db>>),
+    Adt(Symbol<'db>, Slice<GenericArg<'db>>),
     Ref(Ptr<Ty<'db>>, Mutability, Lifetime),
     Tuple(Slice<Ty<'db>>),
     Slice(Ptr<Ty<'db>>),
@@ -89,6 +89,17 @@ pub enum Lifetime {
 pub enum Const<'db> {
     Literal(u64),
     Other(Symbol<'db>),
+}
+
+// ---------------------------------------------------------------------------
+// GenericArg
+// ---------------------------------------------------------------------------
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub enum GenericArg<'db> {
+    Type(Ty<'db>),
+    Lifetime(Lifetime),
+    Const(Const<'db>),
 }
 
 // ---------------------------------------------------------------------------

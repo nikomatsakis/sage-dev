@@ -586,7 +586,7 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
         out: &mut Vec<PathSegmentAst<'db>>,
     ) {
         let db = self.db();
-        let empty_args = stash.alloc_slice::<TypeRefAst<'db>>(&[]);
+        let empty_args = stash.alloc_slice::<GenericArgAst<'db>>(&[]);
         match node.kind() {
             "scoped_identifier" | "scoped_type_identifier" => {
                 if let Some(prefix) = node.child_by_field_name("path") {
@@ -594,14 +594,14 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
                 } else if node.child(0).is_some_and(|c| c.kind() == "::") {
                     out.push(PathSegmentAst {
                         name: Name::new(db, String::new()),
-                        type_args: empty_args,
+                        generic_args: empty_args,
                         span: self.rel_span(node),
                     });
                 }
                 if let Some(name) = node.child_by_field_name("name") {
                     out.push(PathSegmentAst {
                         name: self.intern_name(name),
-                        type_args: empty_args,
+                        generic_args: empty_args,
                         span: self.rel_span(name),
                     });
                 }
@@ -611,47 +611,49 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
                     self.collect_path_segments_to_stash(stash, ty, out);
                 }
                 if let Some(args_node) = node.child_by_field_name("type_arguments") {
-                    let mut type_args = Vec::new();
+                    let mut generic_args = Vec::new();
                     let mut cursor = args_node.walk();
                     for child in args_node.named_children(&mut cursor) {
                         if child.kind() == "lifetime" {
-                            continue;
+                            let name = self.intern_name(child);
+                            generic_args.push(GenericArgAst::Lifetime(name));
+                        } else {
+                            let ty = self.lower_type_ref_to_stash(stash, child);
+                            generic_args.push(GenericArgAst::Type(stash[ty]));
                         }
-                        let ty = self.lower_type_ref_to_stash(stash, child);
-                        type_args.push(stash[ty]);
                     }
-                    let type_args = stash.alloc_slice(&type_args);
+                    let generic_args = stash.alloc_slice(&generic_args);
                     if let Some(last) = out.last_mut() {
-                        last.type_args = type_args;
+                        last.generic_args = generic_args;
                     }
                 }
             }
             "identifier" | "type_identifier" | "primitive_type" | "metavariable" => {
                 out.push(PathSegmentAst {
                     name: self.intern_name(node),
-                    type_args: empty_args,
+                    generic_args: empty_args,
                     span: self.rel_span(node),
                 });
             }
             "self" => out.push(PathSegmentAst {
                 name: Name::new(db, "self".to_owned()),
-                type_args: empty_args,
+                generic_args: empty_args,
                 span: self.rel_span(node),
             }),
             "crate" => out.push(PathSegmentAst {
                 name: Name::new(db, "crate".to_owned()),
-                type_args: empty_args,
+                generic_args: empty_args,
                 span: self.rel_span(node),
             }),
             "super" => out.push(PathSegmentAst {
                 name: Name::new(db, "super".to_owned()),
-                type_args: empty_args,
+                generic_args: empty_args,
                 span: self.rel_span(node),
             }),
             _ => {
                 out.push(PathSegmentAst {
                     name: Name::new(db, self.node_text(node).to_owned()),
-                    type_args: empty_args,
+                    generic_args: empty_args,
                     span: self.rel_span(node),
                 });
             }
@@ -665,10 +667,10 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
         span: RelativeSpan,
     ) -> Ptr<TypeRefAst<'db>> {
         let db = self.db();
-        let empty_args = stash.alloc_slice::<TypeRefAst<'db>>(&[]);
+        let empty_args = stash.alloc_slice::<GenericArgAst<'db>>(&[]);
         let seg = PathSegmentAst {
             name: Name::new(db, name.to_owned()),
-            type_args: empty_args,
+            generic_args: empty_args,
             span,
         };
         let segs = stash.alloc_slice(&[seg]);
@@ -1086,7 +1088,7 @@ impl<'db> BodyLowerCtx<'db> {
     }
 
     fn collect_path_segments_ast(&mut self, node: Node<'_>, out: &mut Vec<PathSegmentAst<'db>>) {
-        let empty_args = self.stash.alloc_slice::<TypeRefAst<'db>>(&[]);
+        let empty_args = self.stash.alloc_slice::<GenericArgAst<'db>>(&[]);
         match node.kind() {
             "scoped_identifier" | "scoped_type_identifier" => {
                 if let Some(prefix) = node.child_by_field_name("path") {
@@ -1094,14 +1096,14 @@ impl<'db> BodyLowerCtx<'db> {
                 } else if node.child(0).is_some_and(|c| c.kind() == "::") {
                     out.push(PathSegmentAst {
                         name: Name::new(self.db, String::new()),
-                        type_args: empty_args,
+                        generic_args: empty_args,
                         span: self.rel_span(node),
                     });
                 }
                 if let Some(name) = node.child_by_field_name("name") {
                     out.push(PathSegmentAst {
                         name: self.name(name),
-                        type_args: empty_args,
+                        generic_args: empty_args,
                         span: self.rel_span(name),
                     });
                 }
@@ -1111,43 +1113,48 @@ impl<'db> BodyLowerCtx<'db> {
                     self.collect_path_segments_ast(ty, out);
                 }
                 if let Some(args_node) = node.child_by_field_name("type_arguments") {
-                    let mut type_args = Vec::new();
+                    let mut generic_args = Vec::new();
                     let mut cursor = args_node.walk();
                     for child in args_node.named_children(&mut cursor) {
-                        type_args.push(self.lower_type_ref_ast(child));
+                        if child.kind() == "lifetime" {
+                            let name = Name::new(self.db, self.node_text(child).to_owned());
+                            generic_args.push(GenericArgAst::Lifetime(name));
+                        } else {
+                            generic_args.push(GenericArgAst::Type(self.lower_type_ref_ast(child)));
+                        }
                     }
-                    let type_args = self.stash.alloc_slice(&type_args);
+                    let generic_args = self.stash.alloc_slice(&generic_args);
                     if let Some(last) = out.last_mut() {
-                        last.type_args = type_args;
+                        last.generic_args = generic_args;
                     }
                 }
             }
             "identifier" | "type_identifier" | "primitive_type" | "metavariable" => {
                 out.push(PathSegmentAst {
                     name: self.name(node),
-                    type_args: empty_args,
+                    generic_args: empty_args,
                     span: self.rel_span(node),
                 });
             }
             "self" => out.push(PathSegmentAst {
                 name: Name::new(self.db, "self".to_owned()),
-                type_args: empty_args,
+                generic_args: empty_args,
                 span: self.rel_span(node),
             }),
             "crate" => out.push(PathSegmentAst {
                 name: Name::new(self.db, "crate".to_owned()),
-                type_args: empty_args,
+                generic_args: empty_args,
                 span: self.rel_span(node),
             }),
             "super" => out.push(PathSegmentAst {
                 name: Name::new(self.db, "super".to_owned()),
-                type_args: empty_args,
+                generic_args: empty_args,
                 span: self.rel_span(node),
             }),
             _ => {
                 out.push(PathSegmentAst {
                     name: Name::new(self.db, self.node_text(node).to_owned()),
-                    type_args: empty_args,
+                    generic_args: empty_args,
                     span: self.rel_span(node),
                 });
             }
@@ -1228,10 +1235,10 @@ impl<'db> BodyLowerCtx<'db> {
     }
 
     fn make_error_path(&mut self, node: Node<'_>) -> Ptr<PathAst<'db>> {
-        let empty_args = self.stash.alloc_slice::<TypeRefAst<'db>>(&[]);
+        let empty_args = self.stash.alloc_slice::<GenericArgAst<'db>>(&[]);
         let seg = PathSegmentAst {
             name: Name::new(self.db, "?".to_owned()),
-            type_args: empty_args,
+            generic_args: empty_args,
             span: self.rel_span(node),
         };
         let segs = self.stash.alloc_slice(&[seg]);

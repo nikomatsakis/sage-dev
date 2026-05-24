@@ -258,7 +258,7 @@ fn impl_method_self_return_resolves() {
         };
         let foo_sym = sage_ir::symbol::Symbol::ast(ItemAst::Struct(foo_struct));
         let mut stash = sage_stash::Stash::new();
-        let empty_args = stash.alloc_slice::<Ty>(&[]);
+        let empty_args = stash.alloc_slice::<GenericArg>(&[]);
         let self_ty = Ty {
             data: TyData::Adt(foo_sym, empty_args),
         };
@@ -294,7 +294,7 @@ fn impl_method_ref_self_param() {
         };
         let foo_sym = sage_ir::symbol::Symbol::ast(ItemAst::Struct(foo_struct));
         let mut stash = sage_stash::Stash::new();
-        let empty_args = stash.alloc_slice::<Ty>(&[]);
+        let empty_args = stash.alloc_slice::<GenericArg>(&[]);
         let self_ty = Ty {
             data: TyData::Adt(foo_sym, empty_args),
         };
@@ -345,7 +345,7 @@ fn generic_impl_self_resolves_with_bound_vars() {
         };
         let wrapper_sym = sage_ir::symbol::Symbol::ast(ItemAst::Struct(wrapper_struct));
 
-        // Build self type: Adt(Wrapper, [BoundVar(0,0)])
+        // Build self type: Adt(Wrapper, [Type(BoundVar(0,0))])
         // The impl has one generic param T, so self type uses BoundVar for it
         let mut stash = sage_stash::Stash::new();
         let bv = Ty {
@@ -354,7 +354,7 @@ fn generic_impl_self_resolves_with_bound_vars() {
                 param_index: 0,
             }),
         };
-        let args = stash.alloc_slice(&[bv]);
+        let args = stash.alloc_slice(&[GenericArg::Type(bv)]);
         let self_ty = Ty {
             data: TyData::Adt(wrapper_sym, args),
         };
@@ -371,13 +371,15 @@ fn generic_impl_self_resolves_with_bound_vars() {
                 match sig_stash[inner].data {
                     TyData::Adt(sym, args) => {
                         assert_eq!(sym, wrapper_sym);
-                        let type_args = &sig_stash[args];
-                        assert_eq!(type_args.len(), 1);
+                        let generic_args = &sig_stash[args];
+                        assert_eq!(generic_args.len(), 1);
                         assert!(matches!(
-                            type_args[0].data,
-                            TyData::BoundVar(BoundVar {
-                                binder_index: 0,
-                                param_index: 0
+                            generic_args[0],
+                            GenericArg::Type(Ty {
+                                data: TyData::BoundVar(BoundVar {
+                                    binder_index: 0,
+                                    param_index: 0
+                                })
                             })
                         ));
                     }
@@ -387,18 +389,20 @@ fn generic_impl_self_resolves_with_bound_vars() {
             other => panic!("expected &Wrapper<T>, got {other:?}"),
         }
 
-        // Return type Self should be Adt(Wrapper, [BoundVar(0,0)])
+        // Return type Self should be Adt(Wrapper, [Type(BoundVar(0,0))])
         let ret = &sig_stash[fn_sig.ret];
         match ret.data {
             TyData::Adt(sym, args) => {
                 assert_eq!(sym, wrapper_sym);
-                let type_args = &sig_stash[args];
-                assert_eq!(type_args.len(), 1);
+                let generic_args = &sig_stash[args];
+                assert_eq!(generic_args.len(), 1);
                 assert!(matches!(
-                    type_args[0].data,
-                    TyData::BoundVar(BoundVar {
-                        binder_index: 0,
-                        param_index: 0
+                    generic_args[0],
+                    GenericArg::Type(Ty {
+                        data: TyData::BoundVar(BoundVar {
+                            binder_index: 0,
+                            param_index: 0
+                        })
                     })
                 ));
             }

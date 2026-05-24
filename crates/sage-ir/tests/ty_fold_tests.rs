@@ -25,8 +25,7 @@ fn identity_fold() {
         let i32_ty = Ty {
             data: TyData::Int(IntTy::I32),
         };
-        let i32_ptr = stash_a.alloc(i32_ty);
-        let args = stash_a.alloc_slice(&[i32_ty]);
+        let args = stash_a.alloc_slice(&[GenericArg::Type(i32_ty)]);
         let adt = Ty {
             data: TyData::Adt(sym, args),
         };
@@ -43,14 +42,17 @@ fn identity_fold() {
                 TyData::Adt(s, a) => {
                     assert_eq!(s, sym);
                     assert_eq!(stash_b[a].len(), 1);
-                    assert!(matches!(stash_b[a][0].data, TyData::Int(IntTy::I32)));
+                    assert!(matches!(
+                        stash_b[a][0],
+                        GenericArg::Type(Ty {
+                            data: TyData::Int(IntTy::I32)
+                        })
+                    ));
                 }
                 _ => panic!("expected Adt"),
             },
             _ => panic!("expected Ref"),
         }
-
-        let _ = i32_ptr;
     });
 }
 
@@ -79,7 +81,7 @@ fn instantiate_identity_fn() {
             data: TyData::Int(IntTy::I32),
         };
         let mut dst = Stash::new();
-        let result = instantiate_fn_sig(&src, &mut dst, &binder, vec![i32_ty]);
+        let result = instantiate_fn_sig(&src, &mut dst, &binder, vec![GenericArg::Type(i32_ty)]);
 
         let result_params = &dst[result.params];
         assert_eq!(result_params.len(), 1);
@@ -144,7 +146,7 @@ fn instantiate_struct_sig() {
             &src,
             &mut dst,
             &binder,
-            vec![bool_ty, str_ty],
+            vec![GenericArg::Type(bool_ty), GenericArg::Type(str_ty)],
         );
 
         let result_fields = &dst[result.fields];
@@ -192,14 +194,14 @@ fn instantiate_nested_type_args() {
             }),
         };
 
-        // Adt(Vec, [BoundVar(0,1)])
-        let bv1_slice = src.alloc_slice(&[bv1]);
+        // Adt(Vec, [Type(BoundVar(0,1))])
+        let bv1_slice = src.alloc_slice(&[GenericArg::Type(bv1)]);
         let vec_bv1 = Ty {
             data: TyData::Adt(vec_sym, bv1_slice),
         };
 
-        // Adt(HashMap, [BoundVar(0,0), Adt(Vec, [BoundVar(0,1)])])
-        let args = src.alloc_slice(&[bv0, vec_bv1]);
+        // Adt(HashMap, [Type(BoundVar(0,0)), Type(Adt(Vec, [Type(BoundVar(0,1))]))])
+        let args = src.alloc_slice(&[GenericArg::Type(bv0), GenericArg::Type(vec_bv1)]);
         let hashmap_ty = Ty {
             data: TyData::Adt(hashmap_sym, args),
         };
@@ -215,7 +217,12 @@ fn instantiate_nested_type_args() {
         };
 
         let mut dst = Stash::new();
-        let result = instantiate_fn_sig(&src, &mut dst, &binder, vec![str_ty, i32_ty]);
+        let result = instantiate_fn_sig(
+            &src,
+            &mut dst,
+            &binder,
+            vec![GenericArg::Type(str_ty), GenericArg::Type(i32_ty)],
+        );
 
         let result_params = &dst[result.params];
         assert_eq!(result_params.len(), 1);
@@ -224,11 +231,21 @@ fn instantiate_nested_type_args() {
                 assert_eq!(sym, hashmap_sym);
                 let args = &dst[args];
                 assert_eq!(args.len(), 2);
-                assert!(matches!(args[0].data, TyData::Str));
-                match args[1].data {
-                    TyData::Adt(s, inner_args) => {
+                assert!(matches!(
+                    args[0],
+                    GenericArg::Type(Ty { data: TyData::Str })
+                ));
+                match args[1] {
+                    GenericArg::Type(Ty {
+                        data: TyData::Adt(s, inner_args),
+                    }) => {
                         assert_eq!(s, vec_sym);
-                        assert!(matches!(dst[inner_args][0].data, TyData::Int(IntTy::I32)));
+                        assert!(matches!(
+                            dst[inner_args][0],
+                            GenericArg::Type(Ty {
+                                data: TyData::Int(IntTy::I32)
+                            })
+                        ));
                     }
                     _ => panic!("expected Vec<i32>"),
                 }
@@ -264,7 +281,7 @@ fn de_bruijn_shift() {
             data: TyData::Int(IntTy::I32),
         };
         let mut dst = Stash::new();
-        let result = instantiate_fn_sig(&src, &mut dst, &binder, vec![i32_ty]);
+        let result = instantiate_fn_sig(&src, &mut dst, &binder, vec![GenericArg::Type(i32_ty)]);
 
         let result_params = &dst[result.params];
         match result_params[0].data {

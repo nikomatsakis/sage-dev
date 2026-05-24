@@ -167,8 +167,15 @@ pub struct PathAst<'db> {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct PathSegmentAst<'db> {
     pub name: Name<'db>,
-    pub type_args: Slice<TypeRefAst<'db>>,
+    pub generic_args: Slice<GenericArgAst<'db>>,
     pub span: RelativeSpan,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub enum GenericArgAst<'db> {
+    Type(TypeRefAst<'db>),
+    Lifetime(Name<'db>),
+    Const(TypeRefAst<'db>),  // placeholder — const args parsed as type refs for now
 }
 ```
 
@@ -237,8 +244,9 @@ pub enum TyData<'db> {
 
     // --- compound ---
     /// An ADT (struct, enum, union) or other named type with substituted args.
-    /// `Symbol` identifies the type; `Slice<Ty>` holds substituted type args.
-    Adt(Symbol<'db>, Slice<Ty<'db>>),
+    /// `Symbol` identifies the type; `Slice<GenericArg>` holds substituted generic args
+    /// (types, lifetimes, and consts interleaved in declaration order).
+    Adt(Symbol<'db>, Slice<GenericArg<'db>>),
 
     /// `&'a T` or `&'a mut T`.
     Ref(Ptr<Ty<'db>>, Mutability, Lifetime),
@@ -307,6 +315,21 @@ pub enum Const<'db> {
 }
 ```
 
+### `GenericArg`
+
+A unified substitution type that can hold type, lifetime, or const arguments — interleaved in declaration order:
+
+```rust
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub enum GenericArg<'db> {
+    Type(Ty<'db>),
+    Lifetime(Lifetime),
+    Const(Const<'db>),
+}
+```
+
+This allows `struct Foo<'a, T>(&'a T)` to produce `Adt(Foo, [Lifetime(BoundVar(...)), Type(BoundVar(...))])` — lifetimes are not erased.
+
 ### `BoundVar`
 
 ```rust
@@ -362,6 +385,24 @@ Binder {
     },
 }
 ```
+
+**Example with lifetimes.** `struct Ref<'a, T>(&'a T)` produces:
+
+```
+Binder {
+    bound_vars: [
+        BoundVarInfo { kind: Lifetime },
+        BoundVarInfo { kind: Type },
+    ],
+    value: StructSig {
+        fields: [
+            FieldSig { name: "0", ty: Ref(BoundVar(0,1), Shared, Lifetime::BoundVar(BoundVar(0,0))) }
+        ],
+    },
+}
+```
+
+When used as a type `Ref<'static, i32>`, the ADT's generic args are `[GenericArg::Lifetime(Static), GenericArg::Type(Int(I32))]`.
 
 `Binder` is generic over `T` so it wraps `FnSig`, `StructSig`, etc. The same struct is used for nested binders (e.g., `for<'a>` on trait bounds in the future) — the de Bruijn indices handle the nesting.
 
@@ -450,7 +491,7 @@ The [tuple struct constructors RFD](./tuple-struct-ctors.md) deferred its Step 4
 fn tuple_struct_ctor_signature(struct_sig: &Stashed<Binder<StructSig>>) -> Stashed<Binder<FnSig>>
 ```
 
-The params are the struct's field types (in order), the return type is the struct type itself (with its generic args as `BoundVar`s). The `Binder` is inherited from the struct's own signature. This is a pure restructuring — no name resolution involved.
+The params are the struct's field types (in order), the return type is the struct type itself (with its generic args as `GenericArg::Type(BoundVar(...))`s and `GenericArg::Lifetime(BoundVar(...))`s matching the struct's generic params). The `Binder` is inherited from the struct's own signature. This is a pure restructuring — no name resolution involved.
 
 ### Lowering `TypeRefAst` → `Ty`
 
@@ -511,7 +552,7 @@ impl<'a, 'db> SigLowerCtx<'a, 'db> {
 
 1. **Single segment, matches a generic param** → `TyData::BoundVar(...)`.
 2. **Single segment, primitive name** (`bool`, `i32`, `str`, ...) → `TyData::Bool`, `TyData::Int(I32)`, etc.
-3. **Otherwise** → resolve the path via `resolve_name` / `resolve_path` in the type namespace → `Symbol`. Then lower any type arguments on the final path segment. Produce `TyData::Adt(symbol, args)`.
+3. **Otherwise** → resolve the path via `resolve_name` / `resolve_path` in the type namespace → `Symbol`. Then lower generic arguments on the final path segment (type args become `GenericArg::Type(Ty)`, lifetime args become `GenericArg::Lifetime(Lifetime)`). Produce `TyData::Adt(symbol, args)`.
 4. **Resolution failure** → `TyData::Error`.
 
 Step 1 checks generics first, matching how Rust scoping works: a generic param `T` shadows any item named `T` in scope.
@@ -559,7 +600,7 @@ The default implementation does a structural copy — walk each `TyData` variant
 fn default_fold_ty<'db>(folder: &mut impl TyFolder<'db>, ty: Ty<'db>) -> Ty<'db> {
     let data = match ty.data {
         TyData::Adt(sym, args) => {
-            let args = fold_slice(folder, args);
+            let args = fold_generic_arg_slice(folder, args);
             TyData::Adt(sym, args)
         }
         TyData::Ref(inner, m, lt) => {
@@ -601,6 +642,20 @@ fn fold_slice<'db>(
     let tys: Vec<_> = source[slice].iter().map(|ty| folder.fold_ty(*ty)).collect();
     folder.target().alloc_slice(&tys)
 }
+
+fn fold_generic_arg_slice<'db>(
+    folder: &mut impl TyFolder<'db>,
+    slice: Slice<GenericArg<'db>>,
+) -> Slice<GenericArg<'db>> {
+    let source = folder.source();
+    let args: Vec<_> = source[slice].iter().map(|arg| match arg {
+        GenericArg::Type(ty) => GenericArg::Type(folder.fold_ty(*ty)),
+        GenericArg::Lifetime(lt) => GenericArg::Lifetime(*lt), // lifetimes pass through
+        GenericArg::Const(c) => GenericArg::Const(*c),         // consts pass through
+    }).collect();
+    folder.target().alloc_slice(&args)
+}
+```
 ```
 
 ### Instantiation
@@ -611,8 +666,8 @@ The first concrete folder — substitutes `BoundVar`s at the outermost binder wi
 struct Instantiate<'a, 'db> {
     source: &'a Stash,
     target: &'a mut Stash,
-    /// Concrete types for each bound var in the outermost binder.
-    args: Vec<Ty<'db>>,
+    /// Concrete generic args for each bound var in the outermost binder.
+    args: Vec<GenericArg<'db>>,
 }
 
 impl<'db> TyFolder<'db> for Instantiate<'_, 'db> {
@@ -622,7 +677,11 @@ impl<'db> TyFolder<'db> for Instantiate<'_, 'db> {
     fn fold_ty(&mut self, ty: Ty<'db>) -> Ty<'db> {
         match ty.data {
             TyData::BoundVar(bv) if bv.binder_index == 0 => {
-                self.args[bv.param_index as usize]
+                match self.args[bv.param_index as usize] {
+                    GenericArg::Type(ty) => ty,
+                    // Lifetime/Const BoundVars shouldn't appear in Ty position
+                    _ => Ty { data: TyData::Error },
+                }
             }
             TyData::BoundVar(bv) => {
                 Ty {
@@ -707,7 +766,7 @@ The per-item signature stash is coarser than the previous per-field tracking (ch
 **Out of scope (future work):**
 - Where clauses and trait bounds (parsed syntactically, not resolved)
 - `impl Trait` in argument or return position
-- Lifetime resolution (lifetimes in `Binder` are modeled but not resolved)
+- Full lifetime resolution (lifetime arguments are captured in `GenericArg::Lifetime` and `Lifetime::BoundVar`, but lifetime elision rules and borrow checking are not implemented)
 - Const generics beyond `Const::Literal` and `Const::Other`
 - External symbol signatures via `TcxDb` (deferred until the format is designed)
 - Type inference and the `type_checked_body` query
