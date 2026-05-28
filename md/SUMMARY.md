@@ -15,7 +15,6 @@
     - [Stash Safety](./rfds/stash-safety.md)
     - [Per-Kind Symbol Data](./rfds/per-kind-symbol-data.md)
     - [Faster Collision Chains](./rfds/stash-faster-collision-chains.md)
-    - [Stash-allocated MEM-map](./rfds/memmap-stash-allocation.md)
   - [Completed](./rfds/completed.md)
     - [Initial Setup](./rfds/initial-setup.md)
     - [Relative Span Model](./rfds/relative-span-model.md)
@@ -23,3 +22,4 @@
     - [Macro Expansion as Tracked Query](./rfds/macro-expansion-tracked-query.md)
     - [Tuple Struct Constructors](./rfds/tuple-struct-ctors.md)
     - [Stash Hash-Consing](./rfds/stash-hash-consing.md)
+    - [Stash-allocated MEM-map](./rfds/memmap-stash-allocation.md)

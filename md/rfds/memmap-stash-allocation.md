@@ -1,6 +1,6 @@
 # RFD: Stash-allocated MEM-map entries
 
-**Status:** Active
+**Status:** Completed
 
 **Depends on:**
 - [Hash-consed stash](./stash-hash-consing.md) — `Stash`, `Slice<T>`, `Stashed<T>`, `AllocStashData`
