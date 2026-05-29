@@ -242,9 +242,11 @@ Add the `SymExtKind` enum. Add a `kind` field to `SymExt` (default `Other` for b
 
 **Implemented.** The `sym_ext_kind_for_def_kind` mapping lives in `src/tcx_impl.rs` (alongside the existing `namespaces_for_def_kind`). `ModExt` is fully removed; `ModSymbol::external(cn, di)` now constructs `SymExt::new(cn, di, SymExtKind::Mod)` internally. The `From<ModExt> for SymExt` impl is removed since `ModSymbolData::Ext` now holds `SymExt` directly. No deviations from plan.
 
-### Step 2: Add `ImplSymbol` and `StashDirect` impls
+### Step 2: Add `ImplSymbol` and `StashDirect` impls ✅
 
 The type-signatures RFD added `FnSymbol` through `StaticSymbol`. Add `ImplSymbol` (same `Ast`/`Ext` shape). `MacroDef`, `Use`, and `MacroInvocation` don't need wrappers — store the AST directly. All per-kind wrappers need `StashDirect` impls (trivial — they contain only salsa IDs and `SymExt` scalars).
+
+**Implemented.** Added `ImplSymbol` via `define_kind_symbol!` macro. Added `StashDirect` impl to the macro itself so all per-kind wrappers (`FnSymbol`, `StructSymbol`, `EnumSymbol`, `TraitSymbol`, `TypeAliasSymbol`, `ConstSymbol`, `StaticSymbol`, `ImplSymbol`) get it automatically. Also added `StashDirect` for `SymExtKind`. No deviations from plan.
 
 ### Step 3: Rewrite `SymbolData` and `Symbol` construction
 

@@ -105,6 +105,7 @@ pub enum SymbolData<'db> {
 
 impl StashDirect for SymbolData<'_> {}
 impl StashDirect for SymExt {}
+impl StashDirect for SymExtKind {}
 
 impl<'db> Symbol<'db> {
     pub fn ast(item: ItemAst<'db>) -> Self {
@@ -217,6 +218,8 @@ macro_rules! define_kind_symbol {
                 Self::ext(ext)
             }
         }
+
+        impl StashDirect for $Name<'_> {}
     };
 }
 
@@ -246,4 +249,8 @@ define_kind_symbol! {
 
 define_kind_symbol! {
     pub struct StaticSymbol, crate::item::StaticAst<'db>, StaticSymbolData;
+}
+
+define_kind_symbol! {
+    pub struct ImplSymbol, crate::item::ImplAst<'db>, ImplSymbolData;
 }
