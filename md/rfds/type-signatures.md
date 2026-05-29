@@ -1,6 +1,6 @@
 # RFD: Type Signatures
 
-**Status:** Draft
+**Status:** Completed
 
 **Depends on:**
 - [Module sym tree](./module-sym-tree.md) — `Symbol`, `ModSymbol`, `ItemAst`, stash architecture

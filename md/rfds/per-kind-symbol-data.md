@@ -18,6 +18,7 @@ pub enum SymbolData<'db> {
     Ast(ItemAst<'db>),
     TupleStructCtor(StructAst<'db>),
     Ext(SymExt),
+    Intrinsic(Intrinsic),
 }
 ```
 
@@ -45,16 +46,20 @@ pub enum SymbolData<'db> {
     TupleStructCtor(StructSymbol<'db>),
     Enum(EnumSymbol<'db>),
     Trait(TraitSymbol<'db>),
+    Impl(ImplSymbol<'db>),
     Mod(ModSymbol<'db>),
     TypeAlias(TypeAliasSymbol<'db>),
     Const(ConstSymbol<'db>),
     Static(StaticSymbol<'db>),
-    MacroDef(MacroDefSymbol<'db>),
-    Use(UseSymbol<'db>),
-    MacroInvocation(MacroInvocationSymbol<'db>),
-    Error,
+    MacroDef(MacroDefAst<'db>),
+    Use(UseGroupAst<'db>),
+    MacroInvocation(MacroInvocationAst<'db>),
+    Error(AbsoluteSpan),
+    Unknown(SymExt),
 }
 ```
+
+Intrinsic primitives (`bool`, `i32`, `str`, etc.) are modeled as `SymbolData::Struct(StructSymbol::intrinsic(...))` — they are effectively magic structs.
 
 `Symbol` remains a `Copy` newtype with a private `data` field. `Symbol::data()` returns the enum by value.
 
@@ -72,8 +77,10 @@ pub struct SymExt {
 pub enum SymExtKind {
     Fn,
     Struct,
+    TupleStructCtor,
     Enum,
     Trait,
+    Impl,
     Mod,
     TypeAlias,
     Const,
@@ -97,6 +104,8 @@ impl<'db> Symbol<'db> {
             ItemAst::Function(f) => SymbolData::Fn(FnSymbol::ast(f)),
             ItemAst::Struct(s) => SymbolData::Struct(StructSymbol::ast(s)),
             ItemAst::Enum(e) => SymbolData::Enum(EnumSymbol::ast(e)),
+            ItemAst::Impl(i) => SymbolData::Impl(ImplSymbol::ast(i)),
+            ItemAst::Error(span) => SymbolData::Error(span),
             // ...
         };
         Self { data }
@@ -112,8 +121,10 @@ impl<'db> Symbol<'db> {
         let data = match ext.kind {
             SymExtKind::Fn => SymbolData::Fn(FnSymbol::ext(ext)),
             SymExtKind::Struct => SymbolData::Struct(StructSymbol::ext(ext)),
+            SymExtKind::TupleStructCtor => SymbolData::TupleStructCtor(StructSymbol::ext(ext)),
+            SymExtKind::Impl => SymbolData::Impl(ImplSymbol::ext(ext)),
             // ...
-            SymExtKind::Other => SymbolData::Error,
+            SymExtKind::Other => SymbolData::Unknown(ext),
         };
         Self { data }
     }
@@ -124,9 +135,9 @@ impl<'db> Symbol<'db> {
 
 ### `ModSymbol` integration
 
-`ModSymbol` is already a per-kind wrapper with `Ast(ModAst)` / `Ext(ModExt)`. The `SymbolData::Mod` variant wraps it directly. The `From<ModSymbol> for Symbol` impl constructs `SymbolData::Mod(m)`.
+`ModSymbol` is already a per-kind wrapper with `Ast(ModAst)` / `Ext(ModExt)`. As part of this refactor, `ModExt` is removed and `ModSymbol` switches to storing `SymExt` (with `kind: SymExtKind::Mod`) like all other per-kind wrappers. This eliminates the historical asymmetry — `ModExt` was structurally identical to `SymExt` and predated the per-kind wrapper design.
 
-For external modules, `ModExt` doesn't carry `SymExtKind` (it doesn't need to — it's always a module). The conversion from `SymExt` → `ModSymbol` for the `Mod` variant extracts `crate_num`/`def_index`.
+The `SymbolData::Mod` variant wraps `ModSymbol` directly. The `From<ModSymbol> for Symbol` impl constructs `SymbolData::Mod(m)`.
 
 ### TcxDb changes
 
@@ -148,8 +159,10 @@ The `ProxyTcxDb` implementation populates `kind` from rustc's `DefKind`. The map
 |---|---|
 | `Fn`, `AssocFn` | `Fn` |
 | `Struct` | `Struct` |
+| `Ctor(CtorOf::Struct, _)` | `TupleStructCtor` |
 | `Enum` | `Enum` |
 | `Trait`, `TraitAlias` | `Trait` |
+| `Impl { .. }` | `Impl` |
 | `Mod` | `Mod` |
 | `TyAlias`, `AssocTy` | `TypeAlias` |
 | `Const`, `AssocConst` | `Const` |
@@ -162,7 +175,7 @@ The `ProxyTcxDb` implementation populates `kind` from rustc's `DefKind`. The map
 
 `Symbol` derives `AllocStashData` today and implements `StashDirect`. After the refactor, `SymbolData` is larger (it now includes the per-kind wrapper which itself is an enum). This is fine — `Symbol` is still `Copy` (all arms are thin handles or small structs), and `StashDirect` remains valid since equality is structural.
 
-The size of `Symbol` grows from ~16 bytes (tag + `ItemAst`/`SymExt`) to ~24 bytes (tag + per-kind wrapper with its own tag + payload). Still small enough for value semantics.
+The current `Symbol` is already ~24 bytes (driven by `ItemAst::Error(AbsoluteSpan)`). The proposed layout should be similar — per-kind wrappers are thin (discriminant + salsa ID or `SymExt`). Validate with `std::mem::size_of::<Symbol>()` before and after. Still small enough for value semantics.
 
 ### Callers that just want ast-vs-ext
 
@@ -202,7 +215,8 @@ match sym.data() {
     SymbolData::Struct(struct_sym) => { ... }
     SymbolData::TupleStructCtor(struct_sym) => { ... }
     // ...
-    SymbolData::Error => { ... }
+    SymbolData::Error(span) => { ... }
+    SymbolData::Unknown(ext) => { ... }
 }
 ```
 
@@ -224,11 +238,11 @@ Or they match the relevant variants and use `_` for the rest.
 
 ### Step 1: Add `SymExtKind` and extend `SymExt`
 
-Add the `SymExtKind` enum. Add a `kind` field to `SymExt` (default `Other` for back-compat). Add `kind` to `RawChild`. Update `ProxyTcxDb` to populate it from rustc's `DefKind`.
+Add the `SymExtKind` enum. Add a `kind` field to `SymExt` (default `Other` for back-compat). Add `kind` to `RawChild`. Update `ProxyTcxDb` to populate it from rustc's `DefKind`. Remove `ModExt` and switch `ModSymbol` to store `SymExt` (with `kind: SymExtKind::Mod`).
 
-### Step 2: Add missing per-kind wrappers
+### Step 2: Add `ImplSymbol` and `StashDirect` impls
 
-The type-signatures RFD added `FnSymbol` through `StaticSymbol`. Add the remaining: `MacroDefSymbol`, `UseSymbol`, `MacroInvocationSymbol` (or decide these don't need wrappers — they could stay as `SymbolData::MacroDef(MacroDefAst)` directly since they have no ext counterpart in practice).
+The type-signatures RFD added `FnSymbol` through `StaticSymbol`. Add `ImplSymbol` (same `Ast`/`Ext` shape). `MacroDef`, `Use`, and `MacroInvocation` don't need wrappers — store the AST directly. All per-kind wrappers need `StashDirect` impls (trivial — they contain only salsa IDs and `SymExt` scalars).
 
 ### Step 3: Rewrite `SymbolData` and `Symbol` construction
 
@@ -259,12 +273,20 @@ After all callers use per-kind constructors, the `Symbol::ast(item)` constructor
 - Convenience methods (`name()`, `is_local()`)
 
 **Out of scope:**
-- Removing `ModSymbol` as a separate type (it has its own parent/file methods)
+- Removing `ModSymbol` as a separate type (it has its own parent/file methods; only `ModExt` is removed)
 - Per-kind ext data (`FnExt`, `StructExt` with signature info) — that's a separate concern tied to external signature loading
 - Changing how `TupleStructCtor` works — it remains a `StructSymbol` wrapped in a dedicated variant
 
-## Open questions
+## Resolved decisions
 
-1. **Wrappers for macro/use items.** Should `MacroDefAst`, `UseGroupAst`, and `MacroInvocationAst` get per-kind wrappers with an ext arm? Today there are no external macro defs or use items in the symbol table. Options: (a) skip wrappers, store the AST directly in `SymbolData`; (b) add thin wrappers anyway for uniformity. Leaning toward (a) — these items don't have external counterparts and adding wrappers is pure boilerplate.
+- **Intrinsics** (`bool`, `i32`, `str`, etc.) are modeled as `SymbolData::Struct(StructSymbol::intrinsic(...))` — magic structs.
+- **Impl blocks** get a first-class `SymbolData::Impl(ImplSymbol<'db>)` variant.
+- **Local parse errors** (`ItemAst::Error(span)`) map to `SymbolData::Error(AbsoluteSpan)`.
+- **Unmodeled external kinds** (`ExternCrate`, `GlobalAsm`, `OpaqueTy`, `Closure`, etc.) map to `SymbolData::Unknown(SymExt)`, preserving the handle for debugging.
+- **External tuple struct ctors** arrive as rustc `DefKind::Ctor(CtorOf::Struct, _)` and map to `SymExtKind::TupleStructCtor` → `SymbolData::TupleStructCtor(StructSymbol::ext(...))`.
+- **`ModExt` is removed** — `ModSymbol` stores `SymExt` like all other per-kind wrappers.
+- **Enum variant symbols** are out of scope — tracked in a [separate RFD](./enum-variant-symbols.md).
 
-2. **`SymExtKind::Other`.** What external definitions don't map to our kind system? Likely: `ExternCrate`, `GlobalAsm`, `OpaqueTy`, `Closure`, `Impl`, etc. These would be `Other` and appear as `SymbolData::Error` after dispatch. Is `Error` the right name, or should there be an `Unknown(SymExt)` variant that preserves the handle?
+## Resolved decisions (continued)
+
+- **Macro/use wrappers:** No per-kind wrappers for `MacroDef`, `Use`, or `MacroInvocation`. These are only ever local, so `SymbolData` stores the AST directly (e.g., `MacroDef(MacroDefAst<'db>)`) without a `*Symbol` wrapper.
