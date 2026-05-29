@@ -1,14 +1,15 @@
-//! Module symbols: workspace-local (`ModAst`) and external (`ModExt`),
+//! Module symbols: workspace-local (`ModAst`) and external (`SymExt`),
 //! unified by the `ModSymbol` wrapper-of-enum.
 //!
 //! `ModSymbol` is a plain `Copy` newtype around a `ModSymbolData` enum.
 //! Identity for the local arm comes from `ModAst`'s salsa tracked-struct
 //! id (per-resolution-site); identity for the external arm is structural
-//! (`(CrateNum, DefIndex)`). Neither `ModSymbol` nor `ModExt` are interned.
+//! (`(CrateNum, DefIndex)` via `SymExt`).
 
 use sage_stash::StashDirect;
 
 use crate::source::SourceFile;
+use crate::symbol::{SymExt, SymExtKind};
 
 /// Opaque crate number (matches rustc's CrateNum).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
@@ -22,27 +23,8 @@ pub struct DefIndex(pub u32);
 
 impl StashDirect for DefIndex {}
 
-/// External module — a thin handle into rustc's crate metadata.
-///
-/// Plain `Copy` struct; identity is structural. `module_children`
-/// queries on `TcxDb` are keyed on the `(CrateNum, DefIndex)` pair.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
-pub struct ModExt {
-    pub crate_num: CrateNum,
-    pub def_index: DefIndex,
-}
-
-impl ModExt {
-    pub const fn new(crate_num: CrateNum, def_index: DefIndex) -> Self {
-        Self {
-            crate_num,
-            def_index,
-        }
-    }
-}
-
 /// A module symbol — a `Copy` wrapper-of-enum unifying local
-/// (`ModAst`) and external (`ModExt`) modules.
+/// (`ModAst`) and external (`SymExt`) modules.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub struct ModSymbol<'db> {
     data: ModSymbolData<'db>,
@@ -51,7 +33,7 @@ pub struct ModSymbol<'db> {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub enum ModSymbolData<'db> {
     Ast(crate::item::ModAst<'db>),
-    Ext(ModExt),
+    Ext(SymExt),
 }
 
 impl<'db> From<crate::item::ModAst<'db>> for ModSymbol<'db> {
@@ -62,8 +44,8 @@ impl<'db> From<crate::item::ModAst<'db>> for ModSymbol<'db> {
     }
 }
 
-impl From<ModExt> for ModSymbol<'_> {
-    fn from(ext: ModExt) -> Self {
+impl From<SymExt> for ModSymbol<'_> {
+    fn from(ext: SymExt) -> Self {
         Self {
             data: ModSymbolData::Ext(ext),
         }
@@ -75,12 +57,12 @@ impl<'db> ModSymbol<'db> {
         Self::from(ast)
     }
 
-    pub fn ext(ext: ModExt) -> Self {
+    pub fn ext(ext: SymExt) -> Self {
         Self::from(ext)
     }
 
     pub fn external(crate_num: CrateNum, def_index: DefIndex) -> Self {
-        Self::ext(ModExt::new(crate_num, def_index))
+        Self::ext(SymExt::new(crate_num, def_index, SymExtKind::Mod))
     }
 
     pub fn data(self) -> ModSymbolData<'db> {

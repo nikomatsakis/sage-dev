@@ -1,9 +1,9 @@
 use crate::Db;
 use crate::item::*;
-use crate::module::{ModExt, ModSymbol, ModSymbolData};
+use crate::module::{ModSymbol, ModSymbolData};
 use crate::name::Name;
 use crate::source::SourceFile;
-use crate::symbol::{Intrinsic, SymExt, Symbol, SymbolData};
+use crate::symbol::{Intrinsic, Symbol, SymbolData};
 
 // ---------------------------------------------------------------------------
 // Namespace
@@ -341,7 +341,7 @@ impl<'db> Resolver<'db> {
 
         if rest.is_empty() {
             return match first_module.data() {
-                ModSymbolData::Ext(ext) => Ok(Symbol::ext(SymExt::from(ext))),
+                ModSymbolData::Ext(ext) => Ok(Symbol::ext(ext)),
                 ModSymbolData::Ast(_) => Err(ResolutionError::Unresolved),
             };
         }
@@ -591,7 +591,7 @@ fn dispatch_first_segment<'db, 's>(
                 .tcx()
                 .extern_crate(crate_name)
                 .ok_or(ResolutionError::Unresolved)?;
-            let ext_mod = ModSymbol::ext(ModExt::new(cn, crate::module::DefIndex(0)));
+            let ext_mod = ModSymbol::external(cn, crate::module::DefIndex(0));
             Ok((ext_mod, &rest[1..]))
         }
         "crate" => Ok((module.crate_root(db), rest)),
@@ -607,7 +607,7 @@ fn dispatch_first_segment<'db, 's>(
                 }
             }
             if let Some(cn) = db.tcx().extern_crate(first_text) {
-                let ext_mod = ModSymbol::ext(ModExt::new(cn, crate::module::DefIndex(0)));
+                let ext_mod = ModSymbol::external(cn, crate::module::DefIndex(0));
                 return Ok((ext_mod, rest));
             }
             Err(ResolutionError::Unresolved)
@@ -623,7 +623,7 @@ fn resolve_remainder<'db>(
 ) -> Result<Symbol<'db>, ResolutionError> {
     if segments.is_empty() {
         return match start.data() {
-            ModSymbolData::Ext(ext) => Ok(Symbol::ext(SymExt::from(ext))),
+            ModSymbolData::Ext(ext) => Ok(Symbol::ext(ext)),
             ModSymbolData::Ast(_) => Err(ResolutionError::Unresolved),
         };
     }

@@ -8,7 +8,7 @@
 use sage_stash::{AllocStashData, StashDirect};
 
 use crate::item::{ItemAst, StructAst};
-use crate::module::{CrateNum, DefIndex, ModExt, ModSymbol};
+use crate::module::{CrateNum, DefIndex, ModSymbol};
 use crate::ty::{FloatTy, IntTy, UintTy};
 
 // ---------------------------------------------------------------------------
@@ -58,19 +58,39 @@ pub struct Symbol<'db> {
     data: SymbolData<'db>,
 }
 
+/// The kind of an external symbol, mirroring rustc's `DefKind`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub enum SymExtKind {
+    Fn,
+    Struct,
+    TupleStructCtor,
+    Enum,
+    Trait,
+    Impl,
+    Mod,
+    TypeAlias,
+    Const,
+    Static,
+    MacroDef,
+    Use,
+    Other,
+}
+
 /// External symbol — a thin handle into rustc's metadata. Plain
 /// `Copy` struct, structural identity.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub struct SymExt {
     pub crate_num: CrateNum,
     pub def_index: DefIndex,
+    pub kind: SymExtKind,
 }
 
 impl SymExt {
-    pub const fn new(crate_num: CrateNum, def_index: DefIndex) -> Self {
+    pub const fn new(crate_num: CrateNum, def_index: DefIndex, kind: SymExtKind) -> Self {
         Self {
             crate_num,
             def_index,
+            kind,
         }
     }
 }
@@ -112,7 +132,7 @@ impl<'db> Symbol<'db> {
     }
 
     pub fn external(crate_num: CrateNum, def_index: DefIndex) -> Self {
-        Self::ext(SymExt::new(crate_num, def_index))
+        Self::ext(SymExt::new(crate_num, def_index, SymExtKind::Other))
     }
 
     pub fn data(self) -> SymbolData<'db> {
@@ -136,16 +156,8 @@ impl<'db> From<ModSymbol<'db>> for Symbol<'db> {
     fn from(m: ModSymbol<'db>) -> Self {
         match m.data() {
             crate::module::ModSymbolData::Ast(ast) => Symbol::ast(ItemAst::Mod(ast)),
-            crate::module::ModSymbolData::Ext(ext) => {
-                Symbol::ext(SymExt::new(ext.crate_num, ext.def_index))
-            }
+            crate::module::ModSymbolData::Ext(ext) => Symbol::ext(ext),
         }
-    }
-}
-
-impl From<ModExt> for SymExt {
-    fn from(ext: ModExt) -> Self {
-        SymExt::new(ext.crate_num, ext.def_index)
     }
 }
 

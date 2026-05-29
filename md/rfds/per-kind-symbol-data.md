@@ -236,9 +236,11 @@ Or they match the relevant variants and use `_` for the rest.
 
 ## Implementation plan
 
-### Step 1: Add `SymExtKind` and extend `SymExt`
+### Step 1: Add `SymExtKind` and extend `SymExt` ✅
 
 Add the `SymExtKind` enum. Add a `kind` field to `SymExt` (default `Other` for back-compat). Add `kind` to `RawChild`. Update `ProxyTcxDb` to populate it from rustc's `DefKind`. Remove `ModExt` and switch `ModSymbol` to store `SymExt` (with `kind: SymExtKind::Mod`).
+
+**Implemented.** The `sym_ext_kind_for_def_kind` mapping lives in `src/tcx_impl.rs` (alongside the existing `namespaces_for_def_kind`). `ModExt` is fully removed; `ModSymbol::external(cn, di)` now constructs `SymExt::new(cn, di, SymExtKind::Mod)` internally. The `From<ModExt> for SymExt` impl is removed since `ModSymbolData::Ext` now holds `SymExt` directly. No deviations from plan.
 
 ### Step 2: Add `ImplSymbol` and `StashDirect` impls
 

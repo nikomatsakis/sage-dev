@@ -7,7 +7,7 @@ use sage_stash::{Slice, Stash};
 
 use crate::Db;
 use crate::item::{ItemAst, MacroDefAst};
-use crate::module::{ModExt, ModSymbol, ModSymbolData};
+use crate::module::{ModSymbol, ModSymbolData};
 use crate::name::Name;
 use crate::resolve::{ResolutionError, SourceRoot, definition, symbol_to_module};
 use crate::symbol::Symbol;
@@ -32,7 +32,7 @@ fn memmap_first_segment<'db, 's>(
             }
             let crate_name = rest[0].text(db);
             if let Some(crate_num) = db.tcx().extern_crate(crate_name) {
-                let ext_mod = ModSymbol::ext(ModExt::new(crate_num, crate::module::DefIndex(0)));
+                let ext_mod = ModSymbol::external(crate_num, crate::module::DefIndex(0));
                 return Ok((ext_mod, &rest[1..]));
             }
             Err(ResolutionError::Unresolved)
@@ -50,7 +50,7 @@ fn memmap_first_segment<'db, 's>(
                 }
             }
             if let Some(crate_num) = db.tcx().extern_crate(first_text) {
-                let ext_mod = ModSymbol::ext(ModExt::new(crate_num, crate::module::DefIndex(0)));
+                let ext_mod = ModSymbol::external(crate_num, crate::module::DefIndex(0));
                 return Ok((ext_mod, rest));
             }
             Err(ResolutionError::Unresolved)

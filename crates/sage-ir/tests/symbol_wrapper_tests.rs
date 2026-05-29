@@ -40,7 +40,7 @@ fn struct_symbol_from_ast() {
 
 #[test]
 fn enum_symbol_from_ext() {
-    let ext = SymExt::new(CrateNum(1), DefIndex(42));
+    let ext = SymExt::new(CrateNum(1), DefIndex(42), SymExtKind::Enum);
     let enum_sym = EnumSymbol::from(ext);
     assert_eq!(enum_sym.as_ast(), None);
     assert_eq!(enum_sym.as_ext(), Some(ext));
@@ -63,7 +63,7 @@ fn trait_symbol_round_trip() {
 
 #[test]
 fn kind_symbols_are_copy() {
-    let ext = SymExt::new(CrateNum(0), DefIndex(0));
+    let ext = SymExt::new(CrateNum(0), DefIndex(0), SymExtKind::Fn);
     let a = FnSymbol::ext(ext);
     let b = a;
     assert_eq!(a, b);

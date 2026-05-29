@@ -6,6 +6,7 @@ pub use proxy::{ProxyTcxDb, TcxRequest};
 
 use crate::module::{CrateNum, DefIndex};
 use crate::resolve::Namespace;
+use crate::symbol::SymExtKind;
 
 /// A single child of an external module — raw owned data, no salsa interning.
 #[derive(Clone, Debug)]
@@ -14,6 +15,7 @@ pub struct RawChild {
     pub crate_num: CrateNum,
     pub def_index: DefIndex,
     pub namespace: Namespace,
+    pub kind: SymExtKind,
 }
 
 /// External crate metadata interface.
