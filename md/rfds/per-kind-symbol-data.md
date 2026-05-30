@@ -254,7 +254,7 @@ Replace the three-variant `SymbolData` with the per-kind enum. Update `Symbol::a
 
 **Implemented.** `SymbolData` now has 16 variants (per-kind wrappers + `MacroDef`/`Use`/`MacroInvocation` AST-only + `Intrinsic` + `Error` + `Unknown`). `Symbol::ast()` dispatches on `ItemAst` to create per-kind wrappers. `Symbol::ext()` dispatches on `SymExtKind`. Added `Symbol::as_ext()` convenience method used by `derive.rs` and display code. `AllocStashData` derive still works fine. Per-kind wrappers gained `salsa::Update` derive (needed because `SymbolData` derives it). No deviations from plan.
 
-### Step 4: Migrate callers
+### Step 4: Migrate callers ✅
 
 Mechanically update every `match sym.data()` across:
 - `resolve.rs` — `symbol_to_module` and friends
@@ -265,6 +265,8 @@ Mechanically update every `match sym.data()` across:
 - Test files: `common/mod.rs`, `memmap_tests.rs`, `expand_tests.rs`
 
 Add `Symbol::name()` and `Symbol::is_local()` convenience methods to reduce per-site boilerplate.
+
+**Implemented.** Added `Symbol::name(db)`, `Symbol::is_local()`, and `Symbol::is_external()`. Caller migration was done as part of Step 3 (the two steps were effectively combined since all callers needed updating when `SymbolData` changed shape). `body_resolve.rs` did not dispatch on `SymbolData` — no changes needed there. `derive.rs` now uses `sym.as_ext()` instead of matching `SymbolData::Ext`.
 
 ### Step 5: Remove the old `Symbol::ast(ItemAst)` if desired
 

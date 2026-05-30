@@ -7,8 +7,9 @@
 
 use sage_stash::{AllocStashData, StashDirect};
 
-use crate::item::{ImplAst, ItemAst, MacroDefAst, MacroInvocationAst, StructAst, UseGroupAst};
+use crate::item::{ItemAst, MacroDefAst, MacroInvocationAst, StructAst, UseGroupAst};
 use crate::module::{CrateNum, DefIndex, ModSymbol};
+use crate::name::Name;
 use crate::span::AbsoluteSpan;
 use crate::ty::{FloatTy, IntTy, UintTy};
 
@@ -199,6 +200,41 @@ impl<'db> Symbol<'db> {
             | SymbolData::MacroInvocation(_)
             | SymbolData::Intrinsic(_)
             | SymbolData::Error(_) => None,
+        }
+    }
+
+    /// True if this symbol is workspace-local (backed by AST).
+    pub fn is_local(self) -> bool {
+        self.as_ext().is_none()
+    }
+
+    /// True if this symbol is external (backed by `SymExt`).
+    pub fn is_external(self) -> bool {
+        self.as_ext().is_some()
+    }
+
+    /// The name of this symbol, if it has one.
+    pub fn name(self, db: &'db dyn crate::Db) -> Option<Name<'db>> {
+        match self.data {
+            SymbolData::Fn(s) => s.as_ast().map(|f| f.name(db)),
+            SymbolData::Struct(s) => s.as_ast().map(|s| s.name(db)),
+            SymbolData::TupleStructCtor(s) => s.as_ast().map(|s| s.name(db)),
+            SymbolData::Enum(s) => s.as_ast().map(|e| e.name(db)),
+            SymbolData::Trait(s) => s.as_ast().map(|t| t.name(db)),
+            SymbolData::TypeAlias(s) => s.as_ast().map(|t| t.name(db)),
+            SymbolData::Const(s) => s.as_ast().map(|c| c.name(db)),
+            SymbolData::Static(s) => s.as_ast().map(|s| s.name(db)),
+            SymbolData::Mod(m) => match m.data() {
+                crate::module::ModSymbolData::Ast(a) => Some(a.name(db)),
+                crate::module::ModSymbolData::Ext(_) => None,
+            },
+            SymbolData::MacroDef(d) => Some(d.name(db)),
+            SymbolData::Impl(_)
+            | SymbolData::Use(_)
+            | SymbolData::MacroInvocation(_)
+            | SymbolData::Intrinsic(_)
+            | SymbolData::Error(_)
+            | SymbolData::Unknown(_) => None,
         }
     }
 }
