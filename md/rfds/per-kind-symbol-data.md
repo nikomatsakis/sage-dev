@@ -1,6 +1,6 @@
 # RFD: Per-Kind SymbolData
 
-**Status:** Draft
+**Status:** Implemented
 
 **Depends on:**
 - [Type signatures](./type-signatures.md) — per-kind symbol wrappers (`FnSymbol`, `StructSymbol`, …)
@@ -268,9 +268,11 @@ Add `Symbol::name()` and `Symbol::is_local()` convenience methods to reduce per-
 
 **Implemented.** Added `Symbol::name(db)`, `Symbol::is_local()`, and `Symbol::is_external()`. Caller migration was done as part of Step 3 (the two steps were effectively combined since all callers needed updating when `SymbolData` changed shape). `body_resolve.rs` did not dispatch on `SymbolData` — no changes needed there. `derive.rs` now uses `sym.as_ext()` instead of matching `SymbolData::Ext`.
 
-### Step 5: Remove the old `Symbol::ast(ItemAst)` if desired
+### Step 5: Remove the old `Symbol::ast(ItemAst)` if desired — kept ✅
 
 After all callers use per-kind constructors, the `Symbol::ast(item)` constructor that takes a full `ItemAst` could be removed in favor of direct `SymbolData::Fn(FnSymbol::ast(f))`. Or keep it as a convenience — it's a one-line dispatcher.
+
+**Decision: kept.** `Symbol::ast(item)` is still used by callers that receive an `ItemAst` (e.g., `walk_entries` in resolve). It dispatches internally to per-kind wrappers, so it's correct and convenient.
 
 ## Scope and non-goals
 
