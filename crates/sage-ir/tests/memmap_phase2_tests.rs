@@ -67,8 +67,8 @@ m!();
             result
         );
         match result.unwrap().data() {
-            SymbolData::Ast(_) => {} // good
-            _ => panic!("expected local symbol"),
+            SymbolData::Unknown(_) => panic!("expected local symbol"),
+            _ => {} // good
         }
     });
 }

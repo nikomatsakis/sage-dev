@@ -7,8 +7,9 @@
 
 use sage_stash::{AllocStashData, StashDirect};
 
-use crate::item::{ItemAst, StructAst};
+use crate::item::{ImplAst, ItemAst, MacroDefAst, MacroInvocationAst, StructAst, UseGroupAst};
 use crate::module::{CrateNum, DefIndex, ModSymbol};
+use crate::span::AbsoluteSpan;
 use crate::ty::{FloatTy, IntTy, UintTy};
 
 // ---------------------------------------------------------------------------
@@ -97,10 +98,22 @@ impl SymExt {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub enum SymbolData<'db> {
-    Ast(ItemAst<'db>),
-    TupleStructCtor(StructAst<'db>),
-    Ext(SymExt),
+    Fn(FnSymbol<'db>),
+    Struct(StructSymbol<'db>),
+    TupleStructCtor(StructSymbol<'db>),
+    Enum(EnumSymbol<'db>),
+    Trait(TraitSymbol<'db>),
+    Impl(ImplSymbol<'db>),
+    Mod(ModSymbol<'db>),
+    TypeAlias(TypeAliasSymbol<'db>),
+    Const(ConstSymbol<'db>),
+    Static(StaticSymbol<'db>),
+    MacroDef(MacroDefAst<'db>),
+    Use(UseGroupAst<'db>),
+    MacroInvocation(MacroInvocationAst<'db>),
     Intrinsic(Intrinsic),
+    Error(AbsoluteSpan<'db>),
+    Unknown(SymExt),
 }
 
 impl StashDirect for SymbolData<'_> {}
@@ -109,21 +122,45 @@ impl StashDirect for SymExtKind {}
 
 impl<'db> Symbol<'db> {
     pub fn ast(item: ItemAst<'db>) -> Self {
-        Self {
-            data: SymbolData::Ast(item),
-        }
+        let data = match item {
+            ItemAst::Function(f) => SymbolData::Fn(FnSymbol::ast(f)),
+            ItemAst::Struct(s) => SymbolData::Struct(StructSymbol::ast(s)),
+            ItemAst::Enum(e) => SymbolData::Enum(EnumSymbol::ast(e)),
+            ItemAst::Trait(t) => SymbolData::Trait(TraitSymbol::ast(t)),
+            ItemAst::Impl(i) => SymbolData::Impl(ImplSymbol::ast(i)),
+            ItemAst::TypeAlias(t) => SymbolData::TypeAlias(TypeAliasSymbol::ast(t)),
+            ItemAst::Const(c) => SymbolData::Const(ConstSymbol::ast(c)),
+            ItemAst::Static(s) => SymbolData::Static(StaticSymbol::ast(s)),
+            ItemAst::Mod(m) => SymbolData::Mod(ModSymbol::ast(m)),
+            ItemAst::Use(u) => SymbolData::Use(u),
+            ItemAst::MacroDef(d) => SymbolData::MacroDef(d),
+            ItemAst::MacroInvocation(m) => SymbolData::MacroInvocation(m),
+            ItemAst::Error(span) => SymbolData::Error(span),
+        };
+        Self { data }
     }
 
     pub fn tuple_struct_ctor(s: StructAst<'db>) -> Self {
         Self {
-            data: SymbolData::TupleStructCtor(s),
+            data: SymbolData::TupleStructCtor(StructSymbol::ast(s)),
         }
     }
 
     pub fn ext(ext: SymExt) -> Self {
-        Self {
-            data: SymbolData::Ext(ext),
-        }
+        let data = match ext.kind {
+            SymExtKind::Fn => SymbolData::Fn(FnSymbol::ext(ext)),
+            SymExtKind::Struct => SymbolData::Struct(StructSymbol::ext(ext)),
+            SymExtKind::TupleStructCtor => SymbolData::TupleStructCtor(StructSymbol::ext(ext)),
+            SymExtKind::Enum => SymbolData::Enum(EnumSymbol::ext(ext)),
+            SymExtKind::Trait => SymbolData::Trait(TraitSymbol::ext(ext)),
+            SymExtKind::Impl => SymbolData::Impl(ImplSymbol::ext(ext)),
+            SymExtKind::Mod => SymbolData::Mod(ModSymbol::ext(ext)),
+            SymExtKind::TypeAlias => SymbolData::TypeAlias(TypeAliasSymbol::ext(ext)),
+            SymExtKind::Const => SymbolData::Const(ConstSymbol::ext(ext)),
+            SymExtKind::Static => SymbolData::Static(StaticSymbol::ext(ext)),
+            SymExtKind::MacroDef | SymExtKind::Use | SymExtKind::Other => SymbolData::Unknown(ext),
+        };
+        Self { data }
     }
 
     pub fn intrinsic(i: Intrinsic) -> Self {
@@ -138,6 +175,31 @@ impl<'db> Symbol<'db> {
 
     pub fn data(self) -> SymbolData<'db> {
         self.data
+    }
+
+    /// Extract the `SymExt` handle if this symbol is external.
+    pub fn as_ext(self) -> Option<SymExt> {
+        match self.data {
+            SymbolData::Fn(s) => s.as_ext(),
+            SymbolData::Struct(s) => s.as_ext(),
+            SymbolData::TupleStructCtor(s) => s.as_ext(),
+            SymbolData::Enum(s) => s.as_ext(),
+            SymbolData::Trait(s) => s.as_ext(),
+            SymbolData::Impl(s) => s.as_ext(),
+            SymbolData::Mod(m) => match m.data() {
+                crate::module::ModSymbolData::Ext(ext) => Some(ext),
+                crate::module::ModSymbolData::Ast(_) => None,
+            },
+            SymbolData::TypeAlias(s) => s.as_ext(),
+            SymbolData::Const(s) => s.as_ext(),
+            SymbolData::Static(s) => s.as_ext(),
+            SymbolData::Unknown(ext) => Some(ext),
+            SymbolData::MacroDef(_)
+            | SymbolData::Use(_)
+            | SymbolData::MacroInvocation(_)
+            | SymbolData::Intrinsic(_)
+            | SymbolData::Error(_) => None,
+        }
     }
 }
 
@@ -155,9 +217,8 @@ impl From<SymExt> for Symbol<'_> {
 
 impl<'db> From<ModSymbol<'db>> for Symbol<'db> {
     fn from(m: ModSymbol<'db>) -> Self {
-        match m.data() {
-            crate::module::ModSymbolData::Ast(ast) => Symbol::ast(ItemAst::Mod(ast)),
-            crate::module::ModSymbolData::Ext(ext) => Symbol::ext(ext),
+        Self {
+            data: SymbolData::Mod(m),
         }
     }
 }
@@ -172,12 +233,12 @@ macro_rules! define_kind_symbol {
         $vis:vis struct $Name:ident, $AstTy:ty, $DataName:ident;
     ) => {
         $(#[$meta])*
-        #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+        #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
         $vis struct $Name<'db> {
             data: $DataName<'db>,
         }
 
-        #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+        #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
         enum $DataName<'db> {
             Ast($AstTy),
             Ext(SymExt),

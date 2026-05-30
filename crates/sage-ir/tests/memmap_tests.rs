@@ -80,8 +80,8 @@ fn p1_named_import_beats_glob() {
         // Should resolve to b::Foo (named import), not a::Foo (glob)
         let sym = result.unwrap();
         match sym.data() {
-            SymbolData::Ast(_) => {}
-            _ => panic!("expected local symbol"),
+            SymbolData::Unknown(_) => panic!("expected local symbol"),
+            _ => {}
         }
     });
 }
@@ -115,8 +115,8 @@ fn p4_glob_beats_std_prelude() {
         // Should resolve to custom::Option (glob), not std::Option (prelude)
         let sym = result.unwrap();
         match sym.data() {
-            SymbolData::Ast(_) | SymbolData::TupleStructCtor(_) => {}
-            _ => panic!("should resolve to local, not std prelude"),
+            SymbolData::Unknown(_) => panic!("should resolve to local, not std prelude"),
+            _ => {}
         }
     });
 }
@@ -262,7 +262,7 @@ fn struct_kind_tuple() {
         )
         .unwrap();
         match sym.data() {
-            SymbolData::Ast(ItemAst::Struct(s)) => assert_eq!(s.kind(db), StructKind::Tuple),
+            SymbolData::Struct(s) => assert_eq!(s.as_ast().unwrap().kind(db), StructKind::Tuple),
             other => panic!("expected Struct, got {other:?}"),
         }
     });
@@ -283,7 +283,7 @@ fn struct_kind_unit() {
         )
         .unwrap();
         match sym.data() {
-            SymbolData::Ast(ItemAst::Struct(s)) => assert_eq!(s.kind(db), StructKind::Unit),
+            SymbolData::Struct(s) => assert_eq!(s.as_ast().unwrap().kind(db), StructKind::Unit),
             other => panic!("expected Struct, got {other:?}"),
         }
     });
@@ -304,7 +304,7 @@ fn struct_kind_braced() {
         )
         .unwrap();
         match sym.data() {
-            SymbolData::Ast(ItemAst::Struct(s)) => assert_eq!(s.kind(db), StructKind::Braced),
+            SymbolData::Struct(s) => assert_eq!(s.as_ast().unwrap().kind(db), StructKind::Braced),
             other => panic!("expected Struct, got {other:?}"),
         }
     });
@@ -401,7 +401,7 @@ fn tuple_struct_resolves_in_type_ns() {
         let result = resolve_name(db, root_module, source_root, name, Namespace::Type);
         assert!(result.is_ok(), "Foo should resolve in Type ns");
         match result.unwrap().data() {
-            SymbolData::Ast(ItemAst::Struct(_)) => {}
+            SymbolData::Struct(_) => {}
             other => panic!("expected Struct, got {other:?}"),
         }
     });

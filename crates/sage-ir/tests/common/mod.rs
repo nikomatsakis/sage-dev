@@ -238,22 +238,49 @@ fn fmt_resolve_result(db: &dyn sage_ir::Db, result: &Result<Symbol, ResolutionEr
 }
 
 pub fn fmt_symbol(db: &dyn sage_ir::Db, sym: Symbol) -> String {
-    match sym.data() {
-        SymbolData::Ast(item) => {
-            let (kind, name) = item_kind_and_name(db, item);
-            match name {
-                Some(n) => format!("<local {kind} {n}>"),
-                None => format!("<local {kind}>"),
-            }
-        }
-        SymbolData::TupleStructCtor(s) => {
-            format!("<ctor {}>", s.name(db).text(db))
-        }
-        SymbolData::Ext(ext) => match db.tcx().def_path(ext.crate_num, ext.def_index) {
+    if let Some(ext) = sym.as_ext() {
+        return match db.tcx().def_path(ext.crate_num, ext.def_index) {
             Some(path) => format!("<ext {path}>"),
             None => format!("<ext {}:{}>", ext.crate_num.0, ext.def_index.0),
+        };
+    }
+    match sym.data() {
+        SymbolData::Fn(s) => format!("<local Function {}>", s.as_ast().unwrap().name(db).text(db)),
+        SymbolData::Struct(s) => {
+            format!("<local Struct {}>", s.as_ast().unwrap().name(db).text(db))
+        }
+        SymbolData::TupleStructCtor(s) => {
+            format!("<ctor {}>", s.as_ast().unwrap().name(db).text(db))
+        }
+        SymbolData::Enum(s) => format!("<local Enum {}>", s.as_ast().unwrap().name(db).text(db)),
+        SymbolData::Trait(s) => {
+            format!("<local Trait {}>", s.as_ast().unwrap().name(db).text(db))
+        }
+        SymbolData::Impl(_) => "<local Impl>".to_owned(),
+        SymbolData::Mod(m) => match m.data() {
+            sage_ir::module::ModSymbolData::Ast(a) => {
+                format!("<local Mod {}>", a.name(db).text(db))
+            }
+            sage_ir::module::ModSymbolData::Ext(_) => unreachable!(),
         },
+        SymbolData::TypeAlias(s) => {
+            format!(
+                "<local TypeAlias {}>",
+                s.as_ast().unwrap().name(db).text(db)
+            )
+        }
+        SymbolData::Const(s) => {
+            format!("<local Const {}>", s.as_ast().unwrap().name(db).text(db))
+        }
+        SymbolData::Static(s) => {
+            format!("<local Static {}>", s.as_ast().unwrap().name(db).text(db))
+        }
+        SymbolData::MacroDef(_) => "<local MacroDef>".to_owned(),
+        SymbolData::Use(_) => "<local Use>".to_owned(),
+        SymbolData::MacroInvocation(_) => "<local MacroInvocation>".to_owned(),
         SymbolData::Intrinsic(i) => format!("<intrinsic {i:?}>"),
+        SymbolData::Error(_) => "<local Error>".to_owned(),
+        SymbolData::Unknown(_) => unreachable!(),
     }
 }
 

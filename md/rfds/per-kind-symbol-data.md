@@ -248,9 +248,11 @@ The type-signatures RFD added `FnSymbol` through `StaticSymbol`. Add `ImplSymbol
 
 **Implemented.** Added `ImplSymbol` via `define_kind_symbol!` macro. Added `StashDirect` impl to the macro itself so all per-kind wrappers (`FnSymbol`, `StructSymbol`, `EnumSymbol`, `TraitSymbol`, `TypeAliasSymbol`, `ConstSymbol`, `StaticSymbol`, `ImplSymbol`) get it automatically. Also added `StashDirect` for `SymExtKind`. No deviations from plan.
 
-### Step 3: Rewrite `SymbolData` and `Symbol` construction
+### Step 3: Rewrite `SymbolData` and `Symbol` construction ✅
 
 Replace the three-variant `SymbolData` with the per-kind enum. Update `Symbol::ast()`, `Symbol::ext()`, `Symbol::tuple_struct_ctor()`, `From<ModSymbol>`, `From<ItemAst>`, etc. Update `AllocStashData` derive (may need manual impl if the enum is too complex for the macro).
+
+**Implemented.** `SymbolData` now has 16 variants (per-kind wrappers + `MacroDef`/`Use`/`MacroInvocation` AST-only + `Intrinsic` + `Error` + `Unknown`). `Symbol::ast()` dispatches on `ItemAst` to create per-kind wrappers. `Symbol::ext()` dispatches on `SymExtKind`. Added `Symbol::as_ext()` convenience method used by `derive.rs` and display code. `AllocStashData` derive still works fine. Per-kind wrappers gained `salsa::Update` derive (needed because `SymbolData` derives it). No deviations from plan.
 
 ### Step 4: Migrate callers
 

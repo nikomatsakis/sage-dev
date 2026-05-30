@@ -125,8 +125,8 @@ fn expand_derives_cmd_get() {
         let symbol = result.unwrap();
 
         // Verify it's an external symbol (from std/core)
-        match symbol.data() {
-            sage_ir::symbol::SymbolData::Ext(ext) => {
+        match symbol.as_ext() {
+            Some(ext) => {
                 // Verify it's identified as a builtin derive
                 assert!(
                     sage.db
@@ -135,7 +135,7 @@ fn expand_derives_cmd_get() {
                     "Debug should be identified as a builtin derive"
                 );
             }
-            _ => panic!("expected external symbol for Debug derive"),
+            None => panic!("expected external symbol for Debug derive"),
         }
     });
 }
@@ -223,14 +223,14 @@ fn expand_derives_cmd_get_full() {
                         out.push_str(&format!("{impl_item}\n"));
                     }
                 }
-                sage_ir::derive::DeriveResult::ProcMacro { symbol } => match symbol.data() {
-                    sage_ir::symbol::SymbolData::Ext(ext) => {
+                sage_ir::derive::DeriveResult::ProcMacro { symbol } => match symbol.as_ext() {
+                    Some(ext) => {
                         out.push_str(&format!(
                             "proc_macro: External({}, {})\n",
                             ext.crate_num.0, ext.def_index.0
                         ));
                     }
-                    _ => {
+                    None => {
                         out.push_str("proc_macro: Local\n");
                     }
                 },

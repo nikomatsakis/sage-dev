@@ -694,11 +694,11 @@ pub(crate) fn symbol_to_module<'db>(
     parent: ModSymbol<'db>,
 ) -> Option<ModSymbol<'db>> {
     match sym.data() {
-        SymbolData::Ast(ItemAst::Mod(decl)) => {
-            // resolve_mod handles both inline and file-based cases.
-            resolve_mod(db, parent, decl, source_root)
-        }
-        SymbolData::Ext(ext) => {
+        SymbolData::Mod(m) => match m.data() {
+            ModSymbolData::Ast(decl) => resolve_mod(db, parent, decl, source_root),
+            ModSymbolData::Ext(ext) => Some(ModSymbol::external(ext.crate_num, ext.def_index)),
+        },
+        SymbolData::Unknown(ext) => {
             if !db.tcx().is_module(ext.crate_num, ext.def_index) {
                 return None;
             }

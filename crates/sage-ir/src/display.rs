@@ -896,35 +896,53 @@ fn with_display_tcx<R>(f: impl FnOnce(&dyn crate::tcx::TcxDb) -> R) -> Option<R>
 /// Helper to format a Res.
 fn fmt_res(f: &mut fmt::Formatter<'_>, res: &Res<'_>) -> fmt::Result {
     with_db(|db| match res {
-        Res::Def(sym) => match sym.data() {
-            SymbolData::Ast(item) => {
-                let name = match item {
-                    ItemAst::Function(func) => Some(func.name(db).text(db).to_string()),
-                    ItemAst::Struct(s) => Some(s.name(db).text(db).to_string()),
-                    ItemAst::Enum(e) => Some(e.name(db).text(db).to_string()),
-                    ItemAst::Trait(t) => Some(t.name(db).text(db).to_string()),
-                    ItemAst::TypeAlias(t) => Some(t.name(db).text(db).to_string()),
-                    ItemAst::Const(c) => Some(c.name(db).text(db).to_string()),
-                    ItemAst::Static(s) => Some(s.name(db).text(db).to_string()),
-                    ItemAst::Mod(m) => Some(m.name(db).text(db).to_string()),
-                    _ => None,
-                };
-                let name = name.unwrap_or_else(|| "?".to_string());
-                write!(f, "<def {name}>")
-            }
-            SymbolData::TupleStructCtor(s) => {
-                write!(f, "<ctor {}>", s.name(db).text(db))
-            }
-            SymbolData::Ext(ext) => {
+        Res::Def(sym) => {
+            if let Some(ext) = sym.as_ext() {
                 let path =
                     with_display_tcx(|tcx| tcx.def_path(ext.crate_num, ext.def_index)).flatten();
-                match path {
+                return match path {
                     Some(p) => write!(f, "<ext {p}>"),
                     None => write!(f, "<ext {}:{}>", ext.crate_num.0, ext.def_index.0),
-                }
+                };
             }
-            SymbolData::Intrinsic(i) => write!(f, "<intrinsic {i:?}>"),
-        },
+            match sym.data() {
+                SymbolData::Fn(s) => write!(f, "<def {}>", s.as_ast().unwrap().name(db).text(db)),
+                SymbolData::Struct(s) => {
+                    write!(f, "<def {}>", s.as_ast().unwrap().name(db).text(db))
+                }
+                SymbolData::TupleStructCtor(s) => {
+                    write!(f, "<ctor {}>", s.as_ast().unwrap().name(db).text(db))
+                }
+                SymbolData::Enum(s) => {
+                    write!(f, "<def {}>", s.as_ast().unwrap().name(db).text(db))
+                }
+                SymbolData::Trait(s) => {
+                    write!(f, "<def {}>", s.as_ast().unwrap().name(db).text(db))
+                }
+                SymbolData::TypeAlias(s) => {
+                    write!(f, "<def {}>", s.as_ast().unwrap().name(db).text(db))
+                }
+                SymbolData::Const(s) => {
+                    write!(f, "<def {}>", s.as_ast().unwrap().name(db).text(db))
+                }
+                SymbolData::Static(s) => {
+                    write!(f, "<def {}>", s.as_ast().unwrap().name(db).text(db))
+                }
+                SymbolData::Mod(m) => match m.data() {
+                    crate::module::ModSymbolData::Ast(a) => {
+                        write!(f, "<def {}>", a.name(db).text(db))
+                    }
+                    crate::module::ModSymbolData::Ext(_) => unreachable!(),
+                },
+                SymbolData::Impl(_) => write!(f, "<def ?>"),
+                SymbolData::MacroDef(_) => write!(f, "<def ?>"),
+                SymbolData::Use(_) => write!(f, "<def ?>"),
+                SymbolData::MacroInvocation(_) => write!(f, "<def ?>"),
+                SymbolData::Intrinsic(i) => write!(f, "<intrinsic {i:?}>"),
+                SymbolData::Error(_) => write!(f, "<def ?>"),
+                SymbolData::Unknown(_) => unreachable!(),
+            }
+        }
         Res::Local(id) => write!(f, "<local:{}>", id.0),
         Res::Err => f.write_str("<unresolved>"),
     })
