@@ -32,7 +32,7 @@ fn check(files: &[(&str, &str)], path: &str, expected: Expect) {
 
         let expanded = dump_expanded_module(db, root, source_root, path)
             .expect("path should resolve to a module");
-        let rendered = fmt_memmap_entries(db, expanded.entries(db), 0);
+        let rendered = fmt_memmap_entries(db, expanded.stash(db), expanded.entries(db), 0);
         expected.assert_eq(&rendered);
     });
 }
@@ -44,7 +44,9 @@ fn root_path() {
         "",
         expect![[r#"
             Item Foo kind=Struct
-            Item Bar kind=Struct"#]],
+            TupleStructCtor Foo
+            Item Bar kind=Struct
+            TupleStructCtor Bar"#]],
     );
 }
 
@@ -53,7 +55,9 @@ fn crate_root_path() {
     check(
         &[("lib.rs", "struct Foo;")],
         "crate",
-        expect!["Item Foo kind=Struct"],
+        expect![[r#"
+            Item Foo kind=Struct
+            TupleStructCtor Foo"#]],
     );
 }
 
@@ -69,7 +73,9 @@ fn nested_inline_module() {
         "#,
         )],
         "inner",
-        expect!["Item InnerThing kind=Struct"],
+        expect![[r#"
+            Item InnerThing kind=Struct
+            TupleStructCtor InnerThing"#]],
     );
 }
 
@@ -83,7 +89,8 @@ fn nested_file_module() {
         "child",
         expect![[r#"
             Item hello kind=Function
-            Item ChildThing kind=Struct"#]],
+            Item ChildThing kind=Struct
+            TupleStructCtor ChildThing"#]],
     );
 }
 
@@ -101,7 +108,9 @@ fn deep_path() {
         "#,
         )],
         "a::b",
-        expect!["Item Deep kind=Struct"],
+        expect![[r#"
+            Item Deep kind=Struct
+            TupleStructCtor Deep"#]],
     );
 }
 

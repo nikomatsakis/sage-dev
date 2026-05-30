@@ -286,5 +286,10 @@ fn memmap_child_module() {
         //- /inner.rs
         pub struct Bar;
     "#)
-    .memmap(&["inner"], expect!["Item Bar kind=Struct"]);
+    .memmap(
+        &["inner"],
+        expect![[r#"
+        Item Bar kind=Struct
+        TupleStructCtor Bar"#]],
+    );
 }

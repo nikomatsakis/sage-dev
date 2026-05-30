@@ -8,6 +8,8 @@
 //! each pass resolves macro paths, expands new callees, and
 //! recursively processes nested `MacroUse`s in expansion output.
 
+use sage_stash::{Slice, Stash};
+
 use crate::Db;
 use crate::module::ModSymbol;
 use crate::resolve::SourceRoot;
@@ -20,17 +22,17 @@ use super::seed::seed_from_items;
 /// Maximum nesting depth for macro expansion (same as rustc's default).
 const MAX_EXPANSION_DEPTH: usize = 128;
 
-/// Resolve and expand all `MacroUse` entries in `entries`, iterating
+/// Resolve and expand all `MacroUse` entries in the stash, iterating
 /// until no new callees are discovered.
 pub(super) fn resolve_and_expand_macros<'db>(
     db: &'db dyn Db,
     module: ModSymbol<'db>,
     source_root: SourceRoot,
-    entries: &mut Vec<MemmapEntry<'db>>,
+    stash: &mut Stash,
+    root: Slice<MemmapEntry<'db>>,
 ) {
     loop {
-        let snapshot: Vec<MemmapEntry<'db>> = entries.clone();
-        let changed = resolve_expand_pass(db, module, source_root, entries, &snapshot, 0);
+        let changed = resolve_expand_pass(db, module, source_root, stash, root, root, 0);
         if !changed {
             break;
         }
@@ -39,14 +41,14 @@ pub(super) fn resolve_and_expand_macros<'db>(
 
 /// Single pass: walk all `MacroUse` entries (including nested ones inside
 /// expansions), resolve paths, expand new callees. Returns true if any
-/// new expansion was added. `depth` tracks nesting level — expansion
-/// stops at `MAX_EXPANSION_DEPTH`.
+/// new expansion was added.
 fn resolve_expand_pass<'db>(
     db: &'db dyn Db,
     module: ModSymbol<'db>,
     source_root: SourceRoot,
-    entries: &mut Vec<MemmapEntry<'db>>,
-    root_entries: &[MemmapEntry<'db>],
+    stash: &mut Stash,
+    entries: Slice<MemmapEntry<'db>>,
+    root_entries: Slice<MemmapEntry<'db>>,
     depth: usize,
 ) -> bool {
     if depth >= MAX_EXPANSION_DEPTH {
@@ -54,64 +56,73 @@ fn resolve_expand_pass<'db>(
     }
 
     let mut changed = false;
+    let len = stash[entries].len();
 
-    for i in 0..entries.len() {
-        if let MemmapEntry::MacroUse(mu) = &entries[i] {
-            let path = mu.path;
-            let input = mu.input;
-            let existing_callees: Vec<MacroCallee<'db>> =
-                mu.expansions.iter().map(|e| e.callee).collect();
+    for i in 0..len {
+        let entry = stash[entries][i];
+        let MemmapEntry::MacroUse(mu) = entry else {
+            continue;
+        };
 
-            let callees = resolve_macro_path(db, module, source_root, root_entries, path);
+        let path: Vec<_> = stash[mu.path].to_vec();
+        let input = mu.input;
+        let existing_callees: Vec<MacroCallee<'db>> =
+            stash[mu.expansions].iter().map(|e| e.callee).collect();
 
-            let new_callees: Vec<MacroCallee<'db>> = callees
-                .into_iter()
-                .filter(|c| !existing_callees.contains(c))
-                .collect();
+        let callees = resolve_macro_path(db, module, source_root, stash, root_entries, &path);
 
-            if new_callees.is_empty() {
-                // Recurse into existing expansions to resolve nested macros.
-                // Pass the top-level root_entries so nested macros can find
-                // definitions from the enclosing module scope.
-                if let MemmapEntry::MacroUse(mu) = &mut entries[i] {
-                    for exp in &mut mu.expansions {
-                        if resolve_expand_pass(
-                            db,
-                            module,
-                            source_root,
-                            &mut exp.entries,
-                            root_entries,
-                            depth + 1,
-                        ) {
-                            changed = true;
-                        }
-                    }
+        let new_callees: Vec<MacroCallee<'db>> = callees
+            .into_iter()
+            .filter(|c| !existing_callees.contains(c))
+            .collect();
+
+        if new_callees.is_empty() {
+            // Recurse into existing expansions to resolve nested macros.
+            let expansion_slice = mu.expansions;
+            let num_expansions = stash[expansion_slice].len();
+            for j in 0..num_expansions {
+                let exp = stash[expansion_slice][j];
+                if resolve_expand_pass(
+                    db,
+                    module,
+                    source_root,
+                    stash,
+                    exp.entries,
+                    root_entries,
+                    depth + 1,
+                ) {
+                    changed = true;
                 }
-                continue;
             }
-
-            let mut new_expansions: Vec<Expansion<'db>> = Vec::new();
-            for callee in &new_callees {
-                let expansion_result = expand_macro(db, *callee, input);
-                let text = expansion_result.text(db);
-                let expanded_entries = if text.is_empty() {
-                    Vec::new()
-                } else {
-                    let parse_source = ParseSource::MacroExpansion(expansion_result);
-                    let items = parse_source.parse(db);
-                    seed_from_items(db, items)
-                };
-                new_expansions.push(Expansion {
-                    callee: *callee,
-                    entries: expanded_entries,
-                });
-            }
-
-            if let MemmapEntry::MacroUse(mu) = &mut entries[i] {
-                mu.expansions.extend(new_expansions);
-            }
-            changed = true;
+            continue;
         }
+
+        let mut current_expansions = mu.expansions;
+        for callee in &new_callees {
+            let expansion_result = expand_macro(db, *callee, input);
+            let text = expansion_result.text(db);
+            let expanded_entries = if text.is_empty() {
+                stash.alloc_slice(&[])
+            } else {
+                let parse_source = ParseSource::MacroExpansion(expansion_result);
+                let items = parse_source.parse(db);
+                seed_from_items(db, items, stash)
+            };
+            let expansion = Expansion {
+                callee: *callee,
+                entries: expanded_entries,
+            };
+            current_expansions = stash.append_one(current_expansions, expansion);
+        }
+
+        // Update the MacroUse in place with new expansions handle.
+        let updated_mu = MacroUse {
+            path: mu.path,
+            input: mu.input,
+            expansions: current_expansions,
+        };
+        stash[entries][i] = MemmapEntry::MacroUse(updated_mu);
+        changed = true;
     }
 
     changed
@@ -122,9 +133,6 @@ fn resolve_expand_pass<'db>(
 /// Returns a `MacroExpansion` with provenance linking back to the
 /// invocation site. Memoized by salsa — identical `(callee, input)`
 /// pairs share the same expansion result.
-///
-/// Does NOT parse or seed entries — the fixpoint loop handles that
-/// via `ParseSource::parse()` and `seed_from_items`.
 #[salsa::tracked]
 pub fn expand_macro<'db>(
     db: &'db dyn Db,
@@ -140,9 +148,7 @@ pub fn expand_macro<'db>(
                 body.clone()
             }
         }
-        MacroCallee::Builtin(_) | MacroCallee::Proc { .. } => {
-            String::new()
-        }
+        MacroCallee::Builtin(_) | MacroCallee::Proc { .. } => String::new(),
     };
     MacroExpansion::new(db, input, text)
 }

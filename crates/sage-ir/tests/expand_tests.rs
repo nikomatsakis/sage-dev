@@ -2,9 +2,10 @@ use std::path::Path;
 
 use expect_test::expect;
 use sage_ir::db::Database;
+use sage_ir::item::ItemAst;
 use sage_ir::item::ModAst;
 use sage_ir::module::ModSymbol;
-use sage_ir::resolve::{SourceRoot, module_items, module_use_imports, resolve_module_path};
+use sage_ir::resolve::{SourceRoot, module_items, resolve_module_path};
 use sage_ir::source::SourceFile;
 use salsa::Database as _;
 
@@ -78,10 +79,12 @@ fn resolve_cmd_get_use_imports() {
         let (source_root, root_module) = setup_mini_redis(db);
         let module = resolve_module_path(db, root_module, source_root, &["cmd", "get"]).unwrap();
 
-        let imports = module_use_imports(db, module);
+        let items = module_items(db, module);
         let mut out = String::new();
-        for import in imports {
-            out.push_str(&format!("{import}\n"));
+        for item in &items {
+            if let ItemAst::Use(group) = item {
+                out.push_str(&format!("{group}\n"));
+            }
         }
 
         expect![[r#"
@@ -118,11 +121,11 @@ fn query_log_demand_driven() {
               salsa: expanded_module(Id(1000))
               salsa: parse_source_file(Id(10))
             parse_source_file("lib.rs")
-              salsa: resolve_mod_tracked(Id(3800))
+              salsa: resolve_mod_tracked(Id(2c00))
               salsa: expanded_module(Id(1001))
               salsa: parse_source_file(Id(7))
             parse_source_file("cmd/mod.rs")
-              salsa: resolve_mod_tracked(Id(3801))
+              salsa: resolve_mod_tracked(Id(2c01))
             module_items("cmd/get.rs")
               salsa: parse_source_file(Id(6))
             parse_source_file("cmd/get.rs")"#]]
@@ -171,7 +174,7 @@ fn resolve_no_cross_module_parsing() {
               salsa: expanded_module(Id(1000))
               salsa: parse_source_file(Id(10))
             parse_source_file("lib.rs")
-              salsa: resolve_mod_tracked(Id(3800))
+              salsa: resolve_mod_tracked(Id(2c00))
             module_items("clients/mod.rs")
               salsa: parse_source_file(Id(5))
             parse_source_file("clients/mod.rs")"#]]

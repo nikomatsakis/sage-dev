@@ -2,36 +2,25 @@
 //!
 //! Resolves a macro invocation path to a set of candidate callees
 //! against a snapshot of the enclosing module's MEM-map entries.
-//!
-//!   * Single-segment: walk entries for `MacroDef`/`MacroUse::Expanded`
-//!     matches (named), then globs (dynamically resolved to modules and
-//!     searched). If any named matches exist, globs are ignored.
-//!   * Multi-segment: dispatch on leading segment (`self`/`crate`/
-//!     `super`/bare), then walk the remaining segments via
-//!     `expanded_module` / `definition`.
+
+use sage_stash::{Slice, Stash};
 
 use crate::Db;
 use crate::item::{ItemAst, MacroDefAst};
-use crate::module::{ModExt, ModSymbol, ModSymbolData};
+use crate::module::{ModSymbol, ModSymbolData};
 use crate::name::Name;
 use crate::resolve::{ResolutionError, SourceRoot, definition, symbol_to_module};
 use crate::symbol::Symbol;
-use crate::types::Path;
 
 use super::data::*;
 use super::expanded_module;
 
-/// Dispatch the first segment of a path during construction-time
-/// resolution. Returns the module to start from plus the remaining
-/// segments. Like `ModSymbol::dispatch_first_segment` but items-based —
-/// safe to call from inside `expanded_module` because it never goes
-/// through the MEM-map on the current module.
-fn memmap_first_segment<'db>(
+fn memmap_first_segment<'db, 's>(
     db: &'db dyn Db,
     current_module: ModSymbol<'db>,
     source_root: SourceRoot,
-    segments: &'db [Name<'db>],
-) -> Result<(ModSymbol<'db>, &'db [Name<'db>]), ResolutionError> {
+    segments: &'s [Name<'db>],
+) -> Result<(ModSymbol<'db>, &'s [Name<'db>]), ResolutionError> {
     let first = segments[0];
     let first_text = first.text(db);
     let rest = &segments[1..];
@@ -43,7 +32,7 @@ fn memmap_first_segment<'db>(
             }
             let crate_name = rest[0].text(db);
             if let Some(crate_num) = db.tcx().extern_crate(crate_name) {
-                let ext_mod = ModSymbol::ext(ModExt::new(crate_num, crate::module::DefIndex(0)));
+                let ext_mod = ModSymbol::external(crate_num, crate::module::DefIndex(0));
                 return Ok((ext_mod, &rest[1..]));
             }
             Err(ResolutionError::Unresolved)
@@ -61,7 +50,7 @@ fn memmap_first_segment<'db>(
                 }
             }
             if let Some(crate_num) = db.tcx().extern_crate(first_text) {
-                let ext_mod = ModSymbol::ext(ModExt::new(crate_num, crate::module::DefIndex(0)));
+                let ext_mod = ModSymbol::external(crate_num, crate::module::DefIndex(0));
                 return Ok((ext_mod, rest));
             }
             Err(ResolutionError::Unresolved)
@@ -69,26 +58,12 @@ fn memmap_first_segment<'db>(
     }
 }
 
-/// Walk `path` from `current_module` to a module it names, using
-/// `definition` (items-based) for each segment rather than the
-/// MEM-map.
-///
-/// This is the **construction-time** path walker — safe to call from
-/// inside `expanded_module` because it never re-enters `expanded_module`
-/// on the current module. Trades off: it can't see names introduced
-/// by macro expansion at the current module (they aren't in
-/// `parse_source_file`), only in already-constructed target modules.
-///
-/// Used by `resolve_macro_path` when resolving glob-target modules
-/// during macro-path resolution. Callers in non-ctime contexts should
-/// use `ModSymbol::resolve_path_to_module` instead.
 fn memmap_resolve_path_to_module<'db>(
     db: &'db dyn Db,
     current_module: ModSymbol<'db>,
     source_root: SourceRoot,
-    path: Path<'db>,
+    segments: &[Name<'db>],
 ) -> Option<ModSymbol<'db>> {
-    let segments = path.segments(db);
     if segments.is_empty() {
         return None;
     }
@@ -109,10 +84,11 @@ pub(super) fn resolve_macro_path<'db>(
     db: &'db dyn Db,
     module: ModSymbol<'db>,
     source_root: SourceRoot,
-    entries: &[MemmapEntry<'db>],
-    path: Path<'db>,
+    stash: &Stash,
+    entries: Slice<MemmapEntry<'db>>,
+    path: &[Name<'db>],
 ) -> Vec<MacroCallee<'db>> {
-    let defs = resolve_macro_path_to_defs(db, module, source_root, entries, path);
+    let defs = resolve_macro_path_to_defs(db, module, source_root, stash, entries, path);
     defs.into_iter().map(MacroCallee::Rules).collect()
 }
 
@@ -120,10 +96,10 @@ fn resolve_macro_path_to_defs<'db>(
     db: &'db dyn Db,
     module: ModSymbol<'db>,
     source_root: SourceRoot,
-    entries: &[MemmapEntry<'db>],
-    path: Path<'db>,
+    stash: &Stash,
+    entries: Slice<MemmapEntry<'db>>,
+    segments: &[Name<'db>],
 ) -> Vec<MacroDefAst<'db>> {
-    let segments = path.segments(db);
     if segments.is_empty() {
         return Vec::new();
     }
@@ -131,16 +107,18 @@ fn resolve_macro_path_to_defs<'db>(
     if segments.len() == 1 {
         let name = segments[0];
         let mut named: Vec<MacroDefAst<'db>> = Vec::new();
-        collect_named_macro_defs(db, entries, name, &mut named);
+        collect_named_macro_defs(db, stash, entries, name, &mut named);
         if !named.is_empty() {
             return dedup(named);
         }
 
         // Glob fallback.
         let mut globbed: Vec<MacroDefAst<'db>> = Vec::new();
-        for entry in entries {
+        for entry in &stash[entries] {
             if let MemmapEntry::Glob { path } = entry {
-                if let Some(target) = memmap_resolve_path_to_module(db, module, source_root, *path)
+                let path_vec: Vec<_> = stash[*path].to_vec();
+                if let Some(target) =
+                    memmap_resolve_path_to_module(db, module, source_root, &path_vec)
                 {
                     if let Some(def) = find_macro_in_module(db, target, name, source_root) {
                         globbed.push(def);
@@ -152,14 +130,9 @@ fn resolve_macro_path_to_defs<'db>(
             return dedup(globbed);
         }
 
-        // Textual-scope fallback: for LocalInline child modules,
-        // macros declared in an ancestor's memmap are still visible
-        // (mirroring rustc's `macro_rules!` scoping rule).
-        // Textual-scope fallback: for inline `mod foo {}`, macros in
-        // an enclosing module's memmap are still visible.
+        // Textual-scope fallback.
         let mut current = module;
         loop {
-            // Only inline mods inherit textual scope.
             let is_inline = matches!(
                 current.data(),
                 ModSymbolData::Ast(a) if a.inline_unexpanded_items(db).is_some()
@@ -186,7 +159,7 @@ fn resolve_macro_path_to_defs<'db>(
             if rest.len() == 1 {
                 let name = rest[0];
                 let mut named: Vec<MacroDefAst<'db>> = Vec::new();
-                collect_named_macro_defs(db, entries, name, &mut named);
+                collect_named_macro_defs(db, stash, entries, name, &mut named);
                 return dedup(named);
             }
             walk_path_to_macro(db, module, source_root, rest)
@@ -206,7 +179,7 @@ fn resolve_macro_path_to_defs<'db>(
             let first = segments[0];
 
             // 1. Local items in this module's snapshot.
-            for entry in entries {
+            for entry in &stash[entries] {
                 if let MemmapEntry::Item(ItemAst::Mod(_)) = entry {
                     if let Some(m) = item_as_child_module(db, entry, first, source_root, module) {
                         let mut defs = Vec::new();
@@ -219,21 +192,16 @@ fn resolve_macro_path_to_defs<'db>(
             }
 
             // 2. Look inside expansion subtrees.
-            for entry in entries {
+            for entry in &stash[entries] {
                 if let MemmapEntry::MacroUse(mu) = entry {
-                    for exp in &mu.expansions {
-                        for sub_entry in &exp.entries {
+                    for exp in &stash[mu.expansions] {
+                        for sub_entry in &stash[exp.entries] {
                             if let MemmapEntry::Item(ItemAst::Mod(_)) = sub_entry {
-                                if let Some(m) = item_as_child_module(
-                                    db,
-                                    sub_entry,
-                                    first,
-                                    source_root,
-                                    module,
-                                ) {
+                                if let Some(m) =
+                                    item_as_child_module(db, sub_entry, first, source_root, module)
+                                {
                                     let mut defs = Vec::new();
-                                    if let Some(def) =
-                                        walk_path_to_macro(db, m, source_root, rest)
+                                    if let Some(def) = walk_path_to_macro(db, m, source_root, rest)
                                     {
                                         defs.push(def);
                                     }
@@ -245,11 +213,12 @@ fn resolve_macro_path_to_defs<'db>(
                 }
             }
 
-            // 3. Globs — first segment may come from one.
-            for entry in entries {
+            // 3. Globs.
+            for entry in &stash[entries] {
                 if let MemmapEntry::Glob { path: glob_path } = entry {
+                    let glob_path_vec: Vec<_> = stash[*glob_path].to_vec();
                     let Some(glob_target) =
-                        memmap_resolve_path_to_module(db, module, source_root, *glob_path)
+                        memmap_resolve_path_to_module(db, module, source_root, &glob_path_vec)
                     else {
                         continue;
                     };
@@ -258,7 +227,9 @@ fn resolve_macro_path_to_defs<'db>(
                         ModSymbolData::Ext(_) => continue,
                     };
                     let source_memmap = expanded_module(db, glob_ast, source_root);
-                    for src_entry in source_memmap.entries(db) {
+                    let src_stash = source_memmap.stash(db);
+                    let src_entries = source_memmap.entries(db);
+                    for src_entry in &src_stash[src_entries] {
                         if let MemmapEntry::Item(ItemAst::Mod(_)) = src_entry {
                             if let Some(m) =
                                 item_as_child_module(db, src_entry, first, source_root, glob_target)
@@ -274,7 +245,7 @@ fn resolve_macro_path_to_defs<'db>(
                 }
             }
 
-            // 4. Fall back to the generic first-segment resolver (extern prelude, etc.).
+            // 4. Fall back to the generic first-segment resolver.
             match memmap_first_segment(db, module, source_root, segments) {
                 Ok((m, rest)) => walk_path_to_macro(db, m, source_root, rest)
                     .into_iter()
@@ -289,11 +260,12 @@ fn resolve_macro_path_to_defs<'db>(
 /// descending through every `MacroUse::Expanded` branch.
 fn collect_named_macro_defs<'db>(
     db: &'db dyn Db,
-    entries: &[MemmapEntry<'db>],
+    stash: &Stash,
+    entries: Slice<MemmapEntry<'db>>,
     name: Name<'db>,
     out: &mut Vec<MacroDefAst<'db>>,
 ) {
-    for entry in entries {
+    for entry in &stash[entries] {
         match entry {
             MemmapEntry::MacroDef(def) => {
                 if def.name(db) == name {
@@ -301,8 +273,8 @@ fn collect_named_macro_defs<'db>(
                 }
             }
             MemmapEntry::MacroUse(mu) => {
-                for exp in &mu.expansions {
-                    collect_named_macro_defs(db, &exp.entries, name, out);
+                for exp in &stash[mu.expansions] {
+                    collect_named_macro_defs(db, stash, exp.entries, name, out);
                 }
             }
             _ => {}
@@ -331,7 +303,9 @@ fn walk_path_to_macro<'db>(
                 ModSymbolData::Ext(_) => return None,
             };
             let target_memmap = expanded_module(db, current_ast, source_root);
-            for entry in target_memmap.entries(db) {
+            let target_stash = target_memmap.stash(db);
+            let target_entries = target_memmap.entries(db);
+            for entry in &target_stash[target_entries] {
                 match entry {
                     MemmapEntry::MacroDef(def) => {
                         if def.name(db) == *seg {
@@ -340,7 +314,13 @@ fn walk_path_to_macro<'db>(
                     }
                     MemmapEntry::Redirect { name, target } => {
                         if *name == *seg {
-                            return resolve_redirect_to_macro(db, current, source_root, *target);
+                            let target_vec: Vec<_> = target_stash[*target].to_vec();
+                            return resolve_redirect_to_macro(
+                                db,
+                                current,
+                                source_root,
+                                &target_vec,
+                            );
                         }
                     }
                     _ => {}
@@ -357,9 +337,8 @@ fn resolve_redirect_to_macro<'db>(
     db: &'db dyn Db,
     current_module: ModSymbol<'db>,
     source_root: SourceRoot,
-    path: Path<'db>,
+    segments: &[Name<'db>],
 ) -> Option<MacroDefAst<'db>> {
-    let segments = path.segments(db);
     if segments.is_empty() {
         return None;
     }
@@ -380,7 +359,9 @@ pub(super) fn find_macro_in_module<'db>(
         ModSymbolData::Ext(_) => return None,
     };
     let memmap = expanded_module(db, ast, source_root);
-    for entry in memmap.entries(db) {
+    let stash = memmap.stash(db);
+    let entries = memmap.entries(db);
+    for entry in &stash[entries] {
         if let MemmapEntry::MacroDef(def) = entry {
             if def.name(db) == name {
                 return Some(*def);
@@ -390,8 +371,6 @@ pub(super) fn find_macro_in_module<'db>(
     None
 }
 
-/// Helper: interpret a `MemmapEntry::Item(ItemAst::Mod(..))` as a child
-/// module if its name matches the supplied first segment.
 fn item_as_child_module<'db>(
     db: &'db dyn Db,
     entry: &MemmapEntry<'db>,
@@ -412,7 +391,6 @@ fn item_as_child_module<'db>(
     symbol_to_module(db, sym, source_root, parent)
 }
 
-/// Tiny set-dedup helper — preserves insertion order.
 fn dedup<'db>(mut defs: Vec<MacroDefAst<'db>>) -> Vec<MacroDefAst<'db>> {
     let mut out: Vec<MacroDefAst<'db>> = Vec::new();
     defs.retain(|def| {

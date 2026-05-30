@@ -8,7 +8,7 @@ use sage_ir::body_resolve::resolve_body;
 use sage_ir::display::pretty_print_resolved;
 use sage_ir::item::ItemAst;
 use sage_ir::resolve::{module_items, resolve_module_path};
-use sage_ir::types::TypeRefKind;
+use sage_ir::sig_ast::TypeRefAstKind;
 
 use sage::driver::run_sage_with;
 
@@ -27,8 +27,13 @@ fn find_method<'db>(
     let items = module_items(db, module);
     for item in items {
         if let ItemAst::Impl(impl_item) = item {
-            if let TypeRefKind::Path(path) = impl_item.self_ty(db).kind(db) {
-                if path.segments(db).last().map(|n| n.text(db).as_str()) == Some(type_name) {
+            let sig = impl_item.signature(db);
+            let stash = sig.stash();
+            let data = &stash[*sig.root()];
+            if let TypeRefAstKind::Path(path_ptr) = stash[data.self_ty].kind {
+                let path = &stash[path_ptr];
+                let segments = &stash[path.segments];
+                if segments.last().map(|s| s.name.text(db).as_str()) == Some(type_name) {
                     for sub_item in impl_item.items(db) {
                         if let ItemAst::Function(f) = sub_item {
                             if f.name(db).text(db) == method_name {
@@ -263,13 +268,13 @@ fn query_log_body_resolve_parse_demand_driven() {
               salsa: expanded_module(Id(1000))
               salsa: parse_source_file(Id(10))
             parse_source_file("lib.rs")
-              salsa: resolve_mod_tracked(Id(3800))
+              salsa: resolve_mod_tracked(Id(2c00))
             module_items("parse.rs")
               salsa: parse_source_file(Id(11))
             parse_source_file("parse.rs")
-              salsa: resolve_body(Id(5800))
+              salsa: resolve_body(Id(4000))
               salsa: expanded_module(Id(1001))
-              salsa: resolve_mod_tracked(Id(3801))
+              salsa: resolve_mod_tracked(Id(2c01))
               salsa: expanded_module(Id(1002))
               salsa: parse_source_file(Id(f))
             parse_source_file("frame.rs")

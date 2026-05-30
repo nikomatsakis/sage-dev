@@ -7,7 +7,10 @@
 
 use std::fmt;
 
+use sage_stash::{Ptr, Stash, StashData};
+
 use crate::item::*;
+use crate::sig_ast::{PathAst, PathSegmentAst, TypeRefAst, TypeRefAstKind};
 use crate::types::*;
 
 fn with_db(f: impl FnOnce(&dyn salsa::Database) -> fmt::Result) -> fmt::Result {
@@ -49,15 +52,22 @@ impl fmt::Display for FnAst<'_> {
                 f.write_str("unsafe ")?;
             }
             write!(f, "fn {}(", self.name(db).text(db))?;
-            for (i, p) in self.params(db).iter().enumerate() {
+            let sig = self.signature(db);
+            let sig_stash = sig.stash();
+            let sig_data = &sig_stash[*sig.root()];
+            for (i, p) in sig_stash[sig_data.params].iter().enumerate() {
                 if i > 0 {
                     f.write_str(", ")?;
                 }
-                fmt::Display::fmt(p, f)?;
+                if let Some(name) = p.name {
+                    write!(f, "{}: ", name.text(db))?;
+                }
+                sig_stash[p.ty].pretty(f, sig_stash, 0)?;
             }
             f.write_str(")")?;
-            if let Some(ret) = self.ret_type(db) {
-                write!(f, " -> {ret}")?;
+            if let Some(ret) = sig_data.ret_type {
+                f.write_str(" -> ")?;
+                sig_stash[ret].pretty(f, sig_stash, 0)?;
             }
             f.write_str(" ")?;
             let body = self.body(db);
@@ -76,8 +86,13 @@ impl fmt::Display for StructAst<'_> {
         with_db(|db| {
             write_attrs(f, self.attrs(db))?;
             writeln!(f, "struct {} {{", self.name(db).text(db))?;
-            for field in self.fields(db) {
-                writeln!(f, "  {field}")?;
+            let sig = self.signature(db);
+            let sig_stash = sig.stash();
+            let sig_data = &sig_stash[*sig.root()];
+            for field in &sig_stash[sig_data.fields] {
+                write!(f, "  {}: ", field.name.text(db))?;
+                sig_stash[field.ty].pretty(f, sig_stash, 0)?;
+                writeln!(f)?;
             }
             f.write_str("}")
         })
@@ -91,14 +106,19 @@ impl fmt::Display for EnumAst<'_> {
         with_db(|db| {
             write_attrs(f, self.attrs(db))?;
             writeln!(f, "enum {} {{", self.name(db).text(db))?;
-            for v in self.variants(db) {
-                let fields = v.fields(db);
+            let sig = self.signature(db);
+            let sig_stash = sig.stash();
+            let sig_data = &sig_stash[*sig.root()];
+            for v in &sig_stash[sig_data.variants] {
+                let fields = &sig_stash[v.fields];
                 if fields.is_empty() {
-                    writeln!(f, "  {}", v.name(db).text(db))?;
+                    writeln!(f, "  {}", v.name.text(db))?;
                 } else {
-                    writeln!(f, "  {} {{", v.name(db).text(db))?;
+                    writeln!(f, "  {} {{", v.name.text(db))?;
                     for field in fields {
-                        writeln!(f, "    {field}")?;
+                        write!(f, "    {}: ", field.name.text(db))?;
+                        sig_stash[field.ty].pretty(f, sig_stash, 0)?;
+                        writeln!(f)?;
                     }
                     writeln!(f, "  }}")?;
                 }
@@ -129,12 +149,16 @@ impl fmt::Display for ImplAst<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         with_db(|db| {
             write_attrs(f, self.attrs(db))?;
-            if let Some(trait_path) = self.trait_path(db) {
-                write!(f, "impl {trait_path} for {} {{", self.self_ty(db))?;
-            } else {
-                write!(f, "impl {} {{", self.self_ty(db))?;
+            let sig = self.signature(db);
+            let stash = sig.stash();
+            let data = &stash[*sig.root()];
+            f.write_str("impl ")?;
+            if let Some(trait_path) = data.trait_path {
+                stash[trait_path].pretty(f, stash, 0)?;
+                f.write_str(" for ")?;
             }
-            f.write_str("\n")?;
+            stash[data.self_ty].pretty(f, stash, 0)?;
+            f.write_str(" {\n")?;
             for item in self.items(db) {
                 writeln!(f, "  {item}")?;
             }
@@ -150,8 +174,12 @@ impl fmt::Display for TypeAliasAst<'_> {
         with_db(|db| {
             write_attrs(f, self.attrs(db))?;
             write!(f, "type {}", self.name(db).text(db))?;
-            if let Some(ty) = self.ty(db) {
-                write!(f, " = {ty}")?;
+            let sig = self.signature(db);
+            let stash = sig.stash();
+            let data = &stash[*sig.root()];
+            if let Some(ty) = data.ty {
+                f.write_str(" = ")?;
+                stash[ty].pretty(f, stash, 0)?;
             }
             Ok(())
         })
@@ -165,8 +193,12 @@ impl fmt::Display for ConstAst<'_> {
         with_db(|db| {
             write_attrs(f, self.attrs(db))?;
             write!(f, "const {}", self.name(db).text(db))?;
-            if let Some(ty) = self.ty(db) {
-                write!(f, ": {ty}")?;
+            let sig = self.signature(db);
+            let stash = sig.stash();
+            let data = &stash[*sig.root()];
+            if let Some(ty) = data.ty {
+                f.write_str(": ")?;
+                stash[ty].pretty(f, stash, 0)?;
             }
             Ok(())
         })
@@ -185,8 +217,12 @@ impl fmt::Display for StaticAst<'_> {
                 f.write_str("static ")?;
             }
             write!(f, "{}", self.name(db).text(db))?;
-            if let Some(ty) = self.ty(db) {
-                write!(f, ": {ty}")?;
+            let sig = self.signature(db);
+            let stash = sig.stash();
+            let data = &stash[*sig.root()];
+            if let Some(ty) = data.ty {
+                f.write_str(": ")?;
+                stash[ty].pretty(f, stash, 0)?;
             }
             Ok(())
         })
@@ -219,31 +255,34 @@ impl fmt::Display for UseGroupAst<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         with_db(|db| {
             write_attrs(f, self.attrs(db))?;
-            for (i, import) in self.imports(db).iter().enumerate() {
+            let imports = self.imports(db);
+            let stash = imports.stash();
+            for (i, import) in stash[*imports.root()].iter().enumerate() {
                 if i > 0 {
                     writeln!(f)?;
                 }
-                fmt::Display::fmt(import, f)?;
-            }
-            Ok(())
-        })
-    }
-}
-
-impl fmt::Display for UseImport<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        with_db(|db| {
-            write!(f, "use {}", self.path(db))?;
-            match self.kind(db) {
-                UseKind::Named(name) => {
-                    // Only show `as X` if the alias differs from the last path segment
-                    let segs = self.path(db).segments(db);
-                    if segs.last().map(|s| s.text(db)) != Some(name.text(db)) {
-                        write!(f, " as {}", name.text(db))?;
+                let segs = &stash[import.path];
+                f.write_str("use ")?;
+                for (j, seg) in segs.iter().enumerate() {
+                    if j > 0 {
+                        f.write_str("::")?;
+                    }
+                    let text = seg.text(db);
+                    if text.is_empty() {
+                        f.write_str("::")?;
+                    } else {
+                        f.write_str(text)?;
                     }
                 }
-                UseKind::Glob => f.write_str("::*")?,
-                UseKind::Unnamed => f.write_str(" as _")?,
+                match import.kind {
+                    UseKind::Named(name) => {
+                        if segs.last().map(|s| s.text(db)) != Some(name.text(db)) {
+                            write!(f, " as {}", name.text(db))?;
+                        }
+                    }
+                    UseKind::Glob => f.write_str("::*")?,
+                    UseKind::Unnamed => f.write_str(" as _")?,
+                }
             }
             Ok(())
         })
@@ -278,90 +317,15 @@ impl fmt::Display for MacroDefAst<'_> {
 
 impl fmt::Display for MacroInvocationAst<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        with_db(|db| write!(f, "{}!()", self.path(db)))
-    }
-}
-
-// -- TypeRef --
-
-impl fmt::Display for TypeRef<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        with_db(|db| match self.kind(db) {
-            TypeRefKind::Path(p) => write!(f, "{p}"),
-            TypeRefKind::Reference(inner, Mutability::Shared) => write!(f, "&{inner}"),
-            TypeRefKind::Reference(inner, Mutability::Mut) => write!(f, "&mut {inner}"),
-            TypeRefKind::Slice(inner) => write!(f, "[{inner}]"),
-            TypeRefKind::Array(inner) => write!(f, "[{inner}; _]"),
-            TypeRefKind::Tuple(tup) => {
-                f.write_str("(")?;
-                for (i, elem) in tup.elements(db).iter().enumerate() {
-                    if i > 0 {
-                        f.write_str(", ")?;
-                    }
-                    write!(f, "{elem}")?;
-                }
-                f.write_str(")")
-            }
-            TypeRefKind::Never => f.write_str("!"),
-            TypeRefKind::Infer => f.write_str("_"),
-            TypeRefKind::Error => f.write_str("{error}"),
-        })
-    }
-}
-
-// -- Path --
-
-impl fmt::Display for Path<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         with_db(|db| {
-            for (i, seg) in self.segments(db).iter().enumerate() {
+            let segs = self.path(db);
+            for (i, seg) in segs.iter().enumerate() {
                 if i > 0 {
                     f.write_str("::")?;
                 }
                 f.write_str(seg.text(db))?;
             }
-            Ok(())
-        })
-    }
-}
-
-// -- Param --
-
-impl fmt::Display for Param<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        with_db(|db| {
-            if let Some(name) = self.name(db) {
-                write!(f, "{}: {}", name.text(db), self.ty(db))
-            } else {
-                write!(f, "{}", self.ty(db))
-            }
-        })
-    }
-}
-
-// -- FieldDef --
-
-impl fmt::Display for FieldDef<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        with_db(|db| write!(f, "{}: {}", self.name(db).text(db), self.ty(db)))
-    }
-}
-
-// -- VariantDef --
-
-impl fmt::Display for VariantDef<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        with_db(|db| {
-            let fields = self.fields(db);
-            if fields.is_empty() {
-                write!(f, "{}", self.name(db).text(db))
-            } else {
-                writeln!(f, "{} {{", self.name(db).text(db))?;
-                for field in fields {
-                    writeln!(f, "  {field}")?;
-                }
-                f.write_str("}")
-            }
+            f.write_str("!()")
         })
     }
 }
@@ -390,7 +354,12 @@ impl fmt::Display for Attr<'_> {
                 } else {
                     f.write_str("#[")?;
                 }
-                write!(f, "{}", self.path(db))?;
+                for (i, seg) in self.path(db).iter().enumerate() {
+                    if i > 0 {
+                        f.write_str("::")?;
+                    }
+                    f.write_str(seg.text(db))?;
+                }
                 if let Some(args) = self.args(db) {
                     write!(f, "{}", args.text(db))?;
                 }
@@ -410,8 +379,6 @@ fn write_attrs(f: &mut fmt::Formatter<'_>, attrs: &[Attr<'_>]) -> fmt::Result {
 // ===========================================================================
 // PrettyPrint — trait for stash-allocated body types
 // ===========================================================================
-
-use sage_stash::{Ptr, Stash};
 
 use crate::body::*;
 
@@ -476,7 +443,7 @@ impl<'db> PrettyPrint<'db> for ExprKind<'db> {
                 f.write_str("}")
             }
             ExprKind::Literal(lit) => write!(f, "{lit:?}"),
-            ExprKind::Path(p) => write!(f, "{p}"),
+            ExprKind::Path(p) => p.pretty(f, s, indent),
             ExprKind::Call(func, args) => {
                 func.pretty(f, s, indent)?;
                 f.write_str("(")?;
@@ -628,10 +595,12 @@ impl<'db> PrettyPrint<'db> for ExprKind<'db> {
             }
             ExprKind::Cast(expr, ty) => {
                 expr.pretty(f, s, indent)?;
-                write!(f, " as {ty}")
+                f.write_str(" as ")?;
+                ty.pretty(f, s, indent)
             }
             ExprKind::StructLit(path, fields) => with_db(|db| {
-                write!(f, "{path} {{")?;
+                path.pretty(f, s, indent)?;
+                f.write_str(" {")?;
                 for (i, fi) in s[*fields].iter().enumerate() {
                     if i > 0 {
                         f.write_str(",")?;
@@ -651,7 +620,10 @@ impl<'db> PrettyPrint<'db> for ExprKind<'db> {
                 }
                 Ok(())
             }
-            ExprKind::MacroCall(path, args) => with_db(|db| write!(f, "{path}!{}", args.text(db))),
+            ExprKind::MacroCall(path, args) => with_db(|db| {
+                path.pretty(f, s, indent)?;
+                write!(f, "!{}", args.text(db))
+            }),
             ExprKind::IfLet(pat, scrutinee, then, else_) => {
                 f.write_str("if let ")?;
                 pat.pretty(f, s, indent)?;
@@ -688,7 +660,8 @@ impl<'db> PrettyPrint<'db> for Stmt<'db> {
                 f.write_str("let ")?;
                 pat.pretty(f, s, indent)?;
                 if let Some(ty) = ty {
-                    write!(f, ": {ty}")?;
+                    f.write_str(": ")?;
+                    ty.pretty(f, s, indent)?;
                 }
                 if let Some(init) = init {
                     f.write_str(" = ")?;
@@ -722,7 +695,7 @@ impl<'db> PrettyPrint<'db> for PatKind<'db> {
                 }
                 f.write_str(name.text(db))
             }),
-            PatKind::Path(p) => write!(f, "{p}"),
+            PatKind::Path(p) => p.pretty(f, s, indent),
             PatKind::Tuple(pats) => {
                 f.write_str("(")?;
                 for (i, p) in s[*pats].iter().enumerate() {
@@ -734,7 +707,8 @@ impl<'db> PrettyPrint<'db> for PatKind<'db> {
                 f.write_str(")")
             }
             PatKind::Struct(path, fields) => with_db(|db| {
-                write!(f, "{path} {{")?;
+                path.pretty(f, s, indent)?;
+                f.write_str(" {")?;
                 for (i, fp) in s[*fields].iter().enumerate() {
                     if i > 0 {
                         f.write_str(",")?;
@@ -745,7 +719,8 @@ impl<'db> PrettyPrint<'db> for PatKind<'db> {
                 f.write_str(" }")
             }),
             PatKind::TupleStruct(path, pats) => {
-                write!(f, "{path}(")?;
+                path.pretty(f, s, indent)?;
+                f.write_str("(")?;
                 for (i, p) in s[*pats].iter().enumerate() {
                     if i > 0 {
                         f.write_str(", ")?;
@@ -797,7 +772,93 @@ impl<'db> PrettyPrint<'db> for ClosureParam<'db> {
     }
 }
 
-use sage_stash::StashData;
+// ===========================================================================
+// PrettyPrint — stash-allocated type refs and paths
+// ===========================================================================
+
+impl<'db> PrettyPrint<'db> for TypeRefAst<'db> {
+    fn pretty(&self, f: &mut fmt::Formatter<'_>, s: &Stash, indent: usize) -> fmt::Result {
+        match self.kind {
+            TypeRefAstKind::Path(p) => s[p].pretty(f, s, indent),
+            TypeRefAstKind::Reference(inner, Mutability::Shared) => {
+                f.write_str("&")?;
+                s[inner].pretty(f, s, indent)
+            }
+            TypeRefAstKind::Reference(inner, Mutability::Mut) => {
+                f.write_str("&mut ")?;
+                s[inner].pretty(f, s, indent)
+            }
+            TypeRefAstKind::Slice(inner) => {
+                f.write_str("[")?;
+                s[inner].pretty(f, s, indent)?;
+                f.write_str("]")
+            }
+            TypeRefAstKind::Array(inner) => {
+                f.write_str("[")?;
+                s[inner].pretty(f, s, indent)?;
+                f.write_str("; _]")
+            }
+            TypeRefAstKind::Tuple(elems) => {
+                f.write_str("(")?;
+                for (i, elem) in s[elems].iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    elem.pretty(f, s, indent)?;
+                }
+                f.write_str(")")
+            }
+            TypeRefAstKind::Never => f.write_str("!"),
+            TypeRefAstKind::Infer => f.write_str("_"),
+            TypeRefAstKind::Error => f.write_str("{error}"),
+        }
+    }
+}
+
+impl<'db> PrettyPrint<'db> for PathAst<'db> {
+    fn pretty(&self, f: &mut fmt::Formatter<'_>, s: &Stash, indent: usize) -> fmt::Result {
+        with_db(|db| {
+            for (i, seg) in s[self.segments].iter().enumerate() {
+                if i > 0 {
+                    f.write_str("::")?;
+                }
+                f.write_str(seg.name.text(db))?;
+                let type_args = &s[seg.type_args];
+                if !type_args.is_empty() {
+                    f.write_str("<")?;
+                    for (j, arg) in type_args.iter().enumerate() {
+                        if j > 0 {
+                            f.write_str(", ")?;
+                        }
+                        arg.pretty(f, s, indent)?;
+                    }
+                    f.write_str(">")?;
+                }
+            }
+            Ok(())
+        })
+    }
+}
+
+impl<'db> PrettyPrint<'db> for PathSegmentAst<'db> {
+    fn pretty(&self, f: &mut fmt::Formatter<'_>, s: &Stash, indent: usize) -> fmt::Result {
+        with_db(|db| {
+            f.write_str(self.name.text(db))?;
+            let type_args = &s[self.type_args];
+            if !type_args.is_empty() {
+                f.write_str("<")?;
+                for (i, arg) in type_args.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    arg.pretty(f, s, indent)?;
+                }
+                f.write_str(">")?;
+            }
+            Ok(())
+        })
+    }
+}
 
 // ===========================================================================
 // PrettyPrint — resolved body types
@@ -835,31 +896,53 @@ fn with_display_tcx<R>(f: impl FnOnce(&dyn crate::tcx::TcxDb) -> R) -> Option<R>
 /// Helper to format a Res.
 fn fmt_res(f: &mut fmt::Formatter<'_>, res: &Res<'_>) -> fmt::Result {
     with_db(|db| match res {
-        Res::Def(sym) => match sym.data() {
-            SymbolData::Ast(item) => {
-                let name = match item {
-                    ItemAst::Function(func) => Some(func.name(db).text(db).to_string()),
-                    ItemAst::Struct(s) => Some(s.name(db).text(db).to_string()),
-                    ItemAst::Enum(e) => Some(e.name(db).text(db).to_string()),
-                    ItemAst::Trait(t) => Some(t.name(db).text(db).to_string()),
-                    ItemAst::TypeAlias(t) => Some(t.name(db).text(db).to_string()),
-                    ItemAst::Const(c) => Some(c.name(db).text(db).to_string()),
-                    ItemAst::Static(s) => Some(s.name(db).text(db).to_string()),
-                    ItemAst::Mod(m) => Some(m.name(db).text(db).to_string()),
-                    _ => None,
-                };
-                let name = name.unwrap_or_else(|| "?".to_string());
-                write!(f, "<def {name}>")
-            }
-            SymbolData::Ext(ext) => {
+        Res::Def(sym) => {
+            if let Some(ext) = sym.as_ext() {
                 let path =
                     with_display_tcx(|tcx| tcx.def_path(ext.crate_num, ext.def_index)).flatten();
-                match path {
+                return match path {
                     Some(p) => write!(f, "<ext {p}>"),
                     None => write!(f, "<ext {}:{}>", ext.crate_num.0, ext.def_index.0),
-                }
+                };
             }
-        },
+            match sym.data() {
+                SymbolData::Fn(s) => write!(f, "<def {}>", s.as_ast().unwrap().name(db).text(db)),
+                SymbolData::Struct(s) => {
+                    write!(f, "<def {}>", s.as_ast().unwrap().name(db).text(db))
+                }
+                SymbolData::TupleStructCtor(s) => {
+                    write!(f, "<ctor {}>", s.as_ast().unwrap().name(db).text(db))
+                }
+                SymbolData::Enum(s) => {
+                    write!(f, "<def {}>", s.as_ast().unwrap().name(db).text(db))
+                }
+                SymbolData::Trait(s) => {
+                    write!(f, "<def {}>", s.as_ast().unwrap().name(db).text(db))
+                }
+                SymbolData::TypeAlias(s) => {
+                    write!(f, "<def {}>", s.as_ast().unwrap().name(db).text(db))
+                }
+                SymbolData::Const(s) => {
+                    write!(f, "<def {}>", s.as_ast().unwrap().name(db).text(db))
+                }
+                SymbolData::Static(s) => {
+                    write!(f, "<def {}>", s.as_ast().unwrap().name(db).text(db))
+                }
+                SymbolData::Mod(m) => match m.data() {
+                    crate::module::ModSymbolData::Ast(a) => {
+                        write!(f, "<def {}>", a.name(db).text(db))
+                    }
+                    crate::module::ModSymbolData::Ext(_) => unreachable!(),
+                },
+                SymbolData::Impl(_) => write!(f, "<def ?>"),
+                SymbolData::MacroDef(_) => write!(f, "<def ?>"),
+                SymbolData::Use(_) => write!(f, "<def ?>"),
+                SymbolData::MacroInvocation(_) => write!(f, "<def ?>"),
+                SymbolData::Intrinsic(i) => write!(f, "<intrinsic {i:?}>"),
+                SymbolData::Error(_) => write!(f, "<def ?>"),
+                SymbolData::Unknown(_) => unreachable!(),
+            }
+        }
         Res::Local(id) => write!(f, "<local:{}>", id.0),
         Res::Err => f.write_str("<unresolved>"),
     })
@@ -1090,7 +1173,8 @@ impl<'db> PrettyPrint<'db> for RExprKind<'db> {
             }
             RExprKind::Cast(expr, ty) => {
                 expr.pretty(f, s, indent)?;
-                write!(f, " as {ty}")
+                f.write_str(" as ")?;
+                ty.pretty(f, s, indent)
             }
             RExprKind::StructLit(res, fields) => with_db(|db| {
                 fmt_res(f, res)?;
@@ -1131,7 +1215,8 @@ impl<'db> PrettyPrint<'db> for RStmt<'db> {
                 f.write_str("let ")?;
                 pat.pretty(f, s, indent)?;
                 if let Some(ty) = ty {
-                    write!(f, ": {ty}")?;
+                    f.write_str(": ")?;
+                    ty.pretty(f, s, indent)?;
                 }
                 if let Some(init) = init {
                     f.write_str(" = ")?;

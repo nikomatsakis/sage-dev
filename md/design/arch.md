@@ -14,14 +14,16 @@ graph TD
     TS["tree-sitter parse"]
     FIT["parse_source_file(file)<br><i>→ Vec&lt;ItemAst&gt;</i>"]
     EM["expanded_module(ModAst)<br><i>→ ExpandedModule</i><br>(seed + expand macros)"]
-    RN["resolve_name(ModSymbol, name, ns)<br><i>→ Symbol</i>"]
-    RB["resolve_body(FnAst, ModSymbol, ...)<br><i>→ ResolvedBody</i>"]
+    RV["Resolver<br><i>resolve_segments, resolve_member</i><br>(module → extern → prelude → intrinsics)"]
+    SL["sig_lower (Ribs + Resolver)<br><i>TypeRefAst → Ty</i>"]
+    RB["resolve_body (Ribs + Resolver)<br><i>→ ResolvedBody</i>"]
     DS["TcxDb<br><i>rustc_driver TyCtxt</i>"]
 
     SF --> TS --> FIT --> EM
     DS --> EM
-    EM --> RN
-    RN --> RB
+    EM --> RV
+    RV --> SL
+    RV --> RB
     FIT --> RB
 ```
 
@@ -41,8 +43,9 @@ expanded module) to handle cross-module glob/redirect cycles, and
 - **`sage-ir`** (`crates/sage-ir/`) — the salsa-based IR. All tracked
   structs, lowering, resolution, body resolution, display.
 - **`sage-stash`** (`crates/sage-stash/`) — type-erased `Copy`-only
-  storage with `Ptr<T>` and `Slice<T>` handles. Used for function
-  bodies (syntactic and resolved).
+  storage with `Ptr<T>` and `Slice<T>` handles. Used for item
+  signatures, function bodies (syntactic and resolved), and
+  use-import data.
 - **`sage-stash-macros`** — derive macros for `sage-stash` traits.
 
 ## TcxDb — external crate metadata

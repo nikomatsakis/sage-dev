@@ -41,6 +41,8 @@ pub use data::*;
 pub use expand::expand_macro;
 pub use validate::{MemmapError, memmap_errors};
 
+use sage_stash::{Slice, Stash, Stashed};
+
 use crate::Db;
 use crate::item::ModAst;
 use crate::module::ModSymbol;
@@ -50,7 +52,17 @@ use crate::resolve::SourceRoot;
 #[salsa::tracked(debug)]
 pub struct ExpandedModule<'db> {
     #[returns(ref)]
-    pub entries: Vec<MemmapEntry<'db>>,
+    pub memmap: Memmap<'db>,
+}
+
+impl<'db> ExpandedModule<'db> {
+    pub fn stash(self, db: &'db dyn Db) -> &'db Stash {
+        self.memmap(db).stash()
+    }
+
+    pub fn entries(self, db: &'db dyn Db) -> Slice<MemmapEntry<'db>> {
+        *self.memmap(db).root()
+    }
 }
 
 /// Compute the MEM-map for a local module. Seeds from `parse_source_file`
@@ -65,11 +77,13 @@ pub fn expanded_module<'db>(
     source_root: SourceRoot,
 ) -> ExpandedModule<'db> {
     let items = module.unexpanded_items(db);
-    let mut entries = seed::seed_from_items(db, &items);
+    let mut stash = Stash::new();
+    let root = seed::seed_from_items(db, &items, &mut stash);
 
-    expand::resolve_and_expand_macros(db, ModSymbol::ast(module), source_root, &mut entries);
+    expand::resolve_and_expand_macros(db, ModSymbol::ast(module), source_root, &mut stash, root);
 
-    ExpandedModule::new(db, entries)
+    let memmap = Stashed::new(stash, root);
+    ExpandedModule::new(db, memmap)
 }
 
 /// Cycle recovery initial value: empty MEM-map.
@@ -79,7 +93,10 @@ fn expanded_module_initial<'db>(
     _module: ModAst<'db>,
     _source_root: SourceRoot,
 ) -> ExpandedModule<'db> {
-    ExpandedModule::new(db, Vec::new())
+    let mut stash = Stash::new();
+    let root: Slice<MemmapEntry<'db>> = stash.alloc_slice(&[]);
+    let memmap = Stashed::new(stash, root);
+    ExpandedModule::new(db, memmap)
 }
 
 /// Convenience wrapper: dispatch on `ModSymbol`. For external modules
@@ -93,6 +110,11 @@ pub fn module_memmap<'db>(
 ) -> ExpandedModule<'db> {
     match module.data() {
         crate::module::ModSymbolData::Ast(ast) => *expanded_module(db, ast, source_root),
-        crate::module::ModSymbolData::Ext(_) => ExpandedModule::new(db, Vec::new()),
+        crate::module::ModSymbolData::Ext(_) => {
+            let mut stash = Stash::new();
+            let root = stash.alloc_slice(&[]);
+            let memmap = Stashed::new(stash, root);
+            ExpandedModule::new(db, memmap)
+        }
     }
 }

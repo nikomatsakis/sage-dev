@@ -1,23 +1,4 @@
 //! Shared fixture-based test harness for MEM-map and resolution tests.
-//!
-//! Tests declare one or more files with `//- /path` marker lines; each
-//! assertion method creates a fresh database, builds the fixture, runs the
-//! query, and compares the rendered output to an `expect_test::Expect`.
-//!
-//! # Example
-//!
-//! ```ignore
-//! t(r#"
-//!     //- /lib.rs
-//!     struct X;
-//! "#)
-//! .resolve("X", Namespace::Type, expect!["<local Struct X>"])
-//! .errors(expect![""]);
-//! ```
-//!
-//! Because each method re-builds the database, calls are independent — tests
-//! don't have to worry about query-log interference between assertions. This
-//! is cheap in practice: fixtures are small and setup is microseconds.
 
 #![allow(dead_code)]
 
@@ -32,19 +13,13 @@ use sage_ir::resolve::{
 };
 use sage_ir::source::SourceFile;
 use sage_ir::symbol::{Symbol, SymbolData};
+use sage_stash::{Slice, Stash};
 use salsa::Database as _;
 
 // ---------------------------------------------------------------------------
 // Fixture parsing
 // ---------------------------------------------------------------------------
 
-/// Parse a fixture string into `(path, text)` pairs.
-///
-/// Files are separated by `//- /path` marker lines. Everything before the
-/// first marker is discarded. Common leading indentation is stripped from
-/// each file body so fixtures can be written indented inside raw strings.
-///
-/// Single-file fixtures without any marker are treated as `/lib.rs`.
 pub fn parse_fixture(src: &str) -> Vec<(String, String)> {
     let mut files: Vec<(String, String)> = Vec::new();
     let mut current: Option<(String, Vec<String>)> = None;
@@ -65,7 +40,6 @@ pub fn parse_fixture(src: &str) -> Vec<(String, String)> {
         files.push((path, dedent(&body)));
     }
 
-    // No marker at all → treat whole thing as lib.rs.
     if files.is_empty() {
         files.push(("lib.rs".to_owned(), src.to_owned()));
     }
@@ -74,8 +48,6 @@ pub fn parse_fixture(src: &str) -> Vec<(String, String)> {
 }
 
 fn dedent(lines: &[String]) -> String {
-    // Strip leading/trailing blank lines and compute common indent on
-    // non-blank lines.
     let start = lines.iter().position(|l| !l.trim().is_empty()).unwrap_or(0);
     let end = lines
         .iter()
@@ -107,30 +79,21 @@ fn dedent(lines: &[String]) -> String {
 // TestCrate — fluent entry point
 // ---------------------------------------------------------------------------
 
-/// Entry point — parses the fixture and returns a builder.
 pub fn t(fixture: &str) -> TestCrate {
     TestCrate {
         files: parse_fixture(fixture),
     }
 }
 
-/// Fluent test builder.
-///
-/// Each assertion method creates a fresh database and re-builds the fixture,
-/// so calls on the same `TestCrate` are independent.
 pub struct TestCrate {
     files: Vec<(String, String)>,
 }
 
 impl TestCrate {
-    /// Assert that `resolve_name(root, name, ns)` produces the expected
-    /// rendered symbol (or error string).
     pub fn resolve(&self, name: &str, ns: Namespace, expect: Expect) -> &Self {
         self.resolve_in(&[], name, ns, expect)
     }
 
-    /// Like `resolve`, but resolves against a submodule identified by a
-    /// path like `["inner", "deeper"]` from the crate root.
     pub fn resolve_in(
         &self,
         module_path: &[&str],
@@ -158,8 +121,6 @@ impl TestCrate {
         self
     }
 
-    /// Assert on `memmap_errors` aggregated across every module reachable
-    /// from the crate root. An empty string means "no errors".
     pub fn errors(&self, expect: Expect) -> &Self {
         let db = Database::default();
         db.attach(|db| {
@@ -174,8 +135,6 @@ impl TestCrate {
         self
     }
 
-    /// Pretty-print the memmap of a module identified by a path like
-    /// `[]` (root) or `["inner"]`.
     pub fn memmap(&self, module_path: &[&str], expect: Expect) -> &Self {
         let db = Database::default();
         db.attach(|db| {
@@ -189,7 +148,9 @@ impl TestCrate {
                 }
             };
             let memmap = module_memmap(db, module, source_root);
-            let rendered = fmt_memmap_entries(db, memmap.entries(db), 0);
+            let stash = memmap.stash(db);
+            let entries = memmap.entries(db);
+            let rendered = fmt_memmap_entries(db, stash, entries, 0);
             expect.assert_eq(&rendered);
         });
         self
@@ -207,7 +168,6 @@ impl TestCrate {
             .collect();
         let source_root = SourceRoot::new(db, source_files.clone());
 
-        // Crate root: prefer lib.rs, fall back to main.rs.
         let lib_file = source_files
             .iter()
             .find(|f| {
@@ -251,7 +211,9 @@ impl TestCrate {
 
         // Recurse into child modules declared by this module.
         let memmap = module_memmap(db, module, source_root);
-        for entry in memmap.entries(db) {
+        let stash = memmap.stash(db);
+        let entries = memmap.entries(db);
+        for entry in &stash[entries] {
             if let MemmapEntry::Item(sage_ir::item::ItemAst::Mod(mod_item)) = entry {
                 if let Some(child) =
                     sage_ir::resolve::resolve_mod(db, module, *mod_item, source_root)
@@ -276,18 +238,49 @@ fn fmt_resolve_result(db: &dyn sage_ir::Db, result: &Result<Symbol, ResolutionEr
 }
 
 pub fn fmt_symbol(db: &dyn sage_ir::Db, sym: Symbol) -> String {
-    match sym.data() {
-        SymbolData::Ast(item) => {
-            let (kind, name) = item_kind_and_name(db, item);
-            match name {
-                Some(n) => format!("<local {kind} {n}>"),
-                None => format!("<local {kind}>"),
-            }
-        }
-        SymbolData::Ext(ext) => match db.tcx().def_path(ext.crate_num, ext.def_index) {
+    if let Some(ext) = sym.as_ext() {
+        return match db.tcx().def_path(ext.crate_num, ext.def_index) {
             Some(path) => format!("<ext {path}>"),
             None => format!("<ext {}:{}>", ext.crate_num.0, ext.def_index.0),
+        };
+    }
+    match sym.data() {
+        SymbolData::Fn(s) => format!("<local Function {}>", s.as_ast().unwrap().name(db).text(db)),
+        SymbolData::Struct(s) => {
+            format!("<local Struct {}>", s.as_ast().unwrap().name(db).text(db))
+        }
+        SymbolData::TupleStructCtor(s) => {
+            format!("<ctor {}>", s.as_ast().unwrap().name(db).text(db))
+        }
+        SymbolData::Enum(s) => format!("<local Enum {}>", s.as_ast().unwrap().name(db).text(db)),
+        SymbolData::Trait(s) => {
+            format!("<local Trait {}>", s.as_ast().unwrap().name(db).text(db))
+        }
+        SymbolData::Impl(_) => "<local Impl>".to_owned(),
+        SymbolData::Mod(m) => match m.data() {
+            sage_ir::module::ModSymbolData::Ast(a) => {
+                format!("<local Mod {}>", a.name(db).text(db))
+            }
+            sage_ir::module::ModSymbolData::Ext(_) => unreachable!(),
         },
+        SymbolData::TypeAlias(s) => {
+            format!(
+                "<local TypeAlias {}>",
+                s.as_ast().unwrap().name(db).text(db)
+            )
+        }
+        SymbolData::Const(s) => {
+            format!("<local Const {}>", s.as_ast().unwrap().name(db).text(db))
+        }
+        SymbolData::Static(s) => {
+            format!("<local Static {}>", s.as_ast().unwrap().name(db).text(db))
+        }
+        SymbolData::MacroDef(_) => "<local MacroDef>".to_owned(),
+        SymbolData::Use(_) => "<local Use>".to_owned(),
+        SymbolData::MacroInvocation(_) => "<local MacroInvocation>".to_owned(),
+        SymbolData::Intrinsic(i) => format!("<intrinsic {i:?}>"),
+        SymbolData::Error(_) => "<local Error>".to_owned(),
+        SymbolData::Unknown(_) => unreachable!(),
     }
 }
 
@@ -323,10 +316,15 @@ pub fn fmt_namespace(ns: Namespace) -> &'static str {
     }
 }
 
-pub fn fmt_memmap_entries(db: &dyn sage_ir::Db, entries: &[MemmapEntry], indent: usize) -> String {
+pub fn fmt_memmap_entries(
+    db: &dyn sage_ir::Db,
+    stash: &Stash,
+    entries: Slice<MemmapEntry>,
+    indent: usize,
+) -> String {
     let mut out = String::new();
-    for entry in entries {
-        fmt_entry(db, entry, indent, &mut out);
+    for entry in &stash[entries] {
+        fmt_entry(db, stash, entry, indent, &mut out);
     }
     if !out.is_empty() && out.ends_with('\n') {
         out.pop();
@@ -334,7 +332,13 @@ pub fn fmt_memmap_entries(db: &dyn sage_ir::Db, entries: &[MemmapEntry], indent:
     out
 }
 
-fn fmt_entry(db: &dyn sage_ir::Db, entry: &MemmapEntry, indent: usize, out: &mut String) {
+fn fmt_entry(
+    db: &dyn sage_ir::Db,
+    stash: &Stash,
+    entry: &MemmapEntry,
+    indent: usize,
+    out: &mut String,
+) {
     let pad = "  ".repeat(indent);
     match entry {
         MemmapEntry::Item(item) => {
@@ -345,34 +349,46 @@ fn fmt_entry(db: &dyn sage_ir::Db, entry: &MemmapEntry, indent: usize, out: &mut
                 None => out.push_str(&format!("Item kind={kind}\n")),
             }
         }
+        MemmapEntry::TupleStructCtor(s) => {
+            out.push_str(&pad);
+            out.push_str(&format!("TupleStructCtor {}\n", s.name(db).text(db)));
+        }
         MemmapEntry::MacroDef(def) => {
             out.push_str(&pad);
             out.push_str(&format!("MacroDef {}\n", def.name(db).text(db)));
         }
         MemmapEntry::Redirect { name, target } => {
             out.push_str(&pad);
+            let target_slice = &stash[*target];
             out.push_str(&format!(
                 "Redirect {} target={}\n",
                 name.text(db),
-                fmt_path(db, *target)
+                fmt_name_path(db, target_slice)
             ));
         }
         MemmapEntry::Glob { path } => {
             out.push_str(&pad);
-            out.push_str(&format!("Glob path={}\n", fmt_path(db, *path)));
+            let path_slice = &stash[*path];
+            out.push_str(&format!("Glob path={}\n", fmt_name_path(db, path_slice)));
         }
         MemmapEntry::MacroUse(mu) => {
             out.push_str(&pad);
+            let path_slice = &stash[mu.path];
             out.push_str(&format!(
                 "MacroUse path={} state={}\n",
-                fmt_path(db, mu.path),
-                fmt_macro_use_state(db, &mu.state(), indent + 1)
+                fmt_name_path(db, path_slice),
+                fmt_macro_use_state(db, stash, &mu.state(stash), indent + 1)
             ));
         }
     }
 }
 
-fn fmt_macro_use_state(db: &dyn sage_ir::Db, state: &sage_ir::memmap::MacroUseState, indent: usize) -> String {
+fn fmt_macro_use_state(
+    db: &dyn sage_ir::Db,
+    stash: &Stash,
+    state: &sage_ir::memmap::MacroUseState,
+    indent: usize,
+) -> String {
     use sage_ir::memmap::MacroUseState;
     match state {
         MacroUseState::Unresolved => "Unresolved".to_owned(),
@@ -388,7 +404,7 @@ fn fmt_macro_use_state(db: &dyn sage_ir::Db, state: &sage_ir::memmap::MacroUseSt
                     "branch callee={} {{\n",
                     fmt_callee(db, &exp.callee)
                 ));
-                s.push_str(&fmt_memmap_entries(db, &exp.entries, indent + 1));
+                s.push_str(&fmt_memmap_entries(db, stash, exp.entries, indent + 1));
                 s.push('\n');
                 s.push_str(&"  ".repeat(indent));
                 s.push_str("}\n");
@@ -414,11 +430,10 @@ fn fmt_callee(db: &dyn sage_ir::Db, callee: &sage_ir::memmap::MacroCallee) -> St
     }
 }
 
-fn fmt_path(db: &dyn sage_ir::Db, path: sage_ir::types::Path) -> String {
-    path.segments(db)
-        .iter()
-        .map(|s| {
-            let text = s.text(db);
+fn fmt_name_path(db: &dyn sage_ir::Db, path: &[sage_ir::name::Name]) -> String {
+    path.iter()
+        .map(|n| {
+            let text = n.text(db);
             if text.is_empty() {
                 "::".to_owned()
             } else {
@@ -452,8 +467,12 @@ pub fn fmt_memmap_error(db: &dyn sage_ir::Db, err: &sage_ir::memmap::MemmapError
                 fmt_namespace(*ns)
             )
         }
-        UnresolvedMacro { path } => format!("UnresolvedMacro path={}", fmt_path(db, *path)),
-        AmbiguousMacro { path } => format!("AmbiguousMacro path={}", fmt_path(db, *path)),
+        UnresolvedMacro { path } => {
+            format!("UnresolvedMacro path={}", fmt_name_path(db, path))
+        }
+        AmbiguousMacro { path } => {
+            format!("AmbiguousMacro path={}", fmt_name_path(db, path))
+        }
         TimeTravelViolation { name, ns } => format!(
             "TimeTravelViolation name={} ns={}",
             name.text(db),
@@ -462,6 +481,8 @@ pub fn fmt_memmap_error(db: &dyn sage_ir::Db, err: &sage_ir::memmap::MemmapError
         UnresolvedRedirect { name } => {
             format!("UnresolvedRedirect name={}", name.text(db))
         }
-        UnresolvedGlob { path } => format!("UnresolvedGlob path={}", fmt_path(db, *path)),
+        UnresolvedGlob { path } => {
+            format!("UnresolvedGlob path={}", fmt_name_path(db, path))
+        }
     }
 }

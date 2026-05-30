@@ -20,6 +20,7 @@ use rustc_span::def_id::DefIndex as RustcDefIndex;
 
 use sage_ir::module::{CrateNum, DefIndex};
 use sage_ir::resolve::{MacroKind, Namespace};
+use sage_ir::symbol::SymExtKind;
 use sage_ir::tcx::RawChild;
 
 use crate::proc_macro_srv::SageServer;
@@ -68,14 +69,16 @@ impl<'tcx> RustcTcxDb<'tcx> {
             let child_name = child.ident.name.as_str().to_owned();
             let cn = CrateNum(child_did.krate.as_u32());
             let di = DefIndex(child_did.index.as_u32());
-            let kind = self.tcx.def_kind(child_did);
+            let def_kind = self.tcx.def_kind(child_did);
+            let sym_ext_kind = sym_ext_kind_for_def_kind(def_kind);
 
-            for ns in namespaces_for_def_kind(kind) {
+            for ns in namespaces_for_def_kind(def_kind) {
                 results.push(RawChild {
                     name: child_name.clone(),
                     crate_num: cn,
                     def_index: di,
                     namespace: ns,
+                    kind: sym_ext_kind,
                 });
             }
         }
@@ -178,6 +181,26 @@ impl<'tcx> RustcTcxDb<'tcx> {
             Ok(output) => Some(output.to_string()),
             Err(_) => None,
         }
+    }
+}
+
+/// Map a `DefKind` to a `SymExtKind`.
+fn sym_ext_kind_for_def_kind(kind: DefKind) -> SymExtKind {
+    use rustc_hir::def::CtorOf;
+    match kind {
+        DefKind::Fn | DefKind::AssocFn => SymExtKind::Fn,
+        DefKind::Struct => SymExtKind::Struct,
+        DefKind::Ctor(CtorOf::Struct, _) => SymExtKind::TupleStructCtor,
+        DefKind::Enum => SymExtKind::Enum,
+        DefKind::Trait | DefKind::TraitAlias => SymExtKind::Trait,
+        DefKind::Impl { .. } => SymExtKind::Impl,
+        DefKind::Mod => SymExtKind::Mod,
+        DefKind::TyAlias | DefKind::AssocTy => SymExtKind::TypeAlias,
+        DefKind::Const { .. } | DefKind::AssocConst { .. } => SymExtKind::Const,
+        DefKind::Static { .. } => SymExtKind::Static,
+        DefKind::Macro(..) => SymExtKind::MacroDef,
+        DefKind::Use => SymExtKind::Use,
+        _ => SymExtKind::Other,
     }
 }
 

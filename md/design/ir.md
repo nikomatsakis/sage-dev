@@ -11,10 +11,11 @@ For the conceptual model behind the type names see
 ## Symbols (`symbol.rs`, `module.rs`)
 
 The symbol layer is the cross-source vocabulary: a `Symbol` may
-refer to a workspace `ItemAst` or to an external `(CrateNum,
-DefIndex)`. Most resolution APIs return `Symbol`.
+refer to a workspace `ItemAst`, an external `(CrateNum, DefIndex)`,
+a synthesized tuple-struct constructor, or a compiler intrinsic.
+Most resolution APIs return `Symbol`.
 
-### `Symbol` and `SymExt`
+### `Symbol` and `SymbolData`
 
 ```rust
 pub struct Symbol<'db> {
@@ -23,18 +24,25 @@ pub struct Symbol<'db> {
 
 pub enum SymbolData<'db> {
     Ast(ItemAst<'db>),
+    TupleStructCtor(StructAst<'db>),
     Ext(SymExt),
+    Intrinsic(Intrinsic),
 }
 
-pub struct SymExt {
-    pub crate_num: CrateNum,
-    pub def_index: DefIndex,
+pub enum Intrinsic {
+    Bool, Char, Str,
+    Int(IntTy), Uint(UintTy), Float(FloatTy),
 }
 ```
 
 `Symbol` is a plain `Copy` newtype; identity flows from the inner
 data. Constructors: `Symbol::ast(item)`, `Symbol::ext(ext)`,
-`Symbol::external(cn, di)`. Inspect via `.data()`.
+`Symbol::external(cn, di)`, `Symbol::intrinsic(i)`. Inspect via
+`.data()`.
+
+`Intrinsic` represents compiler-known built-in types. They are
+resolved at lowest priority (shadowable by any user-defined type)
+by the `Resolver`.
 
 ### `ModSymbol` and `ModExt`
 
@@ -130,18 +138,17 @@ name, parent, file)` are the test/builder entry points; both wrap
 salsa-tracked constructors so they're safe to call outside another
 tracked function.
 
-## Types (`types.rs`)
+## Types and paths (`types.rs`, `sig_ast.rs`)
 
-`TypeRef` represents types as written in source (unresolved). Salsa
-tracked structs, so `&Vec<String>` is just nested salsa IDs —
-`Copy`.
+Type references in source are represented by stash-allocated
+`TypeRefAst` (in `sig_ast.rs`), not salsa-tracked structs. Each
+item's signature stash contains its full type AST.
 
-`Path` holds `Vec<Name>` segments. `Name` is salsa-interned
-(O(1) equality).
-
-`UseImport` represents a single flattened use import, with `kind`
-of `Named(Name)`, `Glob`, or `Unnamed`. `UseGroupAst` holds a
-`Vec<UseImport>`.
+`Name` is salsa-interned (O(1) equality). Paths in use-imports and
+macro invocations are stored as `Vec<Name<'db>>` or
+`Slice<Name<'db>>` — there is no salsa-tracked `Path` struct for
+these. `UseGroupAst` holds a `Stashed<Slice<UseImportAst>>` where
+each import has a `Slice<Name>` path and a `UseKind`.
 
 ## Syntactic bodies (`body.rs`)
 
@@ -179,12 +186,25 @@ pub enum Res<'db> {
 match handles both local items (`SymbolData::Ast`) and external
 defs (`SymbolData::Ext`).
 
-### `LocalId` and scopes
+### `LocalId` and scopes — the `Ribs` structure
 
-`LocalId(u32)` indexes into `RBody.locals: Slice<LocalVar>`. The
-resolver tracks a scope stack (`Vec` of `Vec<(Name, LocalId)>`).
+`LocalId(u32)` indexes into `RBody.locals: Slice<LocalVar>`.
+Lexical scope is managed by a shared `Ribs` struct (`ribs.rs`)
+that both `sig_lower` and `body_resolve` use. `Ribs` is
+namespace-aware: each entry is `(Name, Namespace, RibEntry)`.
+
+```rust
+pub enum RibEntry<'db> {
+    Local(LocalId),
+    BoundVar(BoundVar),
+    Sym(Symbol<'db>),
+    SelfTy(Ty<'db>),
+}
+```
+
 Scopes are pushed/popped at: blocks, closures, for loops, match
-arms, if-let, while-let.
+arms, if-let, while-let. `sig_lower` pushes generic params as
+`BoundVar` and `Self` as `SelfTy`. `body_resolve` pushes locals.
 
 ### `resolve_body` — the entry point
 
@@ -192,9 +212,10 @@ arms, if-let, while-let.
 `#[salsa::tracked(returns(ref))]` function. It takes
 `(db, FnAst, ModSymbol, SourceRoot)` and returns `&ResolvedBody`.
 
-The `BodyResolver` struct walks the syntactic body, reading from
-the source `Stash` and writing to an output `Stash`. For each
-node:
+The `BodyResolver` struct holds a `Resolver` (for module-level
+resolution) and a `Ribs` (for lexical scope). It walks the
+syntactic body, reading from the source `Stash` and writing to an
+output `Stash`. For each node:
 
 - Expressions: resolve paths (value/type/macro namespace), recurse.
 - Statements: resolve init before pattern (let-binding ordering).
@@ -203,13 +224,15 @@ node:
 
 ### Path resolution algorithm
 
-Single-segment value paths check locals first (innermost scope
-outward), then delegate to `resolve_name` (module items → use
-imports → globs → extern prelude → std prelude).
+For any path (single or multi-segment):
 
-Multi-segment paths use `ModSymbol::resolve_path` (handles `crate`
-/ `self` / `super` / leading `::` / bare) and then walk remaining
-segments via `resolve_member`.
+1. Check `Ribs` for the first segment (locals in value ns, generics
+   / Self in type ns).
+2. If no rib hit, delegate to `Resolver::resolve_segments` which
+   handles: module members → extern prelude → std prelude →
+   intrinsics (for single-segment) or first-segment dispatch
+   (`crate` / `self` / `super` / `::` / bare) + remainder walking
+   (for multi-segment).
 
 ### What stays unresolved
 
@@ -223,7 +246,7 @@ segments via `resolve_member`.
 These are the next milestones; they all hinge on type checking,
 which sage doesn't yet do.
 
-## Module resolution (`resolve.rs`, `memmap/`)
+## Module resolution (`resolve/`, `memmap/`)
 
 Module-level name resolution uses a two-faced **MEM-map** (Minimal
 Expanded Members map) per local module. A MEM-map holds the
@@ -239,26 +262,67 @@ placeholder (external module contents come from `TcxDb` directly).
 
 ### Data model
 
-`MemmapEntry` has five variants:
+`MemmapEntry` has six variants:
 
 - `Item(ItemAst)` — a declared item (struct, fn, impl, mod, …).
   Namespace derived dynamically via `item_in_namespace`.
+- `TupleStructCtor(StructAst)` — synthesized value-namespace entry
+  for tuple/unit structs.
 - `MacroDef(MacroDefAst)` — a `macro_rules!` definition, always in
   `Namespace::Macro(Bang)`.
-- `Redirect { name, target }` — `use foo::bar [as baz]`. Namespace
-  resolved dynamically by resolving `target` at lookup time.
-- `Glob { path }` — `use foo::*`. Target module resolved
+- `Redirect { name: Name, target: Vec<Name> }` — `use foo::bar
+  [as baz]`. Namespace resolved dynamically by resolving `target`
+  at lookup time.
+- `Glob { path: Vec<Name> }` — `use foo::*`. Target module resolved
   dynamically at lookup time, so globs whose target is created by
   macro expansion are picked up correctly.
-- `MacroUse(MacroUse)` — a macro invocation with resolution state
-  (`Unresolved` / `Resolved(Vec<MacroCallee>)` /
-  `Expanded(Vec<Expansion>)`).
+- `MacroUse(MacroUse)` — a macro invocation with its path
+  (`Vec<Name>`), input tokens, and expansion state.
 
-Each `Expansion` pairs a callee with the entries it produced, so a
-fan-out of multiple candidates becomes multiple branches inside a
-single `MacroUse`.
+Paths in `Redirect`, `Glob`, and `MacroUse` are stored as
+`Vec<Name<'db>>` — there is no salsa-interned `Path` struct in the
+memmap layer. Each `Expansion` pairs a callee with the entries it
+produced.
 
-### Two resolvers
+### The `Resolver` struct
+
+The `Resolver` struct (`resolve/mod.rs`) is the primary interface
+for module-level name resolution. It holds `db`, `source_root`,
+and cycle-detection state:
+
+```rust
+pub struct Resolver<'db> {
+    db: &'db dyn Db,
+    source_root: SourceRoot,
+    in_flight: Vec<InFlightQuery<'db>>,
+}
+
+struct InFlightQuery<'db> {
+    module: ModSymbol<'db>,
+    name: Name<'db>,
+    ns: Namespace,
+}
+```
+
+Methods:
+
+- `resolve_name(module, name, ns)` — resolve a single name.
+- `resolve_segments(module, &[Name], ns)` — resolve a path given
+  as a name slice.
+- `resolve_path(module, Path, ns)` — thin wrapper that extracts
+  segments from a salsa-interned Path.
+- `resolve_member(module, name, ns)` — resolve in a module's
+  direct contents (memmap-aware).
+- `resolve_module_path(root, &[&str])` — convenience for walking
+  a segment-list path.
+
+Resolution priority for a single name: module members (named >
+glob) → extern prelude → std prelude → intrinsics.
+
+For multi-segment paths: first-segment dispatch (`crate` / `self`
+/ `super` / `::` / bare) followed by `resolve_member` walking.
+
+### Two resolution contexts
 
 The MEM-map is consumed by two resolvers with different semantic
 guarantees:
@@ -270,41 +334,22 @@ guarantees:
   `expanded_module` because it never re-enters the current
   module's expanded-module query — it walks via items
   (`parse_source_file`) for first-segment lookups.
-- **Post-construction** (`resolve_name`): used by body resolution,
-  display, and IDE-style queries. Returns exactly one `Symbol` or
-  an error. Flattens the whole tree (entries at any
-  `MacroUse::Expanded` depth count equally) and uses
-  `expanded_module`-aware path walking, so names introduced by
-  macro expansion inside any module are visible to downstream
-  callers.
-
-Priority in `resolve_name`: named (items / redirects / macro defs)
-→ glob → extern prelude → std prelude.
-
-### Dispatch on `ModSymbol`
-
-The user-facing entry points are methods on `ModSymbol`:
-
-- `resolve_member(db, source_root, name, ns)` — walks the
-  expanded-module entries (or `TcxDb::module_children` for ext
-  modules).
-- `resolve_path(db, source_root, path, final_ns)` — walks a
-  multi-segment path; first-segment dispatch handles `crate` /
-  `self` / `super` / leading `::` / bare identifiers.
-- `resolve_path_to_module(db, source_root, path)` — same, but
-  always returns a module (used for glob targets).
-
-All three branch on `ModSymbol::data()`: ast arm consults the
-expanded module, ext arm consults `TcxDb`.
+- **Post-construction** (`Resolver`): used by body resolution,
+  signature lowering, derive expansion, and IDE-style queries.
+  Returns exactly one `Symbol` or an error. Flattens the whole
+  tree (entries at any `MacroUse::Expanded` depth count equally)
+  and uses `expanded_module`-aware path walking, so names
+  introduced by macro expansion inside any module are visible to
+  downstream callers.
 
 ### Cycle handling
 
-Path-walking helpers share a thread-local in-flight frame stack.
-Re-entering the same `(module_key, name|path, kind)` triple
-short-circuits to `None` / `Err`, so mutually cyclic globs and
-redirect chains terminate without stack overflow. Module keys are
-encoded so ast and ext modules can share the same stack without
-collision (high bit set for ext, payload packs `(cn, di)`).
+The `Resolver` carries an `in_flight: Vec<InFlightQuery>` stack.
+Re-entering the same `(module, name, ns)` triple short-circuits
+to `Err(Unresolved)`, so mutually cyclic globs and redirect chains
+terminate without stack overflow. This is struct-local state (not
+thread-local), so cycle detection is confined to the resolver's
+lifetime.
 
 ### Macro expansion
 
@@ -350,15 +395,16 @@ that names a module (`SymbolData::Ast(ItemAst::Mod(...))` or
 
 ### Free helpers
 
-- `module_items(module)` / `module_use_imports(module)` —
-  flat-list views over a module's declared items / use imports.
-  Used by display, tests, and the demo entry point.
+- `module_items(module)` — flat-list view over a module's declared
+  items. Used by display, tests, and the demo entry point.
 - `definition(module, name)` / `definition_in_ns(module, name, ns)`
   — direct child lookup, items-based for local modules and
   `TcxDb::module_children` for external. The ns variant filters by
   namespace on the ext arm.
-- `resolve_module_path(root, &[&str])` — convenience for walking a
-  segment-list path from a starting module.
+- `resolve_name(db, module, source_root, name, ns)` — convenience
+  that creates a temporary `Resolver` for one-shot lookups.
+- `resolve_module_path(db, root, source_root, &[&str])` — same,
+  for walking a string-segment path.
 - `dump_expanded_module(root, source_root, "crate::foo::bar")` —
   the demo entry point that ties path-string parsing to
   `resolve_module_path` + `expanded_module`.

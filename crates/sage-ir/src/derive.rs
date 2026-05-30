@@ -7,7 +7,7 @@ use crate::module::{CrateNum, DefIndex, ModSymbol};
 use crate::name::Name;
 use crate::resolve::{MacroKind, Namespace, SourceRoot, definition_in_ns, resolve_name};
 use crate::source::SourceFile;
-use crate::symbol::{Symbol, SymbolData};
+use crate::symbol::Symbol;
 use crate::types::{AttrKind, TokenTree};
 
 /// Result of expanding a single derive.
@@ -36,7 +36,7 @@ pub fn expand_derives<'db>(
         if attr.kind(db) != AttrKind::Normal {
             continue;
         }
-        let path_segs = attr.path(db).segments(db);
+        let path_segs = attr.path(db);
         if path_segs.len() != 1 || path_segs[0].text(db) != "derive" {
             continue;
         }
@@ -51,9 +51,9 @@ pub fn expand_derives<'db>(
                 Namespace::Macro(MacroKind::Derive),
             ) {
                 Ok(symbol) => {
-                    let (cn, di) = match symbol.data() {
-                        SymbolData::Ext(ext) => (ext.crate_num, ext.def_index),
-                        _ => {
+                    let (cn, di) = match symbol.as_ext() {
+                        Some(ext) => (ext.crate_num, ext.def_index),
+                        None => {
                             results.push(DeriveResult::ProcMacro { symbol });
                             continue;
                         }
@@ -123,7 +123,7 @@ fn try_expand_proc_macro<'db>(
                 derive_name,
                 Namespace::Macro(MacroKind::Derive),
             ) {
-                if let SymbolData::Ext(ext) = sym.data() {
+                if let Some(ext) = sym.as_ext() {
                     if let Some(expanded) = db.tcx().expand_proc_macro_derive(
                         ext.crate_num,
                         ext.def_index,

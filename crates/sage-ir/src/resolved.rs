@@ -1,10 +1,11 @@
-use sage_stash::{AllocStashData, Ptr, Slice, StashDirect, Stashed};
+use sage_stash::{AllocStashData, Ptr, Slice, Stashed};
 
 use crate::body::{BinaryOp, Literal, UnaryOp};
 use crate::name::Name;
+use crate::sig_ast::TypeRefAst;
 use crate::span::RelativeSpan;
 use crate::symbol::Symbol;
-use crate::types::{Mutability, TokenTree, TypeRef};
+use crate::types::{Mutability, TokenTree};
 
 /// A resolved function body stored in a `Stash`.
 pub type ResolvedBody<'db> = Stashed<Ptr<RBody<'db>>>;
@@ -17,13 +18,9 @@ pub enum Res<'db> {
     Err,
 }
 
-impl StashDirect for Res<'_> {}
-
 /// Identifies a local variable within a function body.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct LocalId(pub u32);
-
-impl StashDirect for LocalId {}
 
 /// Metadata about a local variable.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
@@ -31,8 +28,6 @@ pub struct LocalVar<'db> {
     pub name: Name<'db>,
     pub span: RelativeSpan,
 }
-
-impl StashDirect for LocalVar<'_> {}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct RBody<'db> {
@@ -80,7 +75,7 @@ pub enum RExprKind<'db> {
     Tuple(Slice<RExpr<'db>>),
     Array(Slice<RExpr<'db>>),
     Index(Ptr<RExpr<'db>>, Ptr<RExpr<'db>>),
-    Cast(Ptr<RExpr<'db>>, TypeRef<'db>),
+    Cast(Ptr<RExpr<'db>>, Ptr<TypeRefAst<'db>>),
     StructLit(Res<'db>, Slice<RFieldInit<'db>>),
     Range(Option<Ptr<RExpr<'db>>>, Option<Ptr<RExpr<'db>>>),
     MacroCall(Res<'db>, TokenTree<'db>),
@@ -97,7 +92,7 @@ pub struct RStmt<'db> {
 pub enum RStmtKind<'db> {
     Let(
         Ptr<RPat<'db>>,
-        Option<TypeRef<'db>>,
+        Option<Ptr<TypeRefAst<'db>>>,
         Option<Ptr<RExpr<'db>>>,
     ),
     Expr(Ptr<RExpr<'db>>),
@@ -149,6 +144,6 @@ pub struct RMatchArm<'db> {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct RClosureParam<'db> {
     pub pat: Ptr<RPat<'db>>,
-    pub ty: Option<TypeRef<'db>>,
+    pub ty: Option<Ptr<TypeRefAst<'db>>>,
     pub span: RelativeSpan,
 }

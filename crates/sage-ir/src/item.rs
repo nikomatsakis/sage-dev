@@ -1,8 +1,11 @@
+use sage_stash::StashDirect;
+
 use crate::body::FunctionBody;
 use crate::name::Name;
+use crate::sig_ast::*;
 use crate::source::SourceFile;
 use crate::span::{AbsoluteSpan, ParseSource};
-use crate::types::{Attr, FieldDef, Param, Path, TypeRef, UseImport, VariantDef};
+use crate::types::{Attr, UseImports};
 
 /// Thin enum over all item kinds. `Copy` because salsa tracked struct
 /// handles are just IDs.
@@ -23,6 +26,10 @@ pub enum ItemAst<'db> {
     /// Unrecognized or unsupported item node.
     Error(AbsoluteSpan<'db>),
 }
+
+impl StashDirect for ItemAst<'_> {}
+impl StashDirect for StructAst<'_> {}
+impl StashDirect for MacroDefAst<'_> {}
 
 impl<'db> ItemAst<'db> {
     pub fn absolute_span(&self, db: &'db dyn crate::Db) -> AbsoluteSpan<'db> {
@@ -64,10 +71,7 @@ pub struct FnAst<'db> {
 
     #[tracked]
     #[returns(ref)]
-    pub params: Vec<Param<'db>>,
-
-    #[tracked]
-    pub ret_type: Option<TypeRef<'db>>,
+    pub signature: FnSigAst<'db>,
 
     #[tracked]
     pub is_async: bool,
@@ -85,9 +89,19 @@ pub struct FnAst<'db> {
 
 // -- Struct --
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub enum StructKind {
+    Tuple,
+    Unit,
+    Braced,
+}
+
 #[salsa::tracked(debug)]
 pub struct StructAst<'db> {
     pub name: Name<'db>,
+
+    #[tracked]
+    pub kind: StructKind,
 
     #[tracked]
     #[returns(ref)]
@@ -95,7 +109,7 @@ pub struct StructAst<'db> {
 
     #[tracked]
     #[returns(ref)]
-    pub fields: Vec<FieldDef<'db>>,
+    pub signature: StructSigAst<'db>,
 
     #[tracked]
     pub span: AbsoluteSpan<'db>,
@@ -113,7 +127,7 @@ pub struct EnumAst<'db> {
 
     #[tracked]
     #[returns(ref)]
-    pub variants: Vec<VariantDef<'db>>,
+    pub signature: EnumSigAst<'db>,
 
     #[tracked]
     pub span: AbsoluteSpan<'db>,
@@ -128,6 +142,10 @@ pub struct TraitAst<'db> {
     #[tracked]
     #[returns(ref)]
     pub attrs: Vec<Attr<'db>>,
+
+    #[tracked]
+    #[returns(ref)]
+    pub signature: TraitSigAst<'db>,
 
     #[tracked]
     #[returns(ref)]
@@ -146,10 +164,8 @@ pub struct ImplAst<'db> {
     pub attrs: Vec<Attr<'db>>,
 
     #[tracked]
-    pub self_ty: TypeRef<'db>,
-
-    #[tracked]
-    pub trait_path: Option<Path<'db>>,
+    #[returns(ref)]
+    pub signature: ImplSigAst<'db>,
 
     #[tracked]
     #[returns(ref)]
@@ -170,7 +186,8 @@ pub struct TypeAliasAst<'db> {
     pub attrs: Vec<Attr<'db>>,
 
     #[tracked]
-    pub ty: Option<TypeRef<'db>>,
+    #[returns(ref)]
+    pub signature: TypeAliasSigAst<'db>,
 
     #[tracked]
     pub span: AbsoluteSpan<'db>,
@@ -187,7 +204,8 @@ pub struct ConstAst<'db> {
     pub attrs: Vec<Attr<'db>>,
 
     #[tracked]
-    pub ty: Option<TypeRef<'db>>,
+    #[returns(ref)]
+    pub signature: ConstSigAst<'db>,
 
     #[tracked]
     pub span: AbsoluteSpan<'db>,
@@ -204,7 +222,8 @@ pub struct StaticAst<'db> {
     pub attrs: Vec<Attr<'db>>,
 
     #[tracked]
-    pub ty: Option<TypeRef<'db>>,
+    #[returns(ref)]
+    pub signature: StaticSigAst<'db>,
 
     #[tracked]
     pub is_mut: bool,
@@ -356,7 +375,7 @@ pub struct UseGroupAst<'db> {
 
     #[tracked]
     #[returns(ref)]
-    pub imports: Vec<UseImport<'db>>,
+    pub imports: UseImports<'db>,
 
     #[tracked]
     pub span: AbsoluteSpan<'db>,
@@ -382,7 +401,9 @@ pub struct MacroDefAst<'db> {
 /// An item-level macro invocation (e.g. `m!()` or `foo::bar::m!()`).
 #[salsa::tracked(debug)]
 pub struct MacroInvocationAst<'db> {
-    pub path: Path<'db>,
+    #[tracked]
+    #[returns(ref)]
+    pub path: Vec<Name<'db>>,
 
     /// The token stream passed to the macro at the invocation site — i.e.
     /// the contents of `m!(...)`, with the outer delimiter pair stripped.

@@ -31,6 +31,12 @@ tree-sitter-rust = "0.24"
 arbitrary = { version = "1", features = ["derive"] }
 criterion = { version = "0.8", features = ["html_reports"] }
 libfuzzer-sys = "0.4"
+sage-stash = { version = "0.1.0", path = "crates/sage-stash" }
+rand = "0.10.1"
+
+[[bench]]
+name = "stash_bench"
+harness = false
 
 [dev-dependencies]
 expect-test = "1.5.1"

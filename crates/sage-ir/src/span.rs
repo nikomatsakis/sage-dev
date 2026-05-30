@@ -1,3 +1,5 @@
+use sage_stash::StashDirect;
+
 use crate::memmap::MacroInput;
 use crate::source::SourceFile;
 
@@ -78,3 +80,5 @@ pub struct RelativeSpan {
     pub start: u32,
     pub end: u32,
 }
+
+impl StashDirect for RelativeSpan {}

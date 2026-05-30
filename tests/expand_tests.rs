@@ -10,7 +10,7 @@ use std::path::Path;
 use expect_test::expect;
 use sage_ir::Db;
 use sage_ir::item::ItemAst;
-use sage_ir::resolve::{module_items, module_use_imports, resolve_module_path};
+use sage_ir::resolve::{module_items, resolve_module_path};
 
 use sage::driver::run_sage_with;
 
@@ -75,10 +75,12 @@ fn resolve_use_imports_with_real_tcx() {
         let module =
             resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
 
-        let imports = module_use_imports(sage.db, module);
+        let items = module_items(sage.db, module);
         let mut out = String::new();
-        for import in imports {
-            out.push_str(&format!("{import}\n"));
+        for item in items {
+            if let ItemAst::Use(group) = item {
+                out.push_str(&format!("{group}\n"));
+            }
         }
 
         expect![[r#"
@@ -123,8 +125,8 @@ fn expand_derives_cmd_get() {
         let symbol = result.unwrap();
 
         // Verify it's an external symbol (from std/core)
-        match symbol.data() {
-            sage_ir::symbol::SymbolData::Ext(ext) => {
+        match symbol.as_ext() {
+            Some(ext) => {
                 // Verify it's identified as a builtin derive
                 assert!(
                     sage.db
@@ -133,7 +135,7 @@ fn expand_derives_cmd_get() {
                     "Debug should be identified as a builtin derive"
                 );
             }
-            _ => panic!("expected external symbol for Debug derive"),
+            None => panic!("expected external symbol for Debug derive"),
         }
     });
 }
@@ -156,11 +158,11 @@ fn query_log_demand_driven_with_real_tcx() {
               salsa: expanded_module(Id(1000))
               salsa: parse_source_file(Id(10))
             parse_source_file("lib.rs")
-              salsa: resolve_mod_tracked(Id(3800))
+              salsa: resolve_mod_tracked(Id(2c00))
               salsa: expanded_module(Id(1001))
               salsa: parse_source_file(Id(7))
             parse_source_file("cmd/mod.rs")
-              salsa: resolve_mod_tracked(Id(3801))
+              salsa: resolve_mod_tracked(Id(2c01))
             module_items("cmd/get.rs")
               salsa: parse_source_file(Id(6))
             parse_source_file("cmd/get.rs")"#]]
@@ -178,13 +180,11 @@ fn expand_no_derives() {
             let has_derive = match item {
                 ItemAst::Struct(s) => s.attrs(sage.db).iter().any(|a| {
                     a.path(sage.db)
-                        .segments(sage.db)
                         .first()
                         .is_some_and(|s| s.text(sage.db) == "derive")
                 }),
                 ItemAst::Enum(e) => e.attrs(sage.db).iter().any(|a| {
                     a.path(sage.db)
-                        .segments(sage.db)
                         .first()
                         .is_some_and(|s| s.text(sage.db) == "derive")
                 }),
@@ -223,14 +223,14 @@ fn expand_derives_cmd_get_full() {
                         out.push_str(&format!("{impl_item}\n"));
                     }
                 }
-                sage_ir::derive::DeriveResult::ProcMacro { symbol } => match symbol.data() {
-                    sage_ir::symbol::SymbolData::Ext(ext) => {
+                sage_ir::derive::DeriveResult::ProcMacro { symbol } => match symbol.as_ext() {
+                    Some(ext) => {
                         out.push_str(&format!(
                             "proc_macro: External({}, {})\n",
                             ext.crate_num.0, ext.def_index.0
                         ));
                     }
-                    sage_ir::symbol::SymbolData::Ast(_) => {
+                    None => {
                         out.push_str("proc_macro: Local\n");
                     }
                 },
@@ -256,11 +256,11 @@ fn expand_derives_cmd_get_full() {
               salsa: expanded_module(Id(1000))
               salsa: parse_source_file(Id(10))
             parse_source_file("lib.rs")
-              salsa: resolve_mod_tracked(Id(3800))
+              salsa: resolve_mod_tracked(Id(2c00))
               salsa: expanded_module(Id(1001))
               salsa: parse_source_file(Id(7))
             parse_source_file("cmd/mod.rs")
-              salsa: resolve_mod_tracked(Id(3801))
+              salsa: resolve_mod_tracked(Id(2c01))
             module_items("cmd/get.rs")
               salsa: parse_source_file(Id(6))
             parse_source_file("cmd/get.rs")
@@ -275,7 +275,7 @@ fn expand_derives_cmd_get_full() {
             tcx::is_module(1, _)
             tcx::module_children(1, _)
             tcx::is_builtin_derive(2, _)
-              salsa: expand_builtin(Id(5800))
+              salsa: expand_builtin(Id(4000))
             expand_builtin("Debug", "Get")"#]]
         .assert_eq(&log);
     });
@@ -471,17 +471,17 @@ fn expanded_items_are_valid_ir() {
             #[# [allow(clippy :: style , clippy :: complexity , clippy :: pedantic , clippy :: restriction , clippy :: perf , clippy :: deprecated , clippy :: nursery , clippy :: cargo , clippy :: suspicious_else_formatting , clippy :: almost_swapped ,)]
             #[# [automatically_derived]
             impl clap::FromArgMatches for Cli {
-              fn from_arg_matches(__clap_arg_matches: &clap::ArgMatches) -> ::std::result::Result {
+              fn from_arg_matches(__clap_arg_matches: &clap::ArgMatches) -> ::std::result::Result<Self, clap::Error> {
               Self::from_arg_matches_mut(&mut __clap_arg_matches.clone())
             }
-              fn from_arg_matches_mut(__clap_arg_matches: &mut clap::ArgMatches) -> ::std::result::Result {
+              fn from_arg_matches_mut(__clap_arg_matches: &mut clap::ArgMatches) -> ::std::result::Result<Self, clap::Error> {
               let v = Cli { port: __clap_arg_matches.remove_one()(String) };
               ::std::result::Result::Ok(v)
             }
-              fn update_from_arg_matches(self: &mut Self, __clap_arg_matches: &clap::ArgMatches) -> ::std::result::Result {
+              fn update_from_arg_matches(self: &mut Self, __clap_arg_matches: &clap::ArgMatches) -> ::std::result::Result<(), clap::Error> {
               self.update_from_arg_matches_mut(&mut __clap_arg_matches.clone())
             }
-              fn update_from_arg_matches_mut(self: &mut Self, __clap_arg_matches: &mut clap::ArgMatches) -> ::std::result::Result {
+              fn update_from_arg_matches_mut(self: &mut Self, __clap_arg_matches: &mut clap::ArgMatches) -> ::std::result::Result<(), clap::Error> {
               if __clap_arg_matches.contains_id(String) {
                 let port = &mut self.port;
                 Derefport = __clap_arg_matches.remove_one()(String)
@@ -493,13 +493,13 @@ fn expanded_items_are_valid_ir() {
             #[# [allow(clippy :: style , clippy :: complexity , clippy :: pedantic , clippy :: restriction , clippy :: perf , clippy :: deprecated , clippy :: nursery , clippy :: cargo , clippy :: suspicious_else_formatting , clippy :: almost_swapped ,)]
             #[# [automatically_derived]
             impl clap::Args for Cli {
-              fn group_id() -> Option {
+              fn group_id() -> Option<clap::Id> {
               Some(clap::Id::from(String))
             }
               fn augment_args(__clap_app: clap::Command) -> clap::Command {
               {
                 let __clap_app = __clap_app.group(clap::ArgGroup::new(String).multiple(Bool(true)).args({
-                  let members: [clap :: Id ; 1usize] = [clap::Id::from(String)];
+                  let members: [clap::Id; _] = [clap::Id::from(String)];
                   members
                 }));
                 let __clap_app = __clap_app.arg({
@@ -514,7 +514,7 @@ fn expanded_items_are_valid_ir() {
               fn augment_args_for_update(__clap_app: clap::Command) -> clap::Command {
               {
                 let __clap_app = __clap_app.group(clap::ArgGroup::new(String).multiple(Bool(true)).args({
-                  let members: [clap :: Id ; 1usize] = [clap::Id::from(String)];
+                  let members: [clap::Id; _] = [clap::Id::from(String)];
                   members
                 }));
                 let __clap_app = __clap_app.arg({
@@ -595,17 +595,17 @@ fn snapshot_expanded_clap_parser() {
             #[# [allow(clippy :: style , clippy :: complexity , clippy :: pedantic , clippy :: restriction , clippy :: perf , clippy :: deprecated , clippy :: nursery , clippy :: cargo , clippy :: suspicious_else_formatting , clippy :: almost_swapped ,)]
             #[# [automatically_derived]
             impl clap::FromArgMatches for Cli {
-              fn from_arg_matches(__clap_arg_matches: &clap::ArgMatches) -> ::std::result::Result {
+              fn from_arg_matches(__clap_arg_matches: &clap::ArgMatches) -> ::std::result::Result<Self, clap::Error> {
               Self::from_arg_matches_mut(&mut __clap_arg_matches.clone())
             }
-              fn from_arg_matches_mut(__clap_arg_matches: &mut clap::ArgMatches) -> ::std::result::Result {
+              fn from_arg_matches_mut(__clap_arg_matches: &mut clap::ArgMatches) -> ::std::result::Result<Self, clap::Error> {
               let v = Cli { port: __clap_arg_matches.remove_one()(String) };
               ::std::result::Result::Ok(v)
             }
-              fn update_from_arg_matches(self: &mut Self, __clap_arg_matches: &clap::ArgMatches) -> ::std::result::Result {
+              fn update_from_arg_matches(self: &mut Self, __clap_arg_matches: &clap::ArgMatches) -> ::std::result::Result<(), clap::Error> {
               self.update_from_arg_matches_mut(&mut __clap_arg_matches.clone())
             }
-              fn update_from_arg_matches_mut(self: &mut Self, __clap_arg_matches: &mut clap::ArgMatches) -> ::std::result::Result {
+              fn update_from_arg_matches_mut(self: &mut Self, __clap_arg_matches: &mut clap::ArgMatches) -> ::std::result::Result<(), clap::Error> {
               if __clap_arg_matches.contains_id(String) {
                 let port = &mut self.port;
                 Derefport = __clap_arg_matches.remove_one()(String)
@@ -617,13 +617,13 @@ fn snapshot_expanded_clap_parser() {
             #[# [allow(clippy :: style , clippy :: complexity , clippy :: pedantic , clippy :: restriction , clippy :: perf , clippy :: deprecated , clippy :: nursery , clippy :: cargo , clippy :: suspicious_else_formatting , clippy :: almost_swapped ,)]
             #[# [automatically_derived]
             impl clap::Args for Cli {
-              fn group_id() -> Option {
+              fn group_id() -> Option<clap::Id> {
               Some(clap::Id::from(String))
             }
               fn augment_args(__clap_app: clap::Command) -> clap::Command {
               {
                 let __clap_app = __clap_app.group(clap::ArgGroup::new(String).multiple(Bool(true)).args({
-                  let members: [clap :: Id ; 1usize] = [clap::Id::from(String)];
+                  let members: [clap::Id; _] = [clap::Id::from(String)];
                   members
                 }));
                 let __clap_app = __clap_app.arg({
@@ -638,7 +638,7 @@ fn snapshot_expanded_clap_parser() {
               fn augment_args_for_update(__clap_app: clap::Command) -> clap::Command {
               {
                 let __clap_app = __clap_app.group(clap::ArgGroup::new(String).multiple(Bool(true)).args({
-                  let members: [clap :: Id ; 1usize] = [clap::Id::from(String)];
+                  let members: [clap::Id; _] = [clap::Id::from(String)];
                   members
                 }));
                 let __clap_app = __clap_app.arg({
