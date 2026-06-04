@@ -840,6 +840,7 @@ name = "sage-ir"
 version = "0.1.0"
 dependencies = [
  "expect-test",
+ "rustc-hash",
  "sage-stash",
  "salsa",
  "tree-sitter",

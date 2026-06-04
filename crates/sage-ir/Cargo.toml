@@ -4,6 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
+rustc-hash = "2.1.2"
 sage-stash = { path = "../sage-stash", features = ["salsa"] }
 salsa = "0.26.1"
 tree-sitter = "0.25"

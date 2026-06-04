@@ -938,6 +938,10 @@ fn fmt_res(f: &mut fmt::Formatter<'_>, res: &Res<'_>) -> fmt::Result {
                 SymbolData::MacroDef(_) => write!(f, "<def ?>"),
                 SymbolData::Use(_) => write!(f, "<def ?>"),
                 SymbolData::MacroInvocation(_) => write!(f, "<def ?>"),
+                SymbolData::GenericParam(p) => match p.name(db) {
+                    Some(n) => write!(f, "<param {}>", n.text(db)),
+                    None => write!(f, "<param ?>"),
+                },
                 SymbolData::Intrinsic(i) => write!(f, "<intrinsic {i:?}>"),
                 SymbolData::Error(_) => write!(f, "<def ?>"),
                 SymbolData::Unknown(_) => unreachable!(),

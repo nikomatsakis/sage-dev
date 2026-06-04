@@ -1,6 +1,6 @@
 # RFD: Generic Parameters as Symbols
 
-**Status:** Draft
+**Status:** Implemented
 
 **Depends on:**
 - [Type Signatures](./type-signatures.md) — current `Ty`, `Binder`, `BoundVar` representation
@@ -162,27 +162,26 @@ pub enum Lifetime<'db> {
 }
 ```
 
-### `Binder<T>` carries symbols
+### `Binder<'db, T>` carries symbols
 
-We retain the `Binder<T>` wrapper, but instead of de Bruijn `BoundVarInfo` it carries a `Slice<GenericParam<'db>>`. The `Parametric` trait avoids a redundant `'db` parameter on `Binder` (since `T` already carries it):
+We retain the `Binder` wrapper, but instead of de Bruijn `BoundVarInfo` it carries a `Slice<GenericParam<'db>>`. The `'db` lifetime is explicit on `Binder` itself — this is straightforward and avoids extra trait machinery (a `Parametric` trait to hide the lifetime was considered but adds complexity without meaningful ergonomic payoff given that code is rarely generic over `Binder<T>`):
 
 ```rust
-/// Trait for types that can appear inside a `Binder`.
-/// Associates the param type so `Binder`
-/// doesn't need its own lifetime parameter.
-trait Parametric {
-    type Param;
-}
-
-impl<'db> Parametric for FnSig<'db> {
-    type Param = GenericParam<'db>;
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
-pub struct Binder<T: Parametric> {
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Binder<'db, T> {
     /// The generic parameters bound by this binder.
-    pub generics: Slice<T::Param>,
+    pub generics: Slice<GenericParam<'db>>,
     pub value: T,
+}
+```
+
+`Binder` does not use `#[repr(C)]` — the stash reads/writes via typed pointers, so Rust's default layout is fine.
+
+`Binder` cannot use `#[derive(AllocStashData)]` (the macro rejects type parameters), so `StashData`, `StashHash`, and `StashCopy` are implemented manually. The `StaticSelf` associated type recurses through `T`:
+
+```rust
+unsafe impl<'db, T: StashData<'db>> StashData<'db> for Binder<'db, T> {
+    type StaticSelf = Binder<'static, T::StaticSelf>;
 }
 ```
 
@@ -303,7 +302,7 @@ This is deferred — higher-ranked types are not needed for the initial type ela
 | Current | New |
 |---------|-----|
 | `BoundVar { binder_index, param_index }` | `TyData::Param(GenericParam)` / `Lifetime::Param(GenericParam)` |
-| `Binder<T> { bound_vars: Slice<BoundVarInfo>, value }` | `Binder<T> { generics: Slice<GenericParam>, value }` |
+| `Binder<'db, T> { bound_vars: Slice<BoundVarInfo>, value }` | `Binder<'db, T> { generics: Slice<GenericParam<'db>>, value: T }` |
 | `BoundVarInfo { kind }` | `GenericParam` enum (`Ast`/`Ext`/`AlphaEquiv` variants, each with a `kind` field) |
 | `Instantiate` folder (substitutes de Bruijn) | `Substitute` folder (substitutes `GenericParam`s) |
 | `Lifetime::BoundVar(BoundVar)` | `Lifetime::Param(GenericParam)` |
@@ -317,7 +316,7 @@ This is deferred — higher-ranked types are not needed for the initial type ela
 
 ### What stays the same
 
-- `Binder<T>` — same role, now carries `Slice<GenericParam>` instead of `Slice<BoundVarInfo>`; uses a `Parametric` trait to avoid a `'db` lifetime parameter
+- `Binder<'db, T>` — same role, now carries `Slice<GenericParam<'db>>` instead of `Slice<BoundVarInfo>`; has an explicit `'db` lifetime (no `Parametric` trait needed)
 - `FnSig`, `StructSig`, `EnumSig`, `FieldSig`, `VariantSig` — same fields, still wrapped in `Binder`
 - `TyFolder` trait — still used, just doesn't need shift/binder-depth tracking
 - `SigLowerCtx` — instead of tracking a de Bruijn depth, it holds the current item's `GenericParam`s and resolves names to them
@@ -339,7 +338,7 @@ When lowering `TypeRefAst` → `Ty`, resolve generic parameter names to their `A
 
 ### Step 4: Migrate `Binder<T>` to carry `GenericParam`
 
-Change `Binder` from storing `Slice<BoundVarInfo>` to `Slice<T::Param>` via the `Parametric` trait. Signature queries still return `Stashed<Binder<FnSig>>` etc. — the shape is the same, only the bound-variable representation changes. Update all callers that inspect the binder's variable list.
+Change `Binder` from storing `Slice<BoundVarInfo>` to `Slice<GenericParam<'db>>`. Signature queries still return `Stashed<Binder<'db, FnSig<'db>>>` etc. — the shape is the same, only the bound-variable representation changes. Implement `StashData`, `StashHash`, and `StashCopy` manually (the derive macro doesn't support type parameters). Update all callers that inspect the binder's variable list.
 
 ### Step 5: Replace `Instantiate` with `Substitute`
 

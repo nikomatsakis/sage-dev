@@ -278,6 +278,10 @@ pub fn fmt_symbol(db: &dyn sage_ir::Db, sym: Symbol) -> String {
         SymbolData::MacroDef(_) => "<local MacroDef>".to_owned(),
         SymbolData::Use(_) => "<local Use>".to_owned(),
         SymbolData::MacroInvocation(_) => "<local MacroInvocation>".to_owned(),
+        SymbolData::GenericParam(p) => match p.name(db) {
+            Some(n) => format!("<param {}>", n.text(db)),
+            None => "<param ?>".to_owned(),
+        },
         SymbolData::Intrinsic(i) => format!("<intrinsic {i:?}>"),
         SymbolData::Error(_) => "<local Error>".to_owned(),
         SymbolData::Unknown(_) => unreachable!(),

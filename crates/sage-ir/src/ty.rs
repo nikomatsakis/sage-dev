@@ -5,6 +5,7 @@
 
 use sage_stash::{AllocStashData, Ptr, Slice};
 
+use crate::generic_param::GenericParam;
 use crate::name::Name;
 use crate::symbol::Symbol;
 use crate::types::Mutability;
@@ -30,12 +31,18 @@ pub enum TyData<'db> {
 
     // --- compound ---
     Adt(Symbol<'db>, Slice<Ty<'db>>),
-    Ref(Ptr<Ty<'db>>, Mutability, Lifetime),
+    Ref(Ptr<Ty<'db>>, Mutability, Lifetime<'db>),
     Tuple(Slice<Ty<'db>>),
     Slice(Ptr<Ty<'db>>),
     Array(Ptr<Ty<'db>>, Const<'db>),
     FnPtr(Slice<Ty<'db>>, Ptr<Ty<'db>>),
-    BoundVar(BoundVar),
+
+    // --- variables ---
+    /// A reference to a generic type parameter (universal variable).
+    /// Invariant: param.kind() == Type.
+    Param(GenericParam<'db>),
+
+    // --- other ---
     Never,
     Error,
 }
@@ -75,8 +82,9 @@ pub enum FloatTy {
 // ---------------------------------------------------------------------------
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
-pub enum Lifetime {
-    BoundVar(BoundVar),
+pub enum Lifetime<'db> {
+    /// Invariant: param.kind() == Lifetime.
+    Param(GenericParam<'db>),
     Static,
     Erased,
 }
@@ -88,17 +96,10 @@ pub enum Lifetime {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub enum Const<'db> {
     Literal(u64),
+    /// A reference to a generic const parameter.
+    /// Invariant: param.kind() == Const.
+    Param(GenericParam<'db>),
     Other(Symbol<'db>),
-}
-
-// ---------------------------------------------------------------------------
-// BoundVar
-// ---------------------------------------------------------------------------
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
-pub struct BoundVar {
-    pub binder_index: u32,
-    pub param_index: u32,
 }
 
 // ---------------------------------------------------------------------------
@@ -106,60 +107,40 @@ pub struct BoundVar {
 // ---------------------------------------------------------------------------
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-#[repr(C)]
 pub struct Binder<'db, T> {
     pub value: T,
-    pub bound_vars: Slice<BoundVarInfo>,
-    _marker: std::marker::PhantomData<&'db ()>,
+    pub generics: Slice<GenericParam<'db>>,
 }
 
-unsafe impl<'db, T: Copy + PartialEq + std::hash::Hash + sage_stash::StashHash + 'static>
-    sage_stash::StashData<'db> for Binder<'db, T>
-{
-    type StaticSelf = Binder<'static, T>;
+unsafe impl<'db, T: sage_stash::StashData<'db>> sage_stash::StashData<'db> for Binder<'db, T> {
+    type StaticSelf = Binder<'static, T::StaticSelf>;
 }
 
-impl<'db, T: Copy + PartialEq + std::hash::Hash + sage_stash::StashHash + 'static>
-    AllocStashData<'db> for Binder<'db, T>
+impl<'db, T: sage_stash::StashData<'db> + sage_stash::StashHash + PartialEq> AllocStashData<'db>
+    for Binder<'db, T>
 {
 }
 
-impl<'db, T: sage_stash::StashHash + std::hash::Hash> sage_stash::StashHash for Binder<'db, T> {
+impl<'db, T: sage_stash::StashHash> sage_stash::StashHash for Binder<'db, T> {
     fn stash_hash(&self, stash: &sage_stash::Stash, hasher: &mut impl sage_stash::StashHasher) {
         self.value.stash_hash(stash, hasher);
-        sage_stash::StashHash::stash_hash(&self.bound_vars, stash, hasher);
+        sage_stash::StashHash::stash_hash(&self.generics, stash, hasher);
     }
 }
 
 impl<'db, T: sage_stash::StashCopy> sage_stash::StashCopy for Binder<'db, T> {
     fn stash_copy(&self, source: &sage_stash::Stash, target: &mut sage_stash::Stash) -> Self {
-        Binder::new(
-            self.value.stash_copy(source, target),
-            self.bound_vars.stash_copy(source, target),
-        )
-    }
-}
-
-impl<'db, T> Binder<'db, T> {
-    pub fn new(value: T, bound_vars: Slice<BoundVarInfo>) -> Self {
-        Self {
-            value,
-            bound_vars,
-            _marker: std::marker::PhantomData,
+        Binder {
+            value: self.value.stash_copy(source, target),
+            generics: self.generics.stash_copy(source, target),
         }
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
-pub struct BoundVarInfo {
-    pub kind: BoundVarKind,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
-pub enum BoundVarKind {
-    Type,
-    Lifetime,
-    Const,
+impl<'db, T> Binder<'db, T> {
+    pub fn new(value: T, generics: Slice<GenericParam<'db>>) -> Self {
+        Self { value, generics }
+    }
 }
 
 // ---------------------------------------------------------------------------

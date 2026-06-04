@@ -1,6 +1,7 @@
 mod common;
 
 use sage_ir::db::Database;
+use sage_ir::generic_param::GenericParamKind;
 use sage_ir::item::*;
 use sage_ir::lower::parse_source_file;
 use sage_ir::module::ModSymbol;
@@ -33,29 +34,23 @@ fn fn_identity_generic() {
         let stash = sig.stash();
         let binder = sig.root();
 
-        let bound_vars = &stash[binder.bound_vars];
-        assert_eq!(bound_vars.len(), 1);
-        assert!(matches!(bound_vars[0].kind, BoundVarKind::Type));
+        let generics = &stash[binder.generics];
+        assert_eq!(generics.len(), 1);
+        assert_eq!(generics[0].kind(db), GenericParamKind::Type);
 
         let fn_sig = &binder.value;
         let params = &stash[fn_sig.params];
         assert_eq!(params.len(), 1);
-        assert!(matches!(
-            params[0].data,
-            TyData::BoundVar(BoundVar {
-                binder_index: 0,
-                param_index: 0
-            })
-        ));
+        match params[0].data {
+            TyData::Param(p) => assert_eq!(p, generics[0]),
+            other => panic!("expected Param, got {other:?}"),
+        }
 
         let ret = &stash[fn_sig.ret];
-        assert!(matches!(
-            ret.data,
-            TyData::BoundVar(BoundVar {
-                binder_index: 0,
-                param_index: 0
-            })
-        ));
+        match ret.data {
+            TyData::Param(p) => assert_eq!(p, generics[0]),
+            other => panic!("expected Param, got {other:?}"),
+        }
     });
 }
 
@@ -73,7 +68,7 @@ fn fn_add_primitives() {
         let stash = sig.stash();
         let binder = sig.root();
 
-        assert!(stash[binder.bound_vars].is_empty());
+        assert!(stash[binder.generics].is_empty());
 
         let fn_sig = &binder.value;
         let params = &stash[fn_sig.params];
@@ -100,27 +95,21 @@ fn struct_pair_generic() {
         let stash = sig.stash();
         let binder = sig.root();
 
-        let bound_vars = &stash[binder.bound_vars];
-        assert_eq!(bound_vars.len(), 2);
+        let generics = &stash[binder.generics];
+        assert_eq!(generics.len(), 2);
 
         let fields = &stash[binder.value.fields];
         assert_eq!(fields.len(), 2);
         assert_eq!(fields[0].name.text(db), "first");
-        assert!(matches!(
-            stash[fields[0].ty].data,
-            TyData::BoundVar(BoundVar {
-                binder_index: 0,
-                param_index: 0
-            })
-        ));
+        match stash[fields[0].ty].data {
+            TyData::Param(p) => assert_eq!(p, generics[0]),
+            other => panic!("expected Param(A), got {other:?}"),
+        }
         assert_eq!(fields[1].name.text(db), "second");
-        assert!(matches!(
-            stash[fields[1].ty].data,
-            TyData::BoundVar(BoundVar {
-                binder_index: 0,
-                param_index: 1
-            })
-        ));
+        match stash[fields[1].ty].data {
+            TyData::Param(p) => assert_eq!(p, generics[1]),
+            other => panic!("expected Param(B), got {other:?}"),
+        }
     });
 }
 
@@ -177,7 +166,8 @@ fn enum_with_fields() {
         let stash = sig.stash();
         let binder = sig.root();
 
-        assert_eq!(stash[binder.bound_vars].len(), 1);
+        let generics = &stash[binder.generics];
+        assert_eq!(generics.len(), 1);
 
         let variants = &stash[binder.value.variants];
         assert_eq!(variants.len(), 2);
@@ -187,13 +177,10 @@ fn enum_with_fields() {
         assert_eq!(variants[1].name.text(db), "Some");
         let some_fields = &stash[variants[1].fields];
         assert_eq!(some_fields.len(), 1);
-        assert!(matches!(
-            stash[some_fields[0].ty].data,
-            TyData::BoundVar(BoundVar {
-                binder_index: 0,
-                param_index: 0
-            })
-        ));
+        match stash[some_fields[0].ty].data {
+            TyData::Param(p) => assert_eq!(p, generics[0]),
+            other => panic!("expected Param(T), got {other:?}"),
+        }
     });
 }
 
@@ -329,7 +316,7 @@ fn impl_method_ref_self_param() {
 }
 
 #[test]
-fn generic_impl_self_resolves_with_bound_vars() {
+fn generic_impl_self_resolves_with_params() {
     let db = Database::default();
     db.attach(|db| {
         let (source_root, module, items) = setup(
@@ -345,16 +332,21 @@ fn generic_impl_self_resolves_with_bound_vars() {
         };
         let wrapper_sym = sage_ir::symbol::Symbol::ast(ItemAst::Struct(wrapper_struct));
 
-        // Build self type: Adt(Wrapper, [BoundVar(0,0)])
-        // The impl has one generic param T, so self type uses BoundVar for it
+        // Lower the struct signature to get its generics (this creates AstGenericParams
+        // inside a tracked function context)
+        let struct_sig = struct_signature(db, wrapper_struct, module, source_root);
+        let struct_stash = struct_sig.stash();
+        let struct_binder = struct_sig.root();
+        let struct_generics = &struct_stash[struct_binder.generics];
+        assert_eq!(struct_generics.len(), 1);
+        let gp = struct_generics[0];
+
+        // Build self type: Adt(Wrapper, [Param(T)]) using the struct's own generic param
         let mut stash = sage_stash::Stash::new();
-        let bv = Ty {
-            data: TyData::BoundVar(BoundVar {
-                binder_index: 0,
-                param_index: 0,
-            }),
+        let param_ty = Ty {
+            data: TyData::Param(gp),
         };
-        let args = stash.alloc_slice(&[bv]);
+        let args = stash.alloc_slice(&[param_ty]);
         let self_ty = Ty {
             data: TyData::Adt(wrapper_sym, args),
         };
@@ -363,7 +355,7 @@ fn generic_impl_self_resolves_with_bound_vars() {
         let sig_stash = sig.stash();
         let fn_sig = &sig.root().value;
 
-        // &self param should be &Wrapper<BoundVar(0,0)>
+        // &self param should be &Wrapper<Param(T)>
         let params = &sig_stash[fn_sig.params];
         assert_eq!(params.len(), 1);
         match params[0].data {
@@ -373,13 +365,12 @@ fn generic_impl_self_resolves_with_bound_vars() {
                         assert_eq!(sym, wrapper_sym);
                         let type_args = &sig_stash[args];
                         assert_eq!(type_args.len(), 1);
-                        assert!(matches!(
-                            type_args[0].data,
-                            TyData::BoundVar(BoundVar {
-                                binder_index: 0,
-                                param_index: 0
-                            })
-                        ));
+                        match type_args[0].data {
+                            TyData::Param(p) => assert_eq!(p, gp),
+                            other => {
+                                panic!("expected Param(T) in wrapper type args, got {other:?}")
+                            }
+                        }
                     }
                     other => panic!("expected Adt(Wrapper<T>) in &self, got {other:?}"),
                 }
@@ -387,22 +378,19 @@ fn generic_impl_self_resolves_with_bound_vars() {
             other => panic!("expected &Wrapper<T>, got {other:?}"),
         }
 
-        // Return type Self should be Adt(Wrapper, [BoundVar(0,0)])
+        // Return type Self should be Adt(Wrapper, [Param(T)])
         let ret = &sig_stash[fn_sig.ret];
         match ret.data {
             TyData::Adt(sym, args) => {
                 assert_eq!(sym, wrapper_sym);
                 let type_args = &sig_stash[args];
                 assert_eq!(type_args.len(), 1);
-                assert!(matches!(
-                    type_args[0].data,
-                    TyData::BoundVar(BoundVar {
-                        binder_index: 0,
-                        param_index: 0
-                    })
-                ));
+                match type_args[0].data {
+                    TyData::Param(p) => assert_eq!(p, gp),
+                    other => panic!("expected Param(T) in Self return, got {other:?}"),
+                }
             }
-            other => panic!("expected Adt(Wrapper<BoundVar>) for Self return, got {other:?}"),
+            other => panic!("expected Adt(Wrapper<Param>) for Self return, got {other:?}"),
         }
     });
 }
