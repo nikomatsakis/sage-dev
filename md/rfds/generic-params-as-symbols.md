@@ -42,28 +42,82 @@ This has several problems for the type inference layer:
 
 ### Generic parameters as tracked structs
 
-Each generic parameter (type, lifetime, const) declared on an item becomes a salsa tracked struct:
+Each generic parameter becomes a salsa identity. The `GenericParam` enum splits by **origin** (ast/ext/anon) — each variant is a distinct salsa struct that stores a `kind` field indicating whether it's a type, lifetime, or const parameter:
 
 ```rust
-#[salsa::tracked]
-pub struct GenericParamSymbol<'db> {
-    pub name: Name<'db>,
-    pub kind: GenericParamKind,
-    /// The item this parameter belongs to.
-    pub parent: Symbol<'db>,
-    /// Position in the parent's parameter list.
-    pub index: u32,
+/// A generic parameter. Split by origin; each variant carries its own `kind`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum GenericParam<'db> {
+    /// From local source — created during item lowering.
+    Ast(AstGenericParam<'db>),
+    /// From external crate metadata — interned on first encounter.
+    Ext(ExtGenericParam<'db>),
+    /// Canonical placeholder — used for alpha-equivalence testing.
+    AlphaEquiv(AlphaEquivParam<'db>),
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub enum GenericParamKind {
-    Type,
-    Lifetime,
-    Const,
+pub enum GenericParamKind { Type, Lifetime, Const }
+
+impl<'db> GenericParam<'db> {
+    pub fn kind(&self, db: &'db dyn Db) -> GenericParamKind {
+        match self {
+            Self::Ast(p) => p.kind(db),
+            Self::Ext(p) => p.kind(db),
+            Self::AlphaEquiv(p) => p.kind(db),
+        }
+    }
 }
 ```
 
-These are created during item lowering (the same phase that currently builds `BoundVarInfo` lists). They are stable salsa identities — two references to the same `T` always refer to the same tracked struct, regardless of where the reference appears.
+All three variants are identity structs that store a `kind` plus some form of name. They differ only in how they're created and what naming info they carry:
+
+**Ast params** are `#[salsa::tracked]` — created during item lowering from AST nodes. They carry a user-given name:
+
+```rust
+#[salsa::tracked]
+pub struct AstGenericParam<'db> {
+    pub kind: GenericParamKind,
+    pub name: Option<Name<'db>>,
+    pub parent: Symbol<'db>,
+}
+```
+
+**Ext params** are `#[salsa::interned]` — created on-demand when importing foreign crate signatures via `TcxDb`. They also carry a name (from the metadata):
+
+```rust
+#[salsa::interned]
+pub struct ExtGenericParam<'db> {
+    pub kind: GenericParamKind,
+    pub name: Option<Name<'db>>,
+    pub parent: Symbol<'db>,
+}
+```
+
+**AlphaEquiv params** are `#[salsa::interned]` — used for alpha-equivalence testing. Two `AlphaEquivParam`s with the same kind and index are intentionally the *same* identity (that's the point — they provide a canonical set of placeholders). They never appear in stored signatures; they're used transiently when substituting both signatures' real params with canonical ones and comparing the results for structural equality:
+
+```rust
+#[salsa::interned]
+pub struct AlphaEquivParam<'db> {
+    pub kind: GenericParamKind,
+    pub index: u32,
+}
+```
+
+**Display.** `GenericParam` impls `Display`:
+- Params with a name print it (e.g., `T`, `'a`, `N`)
+- Params without a name fall back to kind + index (e.g., `_0`, `'_1`, `_2`)
+
+Generic params participate in the `Symbol` infrastructure. `AstGenericParam` is a `SymbolData` variant (it has a name and parent, so name resolution, `Symbol::name()`, etc. work naturally):
+
+```rust
+enum SymbolData<'db> {
+    // ... existing variants ...
+    GenericParam(AstGenericParam<'db>),
+}
+```
+
+Ast params are created during item lowering (the same phase that currently builds `BoundVarInfo` lists). Ext params are interned on first encounter when importing foreign item generics from rustc metadata. AlphaEquiv params are interned on-demand for alpha-equivalence checks. All are stable salsa identities — two references to the same parameter always resolve to the same struct.
 
 ### Types reference symbols directly
 
@@ -82,9 +136,10 @@ pub enum TyData<'db> {
     FnPtr(Slice<Ty<'db>>, Ptr<Ty<'db>>),
 
     // --- variables ---
-    /// A reference to a generic parameter (universal variable).
+    /// A reference to a generic type parameter (universal variable).
     /// Replaces BoundVar for signatures and resolved types.
-    Param(GenericParamSymbol<'db>),
+    /// Invariant: param.kind() == Type.
+    Param(GenericParam<'db>),
 
     /// An inference variable (existential). Only appears during type elaboration.
     FreeVar(FreeVarIndex),
@@ -100,21 +155,42 @@ pub enum TyData<'db> {
 ```rust
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub enum Lifetime<'db> {
-    Param(GenericParamSymbol<'db>),
+    /// Invariant: param.kind() == Lifetime.
+    Param(GenericParam<'db>),
     Static,
     Erased,
 }
 ```
 
-### Signatures without binders
+### `Binder<T>` carries symbols
 
-Signatures are plain structs — no `Binder<T>` wrapper:
+We retain the `Binder<T>` wrapper, but instead of de Bruijn `BoundVarInfo` it carries a `Slice<GenericParam<'db>>`. The `Parametric` trait avoids a redundant `'db` parameter on `Binder` (since `T` already carries it):
+
+```rust
+/// Trait for types that can appear inside a `Binder`.
+/// Associates the param type so `Binder`
+/// doesn't need its own lifetime parameter.
+trait Parametric {
+    type Param;
+}
+
+impl<'db> Parametric for FnSig<'db> {
+    type Param = GenericParam<'db>;
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub struct Binder<T: Parametric> {
+    /// The generic parameters bound by this binder.
+    pub generics: Slice<T::Param>,
+    pub value: T,
+}
+```
+
+Signatures themselves stay clean — no `generics` field:
 
 ```rust
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct FnSig<'db> {
-    /// The generic parameters declared on this function.
-    pub generics: Slice<GenericParamSymbol<'db>>,
     pub params: Slice<Ty<'db>>,
     pub ret: Ptr<Ty<'db>>,
 }
@@ -123,12 +199,16 @@ pub struct FnSig<'db> {
 Example: `fn identity<T>(x: T) -> T` becomes:
 
 ```
-FnSig {
-    generics: [GenericParamSymbol("T", Type, parent=identity)],
-    params: [Ty { data: TyData::Param(GenericParamSymbol("T", ...)) }],
-    ret: Ptr<Ty> → TyData::Param(GenericParamSymbol("T", ...)),
+Binder {
+    generics: [GenericParam::Ast(AstGenericParam { kind: Type, name: "T", parent: identity, index: 0 })],
+    value: FnSig {
+        params: [Ty { data: TyData::Param(GenericParam::Ast(...)) }],
+        ret: Ptr<Ty> → TyData::Param(GenericParam::Ast(...)),
+    },
 }
 ```
+
+The `Binder` serves the same structural role as before (marking "this signature is parameterized") but the bound variables are now stable symbol references rather than positional indices. Callers that need to instantiate the signature substitute the `generics` symbols; callers that just need the shape (e.g., arity checks) can look through the binder without any opening ceremony.
 
 ### Substitution on instantiation
 
@@ -138,26 +218,48 @@ When calling a generic function, you substitute its `Param` symbols with concret
 struct Substitute<'db> {
     source: &Stash,
     target: &mut Stash,
-    /// Maps generic param symbols to their substituted types.
-    subst: FxHashMap<GenericParamSymbol<'db>, Ptr<Ty<'db>>>,
+    /// Maps generic params to their substituted types/lifetimes.
+    /// For type params: maps to a Ptr<Ty>.
+    /// For lifetime params: maps to a Lifetime.
+    subst: FxHashMap<GenericParam<'db>, SubstTarget<'db>>,
+}
+
+enum SubstTarget<'db> {
+    Ty(Ty<'db>),
+    Lifetime(Lifetime<'db>),
+    Const(Const<'db>),
 }
 
 impl TyFolder for Substitute<'_> {
     fn fold_ty(&mut self, ty: Ty<'db>) -> Ty<'db> {
         match ty.data {
-            TyData::Param(sym) => {
-                match self.subst.get(&sym) {
-                    Some(&replacement) => self.target[replacement],
-                    None => ty,  // not in scope of this substitution (e.g., outer impl param)
+            TyData::Param(param) => {
+                match self.subst.get(&param) {
+                    Some(SubstTarget::Ty(t)) => *t,
+                    _ => ty,  // not in scope of this substitution (e.g., outer impl param)
                 }
             }
             _ => default_fold_ty(self, ty),
+        }
+    }
+
+    fn fold_lifetime(&mut self, lt: Lifetime<'db>) -> Lifetime<'db> {
+        match lt {
+            Lifetime::Param(param) => {
+                match self.subst.get(&param) {
+                    Some(SubstTarget::Lifetime(l)) => *l,
+                    _ => lt,
+                }
+            }
+            _ => lt,
         }
     }
 }
 ```
 
 For the type-checking setup, the function's *own* generics are left as `Param` nodes (they're universals in scope). Only when *calling* another function do you substitute its params with your locals.
+
+Note that `TyData::Param`, `Lifetime::Param`, and `Const::Param` are all leaf nodes — the default `fold_ty`/`fold_lifetime`/`fold_const` passes them through unchanged. Only folders that specifically need to substitute (like `Substitute`) override for them.
 
 ### No binder shifting, ever
 
@@ -166,34 +268,31 @@ Since types reference symbols directly:
 - The stash `Ptr` for `Param(T)` is stable across all nesting depths
 - The egraph can use stash `Ptr`s as keys without worrying about de Bruijn drift
 
+**Tradeoff: alpha-equivalence.** Structural equality of types no longer implies semantic equivalence of signatures — `fn identity<T>(T) -> T` from two different items will have different `GenericParam`s. To test alpha-equivalence, substitute both signatures' params with shared `AlphaEquivParam`s (by position) and compare the results structurally.
+
 ### Scope and visibility
 
-The type checker maintains an environment that tracks which `GenericParamSymbol`s are in scope:
+The type checker maintains an environment that tracks which `GenericParam`s are in scope:
 
 ```rust
 struct TypeEnv<'db> {
     /// All generic params visible at this point, from outermost to innermost.
     /// Used for name resolution during signature lowering.
-    in_scope: Vec<GenericParamSymbol<'db>>,
+    in_scope: Vec<GenericParam<'db>>,
 }
 ```
 
-This replaces the de Bruijn binder stack. Shadowing is impossible — if two items both have a `T`, they have *different* `GenericParamSymbol` tracked structs.
+This replaces the de Bruijn binder stack. Shadowing is impossible — if two items both have a `T`, they have *different* `AstGenericParam` tracked structs.
 
-### Higher-ranked types (`for<'a>`)
+### Higher-ranked types and anonymous lifetimes
 
-Higher-ranked types (e.g., `for<'a> fn(&'a u32) -> &'a u32`) introduce anonymous parameters that aren't attached to any item. These get their own tracked structs:
+Lifetimes in function signatures are not always named. There are several cases:
 
-```rust
-#[salsa::tracked]
-pub struct HigherRankedParam<'db> {
-    pub kind: GenericParamKind,
-    /// The syntactic location where this was introduced.
-    pub span: AbsoluteSpan,
-}
-```
+- `fn(&u32)` — anonymous lifetime, no user-given name
+- `fn(&'a u32)` — named lifetime introduced by an outer `for<'a>` or item-level generic
+- `for<'a> fn(&'a u32) -> &'a u32` — higher-ranked with a named lifetime
 
-Or they could be a variant of `GenericParamSymbol` with a different `parent`. The key property is that each `for<'a>` in the source creates a distinct tracked struct, so two `for<'a>` at different locations never collide.
+All of these are handled by `AstGenericParam` with an optional name. Anonymous lifetimes (like the one in `fn(&u32)`) get `name: None` — they're still distinct tracked structs (each syntactic occurrence creates its own identity), they just don't have a user-visible name.
 
 This is deferred — higher-ranked types are not needed for the initial type elaboration milestone.
 
@@ -203,59 +302,59 @@ This is deferred — higher-ranked types are not needed for the initial type ela
 
 | Current | New |
 |---------|-----|
-| `BoundVar { binder_index, param_index }` | `Param(GenericParamSymbol)` |
-| `Binder<T> { bound_vars, value }` | Plain `T` with `generics: Slice<GenericParamSymbol>` |
-| `BoundVarInfo { kind }` | `GenericParamSymbol` (tracked struct with name, kind, parent, index) |
-| `Instantiate` folder (substitutes de Bruijn) | `Substitute` folder (substitutes symbols) |
-| `Lifetime::BoundVar(BoundVar)` | `Lifetime::Param(GenericParamSymbol)` |
+| `BoundVar { binder_index, param_index }` | `TyData::Param(GenericParam)` / `Lifetime::Param(GenericParam)` |
+| `Binder<T> { bound_vars: Slice<BoundVarInfo>, value }` | `Binder<T> { generics: Slice<GenericParam>, value }` |
+| `BoundVarInfo { kind }` | `GenericParam` enum (`Ast`/`Ext`/`AlphaEquiv` variants, each with a `kind` field) |
+| `Instantiate` folder (substitutes de Bruijn) | `Substitute` folder (substitutes `GenericParam`s) |
+| `Lifetime::BoundVar(BoundVar)` | `Lifetime::Param(GenericParam)` |
 
 ### What is deleted
 
 - `BoundVar` struct
-- `Binder<T>` struct and its `unsafe impl StashData`
 - `BoundVarInfo`, `BoundVarKind`
 - The de Bruijn shifting logic in `TyFolder`
 - `Instantiate` folder (replaced by `Substitute`)
 
 ### What stays the same
 
-- `FnSig`, `StructSig`, `EnumSig`, `FieldSig`, `VariantSig` — same fields minus the `Binder` wrapper, plus a `generics` field
+- `Binder<T>` — same role, now carries `Slice<GenericParam>` instead of `Slice<BoundVarInfo>`; uses a `Parametric` trait to avoid a `'db` lifetime parameter
+- `FnSig`, `StructSig`, `EnumSig`, `FieldSig`, `VariantSig` — same fields, still wrapped in `Binder`
 - `TyFolder` trait — still used, just doesn't need shift/binder-depth tracking
-- `SigLowerCtx` — instead of tracking a de Bruijn depth, it holds the current item's `GenericParamSymbol`s and resolves names to them
-- Stash hash-consing — unchanged; `Param(symbol)` hashes by the symbol's salsa id
+- `SigLowerCtx` — instead of tracking a de Bruijn depth, it holds the current item's `GenericParam`s and resolves names to them
+- Stash hash-consing — unchanged; `Param(GenericParam)` hashes by the salsa id
 
 ## Implementation plan
 
-### Step 1: Create `GenericParamSymbol`
+### Step 1: Create `GenericParam` and `AstGenericParam`
 
-Add the tracked struct. Create instances during item lowering (where `BoundVarInfo` is currently created). Wire them into the existing `GenericParam` AST processing.
+Add `AstGenericParam` tracked struct, `ExtGenericParam` and `AlphaEquivParam` interned structs, and the `GenericParam` enum. Add a `GenericParam` variant to `SymbolData`. Create `AstGenericParam` instances during item lowering (where `BoundVarInfo` is currently created).
 
-### Step 2: Add `TyData::Param` variant
+### Step 2: Add `TyData::Param` and `Lifetime::Param` variants
 
-Add the variant. Initially unused — existing code still produces `BoundVar`.
+Add `TyData::Param(GenericParam)` and `Lifetime::Param(GenericParam)`. Initially unused — existing code still produces `BoundVar`.
 
 ### Step 3: Migrate `SigLowerCtx` to produce `Param` instead of `BoundVar`
 
-When lowering `TypeRefAst` → `Ty`, resolve generic parameter names to their `GenericParamSymbol` and emit `TyData::Param(sym)` instead of `TyData::BoundVar(...)`.
+When lowering `TypeRefAst` → `Ty`, resolve generic parameter names to their `AstGenericParam` and emit `TyData::Param(GenericParam::Ast(...))` instead of `TyData::BoundVar(...)`.
 
-### Step 4: Remove `Binder<T>` from signature queries
+### Step 4: Migrate `Binder<T>` to carry `GenericParam`
 
-Change `fn_signature` etc. from returning `Stashed<Binder<FnSig>>` to returning `Stashed<FnSig>` (with a `generics` field on `FnSig`). Update all callers.
+Change `Binder` from storing `Slice<BoundVarInfo>` to `Slice<T::Param>` via the `Parametric` trait. Signature queries still return `Stashed<Binder<FnSig>>` etc. — the shape is the same, only the bound-variable representation changes. Update all callers that inspect the binder's variable list.
 
 ### Step 5: Replace `Instantiate` with `Substitute`
 
-The new folder maps `GenericParamSymbol → Ty` instead of `BoundVar → Ty`. Update call sites that instantiate signatures.
+The new folder maps `GenericParam → SubstTarget` instead of `BoundVar → Ty`. Update call sites that instantiate signatures.
 
 ### Step 6: Delete dead code
 
-Remove `BoundVar`, `Binder<T>`, `BoundVarInfo`, `BoundVarKind`, the old `Instantiate` folder, and any de Bruijn shifting logic.
+Remove `BoundVar`, `BoundVarInfo`, `BoundVarKind`, the old `Instantiate` folder, and any de Bruijn shifting logic.
 
 ## Open questions
 
-1. **`GenericParamSymbol` vs. reusing `Symbol`.** Should generic params be a variant of the existing `Symbol`/`SymbolData` enum, or a separate tracked struct? Using `Symbol` is more uniform but adds a new kind to an already-complex enum. A separate struct is cleaner but means two kinds of "named thing" in the system.
+1. ~~**`GenericParamSymbol` vs. reusing `Symbol`.**~~ **Resolved:** `AstGenericParam` is a `SymbolData` variant. `GenericParam` is an enum over origin (`Ast`/`Ext`/`AlphaEquiv`), where each variant stores a `kind: GenericParamKind` field. No per-kind split at the enum level — kind is data, not structure.
 
-2. **External crate generics.** For types imported from rustc metadata (via `TcxDb`), how do we create `GenericParamSymbol`s? Presumably on-demand when we first encounter the foreign item's signature, cached via salsa.
+2. ~~**External crate generics.**~~ **Resolved:** `ExtGenericParam` is `#[salsa::interned]` with `kind`, `name`, `parent`, `index`. Created on-demand when importing foreign signatures. `AlphaEquivParam` is also `#[salsa::interned]` with `kind` and `index` — used during signature normalization/canonicalization.
 
-3. **Const generics.** `Const::Other(Symbol<'db>)` in the current design uses a Symbol for named consts. Should const generic parameters also use `GenericParamSymbol`, or does `Const` need its own parallel treatment?
+3. ~~**Const generics.**~~ **Resolved:** `Const` gets a `Const::Param(GenericParam<'db>)` variant, symmetric with `TyData::Param` and `Lifetime::Param`. Invariant: `param.kind() == Const`.
 
-4. **`where` clauses.** Where-clauses reference generic params. With symbols this is straightforward (`T: Foo` references `GenericParamSymbol("T")`), but the representation of where-clauses themselves isn't yet designed.
+4. ~~**`where` clauses.**~~ **Not blocking:** Where-clauses will reference `GenericParam`s naturally, but their own representation is a separate design problem (future RFD). Nothing here needs to be resolved first.
