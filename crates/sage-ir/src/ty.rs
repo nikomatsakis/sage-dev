@@ -116,9 +116,7 @@ pub struct Binder<'db, T> {
 unsafe impl<'db, T: Copy + PartialEq + std::hash::Hash + sage_stash::StashHash + 'static>
     sage_stash::StashData<'db> for Binder<'db, T>
 {
-    fn static_type_id() -> std::any::TypeId {
-        std::any::TypeId::of::<Binder<'static, T>>()
-    }
+    type StaticSelf = Binder<'static, T>;
 }
 
 impl<'db, T: Copy + PartialEq + std::hash::Hash + sage_stash::StashHash + 'static>

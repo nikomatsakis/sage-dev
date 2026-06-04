@@ -404,9 +404,7 @@ mod tests {
         struct Collider(u32);
 
         unsafe impl<'db> StashData<'db> for Collider {
-            fn static_type_id() -> std::any::TypeId {
-                std::any::TypeId::of::<Collider>()
-            }
+            type StaticSelf = Collider;
         }
 
         impl AllocStashData<'_> for Collider {}

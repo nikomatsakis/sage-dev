@@ -26,17 +26,19 @@ fn next_stash_id() -> u32 {
 // Traits — arena-storable types
 // ---------------------------------------------------------------------------
 
-/// Supertrait for all stash-storable types. Provides the `static_type_id()`
+/// Supertrait for all stash-storable types. Provides the `StaticSelf`
 /// used for runtime type checking on retrieval.
 ///
 /// # Safety
 /// - Only lifetimes in `Self` are `'db` or `'static`.
-/// - `static_type_id()` returns `TypeId` of the `'static` version of Self.
+/// - `TypeId::of::<StaticSelf>()` must uniquely identify `Self` modulo
+///   the `'db` lifetime — i.e., two distinct types must not share the same
+///   `StaticSelf`.
 /// - `Self: Copy`.
 ///
 /// Prefer `#[derive(AllocStashData)]` over implementing this directly.
 pub unsafe trait StashData<'db>: Copy {
-    fn static_type_id() -> TypeId;
+    type StaticSelf: 'static;
 }
 
 /// Stash-storable type with hash-consing support. All allocations are
@@ -597,7 +599,7 @@ impl Stash {
 
     /// Hash-cons a single value. Equal content always produces equal `Ptr`s.
     pub fn alloc<'db, T: AllocStashData<'db>>(&mut self, value: T) -> Ptr<T> {
-        let type_id = <T as StashData>::static_type_id();
+        let type_id = TypeId::of::<T::StaticSelf>();
         let mut hasher = InternHasher::new();
         value.stash_hash(self, &mut hasher);
         let content_hash = hasher.finish();
@@ -629,7 +631,7 @@ impl Stash {
 
     /// Hash-cons a contiguous slice. Equal content always produces equal `Slice`s.
     pub fn alloc_slice<'db, T: AllocStashData<'db>>(&mut self, values: &[T]) -> Slice<T> {
-        let type_id = <T as StashData>::static_type_id();
+        let type_id = TypeId::of::<T::StaticSelf>();
         let mut hasher = InternHasher::new();
         values.len().hash(&mut hasher);
         for v in values {
@@ -773,7 +775,7 @@ impl<'db, T: StashData<'db>> Index<Ptr<T>> for Stash {
     fn index(&self, ptr: Ptr<T>) -> &T {
         #[cfg(debug_assertions)]
         self.validate_stash_id::<T>(ptr.stash_id);
-        let entry = self.validate_entry::<T>(ptr.index, <T as StashData>::static_type_id());
+        let entry = self.validate_entry::<T>(ptr.index, TypeId::of::<T::StaticSelf>());
         debug_assert_eq!(entry.count, 1);
         unsafe { self.read_one(entry.offset) }
     }
@@ -784,7 +786,7 @@ impl<'db, T: StashData<'db>> Index<Slice<T>> for Stash {
     fn index(&self, slice: Slice<T>) -> &[T] {
         #[cfg(debug_assertions)]
         self.validate_stash_id::<T>(slice.stash_id);
-        let entry = self.validate_entry::<T>(slice.index, <T as StashData>::static_type_id());
+        let entry = self.validate_entry::<T>(slice.index, TypeId::of::<T::StaticSelf>());
         unsafe { self.read_slice(entry.offset, entry.count) }
     }
 }
@@ -793,7 +795,7 @@ impl<'db, T: StashData<'db>> IndexMut<Ptr<T>> for Stash {
     fn index_mut(&mut self, ptr: Ptr<T>) -> &mut T {
         #[cfg(debug_assertions)]
         self.validate_stash_id::<T>(ptr.stash_id);
-        let entry = self.validate_entry::<T>(ptr.index, <T as StashData>::static_type_id());
+        let entry = self.validate_entry::<T>(ptr.index, TypeId::of::<T::StaticSelf>());
         debug_assert_eq!(entry.count, 1);
         let offset = entry.offset;
         unsafe { self.read_one_mut(offset) }
@@ -804,7 +806,7 @@ impl<'db, T: StashData<'db>> IndexMut<Slice<T>> for Stash {
     fn index_mut(&mut self, slice: Slice<T>) -> &mut [T] {
         #[cfg(debug_assertions)]
         self.validate_stash_id::<T>(slice.stash_id);
-        let entry = self.validate_entry::<T>(slice.index, <T as StashData>::static_type_id());
+        let entry = self.validate_entry::<T>(slice.index, TypeId::of::<T::StaticSelf>());
         let offset = entry.offset;
         let count = entry.count;
         unsafe { self.read_slice_mut(offset, count) }

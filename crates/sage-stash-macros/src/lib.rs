@@ -59,7 +59,7 @@ fn derive_arena_data_impl(input: TokenStream) -> TokenStream {
 
     let has_lifetime = !lifetimes.is_empty();
 
-    // For static_type_id: use Name<'static> if generic, else just Name.
+    // For StaticSelf: use Name<'static> if generic, else just Name.
     let static_ty = if has_lifetime {
         quote! { #name<'static> }
     } else {
@@ -86,9 +86,7 @@ fn derive_arena_data_impl(input: TokenStream) -> TokenStream {
 
     quote! {
         unsafe impl<'db> ::sage_stash::StashData<'db> for #ty {
-            fn static_type_id() -> ::core::any::TypeId {
-                ::core::any::TypeId::of::<#static_ty>()
-            }
+            type StaticSelf = #static_ty;
         }
 
         impl<'db> #trait_name<'db> for #ty {}
