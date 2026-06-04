@@ -17,7 +17,6 @@
     - [Per-Kind Symbol Data](./rfds/per-kind-symbol-data.md)
     - [Faster Collision Chains](./rfds/stash-faster-collision-chains.md)
     - [Enum Variant Symbols](./rfds/enum-variant-symbols.md)
-    - [Generic Params as Symbols](./rfds/generic-params-as-symbols.md)
     - [Type Inference](./rfds/type-inference.md)
   - [Completed](./rfds/completed.md)
     - [Initial Setup](./rfds/initial-setup.md)
@@ -28,3 +27,4 @@
     - [Stash Hash-Consing](./rfds/stash-hash-consing.md)
     - [Stash-allocated MEM-map](./rfds/memmap-stash-allocation.md)
     - [Type Signatures](./rfds/type-signatures.md)
+    - [Generic Params as Symbols](./rfds/generic-params-as-symbols.md)
