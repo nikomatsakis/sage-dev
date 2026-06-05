@@ -5,6 +5,7 @@
 **Depends on:**
 - [Type Signatures](./type-signatures.md) — `Ty`, `Binder`, `TyFolder`, stash-allocated types
 - [Per-kind symbol data](./per-kind-symbol-data.md) — `FnSymbol`, `StructSymbol`, etc.
+- [Generic params as symbols](./generic-params-as-symbols.md) — `GenericParam`, stable identities replacing de Bruijn indices
 
 ## Goal
 
@@ -22,23 +23,22 @@ The system has three major components:
 2. **A versioned union-find** — supports speculative branching during trait resolution (try one impl candidate, backtrack if it fails, try another).
 3. **Trait solving with near-miss feedback** — the solver always works forward from concrete types; when inputs are too vague, it collects "near-misses" that feed backward as constraints.
 
-### Free variables and index spaces
+### Inference variables and index spaces
 
-During type inference, we work with **free variables** rather than de Bruijn-indexed bound variables. Signatures use `BoundVar` (de Bruijn) under `Binder<T>`, but when we "open" a binder for type-checking, we substitute each bound variable with a fresh free variable.
+Signatures already use `TyData::Param(GenericParam)` to reference generic parameters — these are stable symbol identities that need no shifting. During type inference, we add a new variant for unknowns:
 
 ```rust
 enum TyData<'db> {
-    // ... existing variants (Bool, Adt, Ref, etc.) ...
-    BoundVar(BoundVar),          // only inside Binder<T>, never during inference
-    FreeVar(FreeVarIndex),       // used during inference — stable identity
+    // ... existing variants (Bool, Adt, Ref, Param, etc.) ...
+    InferVar(InferVarIndex),     // used during inference — fresh unknowns
 }
 ```
 
-A `FreeVar(index)` has a **stable identity** regardless of binder nesting depth. Entering a closure doesn't shift anything — it just allocates new `FreeVarIndex` values at a higher universe level. This stability is what allows us to use the stash `Ptr` (hash-consed from `TyData::FreeVar(i)`) as the egraph key.
+`GenericParam` values (universals from the function's signature) participate in inference as-is — they're already stable, hash-consable, and can appear freely in types at any depth. The `InferVar` variant represents existential unknowns that the inference engine must resolve.
+
+**Instantiating a signature** substitutes each `GenericParam` with either a concrete type or a fresh `InferVar`. No "opening" step is needed — just a `Substitute` fold.
 
 #### Newtyped index spaces
-
-There are several distinct index spaces that must not be confused:
 
 ```rust
 /// Stash allocation index — identifies a Ty node *structurally*.
@@ -46,9 +46,9 @@ There are several distinct index spaces that must not be confused:
 /// This is the egraph key: works for variables, concrete types, and applications alike.
 struct TyIndex(u32);  // derived from Ptr<Ty>
 
-/// Sequential counter for free variables. Dense, monotonically increasing.
-/// Indexes into the variable metadata table. Lives inside TyData::FreeVar.
-struct FreeVarIndex(u32);
+/// Sequential counter for inference variables. Dense, monotonically increasing.
+/// Indexes into the variable metadata table. Lives inside TyData::InferVar.
+struct InferVarIndex(u32);
 
 /// Version tree node identifier. Dense, recycled on removal.
 struct Version(usize);
@@ -60,22 +60,21 @@ Variable data is stored *in the version node*, not in a single global table. Eac
 
 ```rust
 struct VarInfo {
-    kind: VarKind,         // Universal or Existential
     universe: Universe,    // scope depth (higher = more local, can't escape)
     // span, debug name, etc.
 }
-
-enum VarKind { Universal, Existential }
 
 /// Universe is just a scope depth counter. A variable at universe U can be
 /// equated to types containing only variables at universe <= U.
 struct Universe(u32);
 ```
 
-Each version node stores a `variable_start: FreeVarIndex` and a `variables: Vec<VarInfo>`. To look up metadata for `FreeVar(i)`, walk up the version tree:
+Universal parameters (from function/impl generics) don't need `VarInfo` — they already have identity and scope via `GenericParam`. Only existential inference variables are tracked here.
+
+Each version node stores a `variable_start: InferVarIndex` and a `variables: Vec<VarInfo>`. To look up metadata for `InferVar(i)`, walk up the version tree:
 
 ```rust
-fn get_variable(tree: &[VersionNode], v: Version, idx: FreeVarIndex) -> &VarInfo {
+fn get_variable(tree: &[VersionNode], v: Version, idx: InferVarIndex) -> &VarInfo {
     let node = &tree[v];
     if idx.0 >= node.variable_start.0 {
         &node.variables[(idx.0 - node.variable_start.0) as usize]
@@ -85,33 +84,41 @@ fn get_variable(tree: &[VersionNode], v: Version, idx: FreeVarIndex) -> &VarInfo
 }
 ```
 
-**Sibling versions reuse indices.** When two branches fork from the same parent, they both start allocating variables at the same `variable_start` (parent's count of existing variables). So `FreeVar(4)` might mean `?a0` in Branch A and `?b0` in Branch B:
+**Sibling versions reuse indices.** When two branches fork from the same parent, they both start allocating variables at the same `variable_start` (parent's count of existing variables). So `InferVar(4)` might mean `?a0` in Branch A and `?b0` in Branch B:
 
 ```
-Root:     variable_start=0, variables=[X, Y, ?0, ?1]
+Root:     variable_start=0, variables=[?0, ?1, ?2, ?3]
 Branch A: variable_start=4, variables=[?a0, ?a1]
 Branch B: variable_start=4, variables=[?b0, ?b1, ?b2]
 ```
 
-This is fine — all operations are always performed at a specific version, so the lookup is unambiguous. And it's *beneficial*: `TyData::FreeVar(FreeVarIndex(4))` hash-conses to a single `TyIndex` in the stash, shared across branches. The stash stays compact — different branches reuse the same stash Ptr for their respective variables at the same offset. The version-specific meaning (metadata, bounds, equalities) lives entirely in the per-version data.
+This is fine — all operations are always performed at a specific version, so the lookup is unambiguous. And it's *beneficial*: `TyData::InferVar(InferVarIndex(4))` hash-conses to a single `TyIndex` in the stash, shared across branches. The stash stays compact — different branches reuse the same stash Ptr for their respective variables at the same offset. The version-specific meaning (metadata, bounds, equalities) lives entirely in the per-version data.
 
-**Opening a binder** (at the root version):
+**Setting up a function** (at the root version):
 
 ```
-open impl binder → FreeVar(0) = X, kind=Universal, universe=0
-open fn binder   → FreeVar(1) = Y, kind=Universal, universe=1
-check body       → FreeVar(2) = ?0, kind=Existential, universe=1
-                   FreeVar(3) = ?1, kind=Existential, universe=1
-enter closure    → FreeVar(4) = ?c0, kind=Existential, universe=2
+impl<X> Foo<X> {
+    fn bar<Y>(self) { ... }
+}
+
+// GenericParams X and Y already exist as symbols.
+// Instantiating the signature: X → TyData::Param(X), Y → TyData::Param(Y)
+// These are universal — they appear in types but are NOT InferVars.
+
+// Checking the body creates existentials:
+InferVar(0) = ?0, universe=1  (for an unannotated let binding)
+InferVar(1) = ?1, universe=1  (for a method return type)
+// Entering a closure:
+InferVar(2) = ?c0, universe=2
 ```
 
-The universe field encodes scope — `FreeVar(4)` at universe 2 cannot appear in the bound of `FreeVar(2)` at universe 1 (inner can't escape outward).
+The universe field encodes scope — `InferVar(2)` at universe 2 cannot appear in the bound of `InferVar(0)` at universe 1 (inner can't escape outward). `GenericParam` values from the enclosing signature are effectively at universe 0 — they can appear anywhere.
 
-Since each `FreeVarIndex` appears inside a distinct `TyData::FreeVar(i)`, each gets a distinct `TyIndex` after hash-consing. This is what makes `TyIndex` viable as the egraph key for both variables and concrete types.
+Since each `InferVarIndex` appears inside a distinct `TyData::InferVar(i)`, each gets a distinct `TyIndex` after hash-consing. This is what makes `TyIndex` viable as the egraph key for both variables and concrete types.
 
 ### Inference variable bounds
 
-Each existential variable tracks a *bound* that narrows monotonically:
+Each inference variable tracks a *bound* that narrows monotonically:
 
 ```rust
 enum Bound<T> {
@@ -127,11 +134,11 @@ A variable's stream produces a sequence:
 None → AtLeast(Foo<'a>) → AtLeast(Foo<'static>) → Exactly(Foo<'static>)
 ```
 
-**Key invariant: bounds never contain existential variables.** Bounds are always concrete types (may contain universals, but never existentials). This means:
+**Key invariant: bounds never contain inference variables.** Bounds are always concrete types (may contain `GenericParam` universals, but never `InferVar`). This means:
 
 - Bounds are always directly printable, comparable, and hashable
 - No transitive closure needed to inspect what a bound resolves to
-- The universe check is enforced naturally: inner existentials can't appear in outer bounds
+- The universe check is enforced naturally: inner inference variables can't appear in outer bounds
 
 **Bounds are versioned** — a speculative branch might set `?X >= Foo` based on a candidate that turns out to be wrong. Discarding the branch rolls back the bound. (See versioned data structure below.)
 
@@ -178,9 +185,9 @@ struct VersionNode {
     
     // --- Variable data (dense, owned by this version) ---
     
-    /// First FreeVarIndex belonging to this version.
-    variable_start: FreeVarIndex,
-    /// Variables created in this version.
+    /// First InferVarIndex belonging to this version.
+    variable_start: InferVarIndex,
+    /// Inference variables created in this version.
     variables: Vec<VarInfo>,
     
     // --- Mutable inference state (sparse diffs from ancestry) ---
@@ -188,7 +195,7 @@ struct VersionNode {
     /// Equality edges (union-find parents), keyed by TyIndex.
     parents: FxHashMap<TyIndex, TyIndex>,
     
-    /// Bounds on existential variables, keyed by TyIndex of the FreeVar node.
+    /// Bounds on inference variables, keyed by TyIndex of the InferVar node.
     bounds: FxHashMap<TyIndex, Bound<TyIndex>>,
     
     /// Dependents for congruence closure: who references this node as an arg.
@@ -201,7 +208,7 @@ struct VersionNode {
 
 **Key insight:** Both equalities AND bounds are versioned (per-node sparse diffs). A speculative branch can freely add equalities, tighten bounds, and allocate new variables; if the branch is discarded, its `VersionNode` is simply dropped — everything rolls back automatically.
 
-The stash is the exception — it is NOT versioned. Types allocated in a discarded branch remain in the stash (harmless unreferenced nodes). This is actually beneficial: sibling branches that allocate the same `FreeVar(N)` or build the same `Adt(Vec, [FreeVar(N)])` share stash entries thanks to hash-consing.
+The stash is the exception — it is NOT versioned. Types allocated in a discarded branch remain in the stash (harmless unreferenced nodes). This is actually beneficial: sibling branches that allocate the same `InferVar(N)` or build the same `Adt(Vec, [InferVar(N)])` share stash entries thanks to hash-consing.
 
 #### Version tree
 
@@ -233,15 +240,17 @@ The full `find(x)` at version `v` is the standard union-find chase, but each par
 
 #### Variable allocation and versioning
 
-Each version node stores the variables it created. Siblings start at the same offset:
+Each version node stores the inference variables it created. Siblings start at the same offset:
 
 ```
-Root version:    variable_start=0, variables=[X, Y, ?0, ?1, ?2]
-  ├─ Branch A:  variable_start=5, variables=[?a0, ?a1, ?a2]
-  └─ Branch B:  variable_start=5, variables=[?b0, ?b1]
+Root version:    variable_start=0, variables=[?0, ?1, ?2]
+  ├─ Branch A:  variable_start=3, variables=[?a0, ?a1, ?a2]
+  └─ Branch B:  variable_start=3, variables=[?b0, ?b1]
 ```
 
-`FreeVar(5)` is `?a0` in Branch A's lineage and `?b0` in Branch B's lineage. The stash has one `TyData::FreeVar(FreeVarIndex(5))` node shared by both — maximizing hash-consing reuse.
+`InferVar(3)` is `?a0` in Branch A's lineage and `?b0` in Branch B's lineage. The stash has one `TyData::InferVar(InferVarIndex(3))` node shared by both — maximizing hash-consing reuse.
+
+Note: universal parameters (`GenericParam` values from the function/impl signature) are not allocated in the version tree at all — they already have stable identities. Only existential inference variables live here.
 
 If Branch B is discarded, its `VersionNode` (including its `variables` vec) is dropped. If Branch A succeeds and we rebase, its variables become part of the flattened ancestry.
 
@@ -255,7 +264,7 @@ If Branch B is discarded, its `VersionNode` (including its `variables` vec) is d
 
 #### Stash interaction
 
-The stash is part of the egraph structure — types are allocated into it during inference (e.g., when constructing `Vec<?X>` you allocate `Adt(Vec, [FreeVar(3)])` into the stash). The stash is append-only and hash-consing: allocating the same `TyData` twice returns the same `TyIndex`. This is fine — structurally identical types *should* be the same egraph node.
+The stash is part of the egraph structure — types are allocated into it during inference (e.g., when constructing `Vec<?X>` you allocate `Adt(Vec, [InferVar(3)])` into the stash). The stash is append-only and hash-consing: allocating the same `TyData` twice returns the same `TyIndex`. This is fine — structurally identical types *should* be the same egraph node.
 
 The stash is *not* versioned. Types allocated in a speculative branch that gets discarded remain in the stash (they're harmless — just unreferenced). Only the mutable state (parents, bounds, worklist) is versioned.
 
@@ -263,7 +272,7 @@ The stash is *not* versioned. Types allocated in a speculative branch that gets 
 
 The trait solver is a `#[salsa::tracked]` function — it takes concrete inputs and is cached. Its full design is deferred to a separate RFD; this section sketches the interface.
 
-**Forward-only.** The solver always works from concrete types. When a bound is still `AtLeast(BOTTOM)`, the inference engine replaces unknowns with universal variables before querying: e.g., `Option<?X>: Trait` becomes `forall<X> Option<X>: Trait`. The solver attempts to prove this, and comes back with one of:
+**Forward-only.** The solver always works from concrete types. When a bound is still `AtLeast(BOTTOM)`, the inference engine replaces unknowns with fresh `GenericParam` placeholders before querying: e.g., `Option<?X>: Trait` becomes `forall<X> Option<X>: Trait`. The solver attempts to prove this, and comes back with one of:
 
 - **Success** — the impl applies; yields associated type bindings as `=` constraints → fed into the egraph.
 - **Failure with hints** — unprovable, but the solver reports what *would* make it provable: `X = u32`, `X: Bar`, etc. These hints feed back as constraints on the inference variable.
@@ -290,7 +299,7 @@ The bounds lattice drives exploration; the egraph records conclusions. The trans
 
 ### Handling `BOTTOM` and unbounded variables
 
-When an inference variable has no information yet, its bound is `BOTTOM`. Before querying the trait solver, unknowns are replaced with universals:
+When an inference variable has no information yet, its bound is `BOTTOM`. Before querying the trait solver, unknowns are replaced with fresh `GenericParam` placeholders (universals):
 
 ```
 ?X = BOTTOM
@@ -500,14 +509,13 @@ fn type_check_body(db: &dyn Db, fn_sym: FnSymbol, body: &ResolvedBody) -> TypeCh
     // 1. Create the versioned egraph (which owns the stash and variable table).
     let mut egraph = VersionedEGraph::new();
     
-    // 2. Open the function's binders — substitute BoundVars with fresh FreeVars.
-    //    If inside `impl<X> { fn bar<Y>() }`, this creates:
-    //      FreeVar(0) = X, kind=Universal, universe=0
-    //      FreeVar(1) = Y, kind=Universal, universe=1
-    //    The signature's types are cloned into the egraph's stash with
-    //    BoundVars replaced by FreeVars in one pass (TyFolder).
-    let sig = egraph.open_signature(fn_sym.signature(db));
-    //    sig.params and sig.ret now contain FreeVars, not BoundVars.
+    // 2. Import the function's signature into the egraph's stash.
+    //    GenericParams (X, Y) stay as TyData::Param — they're already stable symbols.
+    //    The signature's types are cloned from the external stash into the
+    //    egraph's stash in one pass (TyFolder), with GenericParams preserved as-is.
+    let sig = egraph.import_signature(fn_sym.signature(db));
+    //    sig.params and sig.ret now live in the egraph's stash,
+    //    containing TyData::Param for generic parameters.
     
     // 3. Build the runtime + context.
     let mut ctx = InferCtx {
@@ -533,19 +541,18 @@ fn type_check_body(db: &dyn Db, fn_sym: FnSymbol, body: &ResolvedBody) -> TypeCh
 
 ```rust
 impl InferCtx {
-    /// Allocate a fresh existential variable at the current universe.
-    /// Returns the TyIndex (stash Ptr) for the FreeVar node.
+    /// Allocate a fresh inference variable at the current universe.
+    /// Returns the TyIndex (stash Ptr) for the InferVar node.
     /// Note: &self because InferCtx is shared across concurrent tasks;
     /// internal mutation guarded by RefCell.
     fn fresh_ty_var(&self) -> TyIndex {
         // Allocates in the current version node's variable list
         let idx = self.egraph.alloc_var(VarInfo {
-            kind: VarKind::Existential,
             universe: self.current_universe,
         });
         
-        // Allocate FreeVar(idx) in the stash — unique TyData → unique TyIndex
-        self.egraph.stash.alloc(Ty { data: TyData::FreeVar(idx) })
+        // Allocate InferVar(idx) in the stash — unique TyData → unique TyIndex
+        self.egraph.stash.alloc(Ty { data: TyData::InferVar(idx) })
     }
 }
 ```
@@ -557,16 +564,22 @@ When type-checking a call like `foo.bar(x)` where `bar` is from another item:
 ```rust
 impl InferCtx {
     /// Import a foreign signature into the egraph's stash, substituting its
-    /// BoundVars with the given type arguments (concrete types or FreeVars).
-    fn instantiate_sig(&mut self, sig: &Stashed<Binder<FnSig>>, args: &[TyIndex]) -> FnSig {
-        // Uses the TyFolder machinery from the type-signatures RFD.
+    /// GenericParams with the given type arguments (concrete types or InferVars).
+    fn instantiate_sig(&self, sig: &Stashed<Binder<FnSig>>, args: &[TyIndex]) -> FnSig {
+        // Uses the Substitute folder (TyFolder machinery).
         // Clones types from the foreign stash into our stash, replacing
-        // BoundVars at the outermost binder with the supplied args.
-        // If a type arg is a FreeVar, the resulting type contains that FreeVar.
-        let mut folder = Instantiate {
+        // each GenericParam listed in the binder's `generics` with the
+        // corresponding arg. If a type arg is an InferVar, the resulting
+        // type contains that InferVar.
+        let subst: FxHashMap<GenericParam, SubstTarget> = sig.value.generics
+            .iter()
+            .zip(args.iter())
+            .map(|(param, arg)| (*param, SubstTarget::Ty(*arg)))
+            .collect();
+        let mut folder = Substitute {
             source: sig.stash(),
             target: &mut self.egraph.stash,
-            args: args.to_vec(),
+            subst,
         };
         folder.fold_fn_sig(sig.root())
     }
@@ -738,7 +751,7 @@ The structured concurrency scope ensures all spawned tasks within a block comple
 
 ### Core constraint operations
 
-There are four distinct constraint operations, each used in different contexts:
+There are three constraint operations, plus a placeholder for coercions (a non-goal for this pass):
 
 ```rust
 impl InferCtx {
@@ -751,7 +764,7 @@ impl InferCtx {
     
     /// Check that `a` and `b` can be equal. Structural descent;
     /// sets bounds on inference vars; errors on mismatch.
-    /// Used for generic type argument positions, pattern bindings.
+    /// Used for invariant positions (generic type args, pattern bindings).
     fn require_eq(&self, a: Ptr<Ty>, b: Ptr<Ty>) {
         let a = self.egraph.find(a);
         let b = self.egraph.find(b);
@@ -761,20 +774,18 @@ impl InferCtx {
         let b_data = self.egraph.stash[b];
         
         match (a_data.data, b_data.data) {
-            // Two existential vars: union in egraph + spawn watcher
-            (TyData::FreeVar(va), TyData::FreeVar(vb))
-                if self.is_existential(va) && self.is_existential(vb) =>
-            {
+            // Two inference vars: union in egraph + spawn watcher
+            (TyData::InferVar(_), TyData::InferVar(_)) => {
                 self.egraph.union(a, b);
                 self.runtime.spawn(watch_equality(a, b));
             }
             
-            // Existential var meets concrete type: set bound + union
-            (TyData::FreeVar(v), _) if self.is_existential(v) => {
+            // Inference var meets concrete type: set bound + union
+            (TyData::InferVar(_), _) => {
                 self.egraph.set_bound(a, Bound::Exactly(b));
                 self.egraph.union(a, b);
             }
-            (_, TyData::FreeVar(v)) if self.is_existential(v) => {
+            (_, TyData::InferVar(_)) => {
                 self.egraph.set_bound(b, Bound::Exactly(a));
                 self.egraph.union(a, b);
             }
@@ -801,21 +812,44 @@ impl InferCtx {
     }
     
     /// Check that `a <: b` (a is a subtype of b).
-    /// Handles lifetime variance in references.
-    /// Used for variance positions within type structure.
+    /// Handles lifetime variance in references, `never <: anything`.
+    /// Falls back to require_eq for invariant positions.
+    /// Used for: argument passing, assignment, return values, match arms.
     fn require_sub(&self, a: Ptr<Ty>, b: Ptr<Ty>) {
-        // ... subtyping rules: reference variance, never <: anything, etc.
-        // Falls back to require_eq for invariant positions.
+        let a = self.egraph.find(a);
+        let b = self.egraph.find(b);
+        if a == b { return; }
+        
+        let a_data = self.egraph.stash[a];
+        let b_data = self.egraph.stash[b];
+        
+        match (a_data.data, b_data.data) {
+            // `never` is a subtype of anything
+            (TyData::Never, _) => {}
+            
+            // Inference vars: same as require_eq for now
+            (TyData::InferVar(_), _) | (_, TyData::InferVar(_)) => {
+                self.require_eq(a, b);
+            }
+            
+            // References: covariant in the referent, contravariant in lifetime
+            (TyData::Ref(inner_a, m_a, _lt_a), TyData::Ref(inner_b, m_b, _lt_b))
+                if m_a == m_b =>
+            {
+                self.require_sub(inner_a, inner_b);
+                // lifetime: lt_a outlives lt_b (deferred — lifetimes are a non-goal)
+            }
+            
+            // Everything else: fall back to equality
+            _ => self.require_eq(a, b),
+        }
     }
     
     /// Check that `a` can coerce to `b`.
-    /// Includes everything require_sub allows, plus:
-    /// - &mut T → &T
-    /// - Deref coercions
-    /// - Unsizing (e.g., [T; N] → [T])
-    /// Used for: argument passing, assignment, return values.
+    /// For now, just delegates to subtyping. Later this will handle
+    /// &mut T → &T, deref coercions, unsizing, etc.
     fn require_coerce(&self, a: Ptr<Ty>, b: Ptr<Ty>) {
-        // ... coercion rules, potentially inserting adjustment nodes in the IR
+        self.require_sub(a, b);
     }
 }
 ```
@@ -830,7 +864,6 @@ impl InferCtx {
 | Assignment `let x: T = expr` | `require_coerce` |
 | Return value vs declared return type | `require_coerce` |
 | Match arms (all must produce compatible type) | `require_coerce` |
-| Reference variance within type structure | `require_sub` |
 
 ### Method resolution (awaiting concrete types)
 
@@ -838,8 +871,8 @@ impl InferCtx {
 /// Resolve a method on a receiver type. If the receiver is still an
 /// inference variable, await its bound before looking up methods.
 async fn resolve_method(ctx: &InferCtx, receiver_ty: Ty, name: &str) -> FnSymbol {
-    let concrete_ty = match receiver_ty.data {
-        TyData::BoundVar(v) if ctx.is_existential(v) => {
+    match receiver_ty.data {
+        TyData::InferVar(v) => {
             // Wait until the receiver has a concrete type
             loop {
                 match ctx.runtime.next_bound(v).await {
@@ -887,12 +920,12 @@ RExprKind::Closure { params, body } => {
     let body_ty = check_expr(ctx, body, Some(ret_ty)).await;
     ctx.require_coerce(body_ty, ret_ty);
     
-    // Restore universe — existentials at the inner universe remain in the
+    // Restore universe — inference vars at the inner universe remain in the
     // egraph but universe checking prevents them from appearing in
     // bounds/equalities of outer variables.
     ctx.current_universe = outer_universe;
     
-    // The closure's type references the param/ret FreeVars directly.
+    // The closure's type references the param/ret InferVars directly.
     // They have stable TyIndex values regardless of universe nesting.
     let fn_ty = ctx.egraph.stash.alloc(Ty {
         data: TyData::FnPtr(param_types, ret_ty)
@@ -903,7 +936,7 @@ RExprKind::Closure { params, body } => {
 
 ### Key observations from this sketch
 
-1. **Importing signatures is the natural instantiation point.** When you clone a foreign signature into the local stash, you simultaneously apply substitutions (replacing that item's generics with concrete types or fresh inference vars). One operation, no separate "substitution pass."
+1. **Importing signatures is the natural instantiation point.** When you clone a foreign signature into the local stash, you simultaneously apply substitutions (replacing that item's `GenericParam` references with concrete types or fresh inference vars). One operation, no separate "substitution pass."
 
 2. **`equate` is the workhorse.** Almost every type-checking step ends with `equate(actual, expected)`. This either immediately resolves (concrete vs concrete), sets a bound (concrete vs inference var), or creates an egraph edge (inference var vs inference var).
 
@@ -929,7 +962,7 @@ RExprKind::Closure { params, body } => {
 
 The trait solver design is out of scope for this RFD. It deserves its own deep-dive covering:
 
-- The universal-variable approach to near-misses (replacing BOTTOM with universals, e.g., `Option<_1>: Trait` becomes `forall<X> Option<X>: Trait`, which comes back with hints like `X = u32` or `X: Bar`)
+- The placeholder approach to near-misses (replacing BOTTOM with fresh `GenericParam` placeholders, e.g., `Option<_1>: Trait` becomes `forall<X> Option<X>: Trait`, which comes back with hints like `X = u32` or `X: Bar`)
 - How to manage lifetime canonicalization for better cache hits (precise lifetimes often don't matter — only their relationships)
 - Coherence, overlap, specialization
 - The `#[salsa::tracked]` caching strategy
@@ -1068,6 +1101,7 @@ For these patterns, the inference engine needs:
 
 ## Non-goals (for now)
 
+- Coercions (`&mut T → &T`, deref coercions, unsizing) — first pass uses subtyping only; coercion insertion is a later layer
 - Lifetime inference and region solving (separate system, runs after type inference)
 - Const generics evaluation
 - Exhaustive trait coherence checking
