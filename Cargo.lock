@@ -836,6 +836,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sage-infer"
+version = "0.1.0"
+dependencies = [
+ "expect-test",
+ "rustc-hash",
+ "sage-ir",
+ "sage-stash",
+ "salsa",
+ "smallvec",
+]
+
+[[package]]
 name = "sage-ir"
 version = "0.1.0"
 dependencies = [

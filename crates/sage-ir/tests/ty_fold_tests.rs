@@ -26,8 +26,8 @@ fn identity_fold() {
         let i32_ty = Ty {
             data: TyData::Int(IntTy::I32),
         };
-        let _i32_ptr = stash_a.alloc(i32_ty);
-        let args = stash_a.alloc_slice(&[i32_ty]);
+        let i32_ptr = stash_a.alloc(i32_ty);
+        let args = stash_a.alloc_slice(&[i32_ptr]);
         let adt = Ty {
             data: TyData::Adt(sym, args),
         };
@@ -44,7 +44,10 @@ fn identity_fold() {
                 TyData::Adt(s, a) => {
                     assert_eq!(s, sym);
                     assert_eq!(stash_b[a].len(), 1);
-                    assert!(matches!(stash_b[a][0].data, TyData::Int(IntTy::I32)));
+                    assert!(matches!(
+                        stash_b[stash_b[a][0]].data,
+                        TyData::Int(IntTy::I32)
+                    ));
                 }
                 _ => panic!("expected Adt"),
             },
@@ -80,7 +83,8 @@ fn instantiate_identity_fn() {
         let param_ty = Ty {
             data: TyData::Param(gp),
         };
-        let params = src.alloc_slice(&[param_ty]);
+        let param_ptr = src.alloc(param_ty);
+        let params = src.alloc_slice(&[param_ptr]);
         let ret = src.alloc(param_ty);
         let fn_sig = FnSig { params, ret };
         let binder = Binder::new(fn_sig, generics);
@@ -93,7 +97,10 @@ fn instantiate_identity_fn() {
 
         let result_params = &dst[result.params];
         assert_eq!(result_params.len(), 1);
-        assert!(matches!(result_params[0].data, TyData::Int(IntTy::I32)));
+        assert!(matches!(
+            dst[result_params[0]].data,
+            TyData::Int(IntTy::I32)
+        ));
 
         let result_ret = &dst[result.ret];
         assert!(matches!(result_ret.data, TyData::Int(IntTy::I32)));
@@ -221,18 +228,22 @@ fn instantiate_nested_type_args() {
         };
 
         // Adt(Vec, [Param(V)])
-        let v_slice = src.alloc_slice(&[ty_v]);
+        let ty_v_ptr = src.alloc(ty_v);
+        let v_slice = src.alloc_slice(&[ty_v_ptr]);
         let vec_v = Ty {
             data: TyData::Adt(vec_sym, v_slice),
         };
 
         // Adt(HashMap, [Param(K), Adt(Vec, [Param(V)])])
-        let args = src.alloc_slice(&[ty_k, vec_v]);
+        let ty_k_ptr = src.alloc(ty_k);
+        let vec_v_ptr = src.alloc(vec_v);
+        let args = src.alloc_slice(&[ty_k_ptr, vec_v_ptr]);
         let hashmap_ty = Ty {
             data: TyData::Adt(hashmap_sym, args),
         };
 
-        let params = src.alloc_slice(&[hashmap_ty]);
+        let hashmap_ptr = src.alloc(hashmap_ty);
+        let params = src.alloc_slice(&[hashmap_ptr]);
         let ret = src.alloc(hashmap_ty);
         let fn_sig = FnSig { params, ret };
         let binder = Binder::new(fn_sig, generics);
@@ -247,16 +258,19 @@ fn instantiate_nested_type_args() {
 
         let result_params = &dst[result.params];
         assert_eq!(result_params.len(), 1);
-        match result_params[0].data {
+        match dst[result_params[0]].data {
             TyData::Adt(sym, args) => {
                 assert_eq!(sym, hashmap_sym);
                 let args = &dst[args];
                 assert_eq!(args.len(), 2);
-                assert!(matches!(args[0].data, TyData::Str));
-                match args[1].data {
+                assert!(matches!(dst[args[0]].data, TyData::Str));
+                match dst[args[1]].data {
                     TyData::Adt(s, inner_args) => {
                         assert_eq!(s, vec_sym);
-                        assert!(matches!(dst[inner_args][0].data, TyData::Int(IntTy::I32)));
+                        assert!(matches!(
+                            dst[dst[inner_args][0]].data,
+                            TyData::Int(IntTy::I32)
+                        ));
                     }
                     _ => panic!("expected Vec<i32>"),
                 }
@@ -298,7 +312,8 @@ fn param_not_in_subst_passes_through() {
         let ty_u = Ty {
             data: TyData::Param(gp_u),
         };
-        let params = src.alloc_slice(&[ty_u]);
+        let ty_u_ptr = src.alloc(ty_u);
+        let params = src.alloc_slice(&[ty_u_ptr]);
         let ret = src.alloc(ty_u);
         let fn_sig = FnSig { params, ret };
         let binder = Binder::new(fn_sig, generics);
@@ -311,7 +326,7 @@ fn param_not_in_subst_passes_through() {
 
         // U is not in scope of the substitution, so it passes through unchanged
         let result_params = &dst[result.params];
-        match result_params[0].data {
+        match dst[result_params[0]].data {
             TyData::Param(p) => assert_eq!(p, gp_u),
             _ => panic!("expected Param(U) to pass through unchanged"),
         }

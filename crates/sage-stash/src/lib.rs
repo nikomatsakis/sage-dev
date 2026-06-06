@@ -208,6 +208,14 @@ impl<'db, T: StashData<'db> + StashHash> StashHash for Ptr<T> {
     }
 }
 
+/// Safety: Ptr<T> is just an index — the lifetime in T is phantom.
+/// StaticSelf maps Ptr<T<'db>> → Ptr<T<'static>> via T's own StaticSelf.
+unsafe impl<'db, T: StashData<'db>> StashData<'db> for Ptr<T> {
+    type StaticSelf = Ptr<T::StaticSelf>;
+}
+
+impl<'db, T: StashData<'db> + StashHash + PartialEq> AllocStashData<'db> for Ptr<T> {}
+
 /// Thin handle to a contiguous slice in a `Stash`.
 #[derive(Debug)]
 pub struct Slice<T> {

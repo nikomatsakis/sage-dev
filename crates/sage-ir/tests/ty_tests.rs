@@ -24,7 +24,7 @@ fn ty_adt_round_trip() {
         let i32_ty = stash.alloc(Ty {
             data: TyData::Int(IntTy::I32),
         });
-        let args = stash.alloc_slice(&[stash[i32_ty]]);
+        let args = stash.alloc_slice(&[i32_ty]);
         let adt = stash.alloc(Ty {
             data: TyData::Adt(sym, args),
         });
@@ -33,7 +33,7 @@ fn ty_adt_round_trip() {
             TyData::Adt(s, a) => {
                 assert_eq!(s, sym);
                 assert_eq!(stash[a].len(), 1);
-                assert!(matches!(stash[a][0].data, TyData::Int(IntTy::I32)));
+                assert!(matches!(stash[stash[a][0]].data, TyData::Int(IntTy::I32)));
             }
             _ => panic!("expected Adt"),
         }
@@ -63,7 +63,9 @@ fn binder_fn_sig_round_trip() {
         let param_ty = Ty {
             data: TyData::Param(gp),
         };
-        let params = stash.alloc_slice(&[param_ty, param_ty]);
+        let p0 = stash.alloc(param_ty);
+        let p1 = stash.alloc(param_ty);
+        let params = stash.alloc_slice(&[p0, p1]);
         let ret = stash.alloc(param_ty);
         let fn_sig = FnSig { params, ret };
         let binder: Binder<'_, FnSig<'_>> = Binder::new(fn_sig, generics);

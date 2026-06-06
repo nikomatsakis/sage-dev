@@ -1,7 +1,7 @@
 //! `TyFolder`: cross-stash type mapping.
 
 use rustc_hash::FxHashMap;
-use sage_stash::{Slice, Stash};
+use sage_stash::{Ptr, Slice, Stash};
 
 use crate::generic_param::GenericParam;
 use crate::ty::*;
@@ -25,7 +25,7 @@ pub trait TyFolder<'db> {
 pub fn default_fold_ty<'db>(folder: &mut impl TyFolder<'db>, ty: Ty<'db>) -> Ty<'db> {
     let data = match ty.data {
         TyData::Adt(sym, args) => {
-            let args = fold_slice(folder, args);
+            let args = fold_ptr_slice(folder, args);
             TyData::Adt(sym, args)
         }
         TyData::Ref(inner, m, lt) => {
@@ -34,7 +34,7 @@ pub fn default_fold_ty<'db>(folder: &mut impl TyFolder<'db>, ty: Ty<'db>) -> Ty<
             TyData::Ref(inner, m, lt)
         }
         TyData::Tuple(elems) => {
-            let elems = fold_slice(folder, elems);
+            let elems = fold_ptr_slice(folder, elems);
             TyData::Tuple(elems)
         }
         TyData::Slice(inner) => {
@@ -48,20 +48,30 @@ pub fn default_fold_ty<'db>(folder: &mut impl TyFolder<'db>, ty: Ty<'db>) -> Ty<
             TyData::Array(inner, c)
         }
         TyData::FnPtr(params, ret) => {
-            let params = fold_slice(folder, params);
+            let params = fold_ptr_slice(folder, params);
             let ret_ty = folder.fold_ty(folder.source()[ret]);
             let ret = folder.target().alloc(ret_ty);
             TyData::FnPtr(params, ret)
         }
+        TyData::InferVar(_) => ty.data,
         leaf => leaf,
     };
     Ty { data }
 }
 
-pub fn fold_slice<'db>(folder: &mut impl TyFolder<'db>, slice: Slice<Ty<'db>>) -> Slice<Ty<'db>> {
-    let src_tys: Vec<_> = folder.source()[slice].to_vec();
-    let tys: Vec<_> = src_tys.iter().map(|ty| folder.fold_ty(*ty)).collect();
-    folder.target().alloc_slice(&tys)
+pub fn fold_ptr_slice<'db>(
+    folder: &mut impl TyFolder<'db>,
+    slice: Slice<Ptr<Ty<'db>>>,
+) -> Slice<Ptr<Ty<'db>>> {
+    let src_ptrs: Vec<_> = folder.source()[slice].to_vec();
+    let ptrs: Vec<_> = src_ptrs
+        .iter()
+        .map(|ptr| {
+            let ty = folder.fold_ty(folder.source()[*ptr]);
+            folder.target().alloc(ty)
+        })
+        .collect();
+    folder.target().alloc_slice(&ptrs)
 }
 
 // ---------------------------------------------------------------------------
@@ -69,7 +79,7 @@ pub fn fold_slice<'db>(folder: &mut impl TyFolder<'db>, slice: Slice<Ty<'db>>) -
 // ---------------------------------------------------------------------------
 
 pub fn fold_fn_sig<'db>(folder: &mut impl TyFolder<'db>, sig: FnSig<'db>) -> FnSig<'db> {
-    let params = fold_slice(folder, sig.params);
+    let params = fold_ptr_slice(folder, sig.params);
     let ret_ty = folder.fold_ty(folder.source()[sig.ret]);
     let ret = folder.target().alloc(ret_ty);
     FnSig { params, ret }

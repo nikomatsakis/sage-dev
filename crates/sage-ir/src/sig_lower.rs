@@ -50,7 +50,8 @@ impl<'a, 'db> SigLowerCtx<'a, 'db> {
                     .iter()
                     .map(|e| self.lower_type_ref(*e))
                     .collect();
-                let elems = self.dst.alloc_slice(&tys);
+                let ptrs: Vec<_> = tys.into_iter().map(|t| self.dst.alloc(t)).collect();
+                let elems = self.dst.alloc_slice(&ptrs);
                 Ty {
                     data: TyData::Tuple(elems),
                 }
@@ -145,7 +146,11 @@ impl<'a, 'db> SigLowerCtx<'a, 'db> {
         }
     }
 
-    fn symbol_to_ty(&self, sym: Symbol<'db>, type_args: sage_stash::Slice<Ty<'db>>) -> Ty<'db> {
+    fn symbol_to_ty(
+        &self,
+        sym: Symbol<'db>,
+        type_args: sage_stash::Slice<Ptr<Ty<'db>>>,
+    ) -> Ty<'db> {
         match sym.data() {
             SymbolData::Intrinsic(intrinsic) => Ty {
                 data: intrinsic_to_ty_data(intrinsic),
@@ -156,13 +161,14 @@ impl<'a, 'db> SigLowerCtx<'a, 'db> {
         }
     }
 
-    fn lower_type_args(&mut self, seg: &PathSegmentAst<'db>) -> sage_stash::Slice<Ty<'db>> {
+    fn lower_type_args(&mut self, seg: &PathSegmentAst<'db>) -> sage_stash::Slice<Ptr<Ty<'db>>> {
         let src_args = &self.src[seg.type_args];
         if src_args.is_empty() {
             return self.dst.alloc_slice(&[]);
         }
         let tys: Vec<_> = src_args.iter().map(|a| self.lower_type_ref(*a)).collect();
-        self.dst.alloc_slice(&tys)
+        let ptrs: Vec<_> = tys.into_iter().map(|t| self.dst.alloc(t)).collect();
+        self.dst.alloc_slice(&ptrs)
     }
 }
 
@@ -262,7 +268,8 @@ pub fn lower_fn_sig<'db>(
         .iter()
         .map(|p| cx.lower_ptr_type_ref(p.ty))
         .collect();
-    let params = cx.dst.alloc_slice(&param_tys);
+    let param_ptrs: Vec<_> = param_tys.into_iter().map(|t| cx.dst.alloc(t)).collect();
+    let params = cx.dst.alloc_slice(&param_ptrs);
 
     let ret_ty = match data.ret_type {
         Some(ret_ptr) => cx.lower_ptr_type_ref(ret_ptr),

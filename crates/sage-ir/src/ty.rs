@@ -30,22 +30,31 @@ pub enum TyData<'db> {
     Str,
 
     // --- compound ---
-    Adt(Symbol<'db>, Slice<Ty<'db>>),
+    Adt(Symbol<'db>, Slice<Ptr<Ty<'db>>>),
     Ref(Ptr<Ty<'db>>, Mutability, Lifetime<'db>),
-    Tuple(Slice<Ty<'db>>),
+    Tuple(Slice<Ptr<Ty<'db>>>),
     Slice(Ptr<Ty<'db>>),
     Array(Ptr<Ty<'db>>, Const<'db>),
-    FnPtr(Slice<Ty<'db>>, Ptr<Ty<'db>>),
+    FnPtr(Slice<Ptr<Ty<'db>>>, Ptr<Ty<'db>>),
 
     // --- variables ---
     /// A reference to a generic type parameter (universal variable).
     /// Invariant: param.kind() == Type.
     Param(GenericParam<'db>),
+    /// An existential inference variable — a fresh unknown to be resolved.
+    InferVar(InferVarIndex),
 
     // --- other ---
     Never,
     Error,
 }
+
+/// Sequential counter for inference variables. Dense, monotonically increasing.
+/// Indexes into the per-version variable metadata table.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct InferVarIndex(pub u32);
+
+impl sage_stash::StashDirect for InferVarIndex {}
 
 // ---------------------------------------------------------------------------
 // Primitive details
@@ -149,7 +158,7 @@ impl<'db, T> Binder<'db, T> {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct FnSig<'db> {
-    pub params: Slice<Ty<'db>>,
+    pub params: Slice<Ptr<Ty<'db>>>,
     pub ret: Ptr<Ty<'db>>,
 }
 
