@@ -333,8 +333,7 @@ fn speculative_branch_rollback() {
 
     let branch_a = ctx.branch();
     ctx.switch_to(branch_a);
-    ctx.egraph.set_bound(var, Bound::Exactly(i32_ty));
-    ctx.egraph.union(var, i32_ty);
+    ctx.require_eq(var, i32_ty);
     assert_eq!(ctx.find(var), i32_ty);
 
     ctx.switch_to(Version::ROOT);
@@ -343,7 +342,6 @@ fn speculative_branch_rollback() {
 
     let branch_b = ctx.branch();
     ctx.switch_to(branch_b);
-    ctx.egraph.set_bound(var, Bound::Exactly(bool_ty));
-    ctx.egraph.union(var, bool_ty);
+    ctx.require_eq(var, bool_ty);
     assert_eq!(ctx.find(var), bool_ty);
 }

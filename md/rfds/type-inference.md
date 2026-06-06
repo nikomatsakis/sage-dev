@@ -1,6 +1,6 @@
 # RFD: Type Inference
 
-**Status:** Draft
+**Status:** In Progress
 
 **Depends on:**
 - [Type Signatures](./type-signatures.md) — `Ty`, `Binder`, `TyFolder`, stash-allocated types
@@ -944,6 +944,31 @@ RExprKind::Closure { params, body } => {
 
 4. **No explicit "constraint solving" phase.** Constraints are resolved eagerly by `equate` or lazily by constraint-watcher tasks. There's no separate "solve all constraints" step — finalization just handles the stragglers.
 
+## Implementation status
+
+The `sage-infer` crate implements the infrastructure sections of this RFD. What's done and what's next:
+
+**Done (crates/sage-infer):**
+- Versioned union-find with sparse per-version diffs (`egraph.rs`)
+- Monotonic bounds: `None` → `AtLeast` → `Exactly` (`bound.rs`)
+- Version tree with branching/discard for speculative exploration (`version.rs`)
+- Skeleton decompose/recompose for generic structural type operations (`skeleton.rs`)
+- Constraint operations: `require_eq`, `require_sub`, `require_coerce` (`infer_ctx.rs`)
+- Universe tracking for closure scope escape prevention
+- Finalization: promote unresolved → Error, AtLeast → Exactly
+- Async runtime scaffold (`runtime.rs`)
+
+**Design decisions made during implementation:**
+- `TyData` compound variants store `Slice<Ptr<Ty<'db>>>` (pointer-slices), not `Slice<Ty<'db>>`. This enables zero-copy skeleton decomposition — `decompose` takes `&Stash` (read-only).
+- Congruence closure should use **lazy recanon-on-find** rather than eager propagation with a dependents map. When `find` encounters a compound type, it decomposes, canonicalizes each child, recomposes, and unions if changed. No separate dependents tracking needed.
+- No `TyIdx` newtype — uses `Ptr<Ty<'db>>` directly throughout.
+
+**Next steps (same RFD, not started):**
+- The `ResolvedBody` walker (`type_check_body` pseudocode, L501–947)
+- Async task spawning for structured concurrency in blocks
+- Surface desugarings
+- End-to-end tests from Rust source → inferred types
+
 ## Open questions
 
 1. **Promotion conditions.** What are the precise conditions for promoting `AtLeast` to `Exactly`? Some cases are clear (only one impl, no variance). Others need a quiescence check ("nothing further can tighten this").
@@ -954,7 +979,7 @@ RExprKind::Closure { params, body } => {
 
 4. **Cycles.** In the egraph layer with only `=` constraints, cycles are simpler (either coinductive solution or error). But can cycles arise between the bounds layer and the solver? (Probably not — the solver is forward-only and bounds are monotone.)
 
-5. **Egraph vs. explicit propagation.** Is the congruence closure machinery worth its complexity, or should we propagate structural equalities explicitly in the solver? The egraph is elegant but adds bookkeeping (dependents, worklist, versioned caches).
+5. ~~**Egraph vs. explicit propagation.** Is the congruence closure machinery worth its complexity, or should we propagate structural equalities explicitly in the solver?~~ **Resolved:** Lazy recanon-on-find. No dependents map — just decompose/find-children/recompose when observing a compound type.
 
 6. **Memory management.** Inference variables and egraph nodes accumulate during type checking of a function body. When is it safe to GC? Version removal handles speculative branches, but the "successful" path grows monotonically.
 
