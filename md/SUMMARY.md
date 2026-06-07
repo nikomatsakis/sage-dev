@@ -8,7 +8,7 @@
   - [IR](./design/ir.md)
   - [Stash](./design/stash.md)
   - [Spans](./design/spans.md)
-  - [Research](./design/research/)
+  - [Research](./design/research/README.md)
     - [rustc Subtyping and Coercions](./design/research/rustc-subtyping-and-coercions.md)
 - [RFDs](./rfds/README.md)
   - [Active](./rfds/active.md)
