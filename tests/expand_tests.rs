@@ -509,7 +509,7 @@ fn expanded_items_are_valid_ir() {
                   arg
                 });
                 __clap_app
-              };
+              }
             }
               fn augment_args_for_update(__clap_app: clap::Command) -> clap::Command {
               {
@@ -524,7 +524,7 @@ fn expanded_items_are_valid_ir() {
                   arg
                 });
                 __clap_app
-              };
+              }
             }
             }
         "#]]
@@ -633,7 +633,7 @@ fn snapshot_expanded_clap_parser() {
                   arg
                 });
                 __clap_app
-              };
+              }
             }
               fn augment_args_for_update(__clap_app: clap::Command) -> clap::Command {
               {
@@ -648,7 +648,7 @@ fn snapshot_expanded_clap_parser() {
                   arg
                 });
                 __clap_app
-              };
+              }
             }
             }
             builtin: impl ::std::fmt::Debug for Cli {

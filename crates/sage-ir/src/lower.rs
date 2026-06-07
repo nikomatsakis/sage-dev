@@ -1549,11 +1549,15 @@ impl<'db> BodyLowerCtx<'db> {
                 }
                 "expression_statement" => {
                     if let Some(expr_node) = child.named_child(0) {
-                        let expr = self.lower_expr(expr_node);
-                        stmts.push(Stmt {
-                            kind: StmtKind::Expr(expr),
-                            span: self.rel_span(*child),
-                        });
+                        if is_last && !self.node_text(*child).trim_end().ends_with(';') {
+                            tail = Some(self.lower_expr(expr_node));
+                        } else {
+                            let expr = self.lower_expr(expr_node);
+                            stmts.push(Stmt {
+                                kind: StmtKind::Expr(expr),
+                                span: self.rel_span(*child),
+                            });
+                        }
                     }
                 }
                 _ if is_last => {

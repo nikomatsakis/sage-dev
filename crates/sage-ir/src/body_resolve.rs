@@ -72,8 +72,8 @@ impl<'db> BodyResolver<'db> {
                         Res::Err
                     }
                 }
-                RibEntry::BoundVar(_) | RibEntry::SelfTy(_) => {
-                    // TODO: bound vars / Self in body expressions
+                RibEntry::Param(_) | RibEntry::SelfTy(_) => {
+                    // TODO: generic params / Self in body expressions
                     Res::Err
                 }
                 RibEntry::Sym(sym) => {

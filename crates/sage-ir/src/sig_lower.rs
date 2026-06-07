@@ -2,11 +2,12 @@
 //!
 //! `SigLowerCtx` reads from a syntactic signature stash and writes
 //! resolved `Ty` nodes into a destination stash. Generic params are
-//! tracked so references to them produce `BoundVar`.
+//! tracked so references to them produce `TyData::Param`.
 
 use sage_stash::{Ptr, Stash, Stashed};
 
 use crate::Db;
+use crate::generic_param::{AstGenericParam, GenericParam, GenericParamKind};
 use crate::item::{EnumAst, FnAst, StructAst};
 use crate::module::ModSymbol;
 use crate::name::Name;
@@ -49,7 +50,8 @@ impl<'a, 'db> SigLowerCtx<'a, 'db> {
                     .iter()
                     .map(|e| self.lower_type_ref(*e))
                     .collect();
-                let elems = self.dst.alloc_slice(&tys);
+                let ptrs: Vec<_> = tys.into_iter().map(|t| self.dst.alloc(t)).collect();
+                let elems = self.dst.alloc_slice(&ptrs);
                 Ty {
                     data: TyData::Tuple(elems),
                 }
@@ -92,10 +94,10 @@ impl<'a, 'db> SigLowerCtx<'a, 'db> {
         // Check ribs for the first segment (generic params, Self).
         if let Some(entry) = self.ribs.lookup(first.name, Namespace::Type) {
             return match entry {
-                RibEntry::BoundVar(bv) => {
+                RibEntry::Param(param) => {
                     if rest.is_empty() {
                         Ty {
-                            data: TyData::BoundVar(bv),
+                            data: TyData::Param(param),
                         }
                     } else {
                         // T::AssocType — not yet supported
@@ -144,7 +146,11 @@ impl<'a, 'db> SigLowerCtx<'a, 'db> {
         }
     }
 
-    fn symbol_to_ty(&self, sym: Symbol<'db>, type_args: sage_stash::Slice<Ty<'db>>) -> Ty<'db> {
+    fn symbol_to_ty(
+        &self,
+        sym: Symbol<'db>,
+        type_args: sage_stash::Slice<Ptr<Ty<'db>>>,
+    ) -> Ty<'db> {
         match sym.data() {
             SymbolData::Intrinsic(intrinsic) => Ty {
                 data: intrinsic_to_ty_data(intrinsic),
@@ -155,13 +161,14 @@ impl<'a, 'db> SigLowerCtx<'a, 'db> {
         }
     }
 
-    fn lower_type_args(&mut self, seg: &PathSegmentAst<'db>) -> sage_stash::Slice<Ty<'db>> {
+    fn lower_type_args(&mut self, seg: &PathSegmentAst<'db>) -> sage_stash::Slice<Ptr<Ty<'db>>> {
         let src_args = &self.src[seg.type_args];
         if src_args.is_empty() {
             return self.dst.alloc_slice(&[]);
         }
         let tys: Vec<_> = src_args.iter().map(|a| self.lower_type_ref(*a)).collect();
-        self.dst.alloc_slice(&tys)
+        let ptrs: Vec<_> = tys.into_iter().map(|t| self.dst.alloc(t)).collect();
+        self.dst.alloc_slice(&ptrs)
     }
 }
 
@@ -177,31 +184,33 @@ fn intrinsic_to_ty_data(intrinsic: Intrinsic) -> TyData<'static> {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers: build bound vars from generic params
+// Helpers: create AstGenericParam symbols and bind them in ribs
 // ---------------------------------------------------------------------------
 
 fn build_generics_ribs<'db>(
+    db: &'db dyn Db,
     src: &Stash,
-    generics: sage_stash::Slice<GenericParam<'db>>,
+    generics: sage_stash::Slice<crate::sig_ast::GenericParam<'db>>,
     dst: &mut Stash,
     ribs: &mut Ribs<'db>,
-) -> sage_stash::Slice<BoundVarInfo> {
+    parent: Symbol<'db>,
+) -> sage_stash::Slice<GenericParam<'db>> {
     let params = &src[generics];
-    let mut bound_vars = Vec::new();
+    let mut generic_params = Vec::new();
     for (i, param) in params.iter().enumerate() {
         let (name, kind) = match param {
-            GenericParam::Type { name, .. } => (*name, BoundVarKind::Type),
-            GenericParam::Lifetime { name, .. } => (*name, BoundVarKind::Lifetime),
-            GenericParam::Const { name, .. } => (*name, BoundVarKind::Const),
+            crate::sig_ast::GenericParam::Type { name, .. } => (*name, GenericParamKind::Type),
+            crate::sig_ast::GenericParam::Lifetime { name, .. } => {
+                (*name, GenericParamKind::Lifetime)
+            }
+            crate::sig_ast::GenericParam::Const { name, .. } => (*name, GenericParamKind::Const),
         };
-        let bv = BoundVar {
-            binder_index: 0,
-            param_index: i as u32,
-        };
-        ribs.add(name, Namespace::Type, RibEntry::BoundVar(bv));
-        bound_vars.push(BoundVarInfo { kind });
+        let ast_param = AstGenericParam::new(db, kind, Some(name), parent, i as u32);
+        let gp = GenericParam::Ast(ast_param);
+        ribs.add(name, Namespace::Type, RibEntry::Param(gp));
+        generic_params.push(gp);
     }
-    dst.alloc_slice(&bound_vars)
+    dst.alloc_slice(&generic_params)
 }
 
 // ---------------------------------------------------------------------------
@@ -237,7 +246,8 @@ pub fn lower_fn_sig<'db>(
     let mut dst = Stash::new();
     let mut ribs = Ribs::new();
     ribs.push_scope();
-    let bound_vars = build_generics_ribs(src, data.generics, &mut dst, &mut ribs);
+    let parent = Symbol::ast(crate::item::ItemAst::Function(fn_ast));
+    let generics = build_generics_ribs(db, src, data.generics, &mut dst, &mut ribs, parent);
 
     if let Some(ty) = self_type {
         use sage_stash::StashCopy;
@@ -258,7 +268,8 @@ pub fn lower_fn_sig<'db>(
         .iter()
         .map(|p| cx.lower_ptr_type_ref(p.ty))
         .collect();
-    let params = cx.dst.alloc_slice(&param_tys);
+    let param_ptrs: Vec<_> = param_tys.into_iter().map(|t| cx.dst.alloc(t)).collect();
+    let params = cx.dst.alloc_slice(&param_ptrs);
 
     let ret_ty = match data.ret_type {
         Some(ret_ptr) => cx.lower_ptr_type_ref(ret_ptr),
@@ -272,7 +283,7 @@ pub fn lower_fn_sig<'db>(
     let ret = cx.dst.alloc(ret_ty);
 
     let fn_sig = FnSig { params, ret };
-    let binder = Binder::new(fn_sig, bound_vars);
+    let binder = Binder::new(fn_sig, generics);
     Stashed::new(dst, binder)
 }
 
@@ -290,7 +301,8 @@ pub fn struct_signature<'db>(
     let mut dst = Stash::new();
     let mut ribs = Ribs::new();
     ribs.push_scope();
-    let bound_vars = build_generics_ribs(src, data.generics, &mut dst, &mut ribs);
+    let parent = Symbol::ast(crate::item::ItemAst::Struct(struct_ast));
+    let generics = build_generics_ribs(db, src, data.generics, &mut dst, &mut ribs, parent);
 
     let mut cx = SigLowerCtx {
         resolver: Resolver::new(db, source_root),
@@ -311,7 +323,7 @@ pub fn struct_signature<'db>(
     let fields = cx.dst.alloc_slice(&field_sigs);
 
     let struct_sig = StructSig { fields };
-    let binder = Binder::new(struct_sig, bound_vars);
+    let binder = Binder::new(struct_sig, generics);
     Stashed::new(dst, binder)
 }
 
@@ -329,7 +341,8 @@ pub fn enum_signature<'db>(
     let mut dst = Stash::new();
     let mut ribs = Ribs::new();
     ribs.push_scope();
-    let bound_vars = build_generics_ribs(src, data.generics, &mut dst, &mut ribs);
+    let parent = Symbol::ast(crate::item::ItemAst::Enum(enum_ast));
+    let generics = build_generics_ribs(db, src, data.generics, &mut dst, &mut ribs, parent);
 
     let mut cx = SigLowerCtx {
         resolver: Resolver::new(db, source_root),
@@ -360,6 +373,6 @@ pub fn enum_signature<'db>(
     let variants = cx.dst.alloc_slice(&variant_sigs);
 
     let enum_sig = EnumSig { variants };
-    let binder = Binder::new(enum_sig, bound_vars);
+    let binder = Binder::new(enum_sig, generics);
     Stashed::new(dst, binder)
 }

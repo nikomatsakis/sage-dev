@@ -1,4 +1,5 @@
 use sage_ir::db::Database;
+use sage_ir::generic_param::{ExtGenericParam, GenericParam, GenericParamKind};
 use sage_ir::item::ItemAst;
 use sage_ir::lower::parse_source_file;
 use sage_ir::name::Name;
@@ -26,7 +27,7 @@ fn identity_fold() {
             data: TyData::Int(IntTy::I32),
         };
         let i32_ptr = stash_a.alloc(i32_ty);
-        let args = stash_a.alloc_slice(&[i32_ty]);
+        let args = stash_a.alloc_slice(&[i32_ptr]);
         let adt = Ty {
             data: TyData::Adt(sym, args),
         };
@@ -43,14 +44,15 @@ fn identity_fold() {
                 TyData::Adt(s, a) => {
                     assert_eq!(s, sym);
                     assert_eq!(stash_b[a].len(), 1);
-                    assert!(matches!(stash_b[a][0].data, TyData::Int(IntTy::I32)));
+                    assert!(matches!(
+                        stash_b[stash_b[a][0]].data,
+                        TyData::Int(IntTy::I32)
+                    ));
                 }
                 _ => panic!("expected Adt"),
             },
             _ => panic!("expected Ref"),
         }
-
-        let _ = i32_ptr;
     });
 }
 
@@ -58,22 +60,34 @@ fn identity_fold() {
 fn instantiate_identity_fn() {
     let db = Database::default();
     db.attach(|db| {
+        let file = SourceFile::new(
+            db,
+            "lib.rs".to_owned(),
+            "fn identity<T>(x: T) -> T {}".to_owned(),
+        );
+        let items = parse_source_file(db, file);
+        let fn_sym = Symbol::ast(items[0]);
+
+        let param_t = ExtGenericParam::new(
+            db,
+            GenericParamKind::Type,
+            Some(Name::new(db, "T".to_owned())),
+            fn_sym,
+            0,
+        );
+        let gp = GenericParam::Ext(param_t);
+
         let mut src = Stash::new();
+        let generics = src.alloc_slice(&[gp]);
 
-        let bound_vars = src.alloc_slice(&[BoundVarInfo {
-            kind: BoundVarKind::Type,
-        }]);
-
-        let bv0 = Ty {
-            data: TyData::BoundVar(BoundVar {
-                binder_index: 0,
-                param_index: 0,
-            }),
+        let param_ty = Ty {
+            data: TyData::Param(gp),
         };
-        let params = src.alloc_slice(&[bv0]);
-        let ret = src.alloc(bv0);
+        let param_ptr = src.alloc(param_ty);
+        let params = src.alloc_slice(&[param_ptr]);
+        let ret = src.alloc(param_ty);
         let fn_sig = FnSig { params, ret };
-        let binder = Binder::new(fn_sig, bound_vars);
+        let binder = Binder::new(fn_sig, generics);
 
         let i32_ty = Ty {
             data: TyData::Int(IntTy::I32),
@@ -83,12 +97,13 @@ fn instantiate_identity_fn() {
 
         let result_params = &dst[result.params];
         assert_eq!(result_params.len(), 1);
-        assert!(matches!(result_params[0].data, TyData::Int(IntTy::I32)));
+        assert!(matches!(
+            dst[result_params[0]].data,
+            TyData::Int(IntTy::I32)
+        ));
 
         let result_ret = &dst[result.ret];
         assert!(matches!(result_ret.data, TyData::Int(IntTy::I32)));
-
-        let _ = Name::new(db, "test".to_owned());
     });
 }
 
@@ -96,34 +111,46 @@ fn instantiate_identity_fn() {
 fn instantiate_struct_sig() {
     let db = Database::default();
     db.attach(|db| {
-        let mut src = Stash::new();
+        let file = SourceFile::new(
+            db,
+            "lib.rs".to_owned(),
+            "struct Pair<A, B> { first: A, second: B }".to_owned(),
+        );
+        let items = parse_source_file(db, file);
+        let struct_sym = Symbol::ast(items[0]);
+
         let name_first = Name::new(db, "first".to_owned());
         let name_second = Name::new(db, "second".to_owned());
 
-        let bound_vars = src.alloc_slice(&[
-            BoundVarInfo {
-                kind: BoundVarKind::Type,
-            },
-            BoundVarInfo {
-                kind: BoundVarKind::Type,
-            },
-        ]);
+        let param_a = ExtGenericParam::new(
+            db,
+            GenericParamKind::Type,
+            Some(Name::new(db, "A".to_owned())),
+            struct_sym,
+            0,
+        );
+        let param_b = ExtGenericParam::new(
+            db,
+            GenericParamKind::Type,
+            Some(Name::new(db, "B".to_owned())),
+            struct_sym,
+            1,
+        );
+        let gp_a = GenericParam::Ext(param_a);
+        let gp_b = GenericParam::Ext(param_b);
 
-        let bv0 = Ty {
-            data: TyData::BoundVar(BoundVar {
-                binder_index: 0,
-                param_index: 0,
-            }),
+        let mut src = Stash::new();
+        let generics = src.alloc_slice(&[gp_a, gp_b]);
+
+        let ty_a = Ty {
+            data: TyData::Param(gp_a),
         };
-        let bv1 = Ty {
-            data: TyData::BoundVar(BoundVar {
-                binder_index: 0,
-                param_index: 1,
-            }),
+        let ty_b = Ty {
+            data: TyData::Param(gp_b),
         };
 
-        let ty0 = src.alloc(bv0);
-        let ty1 = src.alloc(bv1);
+        let ty0 = src.alloc(ty_a);
+        let ty1 = src.alloc(ty_b);
         let fields = src.alloc_slice(&[
             FieldSig {
                 name: name_first,
@@ -135,7 +162,7 @@ fn instantiate_struct_sig() {
             },
         ]);
         let sig = StructSig { fields };
-        let binder = Binder::new(sig, bound_vars);
+        let binder = Binder::new(sig, generics);
 
         let bool_ty = Ty { data: TyData::Bool };
         let str_ty = Ty { data: TyData::Str };
@@ -169,45 +196,57 @@ fn instantiate_nested_type_args() {
         let hashmap_sym = Symbol::ast(items[0]);
         let vec_sym = Symbol::ast(items[1]);
 
+        let file2 = SourceFile::new(db, "fn.rs".to_owned(), "fn foo<K, V>() {}".to_owned());
+        let fn_items = parse_source_file(db, file2);
+        let fn_sym = Symbol::ast(fn_items[0]);
+
+        let param_k = ExtGenericParam::new(
+            db,
+            GenericParamKind::Type,
+            Some(Name::new(db, "K".to_owned())),
+            fn_sym,
+            0,
+        );
+        let param_v = ExtGenericParam::new(
+            db,
+            GenericParamKind::Type,
+            Some(Name::new(db, "V".to_owned())),
+            fn_sym,
+            1,
+        );
+        let gp_k = GenericParam::Ext(param_k);
+        let gp_v = GenericParam::Ext(param_v);
+
         let mut src = Stash::new();
-        let bound_vars = src.alloc_slice(&[
-            BoundVarInfo {
-                kind: BoundVarKind::Type,
-            },
-            BoundVarInfo {
-                kind: BoundVarKind::Type,
-            },
-        ]);
+        let generics = src.alloc_slice(&[gp_k, gp_v]);
 
-        let bv0 = Ty {
-            data: TyData::BoundVar(BoundVar {
-                binder_index: 0,
-                param_index: 0,
-            }),
+        let ty_k = Ty {
+            data: TyData::Param(gp_k),
         };
-        let bv1 = Ty {
-            data: TyData::BoundVar(BoundVar {
-                binder_index: 0,
-                param_index: 1,
-            }),
+        let ty_v = Ty {
+            data: TyData::Param(gp_v),
         };
 
-        // Adt(Vec, [BoundVar(0,1)])
-        let bv1_slice = src.alloc_slice(&[bv1]);
-        let vec_bv1 = Ty {
-            data: TyData::Adt(vec_sym, bv1_slice),
+        // Adt(Vec, [Param(V)])
+        let ty_v_ptr = src.alloc(ty_v);
+        let v_slice = src.alloc_slice(&[ty_v_ptr]);
+        let vec_v = Ty {
+            data: TyData::Adt(vec_sym, v_slice),
         };
 
-        // Adt(HashMap, [BoundVar(0,0), Adt(Vec, [BoundVar(0,1)])])
-        let args = src.alloc_slice(&[bv0, vec_bv1]);
+        // Adt(HashMap, [Param(K), Adt(Vec, [Param(V)])])
+        let ty_k_ptr = src.alloc(ty_k);
+        let vec_v_ptr = src.alloc(vec_v);
+        let args = src.alloc_slice(&[ty_k_ptr, vec_v_ptr]);
         let hashmap_ty = Ty {
             data: TyData::Adt(hashmap_sym, args),
         };
 
-        let params = src.alloc_slice(&[hashmap_ty]);
+        let hashmap_ptr = src.alloc(hashmap_ty);
+        let params = src.alloc_slice(&[hashmap_ptr]);
         let ret = src.alloc(hashmap_ty);
         let fn_sig = FnSig { params, ret };
-        let binder = Binder::new(fn_sig, bound_vars);
+        let binder = Binder::new(fn_sig, generics);
 
         let str_ty = Ty { data: TyData::Str };
         let i32_ty = Ty {
@@ -219,16 +258,19 @@ fn instantiate_nested_type_args() {
 
         let result_params = &dst[result.params];
         assert_eq!(result_params.len(), 1);
-        match result_params[0].data {
+        match dst[result_params[0]].data {
             TyData::Adt(sym, args) => {
                 assert_eq!(sym, hashmap_sym);
                 let args = &dst[args];
                 assert_eq!(args.len(), 2);
-                assert!(matches!(args[0].data, TyData::Str));
-                match args[1].data {
+                assert!(matches!(dst[args[0]].data, TyData::Str));
+                match dst[args[1]].data {
                     TyData::Adt(s, inner_args) => {
                         assert_eq!(s, vec_sym);
-                        assert!(matches!(dst[inner_args][0].data, TyData::Int(IntTy::I32)));
+                        assert!(matches!(
+                            dst[dst[inner_args][0]].data,
+                            TyData::Int(IntTy::I32)
+                        ));
                     }
                     _ => panic!("expected Vec<i32>"),
                 }
@@ -239,26 +281,42 @@ fn instantiate_nested_type_args() {
 }
 
 #[test]
-fn de_bruijn_shift() {
+fn param_not_in_subst_passes_through() {
     let db = Database::default();
     db.attach(|db| {
+        let file = SourceFile::new(db, "lib.rs".to_owned(), "fn foo<T, U>() {}".to_owned());
+        let items = parse_source_file(db, file);
+        let fn_sym = Symbol::ast(items[0]);
+
+        let param_t = ExtGenericParam::new(
+            db,
+            GenericParamKind::Type,
+            Some(Name::new(db, "T".to_owned())),
+            fn_sym,
+            0,
+        );
+        let param_u = ExtGenericParam::new(
+            db,
+            GenericParamKind::Type,
+            Some(Name::new(db, "U".to_owned())),
+            fn_sym,
+            1,
+        );
+        let gp_t = GenericParam::Ext(param_t);
+        let gp_u = GenericParam::Ext(param_u);
+
         let mut src = Stash::new();
+        // Only substitute T, leave U unsubstituted (simulates outer impl param)
+        let generics = src.alloc_slice(&[gp_t]);
 
-        let bound_vars = src.alloc_slice(&[BoundVarInfo {
-            kind: BoundVarKind::Type,
-        }]);
-
-        // BoundVar { binder_index: 1, param_index: 0 } — references an outer binder
-        let outer_ref = Ty {
-            data: TyData::BoundVar(BoundVar {
-                binder_index: 1,
-                param_index: 0,
-            }),
+        let ty_u = Ty {
+            data: TyData::Param(gp_u),
         };
-        let params = src.alloc_slice(&[outer_ref]);
-        let ret = src.alloc(outer_ref);
+        let ty_u_ptr = src.alloc(ty_u);
+        let params = src.alloc_slice(&[ty_u_ptr]);
+        let ret = src.alloc(ty_u);
         let fn_sig = FnSig { params, ret };
-        let binder = Binder::new(fn_sig, bound_vars);
+        let binder = Binder::new(fn_sig, generics);
 
         let i32_ty = Ty {
             data: TyData::Int(IntTy::I32),
@@ -266,15 +324,11 @@ fn de_bruijn_shift() {
         let mut dst = Stash::new();
         let result = instantiate_fn_sig(&src, &mut dst, &binder, vec![i32_ty]);
 
+        // U is not in scope of the substitution, so it passes through unchanged
         let result_params = &dst[result.params];
-        match result_params[0].data {
-            TyData::BoundVar(bv) => {
-                assert_eq!(bv.binder_index, 0);
-                assert_eq!(bv.param_index, 0);
-            }
-            _ => panic!("expected shifted BoundVar"),
+        match dst[result_params[0]].data {
+            TyData::Param(p) => assert_eq!(p, gp_u),
+            _ => panic!("expected Param(U) to pass through unchanged"),
         }
-
-        let _ = Name::new(db, "test".to_owned());
     });
 }

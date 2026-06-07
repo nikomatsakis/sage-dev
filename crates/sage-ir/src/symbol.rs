@@ -7,6 +7,7 @@
 
 use sage_stash::{AllocStashData, StashDirect};
 
+use crate::generic_param::AstGenericParam;
 use crate::item::{ItemAst, MacroDefAst, MacroInvocationAst, StructAst, UseGroupAst};
 use crate::module::{CrateNum, DefIndex, ModSymbol};
 use crate::name::Name;
@@ -112,6 +113,7 @@ pub enum SymbolData<'db> {
     MacroDef(MacroDefAst<'db>),
     Use(UseGroupAst<'db>),
     MacroInvocation(MacroInvocationAst<'db>),
+    GenericParam(AstGenericParam<'db>),
     Intrinsic(Intrinsic),
     Error(AbsoluteSpan<'db>),
     Unknown(SymExt),
@@ -198,6 +200,7 @@ impl<'db> Symbol<'db> {
             SymbolData::MacroDef(_)
             | SymbolData::Use(_)
             | SymbolData::MacroInvocation(_)
+            | SymbolData::GenericParam(_)
             | SymbolData::Intrinsic(_)
             | SymbolData::Error(_) => None,
         }
@@ -229,6 +232,7 @@ impl<'db> Symbol<'db> {
                 crate::module::ModSymbolData::Ext(_) => None,
             },
             SymbolData::MacroDef(d) => Some(d.name(db)),
+            SymbolData::GenericParam(p) => p.name(db),
             SymbolData::Impl(_)
             | SymbolData::Use(_)
             | SymbolData::MacroInvocation(_)

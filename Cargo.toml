@@ -40,3 +40,4 @@ harness = false
 
 [dev-dependencies]
 expect-test = "1.5.1"
+sage-test-harness = { path = "crates/sage-test-harness" }

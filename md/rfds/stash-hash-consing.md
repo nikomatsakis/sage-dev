@@ -70,7 +70,7 @@ impl<T: Hash + StashDirect> StashHash for T {
 `Ptr<T>` and `Slice<T>` delegate to the hasher, which controls the recursion strategy:
 
 ```rust
-impl<T: StashHash + StashData> StashHash for Ptr<T> {
+impl<'db, T: StashHash + StashData<'db>> StashHash for Ptr<T> {
     fn stash_hash(&self, stash: &Stash, hasher: &mut impl StashHasher) {
         hasher.stash_hash_ptr(*self, stash);
     }

@@ -1,11 +1,12 @@
 use sage_ir::db::Database;
+use sage_ir::generic_param::{ExtGenericParam, GenericParam, GenericParamKind};
 use sage_ir::item::ItemAst;
 use sage_ir::lower::parse_source_file;
 use sage_ir::name::Name;
 use sage_ir::source::SourceFile;
 use sage_ir::symbol::Symbol;
 use sage_ir::ty::*;
-use sage_stash::{Ptr, Stash};
+use sage_stash::Stash;
 use salsa::Database as _;
 
 #[test]
@@ -23,7 +24,7 @@ fn ty_adt_round_trip() {
         let i32_ty = stash.alloc(Ty {
             data: TyData::Int(IntTy::I32),
         });
-        let args = stash.alloc_slice(&[stash[i32_ty]]);
+        let args = stash.alloc_slice(&[i32_ty]);
         let adt = stash.alloc(Ty {
             data: TyData::Adt(sym, args),
         });
@@ -32,7 +33,7 @@ fn ty_adt_round_trip() {
             TyData::Adt(s, a) => {
                 assert_eq!(s, sym);
                 assert_eq!(stash[a].len(), 1);
-                assert!(matches!(stash[a][0].data, TyData::Int(IntTy::I32)));
+                assert!(matches!(stash[stash[a][0]].data, TyData::Int(IntTy::I32)));
             }
             _ => panic!("expected Adt"),
         }
@@ -43,49 +44,40 @@ fn ty_adt_round_trip() {
 fn binder_fn_sig_round_trip() {
     let db = Database::default();
     db.attach(|db| {
+        let file = SourceFile::new(db, "lib.rs".to_owned(), "fn foo<T>() {}".to_owned());
+        let items = parse_source_file(db, file);
+        let fn_sym = Symbol::ast(items[0]);
+
+        let param_t = ExtGenericParam::new(
+            db,
+            GenericParamKind::Type,
+            Some(Name::new(db, "T".to_owned())),
+            fn_sym,
+            0,
+        );
+        let gp = GenericParam::Ext(param_t);
+
         let mut stash = Stash::new();
+        let generics = stash.alloc_slice(&[gp]);
 
-        let bound_vars = stash.alloc_slice(&[
-            BoundVarInfo {
-                kind: BoundVarKind::Type,
-            },
-            BoundVarInfo {
-                kind: BoundVarKind::Type,
-            },
-        ]);
-
-        let bv0 = Ty {
-            data: TyData::BoundVar(BoundVar {
-                binder_index: 0,
-                param_index: 0,
-            }),
+        let param_ty = Ty {
+            data: TyData::Param(gp),
         };
-        let bv1 = Ty {
-            data: TyData::BoundVar(BoundVar {
-                binder_index: 0,
-                param_index: 1,
-            }),
-        };
-
-        let params = stash.alloc_slice(&[bv0, bv1]);
-        let ret = stash.alloc(bv0);
+        let p0 = stash.alloc(param_ty);
+        let p1 = stash.alloc(param_ty);
+        let params = stash.alloc_slice(&[p0, p1]);
+        let ret = stash.alloc(param_ty);
         let fn_sig = FnSig { params, ret };
-        let binder: Binder<'_, FnSig<'_>> = Binder::new(fn_sig, bound_vars);
+        let binder: Binder<'_, FnSig<'_>> = Binder::new(fn_sig, generics);
         let binder_ptr = stash.alloc(binder);
 
         let stored = &stash[binder_ptr];
-        assert_eq!(stash[stored.bound_vars].len(), 2);
+        assert_eq!(stash[stored.generics].len(), 1);
         assert_eq!(stash[stored.value.params].len(), 2);
         match stash[stored.value.ret].data {
-            TyData::BoundVar(bv) => {
-                assert_eq!(bv.binder_index, 0);
-                assert_eq!(bv.param_index, 0);
-            }
-            _ => panic!("expected BoundVar"),
+            TyData::Param(p) => assert_eq!(p, gp),
+            _ => panic!("expected Param"),
         }
-
-        // Name is not used but suppress warning
-        let _ = Name::new(db, "test".to_owned());
     });
 }
 

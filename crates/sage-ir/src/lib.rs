@@ -4,6 +4,7 @@ pub mod db;
 pub mod derive;
 pub mod display;
 pub mod dump;
+pub mod generic_param;
 pub mod item;
 pub mod lower;
 pub mod memmap;

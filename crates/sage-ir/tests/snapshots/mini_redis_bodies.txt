@@ -21,7 +21,7 @@ fn main() -> mini_redis::Result<()> {
         println!("\"{string}\"");
       } else {
         println!("{value:?}");
-      };
+      }
     }
     Command::Get { key: key } => {
       if let Some(value) = client.get(&key).await? {
@@ -29,10 +29,10 @@ fn main() -> mini_redis::Result<()> {
           println!("\"{string}\"");
         } else {
           println!("{value:?}");
-        };
+        }
       } else {
         println!("(nil)");
-      };
+      }
     }
     Command::Set { key: key, value: value, expires: None } => {
       client.set(&key, value).await?;
@@ -56,7 +56,7 @@ fn main() -> mini_redis::Result<()> {
                     "got message from the channel: {}; message = {:?}",
                     msg.channel, msg.content
                 );
-      };
+      }
     }
   };
   Ok(())
@@ -72,7 +72,7 @@ fn main() -> mini_redis::Result<()> {
         println!("\"{string}\"");
       } else {
         println!("{value:?}");
-      };
+      }
     }
     Command::Get { key: key } => {
       if let Some(value) = client.get(&key).await? {
@@ -80,10 +80,10 @@ fn main() -> mini_redis::Result<()> {
           println!("\"{string}\"");
         } else {
           println!("{value:?}");
-        };
+        }
       } else {
         println!("(nil)");
-      };
+      }
     }
     Command::Set { key: key, value: value, expires: None } => {
       client.set(&key, value).await?;
@@ -107,7 +107,7 @@ fn main() -> mini_redis::Result<()> {
                     "got message from the channel: {}; message = {:?}",
                     msg.channel, msg.content
                 );
-      };
+      }
     }
   };
   Ok(())
@@ -170,7 +170,7 @@ fn run(client: Client, rx: Receiver<Message>) {
       Command::Set(key, value) => client.set(&key, value).await.map(|| None)
     };
     let _ = tx.send(response);
-  };
+  }
 } {
   while let Some((cmd, tx)) = rx.recv().await {
     let response = match cmd {
@@ -178,7 +178,7 @@ fn run(client: Client, rx: Receiver<Message>) {
       Command::Set(key, value) => client.set(&key, value).await.map(|| None)
     };
     let _ = tx.send(response);
-  };
+  }
 }
 
 // --- clients/client.rs ---
@@ -247,7 +247,7 @@ fn handle_command(frame: Frame, subscribe_to: &mut Vec<String>, subscriptions: &
         subscriptions.remove(&channel_name);
         let response = make_unsubscribe_frame(channel_name, subscriptions.len());
         dst.write_frame(&response).await?;
-      };
+      }
     }
     command => {
       let cmd = Unknown::new(command.get_name());
@@ -268,7 +268,7 @@ fn handle_command(frame: Frame, subscribe_to: &mut Vec<String>, subscriptions: &
         subscriptions.remove(&channel_name);
         let response = make_unsubscribe_frame(channel_name, subscriptions.len());
         dst.write_frame(&response).await?;
-      };
+      }
     }
     command => {
       let cmd = Unknown::new(command.get_name());
@@ -344,7 +344,7 @@ fn purge_expired_tasks(shared: Arc<Shared>) {
             }
     } else {
       shared.background_task.notified().await;
-    };
+    }
   };
   debug!("Purge background task shut down")
 } {
@@ -356,7 +356,7 @@ fn purge_expired_tasks(shared: Arc<Shared>) {
             }
     } else {
       shared.background_task.notified().await;
-    };
+    }
   };
   debug!("Purge background task shut down")
 }
@@ -413,7 +413,7 @@ fn get_line(src: &mut Cursor<&[u8; _]>) -> Result<&[u8; _], Error> {
     if src.get_ref()[i] Eq Char And src.get_ref()[i Add Int] Eq Char {
       src.set_position(i Add Int as u64);
       return Ok(&src.get_ref()[start..i]);
-    };
+    }
   };
   Err(Error::Incomplete)
 } {
@@ -423,7 +423,7 @@ fn get_line(src: &mut Cursor<&[u8; _]>) -> Result<&[u8; _], Error> {
     if src.get_ref()[i] Eq Char And src.get_ref()[i Add Int] Eq Char {
       src.set_position(i Add Int as u64);
       return Ok(&src.get_ref()[start..i]);
-    };
+    }
   };
   Err(Error::Incomplete)
 }

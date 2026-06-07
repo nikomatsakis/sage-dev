@@ -1,14 +1,15 @@
+use crate::generic_param::GenericParam;
 use crate::name::Name;
 use crate::resolved::LocalId;
 use crate::symbol::Symbol;
-use crate::ty::{BoundVar, Ty};
+use crate::ty::Ty;
 
 use crate::resolve::Namespace;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum RibEntry<'db> {
     Local(LocalId),
-    BoundVar(BoundVar),
+    Param(GenericParam<'db>),
     Sym(Symbol<'db>),
     SelfTy(Ty<'db>),
 }

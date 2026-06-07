@@ -155,9 +155,9 @@ fn resolve_connection_read_frame() {
                     return <ext std::prelude::v1::Ok>(<ext std::prelude::v1::None>);
                   } else {
                     return <ext std::prelude::v1::Err>(String.into());
-                  };
-                };
-              };
+                  }
+                }
+              }
             }
         "#]]
         .assert_eq(&output);
@@ -203,7 +203,7 @@ fn resolve_parse_next_string() {
                 <bind:4> => <ext std::prelude::v1::Err>(<ext std::format>!(
                             "protocol error; expected simple frame or bulk frame, got {frame:?}"
                         ).into())
-              };
+              }
             }
         "#]].assert_eq(&output);
     });
@@ -226,7 +226,7 @@ fn resolve_parse_next_bytes() {
                 <bind:3> => <ext std::prelude::v1::Err>(<ext std::format>!(
                             "protocol error; expected simple frame or bulk frame, got {frame:?}"
                         ).into())
-              };
+              }
             }
         "#]].assert_eq(&output);
     });
