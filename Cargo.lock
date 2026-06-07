@@ -828,6 +828,7 @@ dependencies = [
  "rand",
  "sage-ir",
  "sage-stash",
+ "sage-test-harness",
  "salsa",
  "serde",
  "serde_json",
@@ -876,6 +877,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "sage-test-harness"
+version = "0.1.0"
+dependencies = [
+ "expect-test",
+ "sage-infer",
+ "sage-ir",
+ "sage-stash",
+ "salsa",
 ]
 
 [[package]]

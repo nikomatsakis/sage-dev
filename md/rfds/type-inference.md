@@ -957,17 +957,20 @@ The `sage-infer` crate implements the infrastructure sections of this RFD. What'
 - Universe tracking for closure scope escape prevention
 - Finalization: promote unresolved → Error, AtLeast → Exactly
 - Async runtime scaffold (`runtime.rs`)
+- Body walker (`check.rs`): walks `ResolvedBody`, checks literals, locals, blocks, binary ops, if/else, return, assign, tuples, refs, struct literals, field access with generic instantiation
+- In-memory test harness (`sage-test-harness` crate) and end-to-end integration tests (`tests/type_check_tests.rs`)
 
 **Design decisions made during implementation:**
 - `TyData` compound variants store `Slice<Ptr<Ty<'db>>>` (pointer-slices), not `Slice<Ty<'db>>`. This enables zero-copy skeleton decomposition — `decompose` takes `&Stash` (read-only).
 - Congruence closure should use **lazy recanon-on-find** rather than eager propagation with a dependents map. When `find` encounters a compound type, it decomposes, canonicalizes each child, recomposes, and unions if changed. No separate dependents tracking needed.
 - No `TyIdx` newtype — uses `Ptr<Ty<'db>>` directly throughout.
+- Block tail heuristic: tree-sitter wraps if/else in `expression_statement` even without a semicolon, so the checker treats the last `Expr` statement as the tail when there is no explicit tail expression.
 
 **Next steps (same RFD, not started):**
-- The `ResolvedBody` walker (`type_check_body` pseudocode, L501–947)
 - Async task spawning for structured concurrency in blocks
-- Surface desugarings
-- End-to-end tests from Rust source → inferred types
+- Surface desugarings (`?`, `for`, `.await`)
+- Function calls (resolving callee signature, instantiating type args)
+- Method resolution on known types
 
 ## Open questions
 

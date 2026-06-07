@@ -1,4 +1,5 @@
 pub mod bound;
+pub mod check;
 pub mod egraph;
 pub mod infer_ctx;
 pub mod runtime;

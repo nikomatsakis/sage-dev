@@ -62,7 +62,7 @@ fn main() -> mini_redis::Result<()> {
         println!("\"{string}\"");
       } else {
         println!("{value:?}");
-      };
+      }
     }
     Command::Get { key: key } => {
       if let Some(value) = client.get(&key).await? {
@@ -70,10 +70,10 @@ fn main() -> mini_redis::Result<()> {
           println!("\"{string}\"");
         } else {
           println!("{value:?}");
-        };
+        }
       } else {
         println!("(nil)");
-      };
+      }
     }
     Command::Set { key: key, value: value, expires: None } => {
       client.set(&key, value).await?;
@@ -97,7 +97,7 @@ fn main() -> mini_redis::Result<()> {
                     "got message from the channel: {}; message = {:?}",
                     msg.channel, msg.content
                 );
-      };
+      }
     }
   };
   Ok(())
@@ -392,7 +392,7 @@ fn run(client: Client, rx: Receiver<Message>) {
       Command::Set(key, value) => client.set(&key, value).await.map(|| None)
     };
     let _ = tx.send(response);
-  };
+  }
 }
 #[derive(Clone)]
 struct BufferedClient {
@@ -433,7 +433,7 @@ fn get(self: &mut Self, key: &str) -> Result<Option<Bytes>> {
   match rx.await {
     Ok(res) => res
     Err(err) => Err(err.into())
-  };
+  }
 }
   /// Set `key` to hold the given `value`.
 ///
@@ -446,7 +446,7 @@ fn set(self: &mut Self, key: &str, value: Bytes) -> Result<()> {
   match rx.await {
     Ok(res) => res.map(|| ())
     Err(err) => Err(err.into())
-  };
+  }
 }
 }
 
@@ -555,7 +555,7 @@ fn ping(self: &mut Self, msg: Option<Bytes>) -> crate::Result<Bytes> {
     Frame::Simple(value) => Ok(value.into())
     Frame::Bulk(value) => Ok(value)
     frame => Err(frame.to_error())
-  };
+  }
 }
   /// Get the value of key.
 ///
@@ -586,7 +586,7 @@ fn get(self: &mut Self, key: &str) -> crate::Result<Option<Bytes>> {
     Frame::Bulk(value) => Ok(Some(value))
     Frame::Null => Ok(None)
     frame => Err(frame.to_error())
-  };
+  }
 }
   /// Set `key` to hold the given `value`.
 ///
@@ -670,7 +670,7 @@ fn set_cmd(self: &mut Self, cmd: Set) -> crate::Result<()> {
   match self.read_response().await? {
     Frame::Simple(response) => Ok(())
     frame => Err(frame.to_error())
-  };
+  }
 }
   /// Posts `message` to the given `channel`.
 ///
@@ -701,7 +701,7 @@ fn publish(self: &mut Self, channel: &str, message: Bytes) -> crate::Result<u64>
   match self.read_response().await? {
     Frame::Integer(response) => Ok(response)
     frame => Err(frame.to_error())
-  };
+  }
 }
   /// Subscribes the client to the specified channels.
 ///
@@ -746,7 +746,7 @@ fn read_response(self: &mut Self) -> crate::Result<Frame> {
       let err = Error::new(ErrorKind::ConnectionReset, String);
       Err(err.into())
     }
-  };
+  }
 }
 }
 impl Subscriber {
@@ -768,10 +768,10 @@ fn next_message(self: &mut Self) -> crate::Result<Option<Message>> {
           {missing} => Err(mframe.to_error())
         }
         frame => Err(frame.to_error())
-      };
+      }
     }
     None => Ok(None)
-  };
+  }
 }
   /// Convert the subscriber into a `Stream` yielding new messages published
 /// on subscribed channels.
@@ -818,7 +818,7 @@ fn unsubscribe(self: &mut Self, channels: &[String; _]) -> crate::Result<()> {
           self.subscribed_channels.retain(|c| Derefchannel Ne &c[..]);
           if self.subscribed_channels.len() Ne len Sub Int {
             return Err(response.to_error());
-          };
+          }
         }
         {missing} => return Err(response.to_error())
       }
@@ -988,7 +988,7 @@ fn apply(self: Self, db: &Db, dst: &mut Connection, shutdown: &mut Shutdown) -> 
     Ping(cmd) => cmd.apply(dst).await
     Unknown(cmd) => cmd.apply(dst).await
     Unsubscribe() => Err(String.into())
-  };
+  }
 }
   /// Returns the command name
 fn get_name(self: &Self) -> &str {
@@ -1000,7 +1000,7 @@ fn get_name(self: &Self) -> &str {
     Command::Unsubscribe() => String
     Command::Ping() => String
     Command::Unknown(cmd) => cmd.get_name()
-  };
+  }
 }
 }
 
@@ -1051,7 +1051,7 @@ fn parse_frames(parse: &mut Parse) -> crate::Result<Ping> {
     Ok(msg) => Ok(Ping::new(Some(msg)))
     Err(ParseError::EndOfStream) => Ok(Ping::default())
     Err(e) => Err(e.into())
-  };
+  }
 }
   /// Apply the `Ping` command and return the message.
 ///
@@ -1339,7 +1339,7 @@ fn parse_frames(parse: &mut Parse) -> crate::Result<Subscribe> {
       Ok(s) => channels.push(s)
       Err(EndOfStream) => break
       Err(err) => return Err(err.into())
-    };
+    }
   };
   Ok(Subscribe { channels: channels })
 }
@@ -1380,7 +1380,7 @@ fn apply(self: Self, db: &Db, dst: &mut Connection, shutdown: &mut Shutdown) -> 
                     return Ok(());
                 }
             };
-  };
+  }
 }
   /// Converts the command into an equivalent `Frame`.
 ///
@@ -1430,7 +1430,7 @@ fn handle_command(frame: Frame, subscribe_to: &mut Vec<String>, subscriptions: &
         subscriptions.remove(&channel_name);
         let response = make_unsubscribe_frame(channel_name, subscriptions.len());
         dst.write_frame(&response).await?;
-      };
+      }
     }
     command => {
       let cmd = Unknown::new(command.get_name());
@@ -1501,7 +1501,7 @@ fn parse_frames(parse: &mut Parse) -> Result<Unsubscribe, ParseError> {
       Ok(s) => channels.push(s)
       Err(EndOfStream) => break
       Err(err) => return Err(err)
-    };
+    }
   };
   Ok(Unsubscribe { channels: channels })
 }
@@ -1606,9 +1606,9 @@ fn read_frame(self: &mut Self) -> crate::Result<Option<Frame>> {
         return Ok(None);
       } else {
         return Err(String.into());
-      };
-    };
-  };
+      }
+    }
+  }
 }
   /// Tries to parse a frame from the buffer. If the buffer contains enough
 /// data, the frame is returned and the data removed from the buffer. If not
@@ -1626,7 +1626,7 @@ fn parse_frame(self: &mut Self) -> crate::Result<Option<Frame>> {
     }
     Err(Incomplete) => Ok(None)
     Err(e) => Err(e.into())
-  };
+  }
 }
   /// Write a single `Frame` value to the underlying stream.
 ///
@@ -1643,7 +1643,7 @@ fn write_frame(self: &mut Self, frame: &Frame) -> io::Result<()> {
       self.write_decimal(val.len() as u64).await?;
       for entry in &DerefDerefval {
         self.write_value(entry).await?;
-      };
+      }
     }
     {missing} => self.write_value(frame).await?
   };
@@ -1795,7 +1795,7 @@ fn set(self: &Self, key: String, value: Bytes, expire: Option<Duration>) {
   if let Some(prev) = prev {
     if let Some(when) = prev.expires_at {
       state.expirations.remove(&(when, key.clone()));
-    };
+    }
   };
   if let Some(when) = expires_at {
     state.expirations.insert((when, key));
@@ -1803,7 +1803,7 @@ fn set(self: &Self, key: String, value: Bytes, expire: Option<Duration>) {
   drop(state);
   if notify {
     self.shared.background_task.notify_one();
-  };
+  }
 }
   /// Returns a `Receiver` for the requested channel.
 ///
@@ -1818,7 +1818,7 @@ fn subscribe(self: &Self, key: String) -> broadcast::Receiver<Bytes> {
       e.insert(tx);
       rx
     }
-  };
+  }
 }
   /// Publish a message to the channel. Returns the number of subscribers
 /// listening on the channel.
@@ -1880,7 +1880,7 @@ fn purge_expired_tasks(shared: Arc<Shared>) {
             }
     } else {
       shared.background_task.notified().await;
-    };
+    }
   };
   debug!("Purge background task shut down")
 }
@@ -1926,7 +1926,7 @@ fn push_bulk(self: &mut Self, bytes: Bytes) {
       vec.push(Frame::Bulk(bytes));
     }
     {missing} => panic!("not an array frame")
-  };
+  }
 }
   /// Push an "integer" frame into the array. `self` must be an Array frame.
 ///
@@ -1939,7 +1939,7 @@ fn push_int(self: &mut Self, value: u64) {
       vec.push(Frame::Integer(value));
     }
     {missing} => panic!("not an array frame")
-  };
+  }
 }
   /// Checks if an entire message can be decoded from `src`
 fn check(src: &mut Cursor<&[u8; _]>) -> Result<(), Error> {
@@ -1966,7 +1966,7 @@ fn check(src: &mut Cursor<&[u8; _]>) -> Result<(), Error> {
       } else {
         let len: usize = get_decimal(src)?.try_into()?;
         skip(src, len Add Int)
-      };
+      }
     }
     {missing} => {
       let len = get_decimal(src)?;
@@ -1976,7 +1976,7 @@ fn check(src: &mut Cursor<&[u8; _]>) -> Result<(), Error> {
       Ok(())
     }
     actual => Err(format!("protocol error; invalid frame type byte `{actual}`").into())
-  };
+  }
 }
   /// The message has already been validated with `check`.
 fn parse(src: &mut Cursor<&[u8; _]>) -> Result<Frame, Error> {
@@ -2011,7 +2011,7 @@ fn parse(src: &mut Cursor<&[u8; _]>) -> Result<Frame, Error> {
         let data = Bytes::copy_from_slice(&src.chunk()[..len]);
         skip(src, n)?;
         Ok(Frame::Bulk(data))
-      };
+      }
     }
     {missing} => {
       let len = get_decimal(src)?.try_into()?;
@@ -2022,7 +2022,7 @@ fn parse(src: &mut Cursor<&[u8; _]>) -> Result<Frame, Error> {
       Ok(Frame::Array(out))
     }
     {missing} => unimplemented!()
-  };
+  }
 }
   /// Converts the frame to an "unexpected frame" error
 fn to_error(self: &Self) -> crate::Error {
@@ -2035,7 +2035,7 @@ impl PartialEq<&str> for Frame {
     Frame::Simple(s) => s.eq(other)
     Frame::Bulk(s) => s.eq(other)
     {missing} => Bool(false)
-  };
+  }
 }
 }
 impl fmt::Display for Frame {
@@ -2058,7 +2058,7 @@ impl fmt::Display for Frame {
       };
       Ok(())
     }
-  };
+  }
 }
 }
 fn peek_u8(src: &mut Cursor<&[u8; _]>) -> Result<u8, Error> {
@@ -2093,7 +2093,7 @@ fn get_line(src: &mut Cursor<&[u8; _]>) -> Result<&[u8; _], Error> {
     if src.get_ref()[i] Eq Char And src.get_ref()[i Add Int] Eq Char {
       src.set_position(i Add Int as u64);
       return Ok(&src.get_ref()[start..i]);
-    };
+    }
   };
   Err(Error::Incomplete)
 }
@@ -2124,7 +2124,7 @@ impl fmt::Display for Error {
   match self {
     Error::Incomplete => String.fmt(fmt)
     Error::Other(err) => err.fmt(fmt)
-  };
+  }
 }
 }
 
@@ -2246,7 +2246,7 @@ fn next_string(self: &mut Self) -> Result<String, ParseError> {
     frame => Err(format!(
                 "protocol error; expected simple frame or bulk frame, got {frame:?}"
             ).into())
-  };
+  }
 }
   /// Return the next entry as raw bytes.
 ///
@@ -2259,7 +2259,7 @@ fn next_bytes(self: &mut Self) -> Result<Bytes, ParseError> {
     frame => Err(format!(
                 "protocol error; expected simple frame or bulk frame, got {frame:?}"
             ).into())
-  };
+  }
 }
   /// Return the next entry as an integer.
 ///
@@ -2274,7 +2274,7 @@ fn next_int(self: &mut Self) -> Result<u64, ParseError> {
     Frame::Simple(data) => atoi()(data.as_bytes()).ok_or_else(|| MSG.into())
     Frame::Bulk(data) => atoi()(&data).ok_or_else(|| MSG.into())
     frame => Err(format!("protocol error; expected int frame but got {frame:?}").into())
-  };
+  }
 }
   /// Ensure there are no more entries in the array
 fn finish(self: &mut Self) -> Result<(), ParseError> {
@@ -2282,7 +2282,7 @@ fn finish(self: &mut Self) -> Result<(), ParseError> {
     Ok(())
   } else {
     Err(String.into())
-  };
+  }
 }
 }
 impl From<String> for ParseError {
@@ -2300,7 +2300,7 @@ impl fmt::Display for ParseError {
   match self {
     ParseError::EndOfStream => String.fmt(f)
     ParseError::Other(err) => err.fmt(f)
-  };
+  }
 }
 }
 impl std::error::Error for ParseError {
@@ -2424,7 +2424,7 @@ fn run(self: &mut Self) -> crate::Result<()> {
       };
       drop(permit);
     });
-  };
+  }
 }
   /// Accept an inbound connection.
 ///
@@ -2441,12 +2441,12 @@ fn accept(self: &mut Self) -> crate::Result<TcpStream> {
       Err(err) => {
         if backoff Gt Int {
           return Err(err.into());
-        };
+        }
       }
     };
     time::sleep(Duration::from_secs(backoff)).await;
     backoff = Int;
-  };
+  }
 }
 }
 impl Handler {

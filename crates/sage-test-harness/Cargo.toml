@@ -1,0 +1,11 @@
+[package]
+name = "sage-test-harness"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+expect-test = "1.5.1"
+sage-infer = { version = "0.1.0", path = "../sage-infer" }
+sage-ir = { version = "0.1.0", path = "../sage-ir" }
+sage-stash = { version = "0.1.0", path = "../sage-stash" }
+salsa = "0.26.1"

@@ -59,9 +59,14 @@ impl<'db> InferCtx<'db> {
     // -----------------------------------------------------------------------
 
     pub fn fresh_ty_var(&mut self) -> Ptr<Ty<'db>> {
+        let data = self.fresh_ty_var_data();
+        self.egraph.alloc_ty(data)
+    }
+
+    pub fn fresh_ty_var_data(&mut self) -> TyData<'db> {
         let universe = self.current_universe;
         let idx = self.egraph.alloc_var(VarInfo { universe });
-        self.egraph.alloc_ty(TyData::InferVar(idx))
+        TyData::InferVar(idx)
     }
 
     pub fn var_universe(&self, idx: InferVarIndex) -> Universe {
@@ -133,6 +138,7 @@ impl<'db> InferCtx<'db> {
 
     /// Check that `a` and `b` can be equal. Structural descent; sets bounds
     /// on inference vars; reports errors on mismatch.
+    /// Convention: `b` is the "expected" type for error reporting.
     pub fn require_eq(&mut self, a: Ptr<Ty<'db>>, b: Ptr<Ty<'db>>) {
         use crate::skeleton::decompose;
 
@@ -170,7 +176,7 @@ impl<'db> InferCtx<'db> {
         let db = decompose(&self.egraph.stash, b_canon);
 
         if da.skeleton != db.skeleton {
-            self.report_type_mismatch(a_canon, b_canon);
+            self.report_type_mismatch(b_canon, a_canon);
             return;
         }
 
@@ -218,6 +224,11 @@ impl<'db> InferCtx<'db> {
         self.egraph.alloc_ty(data)
     }
 
+    pub fn unit_ty(&mut self) -> Ptr<Ty<'db>> {
+        let elems = self.egraph.stash.alloc_slice(&[]);
+        self.egraph.alloc_ty(TyData::Tuple(elems))
+    }
+
     // -----------------------------------------------------------------------
     // Versioning
     // -----------------------------------------------------------------------
@@ -245,6 +256,12 @@ impl<'db> InferCtx<'db> {
         for i in 0..var_count.0 {
             let idx = InferVarIndex(i);
             let ty = self.egraph.alloc_ty(TyData::InferVar(idx));
+            let canon = self.egraph.find_mut(ty);
+
+            if canon != ty {
+                continue;
+            }
+
             let bound = self.egraph.get_bound(ty);
             match bound {
                 Bound::None => {
@@ -271,7 +288,7 @@ impl<'db> InferCtx<'db> {
     // Diagnostics
     // -----------------------------------------------------------------------
 
-    fn report_type_mismatch(&mut self, expected: Ptr<Ty<'db>>, actual: Ptr<Ty<'db>>) {
+    pub fn report_type_mismatch(&mut self, expected: Ptr<Ty<'db>>, actual: Ptr<Ty<'db>>) {
         self.diagnostics.push(Diagnostic {
             kind: DiagnosticKind::TypeMismatch { expected, actual },
         });
@@ -279,6 +296,14 @@ impl<'db> InferCtx<'db> {
 
     pub fn diagnostics(&self) -> &[Diagnostic<'db>] {
         &self.diagnostics
+    }
+
+    pub fn take_diagnostics(self) -> Vec<Diagnostic<'db>> {
+        self.diagnostics
+    }
+
+    pub fn into_parts(self) -> (Vec<Diagnostic<'db>>, Stash) {
+        (self.diagnostics, self.egraph.stash)
     }
 
     pub fn has_errors(&self) -> bool {

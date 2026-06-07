@@ -12,11 +12,14 @@ pub type ResolvedBody<'db> = Stashed<Ptr<RBody<'db>>>;
 
 /// What a path resolved to.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
-pub enum Res<'db> {
+pub enum PathResolution<'db> {
     Def(Symbol<'db>),
     Local(LocalId),
     Err,
 }
+
+/// Short alias for use in match arms and type signatures.
+pub type Res<'db> = PathResolution<'db>;
 
 /// Identifies a local variable within a function body.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
