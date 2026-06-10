@@ -7,6 +7,7 @@ use crate::item::ItemAst;
 use crate::module::{ModSymbol, ModSymbolData};
 use crate::name::Name;
 use crate::resolve::{MacroKind, Namespace, Resolver, SourceRoot, item_in_namespace, item_name};
+use crate::scope::ScopeSymbol;
 
 use super::data::*;
 use super::expanded_module;
@@ -148,10 +149,8 @@ fn collect_unresolved_redirects_globs<'db>(
         match entry {
             MemmapEntry::Redirect { name, target } => {
                 let target_vec: Vec<_> = stash[*target].to_vec();
-                let mut resolver = Resolver::new(db, source_root);
-                if resolver
-                    .resolve_segments_to_module(module, &target_vec)
-                    .is_err()
+                let mut resolver = Resolver::new(db, source_root, ScopeSymbol::Module(module));
+                if resolver.resolve_segments_to_module(&target_vec).is_err()
                     && target_resolves_to_nothing(db, module, source_root, &target_vec)
                 {
                     let err = MemmapError::UnresolvedRedirect { name: *name };
@@ -162,11 +161,8 @@ fn collect_unresolved_redirects_globs<'db>(
             }
             MemmapEntry::Glob { path } => {
                 let path_vec: Vec<_> = stash[*path].to_vec();
-                let mut resolver = Resolver::new(db, source_root);
-                if resolver
-                    .resolve_segments_to_module(module, &path_vec)
-                    .is_err()
-                {
+                let mut resolver = Resolver::new(db, source_root, ScopeSymbol::Module(module));
+                if resolver.resolve_segments_to_module(&path_vec).is_err() {
                     let err = MemmapError::UnresolvedGlob { path: path_vec };
                     if !out.contains(&err) {
                         out.push(err);
@@ -196,13 +192,11 @@ fn target_resolves_to_nothing<'db>(
     source_root: SourceRoot,
     segments: &[Name<'db>],
 ) -> bool {
-    let mut resolver = Resolver::new(db, source_root);
+    let mut resolver = Resolver::new(db, source_root, ScopeSymbol::Module(current_module));
     resolver
-        .resolve_segments(current_module, segments, Namespace::Type)
-        .or_else(|_| resolver.resolve_segments(current_module, segments, Namespace::Value))
-        .or_else(|_| {
-            resolver.resolve_segments(current_module, segments, Namespace::Macro(MacroKind::Bang))
-        })
+        .resolve_segments(segments, Namespace::Type)
+        .or_else(|_| resolver.resolve_segments(segments, Namespace::Value))
+        .or_else(|_| resolver.resolve_segments(segments, Namespace::Macro(MacroKind::Bang)))
         .is_err()
 }
 
@@ -233,8 +227,8 @@ fn name_available_via_glob<'db>(
     for entry in &stash[entries] {
         if let MemmapEntry::Glob { path } = entry {
             let path_vec: Vec<_> = stash[*path].to_vec();
-            let mut resolver = Resolver::new(db, source_root);
-            let Ok(target) = resolver.resolve_segments_to_module(module, &path_vec) else {
+            let mut resolver = Resolver::new(db, source_root, ScopeSymbol::Module(module));
+            let Ok(target) = resolver.resolve_segments_to_module(&path_vec) else {
                 continue;
             };
             let target_ast = match target.data() {

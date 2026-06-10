@@ -9,6 +9,7 @@ use sage_ir::module::ModSymbol;
 use sage_ir::resolve::SourceRoot;
 use sage_ir::sig_lower::fn_signature;
 use sage_ir::source::SourceFile;
+use sage_ir::symbol::FnSymbol;
 use salsa::Database as _;
 
 pub struct TestCrate {
@@ -66,7 +67,8 @@ impl TestCrate {
         source_root: SourceRoot,
     ) -> Vec<String> {
         let resolved = resolve_body(db, fn_ast, module, source_root);
-        let sig = fn_signature(db, fn_ast, module, source_root);
+        let fn_sym = FnSymbol::ast(fn_ast);
+        let sig = fn_signature(db, fn_sym, module, source_root);
         let result = type_check_body(db, &resolved, sig, module, source_root);
         result.render_errors(db)
     }

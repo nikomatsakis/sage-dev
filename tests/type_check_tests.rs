@@ -209,3 +209,27 @@ fn generic_construct_then_access() {
     )
     .check_ok();
 }
+
+// ---------------------------------------------------------------------------
+// Cross-module: struct in another module, accessed from root
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cross_module_struct_field_access() {
+    TestCrate::in_memory("mod other; fn f(w: other::Wrapper) -> u32 { w.value }")
+        .file("other.rs", "pub struct Wrapper { pub value: u32 }")
+        .check_ok();
+}
+
+#[test]
+fn cross_module_struct_field_non_intrinsic() {
+    // The struct's field type (Inner) must be resolved from the *defining*
+    // module's scope, not the caller's. This test would fail if the type
+    // checker passed its own module for signature resolution.
+    TestCrate::in_memory("mod other; fn f(w: other::Wrapper) -> other::Inner { w.value }")
+        .file(
+            "other.rs",
+            "pub struct Inner { pub x: u32 } pub struct Wrapper { pub value: Inner }",
+        )
+        .check_ok();
+}

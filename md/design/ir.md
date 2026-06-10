@@ -288,12 +288,14 @@ produced.
 
 The `Resolver` struct (`resolve/mod.rs`) is the primary interface
 for module-level name resolution. It holds `db`, `source_root`,
-and cycle-detection state:
+a `ScopeSymbol` (which determines the starting module for public
+entry points), and cycle-detection state:
 
 ```rust
 pub struct Resolver<'db> {
     db: &'db dyn Db,
     source_root: SourceRoot,
+    scope: ScopeSymbol<'db>,
     in_flight: Vec<InFlightQuery<'db>>,
 }
 
@@ -306,11 +308,13 @@ struct InFlightQuery<'db> {
 
 Methods:
 
-- `resolve_name(module, name, ns)` — resolve a single name.
-- `resolve_segments(module, &[Name], ns)` — resolve a path given
-  as a name slice.
-- `resolve_path(module, Path, ns)` — thin wrapper that extracts
-  segments from a salsa-interned Path.
+- `resolve_name(name, ns)` — resolve a single name from the
+  resolver's scope module.
+- `resolve_segments(&[Name], ns)` — resolve a path from the
+  resolver's scope module.
+- `resolve_segments_in(module, &[Name], ns)` — resolve a path
+  starting from an explicit module (used internally for
+  multi-segment traversal).
 - `resolve_member(module, name, ns)` — resolve in a module's
   direct contents (memmap-aware).
 - `resolve_module_path(root, &[&str])` — convenience for walking

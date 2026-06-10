@@ -2,6 +2,7 @@ use crate::Db;
 use crate::item::*;
 use crate::module::{ModSymbol, ModSymbolData};
 use crate::name::Name;
+use crate::scope::ScopeSymbol;
 use crate::source::SourceFile;
 use crate::symbol::{Intrinsic, Symbol, SymbolData};
 
@@ -202,7 +203,7 @@ pub fn resolve_module_path<'db>(
     source_root: SourceRoot,
     segments: &[&str],
 ) -> Option<ModSymbol<'db>> {
-    let mut resolver = Resolver::new(db, source_root);
+    let mut resolver = Resolver::new(db, source_root, ScopeSymbol::Module(root));
     resolver.resolve_module_path(root, segments)
 }
 
@@ -273,8 +274,8 @@ pub fn resolve_name<'db>(
     name: Name<'db>,
     ns: Namespace,
 ) -> Result<Symbol<'db>, ResolutionError> {
-    let mut resolver = Resolver::new(db, source_root);
-    resolver.resolve_name(module, name, ns)
+    let mut resolver = Resolver::new(db, source_root, ScopeSymbol::Module(module));
+    resolver.resolve_name(name, ns)
 }
 
 // ---------------------------------------------------------------------------
@@ -298,32 +299,46 @@ struct InFlightQuery<'db> {
 pub struct Resolver<'db> {
     db: &'db dyn Db,
     source_root: SourceRoot,
+    scope: ScopeSymbol<'db>,
     in_flight: Vec<InFlightQuery<'db>>,
 }
 
 impl<'db> Resolver<'db> {
-    pub fn new(db: &'db dyn Db, source_root: SourceRoot) -> Self {
+    pub fn new(db: &'db dyn Db, source_root: SourceRoot, scope: ScopeSymbol<'db>) -> Self {
         Self {
             db,
             source_root,
+            scope,
             in_flight: Vec::new(),
         }
     }
 
-    /// Resolve a single name in a module's scope.
-    ///
-    /// Full fallback chain: module members → extern prelude → std prelude → intrinsics.
+    /// Resolve a single name using the resolver's scope as the starting module.
     pub fn resolve_name(
         &mut self,
-        module: ModSymbol<'db>,
         name: Name<'db>,
         ns: Namespace,
     ) -> Result<Symbol<'db>, ResolutionError> {
+        let module = self.scope.module();
         resolve_plain_name(self, module, name, ns)
     }
 
-    /// Resolve a slice of name segments to a symbol.
+    /// Resolve a slice of name segments using the resolver's scope as the
+    /// starting module.
     pub fn resolve_segments(
+        &mut self,
+        segments: &[Name<'db>],
+        final_ns: Namespace,
+    ) -> Result<Symbol<'db>, ResolutionError> {
+        let module = self.scope.module();
+        self.resolve_segments_in(module, segments, final_ns)
+    }
+
+    /// Resolve a slice of name segments starting from an explicit module.
+    ///
+    /// Used by internal helpers that traverse into child modules during
+    /// multi-segment path resolution.
+    pub fn resolve_segments_in(
         &mut self,
         module: ModSymbol<'db>,
         segments: &[Name<'db>],
@@ -349,8 +364,19 @@ impl<'db> Resolver<'db> {
         resolve_remainder(self, first_module, rest, final_ns)
     }
 
-    /// Resolve a slice of name segments to a module.
+    /// Resolve a slice of name segments to a module, starting from the
+    /// resolver's scope.
     pub fn resolve_segments_to_module(
+        &mut self,
+        segments: &[Name<'db>],
+    ) -> Result<ModSymbol<'db>, ResolutionError> {
+        let module = self.scope.module();
+        self.resolve_segments_to_module_in(module, segments)
+    }
+
+    /// Resolve a slice of name segments to a module, starting from an
+    /// explicit module.
+    pub fn resolve_segments_to_module_in(
         &mut self,
         module: ModSymbol<'db>,
         segments: &[Name<'db>],
@@ -502,7 +528,7 @@ fn walk_entries<'db>(
             MemmapEntry::Redirect { name: n, target } => {
                 if *n == name {
                     let target_vec: Vec<_> = stash[*target].to_vec();
-                    if let Ok(sym) = resolver.resolve_segments(module, &target_vec, ns) {
+                    if let Ok(sym) = resolver.resolve_segments_in(module, &target_vec, ns) {
                         if !named.contains(&sym) {
                             named.push(sym);
                         }
@@ -511,7 +537,7 @@ fn walk_entries<'db>(
             }
             MemmapEntry::Glob { path } => {
                 let path_vec: Vec<_> = stash[*path].to_vec();
-                let Ok(target) = resolver.resolve_segments_to_module(module, &path_vec) else {
+                let Ok(target) = resolver.resolve_segments_to_module_in(module, &path_vec) else {
                     continue;
                 };
                 let sym = resolver.resolve_member(target, name, ns).ok();

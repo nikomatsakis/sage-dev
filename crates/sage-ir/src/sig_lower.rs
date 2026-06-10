@@ -8,13 +8,14 @@ use sage_stash::{Ptr, Stash, Stashed};
 
 use crate::Db;
 use crate::generic_param::{AstGenericParam, GenericParam, GenericParamKind};
-use crate::item::{EnumAst, FnAst, StructAst};
+use crate::item::FnAst;
 use crate::module::ModSymbol;
 use crate::name::Name;
 use crate::resolve::{Namespace, Resolver, SourceRoot};
 use crate::ribs::{RibEntry, Ribs};
+use crate::scope::ScopeSymbol;
 use crate::sig_ast::*;
-use crate::symbol::{Intrinsic, Symbol, SymbolData};
+use crate::symbol::{EnumSymbol, FnSymbol, Intrinsic, StructSymbol, Symbol, SymbolData};
 use crate::ty::*;
 
 // ---------------------------------------------------------------------------
@@ -23,7 +24,6 @@ use crate::ty::*;
 
 struct SigLowerCtx<'a, 'db> {
     resolver: Resolver<'db>,
-    module: ModSymbol<'db>,
     src: &'a Stash,
     dst: &'a mut Stash,
     ribs: Ribs<'db>,
@@ -134,9 +134,7 @@ impl<'a, 'db> SigLowerCtx<'a, 'db> {
 
         // No rib hit — resolve via module-level path resolution.
         let names: Vec<_> = segments.iter().map(|s| s.name).collect();
-        let sym = self
-            .resolver
-            .resolve_segments(self.module, &names, Namespace::Type);
+        let sym = self.resolver.resolve_segments(&names, Namespace::Type);
 
         match sym {
             Ok(sym) => self.symbol_to_ty(sym, type_args),
@@ -217,13 +215,17 @@ fn build_generics_ribs<'db>(
 // Signature queries
 // ---------------------------------------------------------------------------
 
+/// Symbol-keyed function signature query.
 #[salsa::tracked(returns(ref))]
 pub fn fn_signature<'db>(
     db: &'db dyn Db,
-    fn_ast: FnAst<'db>,
+    sym: FnSymbol<'db>,
     module: ModSymbol<'db>,
     source_root: SourceRoot,
 ) -> Stashed<Binder<'db, FnSig<'db>>> {
+    let fn_ast = sym
+        .as_ast()
+        .expect("external fn_signature not yet supported");
     lower_fn_sig(db, fn_ast, module, source_root, None, &Stash::new())
 }
 
@@ -256,9 +258,9 @@ pub fn lower_fn_sig<'db>(
         ribs.add(self_name, Namespace::Type, RibEntry::SelfTy(copied));
     }
 
+    let scope = ScopeSymbol::Module(module);
     let mut cx = SigLowerCtx {
-        resolver: Resolver::new(db, source_root),
-        module,
+        resolver: Resolver::new(db, source_root, scope),
         src,
         dst: &mut dst,
         ribs,
@@ -287,13 +289,17 @@ pub fn lower_fn_sig<'db>(
     Stashed::new(dst, binder)
 }
 
+/// Symbol-keyed struct signature query.
 #[salsa::tracked(returns(ref))]
 pub fn struct_signature<'db>(
     db: &'db dyn Db,
-    struct_ast: StructAst<'db>,
+    sym: StructSymbol<'db>,
     module: ModSymbol<'db>,
     source_root: SourceRoot,
 ) -> Stashed<Binder<'db, StructSig<'db>>> {
+    let struct_ast = sym
+        .as_ast()
+        .expect("external struct_signature not yet supported");
     let sig_ast = struct_ast.signature(db);
     let src = sig_ast.stash();
     let data = &src[*sig_ast.root()];
@@ -304,9 +310,9 @@ pub fn struct_signature<'db>(
     let parent = Symbol::ast(crate::item::ItemAst::Struct(struct_ast));
     let generics = build_generics_ribs(db, src, data.generics, &mut dst, &mut ribs, parent);
 
+    let scope = ScopeSymbol::Module(module);
     let mut cx = SigLowerCtx {
-        resolver: Resolver::new(db, source_root),
-        module,
+        resolver: Resolver::new(db, source_root, scope),
         src,
         dst: &mut dst,
         ribs,
@@ -327,13 +333,17 @@ pub fn struct_signature<'db>(
     Stashed::new(dst, binder)
 }
 
+/// Symbol-keyed enum signature query.
 #[salsa::tracked(returns(ref))]
 pub fn enum_signature<'db>(
     db: &'db dyn Db,
-    enum_ast: EnumAst<'db>,
+    sym: EnumSymbol<'db>,
     module: ModSymbol<'db>,
     source_root: SourceRoot,
 ) -> Stashed<Binder<'db, EnumSig<'db>>> {
+    let enum_ast = sym
+        .as_ast()
+        .expect("external enum_signature not yet supported");
     let sig_ast = enum_ast.signature(db);
     let src = sig_ast.stash();
     let data = &src[*sig_ast.root()];
@@ -344,9 +354,9 @@ pub fn enum_signature<'db>(
     let parent = Symbol::ast(crate::item::ItemAst::Enum(enum_ast));
     let generics = build_generics_ribs(db, src, data.generics, &mut dst, &mut ribs, parent);
 
+    let scope = ScopeSymbol::Module(module);
     let mut cx = SigLowerCtx {
-        resolver: Resolver::new(db, source_root),
-        module,
+        resolver: Resolver::new(db, source_root, scope),
         src,
         dst: &mut dst,
         ribs,

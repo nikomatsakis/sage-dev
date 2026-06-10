@@ -1,6 +1,6 @@
 # RFD: Symbol-Level Signature Queries
 
-**Status:** Proposed
+**Status:** Partially Implemented
 
 **Depends on:**
 - [Type Signatures](./type-signatures.md) — `Ty`, `Binder`, stash-allocated types
@@ -291,3 +291,31 @@ fn cross_module_struct_field_access() {
 ```
 
 This test would fail with the current architecture (caller passes its own module for resolution — `Inner` is not visible from the root module) and pass after the refactoring.
+
+## Implementation notes (deviations from plan)
+
+### Scope stored via module-tree walk, not on AST nodes
+
+The original plan called for storing `scope: ScopeSymbol<'db>` as a tracked field on `StructAst`, `FnAst`, `EnumAst`. This turned out to be impractical because these AST nodes are created in `parse_source_file` (a salsa tracked function that doesn't know the enclosing module — it just parses syntax). Salsa tracked struct fields must be set at construction time.
+
+Instead, the defining module is computed on demand via `struct_defining_module` / `fn_defining_module` / `enum_defining_module` in `scope.rs`. These helpers walk the module tree to find which module is backed by the same `SourceFile` as the item's span. The result is correct and doesn't require modifying the parsing layer. A future optimization could memoize this as a salsa tracked query.
+
+### Signature queries still take an explicit `module` parameter
+
+Rather than having the queries derive the module internally from `sym.scope()`, they still accept an explicit `module: ModSymbol` parameter. This is because:
+1. The AST doesn't store its scope (see above).
+2. The `module` can now be correctly computed by the caller using `struct_defining_module(db, sym, source_root, fallback)`.
+
+The type checker (`check.rs`) was updated to use `struct_defining_module` to pass the struct's *defining* module rather than its own module.
+
+### Steps 3 and 6 deferred
+
+The new type names (`AdtSignature`, `VariantDef`, `FieldDef`) from Step 3 were not introduced yet. The existing `StructSig`, `FnSig`, `EnumSig`, `FieldSig`, `VariantSig` types continue to serve the same purpose. Renaming can happen in a follow-up without any behavioral change.
+
+### What was completed
+
+- **Step 1 (partial):** `ScopeSymbol` type defined in `scope.rs`. Not stored on AST nodes; instead `*_defining_module` helpers provide the same information.
+- **Step 2 (complete):** `Resolver` refactored to own its scope. Public `resolve_name`/`resolve_segments` derive the starting module from `self.scope`. `SigLowerCtx` and `BodyResolver` no longer carry a separate `module` field.
+- **Step 4 (complete):** Signature queries now take `StructSymbol`/`FnSymbol`/`EnumSymbol` instead of AST nodes.
+- **Step 5 (complete):** All callers migrated. `check.rs` uses `struct_defining_module` for correct cross-module resolution. `TODO(symbol-signatures RFD)` comments removed.
+- **Cross-module test (complete):** Both intrinsic and non-intrinsic field types tested across module boundaries.

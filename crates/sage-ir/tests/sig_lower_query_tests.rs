@@ -8,6 +8,7 @@ use sage_ir::module::ModSymbol;
 use sage_ir::resolve::SourceRoot;
 use sage_ir::sig_lower::*;
 use sage_ir::source::SourceFile;
+use sage_ir::symbol::{EnumSymbol, FnSymbol, StructSymbol};
 use sage_ir::ty::*;
 use sage_ir::types::Mutability;
 use salsa::Database as _;
@@ -30,7 +31,7 @@ fn fn_identity_generic() {
             _ => panic!("expected function"),
         };
 
-        let sig = fn_signature(db, fn_ast, module, source_root);
+        let sig = fn_signature(db, FnSymbol::ast(fn_ast), module, source_root);
         let stash = sig.stash();
         let binder = sig.root();
 
@@ -64,7 +65,7 @@ fn fn_add_primitives() {
             _ => panic!("expected function"),
         };
 
-        let sig = fn_signature(db, fn_ast, module, source_root);
+        let sig = fn_signature(db, FnSymbol::ast(fn_ast), module, source_root);
         let stash = sig.stash();
         let binder = sig.root();
 
@@ -91,7 +92,7 @@ fn struct_pair_generic() {
             _ => panic!("expected struct"),
         };
 
-        let sig = struct_signature(db, struct_ast, module, source_root);
+        let sig = struct_signature(db, StructSymbol::ast(struct_ast), module, source_root);
         let stash = sig.stash();
         let binder = sig.root();
 
@@ -123,7 +124,7 @@ fn fn_takes_ref() {
             _ => panic!("expected function"),
         };
 
-        let sig = fn_signature(db, fn_ast, module, source_root);
+        let sig = fn_signature(db, FnSymbol::ast(fn_ast), module, source_root);
         let stash = sig.stash();
         let fn_sig = &sig.root().value;
 
@@ -162,7 +163,7 @@ fn enum_with_fields() {
             _ => panic!("expected enum"),
         };
 
-        let sig = enum_signature(db, enum_ast, module, source_root);
+        let sig = enum_signature(db, EnumSymbol::ast(enum_ast), module, source_root);
         let stash = sig.stash();
         let binder = sig.root();
 
@@ -194,7 +195,7 @@ fn fn_no_return_type_is_unit() {
             _ => panic!("expected function"),
         };
 
-        let sig = fn_signature(db, fn_ast, module, source_root);
+        let sig = fn_signature(db, FnSymbol::ast(fn_ast), module, source_root);
         let stash = sig.stash();
         let fn_sig = &sig.root().value;
 
@@ -334,7 +335,8 @@ fn generic_impl_self_resolves_with_params() {
 
         // Lower the struct signature to get its generics (this creates AstGenericParams
         // inside a tracked function context)
-        let struct_sig = struct_signature(db, wrapper_struct, module, source_root);
+        let struct_sig =
+            struct_signature(db, StructSymbol::ast(wrapper_struct), module, source_root);
         let struct_stash = struct_sig.stash();
         let struct_binder = struct_sig.root();
         let struct_generics = &struct_stash[struct_binder.generics];

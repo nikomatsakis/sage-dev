@@ -8,12 +8,12 @@ use crate::name::Name;
 use crate::resolve::{Namespace, Resolver, SourceRoot};
 use crate::resolved::*;
 use crate::ribs::{RibEntry, Ribs};
+use crate::scope::ScopeSymbol;
 use crate::sig_ast::{PathAst, TypeRefAst, TypeRefAstKind};
 use crate::span::RelativeSpan;
 
 struct BodyResolver<'db> {
     resolver: Resolver<'db>,
-    module: ModSymbol<'db>,
     src: &'db Stash,
     out: Stash,
     locals: Vec<LocalVar<'db>>,
@@ -81,7 +81,7 @@ impl<'db> BodyResolver<'db> {
                         Res::Def(sym)
                     } else {
                         let names: Vec<_> = segments.iter().map(|s| s.name).collect();
-                        match self.resolver.resolve_segments(self.module, &names, ns) {
+                        match self.resolver.resolve_segments(&names, ns) {
                             Ok(sym) => Res::Def(sym),
                             Err(_) => Res::Err,
                         }
@@ -92,7 +92,7 @@ impl<'db> BodyResolver<'db> {
 
         // No rib hit — resolve via module-level resolution.
         let names: Vec<_> = segments.iter().map(|s| s.name).collect();
-        match self.resolver.resolve_segments(self.module, &names, ns) {
+        match self.resolver.resolve_segments(&names, ns) {
             Ok(sym) => Res::Def(sym),
             Err(_) => Res::Err,
         }
@@ -467,9 +467,9 @@ pub fn resolve_body<'db>(
     let body_data = &src_stash[*body.root()];
     let root_expr = &src_stash[body_data.root];
 
+    let scope = ScopeSymbol::Module(module);
     let mut resolver = BodyResolver {
-        resolver: Resolver::new(db, source_root),
-        module,
+        resolver: Resolver::new(db, source_root, scope),
         src: src_stash,
         out: Stash::new(),
         locals: Vec::new(),

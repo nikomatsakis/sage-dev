@@ -4,6 +4,7 @@ use sage_ir::module::ModSymbol;
 use sage_ir::name::Name;
 use sage_ir::resolve::SourceRoot;
 use sage_ir::resolved::*;
+use sage_ir::scope::struct_defining_module;
 use sage_ir::sig_lower::struct_signature;
 use sage_ir::symbol::SymbolData;
 use sage_ir::ty::*;
@@ -385,12 +386,8 @@ fn check_struct_lit<'db>(
         return ctx.alloc_ty(TyData::Error);
     };
 
-    // TODO(symbol-signatures RFD): use symbol-level query instead of as_ast()
-    let Some(struct_ast) = struct_sym.as_ast() else {
-        return ctx.alloc_ty(TyData::Error);
-    };
-
-    let sig = struct_signature(env.db, struct_ast, env.module, env.source_root);
+    let def_module = struct_defining_module(env.db, struct_sym, env.source_root, env.module);
+    let sig = struct_signature(env.db, struct_sym, def_module, env.source_root);
     let sig_stash = sig.stash();
     let binder = sig.root();
 
@@ -440,12 +437,8 @@ fn check_field_access<'db>(
         return ctx.fresh_ty_var();
     };
 
-    // TODO(symbol-signatures RFD): use symbol-level query instead of as_ast()
-    let Some(struct_ast) = struct_sym.as_ast() else {
-        return ctx.fresh_ty_var();
-    };
-
-    let sig = struct_signature(env.db, struct_ast, env.module, env.source_root);
+    let def_module = struct_defining_module(env.db, struct_sym, env.source_root, env.module);
+    let sig = struct_signature(env.db, struct_sym, def_module, env.source_root);
     let sig_stash = sig.stash();
     let binder = sig.root();
 
