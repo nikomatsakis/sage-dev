@@ -149,7 +149,7 @@ fn collect_unresolved_redirects_globs<'db>(
         match entry {
             MemmapEntry::Redirect { name, target } => {
                 let target_vec: Vec<_> = stash[*target].to_vec();
-                let mut resolver = Resolver::new(db, source_root, ScopeSymbol::Module(module));
+                let mut resolver = Resolver::new(db, ScopeSymbol::Module(module, source_root));
                 if resolver.resolve_segments_to_module(&target_vec).is_err()
                     && target_resolves_to_nothing(db, module, source_root, &target_vec)
                 {
@@ -161,7 +161,7 @@ fn collect_unresolved_redirects_globs<'db>(
             }
             MemmapEntry::Glob { path } => {
                 let path_vec: Vec<_> = stash[*path].to_vec();
-                let mut resolver = Resolver::new(db, source_root, ScopeSymbol::Module(module));
+                let mut resolver = Resolver::new(db, ScopeSymbol::Module(module, source_root));
                 if resolver.resolve_segments_to_module(&path_vec).is_err() {
                     let err = MemmapError::UnresolvedGlob { path: path_vec };
                     if !out.contains(&err) {
@@ -192,7 +192,7 @@ fn target_resolves_to_nothing<'db>(
     source_root: SourceRoot,
     segments: &[Name<'db>],
 ) -> bool {
-    let mut resolver = Resolver::new(db, source_root, ScopeSymbol::Module(current_module));
+    let mut resolver = Resolver::new(db, ScopeSymbol::Module(current_module, source_root));
     resolver
         .resolve_segments(segments, Namespace::Type)
         .or_else(|_| resolver.resolve_segments(segments, Namespace::Value))
@@ -227,7 +227,7 @@ fn name_available_via_glob<'db>(
     for entry in &stash[entries] {
         if let MemmapEntry::Glob { path } = entry {
             let path_vec: Vec<_> = stash[*path].to_vec();
-            let mut resolver = Resolver::new(db, source_root, ScopeSymbol::Module(module));
+            let mut resolver = Resolver::new(db, ScopeSymbol::Module(module, source_root));
             let Ok(target) = resolver.resolve_segments_to_module(&path_vec) else {
                 continue;
             };

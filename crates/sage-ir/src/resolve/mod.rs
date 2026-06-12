@@ -203,7 +203,7 @@ pub fn resolve_module_path<'db>(
     source_root: SourceRoot,
     segments: &[&str],
 ) -> Option<ModSymbol<'db>> {
-    let mut resolver = Resolver::new(db, source_root, ScopeSymbol::Module(root));
+    let mut resolver = Resolver::new(db, ScopeSymbol::Module(root, source_root));
     resolver.resolve_module_path(root, segments)
 }
 
@@ -274,7 +274,7 @@ pub fn resolve_name<'db>(
     name: Name<'db>,
     ns: Namespace,
 ) -> Result<Symbol<'db>, ResolutionError> {
-    let mut resolver = Resolver::new(db, source_root, ScopeSymbol::Module(module));
+    let mut resolver = Resolver::new(db, ScopeSymbol::Module(module, source_root));
     resolver.resolve_name(name, ns)
 }
 
@@ -304,7 +304,8 @@ pub struct Resolver<'db> {
 }
 
 impl<'db> Resolver<'db> {
-    pub fn new(db: &'db dyn Db, source_root: SourceRoot, scope: ScopeSymbol<'db>) -> Self {
+    pub fn new(db: &'db dyn Db, scope: ScopeSymbol<'db>) -> Self {
+        let source_root = scope.source_root(db);
         Self {
             db,
             source_root,
@@ -319,7 +320,7 @@ impl<'db> Resolver<'db> {
         name: Name<'db>,
         ns: Namespace,
     ) -> Result<Symbol<'db>, ResolutionError> {
-        let module = self.scope.module();
+        let module = self.scope.module(self.db);
         resolve_plain_name(self, module, name, ns)
     }
 
@@ -330,7 +331,7 @@ impl<'db> Resolver<'db> {
         segments: &[Name<'db>],
         final_ns: Namespace,
     ) -> Result<Symbol<'db>, ResolutionError> {
-        let module = self.scope.module();
+        let module = self.scope.module(self.db);
         self.resolve_segments_in(module, segments, final_ns)
     }
 
@@ -370,7 +371,7 @@ impl<'db> Resolver<'db> {
         &mut self,
         segments: &[Name<'db>],
     ) -> Result<ModSymbol<'db>, ResolutionError> {
-        let module = self.scope.module();
+        let module = self.scope.module(self.db);
         self.resolve_segments_to_module_in(module, segments)
     }
 

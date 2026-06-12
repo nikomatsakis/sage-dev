@@ -6,6 +6,7 @@ use sage_ir::item::*;
 use sage_ir::lower::parse_source_file;
 use sage_ir::module::ModSymbol;
 use sage_ir::resolve::SourceRoot;
+use sage_ir::scope::ScopeSymbol;
 use sage_ir::sig_lower::*;
 use sage_ir::source::SourceFile;
 use sage_ir::symbol::{EnumSymbol, FnSymbol, StructSymbol};
@@ -31,7 +32,11 @@ fn fn_identity_generic() {
             _ => panic!("expected function"),
         };
 
-        let sig = fn_signature(db, FnSymbol::ast(fn_ast), module, source_root);
+        let sig = fn_signature(
+            db,
+            FnSymbol::ast(fn_ast),
+            ScopeSymbol::Module(module, source_root),
+        );
         let stash = sig.stash();
         let binder = sig.root();
 
@@ -65,7 +70,11 @@ fn fn_add_primitives() {
             _ => panic!("expected function"),
         };
 
-        let sig = fn_signature(db, FnSymbol::ast(fn_ast), module, source_root);
+        let sig = fn_signature(
+            db,
+            FnSymbol::ast(fn_ast),
+            ScopeSymbol::Module(module, source_root),
+        );
         let stash = sig.stash();
         let binder = sig.root();
 
@@ -92,7 +101,11 @@ fn struct_pair_generic() {
             _ => panic!("expected struct"),
         };
 
-        let sig = struct_signature(db, StructSymbol::ast(struct_ast), module, source_root);
+        let sig = struct_signature(
+            db,
+            StructSymbol::ast(struct_ast),
+            ScopeSymbol::Module(module, source_root),
+        );
         let stash = sig.stash();
         let binder = sig.root();
 
@@ -124,7 +137,11 @@ fn fn_takes_ref() {
             _ => panic!("expected function"),
         };
 
-        let sig = fn_signature(db, FnSymbol::ast(fn_ast), module, source_root);
+        let sig = fn_signature(
+            db,
+            FnSymbol::ast(fn_ast),
+            ScopeSymbol::Module(module, source_root),
+        );
         let stash = sig.stash();
         let fn_sig = &sig.root().value;
 
@@ -163,7 +180,11 @@ fn enum_with_fields() {
             _ => panic!("expected enum"),
         };
 
-        let sig = enum_signature(db, EnumSymbol::ast(enum_ast), module, source_root);
+        let sig = enum_signature(
+            db,
+            EnumSymbol::ast(enum_ast),
+            ScopeSymbol::Module(module, source_root),
+        );
         let stash = sig.stash();
         let binder = sig.root();
 
@@ -195,7 +216,11 @@ fn fn_no_return_type_is_unit() {
             _ => panic!("expected function"),
         };
 
-        let sig = fn_signature(db, FnSymbol::ast(fn_ast), module, source_root);
+        let sig = fn_signature(
+            db,
+            FnSymbol::ast(fn_ast),
+            ScopeSymbol::Module(module, source_root),
+        );
         let stash = sig.stash();
         let fn_sig = &sig.root().value;
 
@@ -251,7 +276,13 @@ fn impl_method_self_return_resolves() {
             data: TyData::Adt(foo_sym, empty_args),
         };
 
-        let sig = lower_fn_sig(db, method, module, source_root, Some(self_ty), &stash);
+        let sig = lower_fn_sig(
+            db,
+            method,
+            ScopeSymbol::Module(module, source_root),
+            Some(self_ty),
+            &stash,
+        );
         let sig_stash = sig.stash();
         let fn_sig = &sig.root().value;
 
@@ -287,7 +318,13 @@ fn impl_method_ref_self_param() {
             data: TyData::Adt(foo_sym, empty_args),
         };
 
-        let sig = lower_fn_sig(db, method, module, source_root, Some(self_ty), &stash);
+        let sig = lower_fn_sig(
+            db,
+            method,
+            ScopeSymbol::Module(module, source_root),
+            Some(self_ty),
+            &stash,
+        );
         let sig_stash = sig.stash();
         let fn_sig = &sig.root().value;
 
@@ -335,8 +372,11 @@ fn generic_impl_self_resolves_with_params() {
 
         // Lower the struct signature to get its generics (this creates AstGenericParams
         // inside a tracked function context)
-        let struct_sig =
-            struct_signature(db, StructSymbol::ast(wrapper_struct), module, source_root);
+        let struct_sig = struct_signature(
+            db,
+            StructSymbol::ast(wrapper_struct),
+            ScopeSymbol::Module(module, source_root),
+        );
         let struct_stash = struct_sig.stash();
         let struct_binder = struct_sig.root();
         let struct_generics = &struct_stash[struct_binder.generics];
@@ -354,7 +394,13 @@ fn generic_impl_self_resolves_with_params() {
             data: TyData::Adt(wrapper_sym, args),
         };
 
-        let sig = lower_fn_sig(db, method, module, source_root, Some(self_ty), &stash);
+        let sig = lower_fn_sig(
+            db,
+            method,
+            ScopeSymbol::Module(module, source_root),
+            Some(self_ty),
+            &stash,
+        );
         let sig_stash = sig.stash();
         let fn_sig = &sig.root().value;
 

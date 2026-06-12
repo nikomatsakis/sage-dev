@@ -1,6 +1,6 @@
 # RFD: IR Reshape — Symbols, Scope, and Two-Layer Architecture
 
-**Status:** Draft
+**Status:** Partially Implemented (Phase 1 complete, Phase 2 partial)
 
 **Supersedes:**
 - [Symbol-Level Signature Queries](./symbol-signatures.md) (partially implemented, to be reworked)
@@ -427,3 +427,70 @@ This is cosmetic and can be done at any point after Phase 2.
 
 Each numbered step is a commit or small PR. The system compiles and
 tests pass at every boundary.
+
+## Implementation notes (what was actually done)
+
+### Phase 1: Complete
+
+**1a — `LocalCrateSymbol` introduced** as `#[salsa::tracked]` (not
+`#[salsa::input]` as originally planned, because it contains `ModAst<'db>`
+which has a lifetime parameter incompatible with salsa inputs). The
+driver creates one per crate.
+
+**1b — `ScopeSymbol` gained `Crate` variant** plus a `Module(ModSymbol, SourceRoot)`
+variant that carries the source root directly (instead of deriving it
+via a parent-chain walk as originally envisioned). This is simpler
+because `SourceRoot` is a cheap Copy salsa input handle. The
+`source_root(db)` method on `ScopeSymbol` dispatches on both variants.
+
+**1c — `Resolver::new` simplified** to `Resolver::new(db, scope)`.
+It derives `source_root` from `scope.source_root(db)` internally.
+All call sites migrated.
+
+**1d — Signature and body queries migrated:**
+- `fn_signature(db, sym, module, source_root)` → `fn_signature(db, sym, scope)`
+- `struct_signature(db, sym, module, source_root)` → `struct_signature(db, sym, scope)`
+- `enum_signature(db, sym, module, source_root)` → `enum_signature(db, sym, scope)`
+- `resolve_body(db, fn_ast, module, source_root)` → `resolve_body(db, fn_ast, scope)`
+- `lower_fn_sig(db, fn_ast, module, source_root, ...)` → `lower_fn_sig(db, fn_ast, scope, ...)`
+
+The queries still take `scope` as an explicit parameter (not
+single-keyed on symbol alone) because salsa tracked functions require
+at least one salsa-struct parameter for memoization, and `FnSymbol` is
+a plain `Copy` wrapper, not a salsa tracked struct.
+
+**1e — `*_defining_module` helpers retained** because `check.rs` still
+needs them to find the module that defines a cross-module struct
+reference. They'll go away when items carry their scope.
+
+### Phase 2: Partial
+
+**2a — Kind symbols carry optional scope.** Rather than introducing
+separate `LocalFnSymbol` tracked structs, the existing per-kind
+wrappers (`FnSymbol`, `StructSymbol`, etc.) gained an
+`Option<ScopeSymbol>` in their `Ast` variant. Construction via
+`FnSymbol::local(ast, scope)` stores the scope; the legacy
+`FnSymbol::ast(ast)` stores `None`. A `sym.scope()` accessor returns
+`Option<ScopeSymbol>`.
+
+This is lighter-weight than the RFD's original proposal of separate
+salsa tracked structs, and avoids the ID-explosion that full tracked
+wrappers would cause. The tradeoff: symbols without scope can still be
+constructed (the `None` case), so the invariant isn't statically
+enforced. Once all minting sites pass scope, the `Option` can be
+replaced with a bare `ScopeSymbol` and the `ast()` constructor removed.
+
+### Phase 3: Not started
+
+Naming cleanup, `FromImpls` derive, and taxonomy restructuring are
+deferred — the current names are adequate.
+
+### Remaining work
+
+- Migrate item minting (in `lower.rs` and macro expansion) to use
+  `FnSymbol::local(ast, scope)` instead of `FnSymbol::ast(ast)`.
+- Once all symbols carry scope: make signature queries truly
+  single-keyed by reading scope from the symbol internally.
+- Delete `*_defining_module` helpers once all callers use scoped symbols.
+- Fuse `resolve_body` + type inference into a single `body()` query.
+- Remove `source_root` from `SageContext` (use `krate.source_root(db)` instead).

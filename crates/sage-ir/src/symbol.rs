@@ -280,13 +280,17 @@ macro_rules! define_kind_symbol {
 
         #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
         enum $DataName<'db> {
-            Ast($AstTy),
+            Ast($AstTy, Option<crate::scope::ScopeSymbol<'db>>),
             Ext(SymExt),
         }
 
         impl<'db> $Name<'db> {
+            pub fn local(ast: $AstTy, scope: crate::scope::ScopeSymbol<'db>) -> Self {
+                Self { data: $DataName::Ast(ast, Some(scope)) }
+            }
+
             pub fn ast(ast: $AstTy) -> Self {
-                Self { data: $DataName::Ast(ast) }
+                Self { data: $DataName::Ast(ast, None) }
             }
 
             pub fn ext(ext: SymExt) -> Self {
@@ -295,14 +299,21 @@ macro_rules! define_kind_symbol {
 
             pub fn as_ast(self) -> Option<$AstTy> {
                 match self.data {
-                    $DataName::Ast(ast) => Some(ast),
+                    $DataName::Ast(ast, _) => Some(ast),
+                    $DataName::Ext(_) => None,
+                }
+            }
+
+            pub fn scope(self) -> Option<crate::scope::ScopeSymbol<'db>> {
+                match self.data {
+                    $DataName::Ast(_, scope) => scope,
                     $DataName::Ext(_) => None,
                 }
             }
 
             pub fn as_ext(self) -> Option<SymExt> {
                 match self.data {
-                    $DataName::Ast(_) => None,
+                    $DataName::Ast(..) => None,
                     $DataName::Ext(ext) => Some(ext),
                 }
             }

@@ -16,6 +16,7 @@ use sage_ir::db::Database;
 use sage_ir::item::ModAst;
 use sage_ir::module::ModSymbol;
 use sage_ir::resolve::SourceRoot;
+use sage_ir::scope::{LocalCrateSymbol, local_crate};
 use sage_ir::source::SourceFile;
 use sage_ir::tcx::TcxRequest;
 use salsa::Database as _;
@@ -26,6 +27,7 @@ use crate::tcx_impl::RustcTcxDb;
 /// Everything needed to query sage inside the callback.
 pub struct SageContext<'db> {
     pub db: &'db Database,
+    pub krate: LocalCrateSymbol<'db>,
     pub root: ModSymbol<'db>,
     pub source_root: SourceRoot,
 }
@@ -154,10 +156,13 @@ where
                 .or_else(|| files.iter().find(|f| f.path(db) == "main.rs"))
                 .expect("no lib.rs or main.rs found");
 
-            let root = ModSymbol::ast(ModAst::crate_root(db, *lib_file));
+            let root_mod = ModAst::crate_root(db, *lib_file);
+            let root = ModSymbol::ast(root_mod);
+            let krate = local_crate(db, root_mod, source_root);
 
             let ctx = SageContext {
                 db,
+                krate,
                 root,
                 source_root,
             };

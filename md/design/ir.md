@@ -210,7 +210,7 @@ arms, if-let, while-let. `sig_lower` pushes generic params as
 
 `resolve_body` in `body_resolve.rs` is a
 `#[salsa::tracked(returns(ref))]` function. It takes
-`(db, FnAst, ModSymbol, SourceRoot)` and returns `&ResolvedBody`.
+`(db, FnAst, ScopeSymbol)` and returns `&ResolvedBody`.
 
 The `BodyResolver` struct holds a `Resolver` (for module-level
 resolution) and a `Ribs` (for lexical scope). It walks the

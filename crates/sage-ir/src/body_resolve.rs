@@ -3,9 +3,8 @@ use sage_stash::{Ptr, Stash, Stashed};
 use crate::Db;
 use crate::body::*;
 use crate::item::FnAst;
-use crate::module::ModSymbol;
 use crate::name::Name;
-use crate::resolve::{Namespace, Resolver, SourceRoot};
+use crate::resolve::{Namespace, Resolver};
 use crate::resolved::*;
 use crate::ribs::{RibEntry, Ribs};
 use crate::scope::ScopeSymbol;
@@ -459,17 +458,15 @@ impl<'db> BodyResolver<'db> {
 pub fn resolve_body<'db>(
     db: &'db dyn Db,
     function: FnAst<'db>,
-    module: ModSymbol<'db>,
-    source_root: SourceRoot,
+    scope: ScopeSymbol<'db>,
 ) -> ResolvedBody<'db> {
     let body = function.body(db);
     let src_stash = body.stash();
     let body_data = &src_stash[*body.root()];
     let root_expr = &src_stash[body_data.root];
 
-    let scope = ScopeSymbol::Module(module);
     let mut resolver = BodyResolver {
-        resolver: Resolver::new(db, source_root, scope),
+        resolver: Resolver::new(db, scope),
         src: src_stash,
         out: Stash::new(),
         locals: Vec::new(),

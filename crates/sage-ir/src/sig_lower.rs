@@ -9,9 +9,8 @@ use sage_stash::{Ptr, Stash, Stashed};
 use crate::Db;
 use crate::generic_param::{AstGenericParam, GenericParam, GenericParamKind};
 use crate::item::FnAst;
-use crate::module::ModSymbol;
 use crate::name::Name;
-use crate::resolve::{Namespace, Resolver, SourceRoot};
+use crate::resolve::{Namespace, Resolver};
 use crate::ribs::{RibEntry, Ribs};
 use crate::scope::ScopeSymbol;
 use crate::sig_ast::*;
@@ -220,13 +219,12 @@ fn build_generics_ribs<'db>(
 pub fn fn_signature<'db>(
     db: &'db dyn Db,
     sym: FnSymbol<'db>,
-    module: ModSymbol<'db>,
-    source_root: SourceRoot,
+    scope: ScopeSymbol<'db>,
 ) -> Stashed<Binder<'db, FnSig<'db>>> {
     let fn_ast = sym
         .as_ast()
         .expect("external fn_signature not yet supported");
-    lower_fn_sig(db, fn_ast, module, source_root, None, &Stash::new())
+    lower_fn_sig(db, fn_ast, scope, None, &Stash::new())
 }
 
 /// Lower a function signature with an optional self type for impl-block methods.
@@ -236,8 +234,7 @@ pub fn fn_signature<'db>(
 pub fn lower_fn_sig<'db>(
     db: &'db dyn Db,
     fn_ast: FnAst<'db>,
-    module: ModSymbol<'db>,
-    source_root: SourceRoot,
+    scope: ScopeSymbol<'db>,
     self_type: Option<Ty<'db>>,
     self_type_src: &Stash,
 ) -> Stashed<Binder<'db, FnSig<'db>>> {
@@ -258,9 +255,8 @@ pub fn lower_fn_sig<'db>(
         ribs.add(self_name, Namespace::Type, RibEntry::SelfTy(copied));
     }
 
-    let scope = ScopeSymbol::Module(module);
     let mut cx = SigLowerCtx {
-        resolver: Resolver::new(db, source_root, scope),
+        resolver: Resolver::new(db, scope),
         src,
         dst: &mut dst,
         ribs,
@@ -294,8 +290,7 @@ pub fn lower_fn_sig<'db>(
 pub fn struct_signature<'db>(
     db: &'db dyn Db,
     sym: StructSymbol<'db>,
-    module: ModSymbol<'db>,
-    source_root: SourceRoot,
+    scope: ScopeSymbol<'db>,
 ) -> Stashed<Binder<'db, StructSig<'db>>> {
     let struct_ast = sym
         .as_ast()
@@ -310,9 +305,8 @@ pub fn struct_signature<'db>(
     let parent = Symbol::ast(crate::item::ItemAst::Struct(struct_ast));
     let generics = build_generics_ribs(db, src, data.generics, &mut dst, &mut ribs, parent);
 
-    let scope = ScopeSymbol::Module(module);
     let mut cx = SigLowerCtx {
-        resolver: Resolver::new(db, source_root, scope),
+        resolver: Resolver::new(db, scope),
         src,
         dst: &mut dst,
         ribs,
@@ -338,8 +332,7 @@ pub fn struct_signature<'db>(
 pub fn enum_signature<'db>(
     db: &'db dyn Db,
     sym: EnumSymbol<'db>,
-    module: ModSymbol<'db>,
-    source_root: SourceRoot,
+    scope: ScopeSymbol<'db>,
 ) -> Stashed<Binder<'db, EnumSig<'db>>> {
     let enum_ast = sym
         .as_ast()
@@ -354,9 +347,8 @@ pub fn enum_signature<'db>(
     let parent = Symbol::ast(crate::item::ItemAst::Enum(enum_ast));
     let generics = build_generics_ribs(db, src, data.generics, &mut dst, &mut ribs, parent);
 
-    let scope = ScopeSymbol::Module(module);
     let mut cx = SigLowerCtx {
-        resolver: Resolver::new(db, source_root, scope),
+        resolver: Resolver::new(db, scope),
         src,
         dst: &mut dst,
         ribs,

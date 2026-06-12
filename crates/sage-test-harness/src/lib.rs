@@ -7,6 +7,7 @@ use sage_ir::db::Database;
 use sage_ir::item::{FnAst, ItemAst};
 use sage_ir::module::ModSymbol;
 use sage_ir::resolve::SourceRoot;
+use sage_ir::scope::ScopeSymbol;
 use sage_ir::sig_lower::fn_signature;
 use sage_ir::source::SourceFile;
 use sage_ir::symbol::FnSymbol;
@@ -66,9 +67,10 @@ impl TestCrate {
         module: ModSymbol<'db>,
         source_root: SourceRoot,
     ) -> Vec<String> {
-        let resolved = resolve_body(db, fn_ast, module, source_root);
+        let scope = ScopeSymbol::Module(module, source_root);
+        let resolved = resolve_body(db, fn_ast, scope);
         let fn_sym = FnSymbol::ast(fn_ast);
-        let sig = fn_signature(db, fn_sym, module, source_root);
+        let sig = fn_signature(db, fn_sym, scope);
         let result = type_check_body(db, &resolved, sig, module, source_root);
         result.render_errors(db)
     }
