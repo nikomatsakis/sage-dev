@@ -23,6 +23,7 @@
     - [Numeric Inference Variables](./rfds/numeric-inference-variables.md)
     - [Diagnostics Rendering](./rfds/diagnostics-rendering.md)
     - [Trait System](./rfds/trait-system.md)
+    - [IR Reshape](./rfds/ir-reshape.md)
   - [Completed](./rfds/completed.md)
     - [Initial Setup](./rfds/initial-setup.md)
     - [Relative Span Model](./rfds/relative-span-model.md)
