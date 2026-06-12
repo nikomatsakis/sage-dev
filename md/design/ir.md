@@ -36,7 +36,7 @@ pub enum Intrinsic {
 ```
 
 `Symbol` is a plain `Copy` newtype; identity flows from the inner
-data. Constructors: `Symbol::ast(item)`, `Symbol::ext(ext)`,
+data. Constructors: `Symbol::local(item, scope)`, `Symbol::ext(ext)`,
 `Symbol::external(cn, di)`, `Symbol::intrinsic(i)`. Inspect via
 `.data()`.
 

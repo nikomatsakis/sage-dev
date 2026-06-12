@@ -29,7 +29,12 @@ pub struct SageContext<'db> {
     pub db: &'db Database,
     pub krate: LocalCrateSymbol<'db>,
     pub root: ModSymbol<'db>,
-    pub source_root: SourceRoot,
+}
+
+impl<'db> SageContext<'db> {
+    pub fn source_root(&self) -> SourceRoot {
+        self.krate.source_root(self.db)
+    }
 }
 
 /// Set up the full sage pipeline for a project and call `f` with a live
@@ -160,12 +165,7 @@ where
             let root = ModSymbol::ast(root_mod);
             let krate = local_crate(db, root_mod, source_root);
 
-            let ctx = SageContext {
-                db,
-                krate,
-                root,
-                source_root,
-            };
+            let ctx = SageContext { db, krate, root };
 
             f(&ctx)
         })

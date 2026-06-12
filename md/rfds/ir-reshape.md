@@ -1,6 +1,6 @@
 # RFD: IR Reshape — Symbols, Scope, and Two-Layer Architecture
 
-**Status:** Partially Implemented (Phase 1 complete, Phase 2 partial)
+**Status:** Partially Implemented (Phase 1 & 2 complete, Phase 3 not started)
 
 **Supersedes:**
 - [Symbol-Level Signature Queries](./symbol-signatures.md) (partially implemented, to be reworked)
@@ -463,7 +463,7 @@ a plain `Copy` wrapper, not a salsa tracked struct.
 needs them to find the module that defines a cross-module struct
 reference. They'll go away when items carry their scope.
 
-### Phase 2: Partial
+### Phase 2: Complete
 
 **2a — Kind symbols carry optional scope.** Rather than introducing
 separate `LocalFnSymbol` tracked structs, the existing per-kind
@@ -480,17 +480,78 @@ constructed (the `None` case), so the invariant isn't statically
 enforced. Once all minting sites pass scope, the `Option` can be
 replaced with a bare `ScopeSymbol` and the `ast()` constructor removed.
 
+**2b — Item minting in resolution produces scoped symbols.**
+`Symbol::local(item, scope)` and `Symbol::tuple_struct_ctor_local(s, scope)`
+constructors were added. The `walk_entries` function in `resolve/mod.rs`
+(the main memmap-walking resolution path) now mints all symbols with
+`Symbol::local(*item, scope)` using `ScopeSymbol::Module(module, source_root)`.
+The `Symbol` struct gained a `.scope()` accessor that delegates to the
+inner kind-symbol. The test harness (`sage-test-harness`) also mints
+`FnSymbol::local(fn_ast, scope)`.
+
+**2c — Single-keyed signature queries added:**
+- `fn_sig(db, sym)` — reads scope from symbol, delegates to `fn_signature`
+- `struct_sig(db, sym)` — reads scope from symbol, delegates to `struct_signature`
+- `enum_sig(db, sym)` — reads scope from symbol, delegates to `enum_signature`
+
+The two-parameter versions (`fn_signature(db, sym, scope)`) remain as
+the underlying salsa tracked functions and as a fallback for symbols
+that lack scope. The single-keyed wrappers panic if scope is missing.
+
+**2d — Type checker uses scoped symbols directly.** The `check_struct_lit`
+and `check_field_access` functions in `sage-infer/src/check.rs` now use
+`struct_sig(db, sym)` when the symbol carries scope (bypassing the old
+`struct_defining_module` helper), falling back to `struct_signature` with
+a constructed scope when the symbol lacks one.
+
+**1e — `*_defining_module` helpers deleted.** With scoped symbols flowing
+through resolution, the `struct_defining_module`, `fn_defining_module`,
+and `enum_defining_module` helpers in `scope.rs` are no longer needed.
+They have been deleted along with the `find_module_for_file` /
+`search_module_tree` support functions they depended on.
+
 ### Phase 3: Not started
 
 Naming cleanup, `FromImpls` derive, and taxonomy restructuring are
 deferred — the current names are adequate.
 
+### Phase 2e: Scope made non-optional, Symbol::ast() removed
+
+**`CheckEnv` simplified.** The `module` and `source_root` fields were
+replaced by a single `scope: ScopeSymbol<'db>`. The `type_check_body`
+function now takes `scope` instead of `(module, source_root)`.
+
+**`SageContext.source_root` field removed.** Replaced by a
+`source_root()` method that derives it from `krate.source_root(db)`.
+All call sites migrated to use the method.
+
+**`definition()` gained `source_root` parameter.** This allows it to
+mint scoped symbols via `Symbol::local(item, scope)` instead of the
+unscoped `Symbol::ast(item)`. All callers already had `source_root`
+in scope.
+
+**`Symbol::ast()` removed.** The scopeless constructor and
+`tuple_struct_ctor()` helper were deleted. Only `Symbol::local(item,
+scope)` and `Symbol::tuple_struct_ctor_local(s, scope)` remain for
+local symbol construction. The `From<ItemAst> for Symbol` impl was
+also removed.
+
+**`Option<ScopeSymbol>` dropped from kind symbol data.** The internal
+`$DataName::Ast($AstTy, Option<ScopeSymbol<'db>>)` variant was changed
+to `$DataName::Ast($AstTy, ScopeSymbol<'db>)`. The `::ast()` constructor
+on all kind symbols (`FnSymbol`, `StructSymbol`, etc.) was removed; only
+`::local(ast, scope)` remains. The `scope()` method now returns
+`Option<ScopeSymbol>` (Some for Ast, None for Ext) instead of the
+double-Option.
+
+**Signature lowering uses scoped parent symbols.** The `build_generics_ribs`
+calls in `fn_signature`, `struct_signature`, and `enum_signature` now pass
+`Symbol::local(item, scope)` as the parent rather than `Symbol::ast(item)`.
+
 ### Remaining work
 
-- Migrate item minting (in `lower.rs` and macro expansion) to use
-  `FnSymbol::local(ast, scope)` instead of `FnSymbol::ast(ast)`.
-- Once all symbols carry scope: make signature queries truly
-  single-keyed by reading scope from the symbol internally.
-- Delete `*_defining_module` helpers once all callers use scoped symbols.
 - Fuse `resolve_body` + type inference into a single `body()` query.
-- Remove `source_root` from `SageContext` (use `krate.source_root(db)` instead).
+- Propagate scope through `resolve_module_path` chain so the
+  `dummy_root` pattern in std-prelude and derive resolution can be
+  eliminated (low priority — correctness unaffected since those paths
+  only resolve external modules).

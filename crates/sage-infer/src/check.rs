@@ -1,11 +1,9 @@
 use sage_ir::Db;
 use sage_ir::body::{BinaryOp, Literal};
-use sage_ir::module::ModSymbol;
 use sage_ir::name::Name;
-use sage_ir::resolve::SourceRoot;
 use sage_ir::resolved::*;
-use sage_ir::scope::{ScopeSymbol, struct_defining_module};
-use sage_ir::sig_lower::struct_signature;
+use sage_ir::scope::ScopeSymbol;
+use sage_ir::sig_lower::{struct_sig, struct_signature};
 use sage_ir::symbol::SymbolData;
 use sage_ir::ty::*;
 use sage_ir::ty_fold::instantiate_struct_sig;
@@ -35,8 +33,7 @@ pub fn type_check_body<'db>(
     db: &'db dyn Db,
     resolved: &ResolvedBody<'db>,
     sig: &Stashed<Binder<'db, FnSig<'db>>>,
-    module: ModSymbol<'db>,
-    source_root: SourceRoot,
+    scope: ScopeSymbol<'db>,
 ) -> TypeCheckResult<'db> {
     let mut ctx = InferCtx::new();
 
@@ -57,8 +54,7 @@ pub fn type_check_body<'db>(
 
     let env = CheckEnv {
         db,
-        module,
-        source_root,
+        scope,
         ret_ty: sig_data.ret,
     };
 
@@ -74,8 +70,7 @@ pub fn type_check_body<'db>(
 
 struct CheckEnv<'db> {
     db: &'db dyn Db,
-    module: ModSymbol<'db>,
-    source_root: SourceRoot,
+    scope: ScopeSymbol<'db>,
     ret_ty: Ptr<Ty<'db>>,
 }
 
@@ -371,6 +366,17 @@ fn extract_bind_local(pat: &RPat) -> u32 {
 // Struct literal and field access
 // ---------------------------------------------------------------------------
 
+fn get_struct_sig<'db>(
+    env: &CheckEnv<'db>,
+    struct_sym: sage_ir::symbol::StructSymbol<'db>,
+) -> &'db Stashed<Binder<'db, StructSig<'db>>> {
+    if struct_sym.scope().is_some() {
+        struct_sig(env.db, struct_sym)
+    } else {
+        struct_signature(env.db, struct_sym, env.scope)
+    }
+}
+
 fn check_struct_lit<'db>(
     ctx: &mut InferCtx<'db>,
     env: &CheckEnv<'db>,
@@ -386,9 +392,7 @@ fn check_struct_lit<'db>(
         return ctx.alloc_ty(TyData::Error);
     };
 
-    let def_module = struct_defining_module(env.db, struct_sym, env.source_root, env.module);
-    let scope = ScopeSymbol::Module(def_module, env.source_root);
-    let sig = struct_signature(env.db, struct_sym, scope);
+    let sig = get_struct_sig(env, struct_sym);
     let sig_stash = sig.stash();
     let binder = sig.root();
 
@@ -438,9 +442,7 @@ fn check_field_access<'db>(
         return ctx.fresh_ty_var();
     };
 
-    let def_module = struct_defining_module(env.db, struct_sym, env.source_root, env.module);
-    let scope = ScopeSymbol::Module(def_module, env.source_root);
-    let sig = struct_signature(env.db, struct_sym, scope);
+    let sig = get_struct_sig(env, struct_sym);
     let sig_stash = sig.stash();
     let binder = sig.root();
 

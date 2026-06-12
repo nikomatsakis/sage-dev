@@ -47,7 +47,7 @@ fn mini_redis_dir() -> &'static Path {
 #[test]
 fn resolve_cmd_get_with_real_tcx() {
     run_sage_with(mini_redis_dir(), &[], |sage| {
-        let module = resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]);
+        let module = resolve_module_path(sage.db, sage.root, sage.source_root(), &["cmd", "get"]);
         assert!(module.is_some(), "failed to resolve cmd::get");
 
         let module = module.unwrap();
@@ -73,7 +73,7 @@ fn resolve_cmd_get_with_real_tcx() {
 fn resolve_use_imports_with_real_tcx() {
     run_sage_with(mini_redis_dir(), &[], |sage| {
         let module =
-            resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
+            resolve_module_path(sage.db, sage.root, sage.source_root(), &["cmd", "get"]).unwrap();
 
         let items = module_items(sage.db, module);
         let mut out = String::new();
@@ -100,7 +100,7 @@ fn resolve_use_imports_with_real_tcx() {
 fn expand_derives_cmd_get() {
     run_sage_with(mini_redis_dir(), &[], |sage| {
         let module =
-            resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
+            resolve_module_path(sage.db, sage.root, sage.source_root(), &["cmd", "get"]).unwrap();
 
         let items = module_items(sage.db, module);
         assert!(
@@ -116,7 +116,7 @@ fn expand_derives_cmd_get() {
         let result = sage_ir::resolve::resolve_name(
             sage.db,
             module,
-            sage.source_root,
+            sage.source_root(),
             debug_name,
             sage_ir::resolve::Namespace::Macro(sage_ir::resolve::MacroKind::Derive),
         );
@@ -148,7 +148,7 @@ fn query_log_demand_driven_with_real_tcx() {
 
         // Resolve cmd::get — should only parse files on the path
         let module =
-            resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
+            resolve_module_path(sage.db, sage.root, sage.source_root(), &["cmd", "get"]).unwrap();
 
         // Read the target module's items
         let _items = module_items(sage.db, module);
@@ -202,7 +202,7 @@ fn expand_derives_cmd_get_full() {
         sage.db.take_query_log();
 
         let module =
-            resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
+            resolve_module_path(sage.db, sage.root, sage.source_root(), &["cmd", "get"]).unwrap();
 
         let items = module_items(sage.db, module);
         let get_struct = items
@@ -213,7 +213,7 @@ fn expand_derives_cmd_get_full() {
             .expect("Get struct not found in cmd/get.rs");
 
         let results =
-            sage_ir::derive::expand_derives(sage.db, module, sage.source_root, *get_struct);
+            sage_ir::derive::expand_derives(sage.db, module, sage.source_root(), *get_struct);
 
         let mut out = String::new();
         for result in &results {
@@ -365,7 +365,7 @@ fn expand_derives_clap_parser() {
         // bin/server.rs is not part of the module tree (it's a binary target),
         // so we find it directly in the source root.
         let server_file = sage
-            .source_root
+            .source_root()
             .files(sage.db)
             .iter()
             .find(|f| f.path(sage.db) == "bin/server.rs")
@@ -382,7 +382,7 @@ fn expand_derives_clap_parser() {
             .expect("Cli struct not found");
 
         let results =
-            sage_ir::derive::expand_derives(sage.db, module, sage.source_root, *cli_struct);
+            sage_ir::derive::expand_derives(sage.db, module, sage.source_root(), *cli_struct);
 
         // Should have Parser (expanded) + Debug (builtin)
         let has_builtin = results
@@ -406,7 +406,7 @@ fn expand_derives_clap_parser() {
 fn expanded_items_are_valid_ir() {
     run_sage_with(mini_redis_dir(), &[], |sage| {
         let server_file = sage
-            .source_root
+            .source_root()
             .files(sage.db)
             .iter()
             .find(|f| f.path(sage.db) == "bin/server.rs")
@@ -423,7 +423,7 @@ fn expanded_items_are_valid_ir() {
             .expect("Cli struct not found");
 
         let results =
-            sage_ir::derive::expand_derives(sage.db, module, sage.source_root, *cli_struct);
+            sage_ir::derive::expand_derives(sage.db, module, sage.source_root(), *cli_struct);
 
         for result in &results {
             if let sage_ir::derive::DeriveResult::Expanded { items } = result {
@@ -536,7 +536,7 @@ fn expanded_items_are_valid_ir() {
 fn snapshot_expanded_clap_parser() {
     run_sage_with(mini_redis_dir(), &[], |sage| {
         let server_file = sage
-            .source_root
+            .source_root()
             .files(sage.db)
             .iter()
             .find(|f| f.path(sage.db) == "bin/server.rs")
@@ -553,7 +553,7 @@ fn snapshot_expanded_clap_parser() {
             .expect("Cli struct not found");
 
         let results =
-            sage_ir::derive::expand_derives(sage.db, module, sage.source_root, *cli_struct);
+            sage_ir::derive::expand_derives(sage.db, module, sage.source_root(), *cli_struct);
 
         let mut out = String::new();
         for result in &results {

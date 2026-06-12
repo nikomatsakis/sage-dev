@@ -124,16 +124,16 @@ impl StashDirect for SymExt {}
 impl StashDirect for SymExtKind {}
 
 impl<'db> Symbol<'db> {
-    pub fn ast(item: ItemAst<'db>) -> Self {
+    pub fn local(item: ItemAst<'db>, scope: crate::scope::ScopeSymbol<'db>) -> Self {
         let data = match item {
-            ItemAst::Function(f) => SymbolData::Fn(FnSymbol::ast(f)),
-            ItemAst::Struct(s) => SymbolData::Struct(StructSymbol::ast(s)),
-            ItemAst::Enum(e) => SymbolData::Enum(EnumSymbol::ast(e)),
-            ItemAst::Trait(t) => SymbolData::Trait(TraitSymbol::ast(t)),
-            ItemAst::Impl(i) => SymbolData::Impl(ImplSymbol::ast(i)),
-            ItemAst::TypeAlias(t) => SymbolData::TypeAlias(TypeAliasSymbol::ast(t)),
-            ItemAst::Const(c) => SymbolData::Const(ConstSymbol::ast(c)),
-            ItemAst::Static(s) => SymbolData::Static(StaticSymbol::ast(s)),
+            ItemAst::Function(f) => SymbolData::Fn(FnSymbol::local(f, scope)),
+            ItemAst::Struct(s) => SymbolData::Struct(StructSymbol::local(s, scope)),
+            ItemAst::Enum(e) => SymbolData::Enum(EnumSymbol::local(e, scope)),
+            ItemAst::Trait(t) => SymbolData::Trait(TraitSymbol::local(t, scope)),
+            ItemAst::Impl(i) => SymbolData::Impl(ImplSymbol::local(i, scope)),
+            ItemAst::TypeAlias(t) => SymbolData::TypeAlias(TypeAliasSymbol::local(t, scope)),
+            ItemAst::Const(c) => SymbolData::Const(ConstSymbol::local(c, scope)),
+            ItemAst::Static(s) => SymbolData::Static(StaticSymbol::local(s, scope)),
             ItemAst::Mod(m) => SymbolData::Mod(ModSymbol::ast(m)),
             ItemAst::Use(u) => SymbolData::Use(u),
             ItemAst::MacroDef(d) => SymbolData::MacroDef(d),
@@ -143,9 +143,12 @@ impl<'db> Symbol<'db> {
         Self { data }
     }
 
-    pub fn tuple_struct_ctor(s: StructAst<'db>) -> Self {
+    pub fn tuple_struct_ctor_local(
+        s: StructAst<'db>,
+        scope: crate::scope::ScopeSymbol<'db>,
+    ) -> Self {
         Self {
-            data: SymbolData::TupleStructCtor(StructSymbol::ast(s)),
+            data: SymbolData::TupleStructCtor(StructSymbol::local(s, scope)),
         }
     }
 
@@ -216,6 +219,29 @@ impl<'db> Symbol<'db> {
         self.as_ext().is_some()
     }
 
+    /// The scope this symbol was minted in, if available.
+    pub fn scope(self) -> Option<crate::scope::ScopeSymbol<'db>> {
+        match self.data {
+            SymbolData::Fn(s) => s.scope(),
+            SymbolData::Struct(s) => s.scope(),
+            SymbolData::TupleStructCtor(s) => s.scope(),
+            SymbolData::Enum(s) => s.scope(),
+            SymbolData::Trait(s) => s.scope(),
+            SymbolData::Impl(s) => s.scope(),
+            SymbolData::TypeAlias(s) => s.scope(),
+            SymbolData::Const(s) => s.scope(),
+            SymbolData::Static(s) => s.scope(),
+            SymbolData::Mod(_)
+            | SymbolData::MacroDef(_)
+            | SymbolData::Use(_)
+            | SymbolData::MacroInvocation(_)
+            | SymbolData::GenericParam(_)
+            | SymbolData::Intrinsic(_)
+            | SymbolData::Error(_)
+            | SymbolData::Unknown(_) => None,
+        }
+    }
+
     /// The name of this symbol, if it has one.
     pub fn name(self, db: &'db dyn crate::Db) -> Option<Name<'db>> {
         match self.data {
@@ -240,12 +266,6 @@ impl<'db> Symbol<'db> {
             | SymbolData::Error(_)
             | SymbolData::Unknown(_) => None,
         }
-    }
-}
-
-impl<'db> From<ItemAst<'db>> for Symbol<'db> {
-    fn from(item: ItemAst<'db>) -> Self {
-        Self::ast(item)
     }
 }
 
@@ -280,17 +300,13 @@ macro_rules! define_kind_symbol {
 
         #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
         enum $DataName<'db> {
-            Ast($AstTy, Option<crate::scope::ScopeSymbol<'db>>),
+            Ast($AstTy, crate::scope::ScopeSymbol<'db>),
             Ext(SymExt),
         }
 
         impl<'db> $Name<'db> {
             pub fn local(ast: $AstTy, scope: crate::scope::ScopeSymbol<'db>) -> Self {
-                Self { data: $DataName::Ast(ast, Some(scope)) }
-            }
-
-            pub fn ast(ast: $AstTy) -> Self {
-                Self { data: $DataName::Ast(ast, None) }
+                Self { data: $DataName::Ast(ast, scope) }
             }
 
             pub fn ext(ext: SymExt) -> Self {
@@ -306,7 +322,7 @@ macro_rules! define_kind_symbol {
 
             pub fn scope(self) -> Option<crate::scope::ScopeSymbol<'db>> {
                 match self.data {
-                    $DataName::Ast(_, scope) => scope,
+                    $DataName::Ast(_, scope) => Some(scope),
                     $DataName::Ext(_) => None,
                 }
             }
@@ -316,12 +332,6 @@ macro_rules! define_kind_symbol {
                     $DataName::Ast(..) => None,
                     $DataName::Ext(ext) => Some(ext),
                 }
-            }
-        }
-
-        impl<'db> From<$AstTy> for $Name<'db> {
-            fn from(ast: $AstTy) -> Self {
-                Self::ast(ast)
             }
         }
 

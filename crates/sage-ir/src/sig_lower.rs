@@ -227,6 +227,12 @@ pub fn fn_signature<'db>(
     lower_fn_sig(db, fn_ast, scope, None, &Stash::new())
 }
 
+/// Single-keyed function signature query — reads scope from the symbol.
+pub fn fn_sig<'db>(db: &'db dyn Db, sym: FnSymbol<'db>) -> &'db Stashed<Binder<'db, FnSig<'db>>> {
+    let scope = sym.scope().expect("fn_sig requires a scoped symbol");
+    fn_signature(db, sym, scope)
+}
+
 /// Lower a function signature with an optional self type for impl-block methods.
 ///
 /// `self_type_src` is the stash that owns any `Slice`/`Ptr` data inside `self_type`.
@@ -245,7 +251,7 @@ pub fn lower_fn_sig<'db>(
     let mut dst = Stash::new();
     let mut ribs = Ribs::new();
     ribs.push_scope();
-    let parent = Symbol::ast(crate::item::ItemAst::Function(fn_ast));
+    let parent = Symbol::local(crate::item::ItemAst::Function(fn_ast), scope);
     let generics = build_generics_ribs(db, src, data.generics, &mut dst, &mut ribs, parent);
 
     if let Some(ty) = self_type {
@@ -285,6 +291,15 @@ pub fn lower_fn_sig<'db>(
     Stashed::new(dst, binder)
 }
 
+/// Single-keyed struct signature query — reads scope from the symbol.
+pub fn struct_sig<'db>(
+    db: &'db dyn Db,
+    sym: StructSymbol<'db>,
+) -> &'db Stashed<Binder<'db, StructSig<'db>>> {
+    let scope = sym.scope().expect("struct_sig requires a scoped symbol");
+    struct_signature(db, sym, scope)
+}
+
 /// Symbol-keyed struct signature query.
 #[salsa::tracked(returns(ref))]
 pub fn struct_signature<'db>(
@@ -302,7 +317,7 @@ pub fn struct_signature<'db>(
     let mut dst = Stash::new();
     let mut ribs = Ribs::new();
     ribs.push_scope();
-    let parent = Symbol::ast(crate::item::ItemAst::Struct(struct_ast));
+    let parent = Symbol::local(crate::item::ItemAst::Struct(struct_ast), scope);
     let generics = build_generics_ribs(db, src, data.generics, &mut dst, &mut ribs, parent);
 
     let mut cx = SigLowerCtx {
@@ -327,6 +342,15 @@ pub fn struct_signature<'db>(
     Stashed::new(dst, binder)
 }
 
+/// Single-keyed enum signature query — reads scope from the symbol.
+pub fn enum_sig<'db>(
+    db: &'db dyn Db,
+    sym: EnumSymbol<'db>,
+) -> &'db Stashed<Binder<'db, EnumSig<'db>>> {
+    let scope = sym.scope().expect("enum_sig requires a scoped symbol");
+    enum_signature(db, sym, scope)
+}
+
 /// Symbol-keyed enum signature query.
 #[salsa::tracked(returns(ref))]
 pub fn enum_signature<'db>(
@@ -344,7 +368,7 @@ pub fn enum_signature<'db>(
     let mut dst = Stash::new();
     let mut ribs = Ribs::new();
     ribs.push_scope();
-    let parent = Symbol::ast(crate::item::ItemAst::Enum(enum_ast));
+    let parent = Symbol::local(crate::item::ItemAst::Enum(enum_ast), scope);
     let generics = build_generics_ribs(db, src, data.generics, &mut dst, &mut ribs, parent);
 
     let mut cx = SigLowerCtx {

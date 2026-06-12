@@ -69,9 +69,9 @@ impl TestCrate {
     ) -> Vec<String> {
         let scope = ScopeSymbol::Module(module, source_root);
         let resolved = resolve_body(db, fn_ast, scope);
-        let fn_sym = FnSymbol::ast(fn_ast);
+        let fn_sym = FnSymbol::local(fn_ast, scope);
         let sig = fn_signature(db, fn_sym, scope);
-        let result = type_check_body(db, &resolved, sig, module, source_root);
+        let result = type_check_body(db, &resolved, sig, scope);
         result.render_errors(db)
     }
 

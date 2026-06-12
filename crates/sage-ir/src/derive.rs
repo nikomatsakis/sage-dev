@@ -117,11 +117,13 @@ fn try_expand_proc_macro<'db>(
     for crate_name in potential_crate_names(&name_text) {
         if let Some(ext_cn) = db.tcx().extern_crate(&crate_name) {
             let ext_module = ModSymbol::external(ext_cn, DefIndex(0));
+            let dummy_root = SourceRoot::new(db, Vec::new());
             if let Some(sym) = definition_in_ns(
                 db,
                 ext_module,
                 derive_name,
                 Namespace::Macro(MacroKind::Derive),
+                dummy_root,
             ) {
                 if let Some(ext) = sym.as_ext() {
                     if let Some(expanded) = db.tcx().expand_proc_macro_derive(

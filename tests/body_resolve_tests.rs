@@ -54,9 +54,9 @@ fn resolve_and_print(
     type_name: &str,
     method_name: &str,
 ) -> String {
-    let module = resolve_module_path(sage.db, sage.root, sage.source_root, module_path).unwrap();
+    let module = resolve_module_path(sage.db, sage.root, sage.source_root(), module_path).unwrap();
     let method = find_method(sage.db, module, type_name, method_name);
-    let scope = sage_ir::scope::ScopeSymbol::Module(module, sage.source_root);
+    let scope = sage_ir::scope::ScopeSymbol::Module(module, sage.source_root());
     let resolved = resolve_body(sage.db, method, scope);
     pretty_print_resolved(sage.db.tcx(), &resolved)
 }
@@ -239,9 +239,9 @@ fn query_log_body_resolve_demand_driven() {
         sage.db.take_query_log();
 
         let module =
-            resolve_module_path(sage.db, sage.root, sage.source_root, &["cmd", "get"]).unwrap();
+            resolve_module_path(sage.db, sage.root, sage.source_root(), &["cmd", "get"]).unwrap();
         let method = find_method(sage.db, module, "Get", "apply");
-        let scope = sage_ir::scope::ScopeSymbol::Module(module, sage.source_root);
+        let scope = sage_ir::scope::ScopeSymbol::Module(module, sage.source_root());
         let _resolved = resolve_body(sage.db, method, scope);
 
         let log = sage.db.take_query_log();
@@ -261,9 +261,10 @@ fn query_log_body_resolve_parse_demand_driven() {
     run_sage_with(mini_redis_dir(), &[], |sage| {
         sage.db.take_query_log();
 
-        let module = resolve_module_path(sage.db, sage.root, sage.source_root, &["parse"]).unwrap();
+        let module =
+            resolve_module_path(sage.db, sage.root, sage.source_root(), &["parse"]).unwrap();
         let method = find_method(sage.db, module, "Parse", "next_string");
-        let scope = sage_ir::scope::ScopeSymbol::Module(module, sage.source_root);
+        let scope = sage_ir::scope::ScopeSymbol::Module(module, sage.source_root());
         let _resolved = resolve_body(sage.db, method, scope);
 
         let log = sage.db.take_query_log();

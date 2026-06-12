@@ -44,7 +44,7 @@ fn memmap_first_segment<'db, 's>(
             .map(|p| (p, rest))
             .ok_or(ResolutionError::Unresolved),
         _ => {
-            if let Some(sym) = definition(db, current_module, first) {
+            if let Some(sym) = definition(db, current_module, first, source_root) {
                 if let Some(child_mod) = symbol_to_module(db, sym, source_root, current_module) {
                     return Ok((child_mod, rest));
                 }
@@ -73,7 +73,7 @@ fn memmap_resolve_path_to_module<'db>(
 
     let mut current = first_module;
     for seg in rest {
-        let sym = definition(db, current, *seg)?;
+        let sym = definition(db, current, *seg, source_root)?;
         current = symbol_to_module(db, sym, source_root, current)?;
     }
     Some(current)
@@ -295,7 +295,7 @@ fn walk_path_to_macro<'db>(
 
     for (i, seg) in segments.iter().enumerate() {
         if i < segments.len() - 1 {
-            let sym = definition(db, current, *seg)?;
+            let sym = definition(db, current, *seg, source_root)?;
             current = symbol_to_module(db, sym, source_root, current)?;
         } else {
             let current_ast = match current.data() {
@@ -387,7 +387,8 @@ fn item_as_child_module<'db>(
     if mod_item.name(db) != first {
         return None;
     }
-    let sym = Symbol::ast(*item);
+    let scope = crate::scope::ScopeSymbol::Module(parent, source_root);
+    let sym = Symbol::local(*item, scope);
     symbol_to_module(db, sym, source_root, parent)
 }
 

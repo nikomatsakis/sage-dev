@@ -88,6 +88,7 @@ pub fn definition<'db>(
     db: &'db dyn Db,
     module: ModSymbol<'db>,
     name: Name<'db>,
+    source_root: SourceRoot,
 ) -> Option<Symbol<'db>> {
     db.log_query(format!(
         "definition({}, \"{}\")",
@@ -96,9 +97,10 @@ pub fn definition<'db>(
     ));
     match module.data() {
         ModSymbolData::Ast(ast) => {
+            let scope = ScopeSymbol::Module(module, source_root);
             for item in ast.unexpanded_items(db) {
                 if item_name(db, item) == Some(name) {
-                    return Some(Symbol::ast(item));
+                    return Some(Symbol::local(item, scope));
                 }
             }
             None
@@ -120,9 +122,10 @@ pub fn definition_in_ns<'db>(
     module: ModSymbol<'db>,
     name: Name<'db>,
     ns: Namespace,
+    source_root: SourceRoot,
 ) -> Option<Symbol<'db>> {
     match module.data() {
-        ModSymbolData::Ast(_) => definition(db, module, name),
+        ModSymbolData::Ast(_) => definition(db, module, name, source_root),
         ModSymbolData::Ext(ext) => {
             let raw = db.tcx().module_children(ext.crate_num, ext.def_index);
             let name_text = name.text(db);
@@ -412,7 +415,7 @@ impl<'db> Resolver<'db> {
             let sym = self
                 .resolve_member(current, name, Namespace::Type)
                 .ok()
-                .or_else(|| definition(self.db, current, name))?;
+                .or_else(|| definition(self.db, current, name, self.source_root))?;
             current = symbol_to_module(self.db, sym, self.source_root, current)?;
         }
         Some(current)
@@ -453,7 +456,7 @@ fn resolve_member_impl<'db>(
 
     let result = match module.data() {
         ModSymbolData::Ext(_) => {
-            definition_in_ns(db, module, name, ns).ok_or(ResolutionError::Unresolved)
+            definition_in_ns(db, module, name, ns, source_root).ok_or(ResolutionError::Unresolved)
         }
         ModSymbolData::Ast(ast) => {
             let memmap = expanded_module(db, ast, source_root);
@@ -502,12 +505,13 @@ fn walk_entries<'db>(
     use crate::memmap::MemmapEntry;
 
     let db = resolver.db;
+    let scope = ScopeSymbol::Module(module, resolver.source_root);
 
     for entry in &stash[entries] {
         match entry {
             MemmapEntry::Item(item) => {
                 if item_name(db, *item) == Some(name) && item_in_namespace(db, *item, ns) {
-                    let sym = Symbol::ast(*item);
+                    let sym = Symbol::local(*item, scope);
                     if !named.contains(&sym) {
                         named.push(sym);
                     }
@@ -515,7 +519,7 @@ fn walk_entries<'db>(
             }
             MemmapEntry::TupleStructCtor(s) => {
                 if s.name(db) == name && matches!(ns, Namespace::Value) {
-                    let sym = Symbol::tuple_struct_ctor(*s);
+                    let sym = Symbol::tuple_struct_ctor_local(*s, scope);
                     if !named.contains(&sym) {
                         named.push(sym);
                     }
@@ -693,13 +697,14 @@ fn resolve_in_std_prelude<'db>(
     let std_crate = db.tcx().extern_crate("std")?;
     let std_root = ModSymbol::external(std_crate, crate::module::DefIndex(0));
 
-    let prelude_name = Name::new(db, "prelude".to_owned());
-    let prelude_sym = definition(db, std_root, prelude_name)?;
     let dummy_root = SourceRoot::new(db, Vec::new());
+
+    let prelude_name = Name::new(db, "prelude".to_owned());
+    let prelude_sym = definition(db, std_root, prelude_name, dummy_root)?;
     let prelude_mod = symbol_to_module(db, prelude_sym, dummy_root, std_root)?;
 
     let v1_name = Name::new(db, "v1".to_owned());
-    let v1_sym = definition(db, prelude_mod, v1_name)?;
+    let v1_sym = definition(db, prelude_mod, v1_name, dummy_root)?;
     let v1_mod = symbol_to_module(db, v1_sym, dummy_root, prelude_mod)?;
 
     let ext = match v1_mod.data() {

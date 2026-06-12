@@ -27,16 +27,13 @@ fn fn_identity_generic() {
     let db = Database::default();
     db.attach(|db| {
         let (source_root, module, items) = setup(db, "fn identity<T>(x: T) -> T {}");
+        let scope = ScopeSymbol::Module(module, source_root);
         let fn_ast = match items[0] {
             ItemAst::Function(f) => f,
             _ => panic!("expected function"),
         };
 
-        let sig = fn_signature(
-            db,
-            FnSymbol::ast(fn_ast),
-            ScopeSymbol::Module(module, source_root),
-        );
+        let sig = fn_signature(db, FnSymbol::local(fn_ast, scope), scope);
         let stash = sig.stash();
         let binder = sig.root();
 
@@ -65,16 +62,13 @@ fn fn_add_primitives() {
     let db = Database::default();
     db.attach(|db| {
         let (source_root, module, items) = setup(db, "fn add(a: i32, b: i32) -> i32 {}");
+        let scope = ScopeSymbol::Module(module, source_root);
         let fn_ast = match items[0] {
             ItemAst::Function(f) => f,
             _ => panic!("expected function"),
         };
 
-        let sig = fn_signature(
-            db,
-            FnSymbol::ast(fn_ast),
-            ScopeSymbol::Module(module, source_root),
-        );
+        let sig = fn_signature(db, FnSymbol::local(fn_ast, scope), scope);
         let stash = sig.stash();
         let binder = sig.root();
 
@@ -96,16 +90,13 @@ fn struct_pair_generic() {
     let db = Database::default();
     db.attach(|db| {
         let (source_root, module, items) = setup(db, "struct Pair<A, B> { first: A, second: B }");
+        let scope = ScopeSymbol::Module(module, source_root);
         let struct_ast = match items[0] {
             ItemAst::Struct(s) => s,
             _ => panic!("expected struct"),
         };
 
-        let sig = struct_signature(
-            db,
-            StructSymbol::ast(struct_ast),
-            ScopeSymbol::Module(module, source_root),
-        );
+        let sig = struct_signature(db, StructSymbol::local(struct_ast, scope), scope);
         let stash = sig.stash();
         let binder = sig.root();
 
@@ -132,16 +123,13 @@ fn fn_takes_ref() {
     let db = Database::default();
     db.attach(|db| {
         let (source_root, module, items) = setup(db, "fn takes_ref(x: &str) -> &[u8] {}");
+        let scope = ScopeSymbol::Module(module, source_root);
         let fn_ast = match items[0] {
             ItemAst::Function(f) => f,
             _ => panic!("expected function"),
         };
 
-        let sig = fn_signature(
-            db,
-            FnSymbol::ast(fn_ast),
-            ScopeSymbol::Module(module, source_root),
-        );
+        let sig = fn_signature(db, FnSymbol::local(fn_ast, scope), scope);
         let stash = sig.stash();
         let fn_sig = &sig.root().value;
 
@@ -175,16 +163,13 @@ fn enum_with_fields() {
     let db = Database::default();
     db.attach(|db| {
         let (source_root, module, items) = setup(db, "enum Option<T> { None, Some { value: T } }");
+        let scope = ScopeSymbol::Module(module, source_root);
         let enum_ast = match items[0] {
             ItemAst::Enum(e) => e,
             _ => panic!("expected enum"),
         };
 
-        let sig = enum_signature(
-            db,
-            EnumSymbol::ast(enum_ast),
-            ScopeSymbol::Module(module, source_root),
-        );
+        let sig = enum_signature(db, EnumSymbol::local(enum_ast, scope), scope);
         let stash = sig.stash();
         let binder = sig.root();
 
@@ -211,16 +196,13 @@ fn fn_no_return_type_is_unit() {
     let db = Database::default();
     db.attach(|db| {
         let (source_root, module, items) = setup(db, "fn noop() {}");
+        let scope = ScopeSymbol::Module(module, source_root);
         let fn_ast = match items[0] {
             ItemAst::Function(f) => f,
             _ => panic!("expected function"),
         };
 
-        let sig = fn_signature(
-            db,
-            FnSymbol::ast(fn_ast),
-            ScopeSymbol::Module(module, source_root),
-        );
+        let sig = fn_signature(db, FnSymbol::local(fn_ast, scope), scope);
         let stash = sig.stash();
         let fn_sig = &sig.root().value;
 
@@ -261,6 +243,7 @@ fn impl_method_self_return_resolves() {
     db.attach(|db| {
         let (source_root, module, items) =
             setup(db, "struct Foo {} impl Foo { fn make() -> Self {} }");
+        let scope = ScopeSymbol::Module(module, source_root);
 
         let method = find_impl_method(db, &items, "make");
 
@@ -269,20 +252,14 @@ fn impl_method_self_return_resolves() {
             ItemAst::Struct(s) => s,
             _ => panic!("expected struct"),
         };
-        let foo_sym = sage_ir::symbol::Symbol::ast(ItemAst::Struct(foo_struct));
+        let foo_sym = sage_ir::symbol::Symbol::local(ItemAst::Struct(foo_struct), scope);
         let mut stash = sage_stash::Stash::new();
         let empty_args = stash.alloc_slice::<sage_stash::Ptr<Ty>>(&[]);
         let self_ty = Ty {
             data: TyData::Adt(foo_sym, empty_args),
         };
 
-        let sig = lower_fn_sig(
-            db,
-            method,
-            ScopeSymbol::Module(module, source_root),
-            Some(self_ty),
-            &stash,
-        );
+        let sig = lower_fn_sig(db, method, scope, Some(self_ty), &stash);
         let sig_stash = sig.stash();
         let fn_sig = &sig.root().value;
 
@@ -304,6 +281,7 @@ fn impl_method_ref_self_param() {
     db.attach(|db| {
         let (source_root, module, items) =
             setup(db, "struct Foo {} impl Foo { fn bar(&self) -> Self {} }");
+        let scope = ScopeSymbol::Module(module, source_root);
 
         let method = find_impl_method(db, &items, "bar");
 
@@ -311,20 +289,14 @@ fn impl_method_ref_self_param() {
             ItemAst::Struct(s) => s,
             _ => panic!("expected struct"),
         };
-        let foo_sym = sage_ir::symbol::Symbol::ast(ItemAst::Struct(foo_struct));
+        let foo_sym = sage_ir::symbol::Symbol::local(ItemAst::Struct(foo_struct), scope);
         let mut stash = sage_stash::Stash::new();
         let empty_args = stash.alloc_slice::<sage_stash::Ptr<Ty>>(&[]);
         let self_ty = Ty {
             data: TyData::Adt(foo_sym, empty_args),
         };
 
-        let sig = lower_fn_sig(
-            db,
-            method,
-            ScopeSymbol::Module(module, source_root),
-            Some(self_ty),
-            &stash,
-        );
+        let sig = lower_fn_sig(db, method, scope, Some(self_ty), &stash);
         let sig_stash = sig.stash();
         let fn_sig = &sig.root().value;
 
@@ -361,6 +333,7 @@ fn generic_impl_self_resolves_with_params() {
             db,
             "struct Wrapper<T> { val: T } impl<T> Wrapper<T> { fn into_self(&self) -> Self {} }",
         );
+        let scope = ScopeSymbol::Module(module, source_root);
 
         let method = find_impl_method(db, &items, "into_self");
 
@@ -368,15 +341,11 @@ fn generic_impl_self_resolves_with_params() {
             ItemAst::Struct(s) => s,
             _ => panic!("expected struct"),
         };
-        let wrapper_sym = sage_ir::symbol::Symbol::ast(ItemAst::Struct(wrapper_struct));
+        let wrapper_sym = sage_ir::symbol::Symbol::local(ItemAst::Struct(wrapper_struct), scope);
 
         // Lower the struct signature to get its generics (this creates AstGenericParams
         // inside a tracked function context)
-        let struct_sig = struct_signature(
-            db,
-            StructSymbol::ast(wrapper_struct),
-            ScopeSymbol::Module(module, source_root),
-        );
+        let struct_sig = struct_signature(db, StructSymbol::local(wrapper_struct, scope), scope);
         let struct_stash = struct_sig.stash();
         let struct_binder = struct_sig.root();
         let struct_generics = &struct_stash[struct_binder.generics];
@@ -394,13 +363,7 @@ fn generic_impl_self_resolves_with_params() {
             data: TyData::Adt(wrapper_sym, args),
         };
 
-        let sig = lower_fn_sig(
-            db,
-            method,
-            ScopeSymbol::Module(module, source_root),
-            Some(self_ty),
-            &stash,
-        );
+        let sig = lower_fn_sig(db, method, scope, Some(self_ty), &stash);
         let sig_stash = sig.stash();
         let fn_sig = &sig.root().value;
 
