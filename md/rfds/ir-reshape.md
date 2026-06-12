@@ -616,17 +616,27 @@ The harness no longer directly calls `resolve_body` or `type_check_body`.
 directly to test name resolution in isolation (without type checking).
 This is deferred to a cleanup step.
 
-### Remaining work
+### Steps 4–5: Complete
 
-#### Step 4 — Snapshot tests (deferred)
+#### Step 4 — Tests migrated to `fn_body`
 
-Rewrite `body_resolve_tests` and `type_check_tests` as expect-test
-snapshots against `TypedBody` output.
+`body_resolve_tests.rs` no longer calls `resolve_body` directly.
+Instead it uses `FnSymbol::local(method, scope).body(db)` to get a
+`TypedBody`, then pretty-prints `typed.body`. The query-log tests
+similarly go through `fn_body`.
 
-#### Step 5 — Cleanup (deferred)
+`type_check_tests.rs` already used `fn_sym.body(db)` via the
+`sage-test-harness`, so no changes needed there.
 
-Restrict `resolve_body` and `type_check_body` visibility once
-integration tests are migrated to use `fn_body`.
+#### Step 5 — Visibility restricted
+
+- `resolve_body` → `pub(crate)` (was `pub`)
+- `type_check_body` → `pub(crate)` (was `pub`)
+- `TypeCheckResult` and its methods → `pub(crate)`
+- `body_resolve` module → `pub(crate) mod` (was `pub mod`)
+- `infer` module → `pub(crate) mod` (was `pub mod`)
+
+External consumers use `FnSymbol::body(db) -> &TypedBody` exclusively.
 
 #### Low-priority follow-ups
 

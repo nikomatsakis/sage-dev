@@ -11,25 +11,21 @@ use sage_stash::{Ptr, Stash, StashCopy, Stashed};
 
 use super::infer_ctx::{Diagnostic, DiagnosticKind, InferCtx};
 
-pub struct TypeCheckResult<'db> {
-    pub diagnostics: Vec<Diagnostic<'db>>,
-    pub ty_stash: Stash,
+pub(crate) struct TypeCheckResult<'db> {
+    pub(crate) diagnostics: Vec<Diagnostic<'db>>,
+    pub(crate) ty_stash: Stash,
 }
 
 impl<'db> TypeCheckResult<'db> {
-    pub fn render_errors(&self, db: &'db dyn Db) -> Vec<String> {
+    pub(crate) fn render_errors(&self, db: &'db dyn Db) -> Vec<String> {
         self.diagnostics
             .iter()
             .map(|d| render_diagnostic(db, &self.ty_stash, d))
             .collect()
     }
-
-    pub fn has_errors(&self) -> bool {
-        !self.diagnostics.is_empty()
-    }
 }
 
-pub fn type_check_body<'db>(
+pub(crate) fn type_check_body<'db>(
     db: &'db dyn Db,
     resolved: &ResolvedBody<'db>,
     sig: &Stashed<Binder<'db, FnSig<'db>>>,

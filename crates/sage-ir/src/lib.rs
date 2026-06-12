@@ -1,11 +1,11 @@
 pub mod body;
-pub mod body_resolve;
+pub(crate) mod body_resolve;
 pub mod db;
 pub mod derive;
 pub mod display;
 pub mod dump;
 pub mod generic_param;
-pub mod infer;
+pub(crate) mod infer;
 pub mod item;
 pub mod lower;
 pub mod memmap;

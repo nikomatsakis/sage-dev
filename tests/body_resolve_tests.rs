@@ -4,11 +4,11 @@ use std::path::Path;
 
 use expect_test::expect;
 use sage_ir::Db;
-use sage_ir::body_resolve::resolve_body;
 use sage_ir::display::pretty_print_resolved;
 use sage_ir::item::ItemAst;
 use sage_ir::resolve::{module_items, resolve_module_path};
 use sage_ir::sig_ast::TypeRefAstKind;
+use sage_ir::symbol::FnSymbol;
 
 use sage::driver::run_sage_with;
 
@@ -57,8 +57,9 @@ fn resolve_and_print(
     let module = resolve_module_path(sage.db, sage.root, sage.source_root(), module_path).unwrap();
     let method = find_method(sage.db, module, type_name, method_name);
     let scope = sage_ir::scope::ScopeSymbol::Module(module, sage.source_root());
-    let resolved = resolve_body(sage.db, method, scope);
-    pretty_print_resolved(sage.db.tcx(), &resolved)
+    let fn_sym = FnSymbol::local(method, scope);
+    let typed = fn_sym.body(sage.db);
+    pretty_print_resolved(sage.db.tcx(), &typed.body)
 }
 
 #[test]
@@ -242,7 +243,8 @@ fn query_log_body_resolve_demand_driven() {
             resolve_module_path(sage.db, sage.root, sage.source_root(), &["cmd", "get"]).unwrap();
         let method = find_method(sage.db, module, "Get", "apply");
         let scope = sage_ir::scope::ScopeSymbol::Module(module, sage.source_root());
-        let _resolved = resolve_body(sage.db, method, scope);
+        let fn_sym = FnSymbol::local(method, scope);
+        let _typed = fn_sym.body(sage.db);
 
         let log = sage.db.take_query_log();
         assert!(
@@ -265,7 +267,8 @@ fn query_log_body_resolve_parse_demand_driven() {
             resolve_module_path(sage.db, sage.root, sage.source_root(), &["parse"]).unwrap();
         let method = find_method(sage.db, module, "Parse", "next_string");
         let scope = sage_ir::scope::ScopeSymbol::Module(module, sage.source_root());
-        let _resolved = resolve_body(sage.db, method, scope);
+        let fn_sym = FnSymbol::local(method, scope);
+        let _typed = fn_sym.body(sage.db);
 
         let log = sage.db.take_query_log();
         expect![[r#"

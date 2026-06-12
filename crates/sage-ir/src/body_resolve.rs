@@ -458,7 +458,7 @@ impl<'db> BodyResolver<'db> {
 }
 
 /// Produce a resolved body for a function.
-pub fn resolve_body<'db>(
+pub(crate) fn resolve_body<'db>(
     db: &'db dyn Db,
     function: FnAst<'db>,
     scope: ScopeSymbol<'db>,
