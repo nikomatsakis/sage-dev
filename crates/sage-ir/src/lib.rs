@@ -5,6 +5,7 @@ pub mod derive;
 pub mod display;
 pub mod dump;
 pub mod generic_param;
+pub mod infer;
 pub mod item;
 pub mod lower;
 pub mod memmap;
@@ -23,6 +24,7 @@ pub mod tcx;
 mod ts_helpers;
 pub mod ty;
 pub mod ty_fold;
+pub mod typed_body;
 pub mod types;
 
 /// The salsa database trait for sage-ir.

@@ -1,4 +1,4 @@
-use sage_ir::ty::Ty;
+use crate::ty::Ty;
 use sage_stash::Ptr;
 
 /// The bound on an inference variable — narrows monotonically.

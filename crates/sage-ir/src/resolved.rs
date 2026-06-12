@@ -8,7 +8,7 @@ use crate::symbol::Symbol;
 use crate::types::{Mutability, TokenTree};
 
 /// A resolved function body stored in a `Stash`.
-pub type ResolvedBody<'db> = Stashed<Ptr<RBody<'db>>>;
+pub type ResolvedBody<'db> = Stashed<Ptr<CheckedBody<'db>>>;
 
 /// What a path resolved to.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
@@ -33,120 +33,132 @@ pub struct LocalVar<'db> {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
-pub struct RBody<'db> {
-    pub root: Ptr<RExpr<'db>>,
+pub struct CheckedBody<'db> {
+    pub root: Ptr<CheckedExpr<'db>>,
     pub locals: Slice<LocalVar<'db>>,
     pub span: RelativeSpan,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
-pub struct RExpr<'db> {
-    pub kind: RExprKind<'db>,
+pub struct CheckedExpr<'db> {
+    pub kind: CheckedExprKind<'db>,
     pub span: RelativeSpan,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
-pub enum RExprKind<'db> {
+pub enum CheckedExprKind<'db> {
     Literal(Literal),
     Path(Res<'db>),
-    Block(Slice<RStmt<'db>>, Option<Ptr<RExpr<'db>>>),
-    Call(Ptr<RExpr<'db>>, Slice<RExpr<'db>>),
-    MethodCall(Ptr<RExpr<'db>>, Name<'db>, Slice<RExpr<'db>>),
-    Field(Ptr<RExpr<'db>>, Name<'db>),
-    Binary(Ptr<RExpr<'db>>, BinaryOp, Ptr<RExpr<'db>>),
-    Unary(UnaryOp, Ptr<RExpr<'db>>),
-    Ref(Ptr<RExpr<'db>>, Mutability),
-    If(Ptr<RExpr<'db>>, Ptr<RExpr<'db>>, Option<Ptr<RExpr<'db>>>),
-    IfLet(
-        Ptr<RPat<'db>>,
-        Ptr<RExpr<'db>>,
-        Ptr<RExpr<'db>>,
-        Option<Ptr<RExpr<'db>>>,
+    Block(Slice<CheckedStmt<'db>>, Option<Ptr<CheckedExpr<'db>>>),
+    Call(Ptr<CheckedExpr<'db>>, Slice<CheckedExpr<'db>>),
+    MethodCall(Ptr<CheckedExpr<'db>>, Name<'db>, Slice<CheckedExpr<'db>>),
+    Field(Ptr<CheckedExpr<'db>>, Name<'db>),
+    Binary(Ptr<CheckedExpr<'db>>, BinaryOp, Ptr<CheckedExpr<'db>>),
+    Unary(UnaryOp, Ptr<CheckedExpr<'db>>),
+    Ref(Ptr<CheckedExpr<'db>>, Mutability),
+    If(
+        Ptr<CheckedExpr<'db>>,
+        Ptr<CheckedExpr<'db>>,
+        Option<Ptr<CheckedExpr<'db>>>,
     ),
-    Match(Ptr<RExpr<'db>>, Slice<RMatchArm<'db>>),
-    Loop(Ptr<RExpr<'db>>),
-    While(Ptr<RExpr<'db>>, Ptr<RExpr<'db>>),
-    WhileLet(Ptr<RPat<'db>>, Ptr<RExpr<'db>>, Ptr<RExpr<'db>>),
-    For(Ptr<RPat<'db>>, Ptr<RExpr<'db>>, Ptr<RExpr<'db>>),
-    Break(Option<Ptr<RExpr<'db>>>),
+    IfLet(
+        Ptr<CheckedPat<'db>>,
+        Ptr<CheckedExpr<'db>>,
+        Ptr<CheckedExpr<'db>>,
+        Option<Ptr<CheckedExpr<'db>>>,
+    ),
+    Match(Ptr<CheckedExpr<'db>>, Slice<CheckedMatchArm<'db>>),
+    Loop(Ptr<CheckedExpr<'db>>),
+    While(Ptr<CheckedExpr<'db>>, Ptr<CheckedExpr<'db>>),
+    WhileLet(
+        Ptr<CheckedPat<'db>>,
+        Ptr<CheckedExpr<'db>>,
+        Ptr<CheckedExpr<'db>>,
+    ),
+    For(
+        Ptr<CheckedPat<'db>>,
+        Ptr<CheckedExpr<'db>>,
+        Ptr<CheckedExpr<'db>>,
+    ),
+    Break(Option<Ptr<CheckedExpr<'db>>>),
     Continue,
-    Return(Option<Ptr<RExpr<'db>>>),
-    Assign(Ptr<RExpr<'db>>, Ptr<RExpr<'db>>),
-    Await(Ptr<RExpr<'db>>),
-    Try(Ptr<RExpr<'db>>),
-    Closure(Slice<RClosureParam<'db>>, Ptr<RExpr<'db>>),
-    Tuple(Slice<RExpr<'db>>),
-    Array(Slice<RExpr<'db>>),
-    Index(Ptr<RExpr<'db>>, Ptr<RExpr<'db>>),
-    Cast(Ptr<RExpr<'db>>, Ptr<TypeRefAst<'db>>),
-    StructLit(Res<'db>, Slice<RFieldInit<'db>>),
-    Range(Option<Ptr<RExpr<'db>>>, Option<Ptr<RExpr<'db>>>),
+    Return(Option<Ptr<CheckedExpr<'db>>>),
+    Assign(Ptr<CheckedExpr<'db>>, Ptr<CheckedExpr<'db>>),
+    Await(Ptr<CheckedExpr<'db>>),
+    Try(Ptr<CheckedExpr<'db>>),
+    Closure(Slice<CheckedClosureParam<'db>>, Ptr<CheckedExpr<'db>>),
+    Tuple(Slice<CheckedExpr<'db>>),
+    Array(Slice<CheckedExpr<'db>>),
+    Index(Ptr<CheckedExpr<'db>>, Ptr<CheckedExpr<'db>>),
+    Cast(Ptr<CheckedExpr<'db>>, Ptr<TypeRefAst<'db>>),
+    StructLit(Res<'db>, Slice<CheckedFieldInit<'db>>),
+    Range(Option<Ptr<CheckedExpr<'db>>>, Option<Ptr<CheckedExpr<'db>>>),
     MacroCall(Res<'db>, TokenTree<'db>),
     Missing,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
-pub struct RStmt<'db> {
-    pub kind: RStmtKind<'db>,
+pub struct CheckedStmt<'db> {
+    pub kind: CheckedStmtKind<'db>,
     pub span: RelativeSpan,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
-pub enum RStmtKind<'db> {
+pub enum CheckedStmtKind<'db> {
     Let(
-        Ptr<RPat<'db>>,
+        Ptr<CheckedPat<'db>>,
         Option<Ptr<TypeRefAst<'db>>>,
-        Option<Ptr<RExpr<'db>>>,
+        Option<Ptr<CheckedExpr<'db>>>,
     ),
-    Expr(Ptr<RExpr<'db>>),
+    Expr(Ptr<CheckedExpr<'db>>),
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
-pub struct RPat<'db> {
-    pub kind: RPatKind<'db>,
+pub struct CheckedPat<'db> {
+    pub kind: CheckedPatKind<'db>,
     pub span: RelativeSpan,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
-pub enum RPatKind<'db> {
+pub enum CheckedPatKind<'db> {
     Wildcard,
     Bind(LocalId, Mutability),
     Path(Res<'db>),
-    Tuple(Slice<RPat<'db>>),
-    Struct(Res<'db>, Slice<RFieldPat<'db>>),
-    TupleStruct(Res<'db>, Slice<RPat<'db>>),
-    Ref(Ptr<RPat<'db>>, Mutability),
+    Tuple(Slice<CheckedPat<'db>>),
+    Struct(Res<'db>, Slice<CheckedFieldPat<'db>>),
+    TupleStruct(Res<'db>, Slice<CheckedPat<'db>>),
+    Ref(Ptr<CheckedPat<'db>>, Mutability),
     Literal(Literal),
-    Or(Slice<RPat<'db>>),
+    Or(Slice<CheckedPat<'db>>),
     Rest,
     Missing,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
-pub struct RFieldInit<'db> {
+pub struct CheckedFieldInit<'db> {
     pub name: Name<'db>,
-    pub value: Ptr<RExpr<'db>>,
+    pub value: Ptr<CheckedExpr<'db>>,
     pub span: RelativeSpan,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
-pub struct RFieldPat<'db> {
+pub struct CheckedFieldPat<'db> {
     pub name: Name<'db>,
-    pub pat: Ptr<RPat<'db>>,
+    pub pat: Ptr<CheckedPat<'db>>,
     pub span: RelativeSpan,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
-pub struct RMatchArm<'db> {
-    pub pat: Ptr<RPat<'db>>,
-    pub guard: Option<Ptr<RExpr<'db>>>,
-    pub body: Ptr<RExpr<'db>>,
+pub struct CheckedMatchArm<'db> {
+    pub pat: Ptr<CheckedPat<'db>>,
+    pub guard: Option<Ptr<CheckedExpr<'db>>>,
+    pub body: Ptr<CheckedExpr<'db>>,
     pub span: RelativeSpan,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
-pub struct RClosureParam<'db> {
-    pub pat: Ptr<RPat<'db>>,
+pub struct CheckedClosureParam<'db> {
+    pub pat: Ptr<CheckedPat<'db>>,
     pub ty: Option<Ptr<TypeRefAst<'db>>>,
     pub span: RelativeSpan,
 }

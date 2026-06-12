@@ -548,10 +548,94 @@ double-Option.
 calls in `fn_signature`, `struct_signature`, and `enum_signature` now pass
 `Symbol::local(item, scope)` as the parent rather than `Symbol::ast(item)`.
 
+### Steps 1–3: Complete
+
+#### Step 1 — `sage-infer` merged into `sage-ir`
+
+Moved all `sage-infer/src/` files into `sage-ir/src/infer/` as a new
+`pub mod infer` submodule. Imports changed from `sage_ir::` → `crate::`
+and `crate::` → `super::`. Added `smallvec` to `sage-ir` deps.
+`sage-test-harness` now imports from `sage_ir::infer::check`. The
+`crates/sage-infer/` directory was deleted.
+
+#### Step 2 — R-types renamed to Checked-types
+
+Mechanical rename across 4 files (`resolved.rs`, `body_resolve.rs`,
+`infer/check.rs`, `display.rs`):
+
+- `RBody` → `CheckedBody`
+- `RExpr` → `CheckedExpr`, `RExprKind` → `CheckedExprKind`
+- `RStmt` → `CheckedStmt`, `RStmtKind` → `CheckedStmtKind`
+- `RPat` → `CheckedPat`, `RPatKind` → `CheckedPatKind`
+- `RMatchArm` → `CheckedMatchArm`
+- `RClosureParam` → `CheckedClosureParam`
+- `RFieldInit` → `CheckedFieldInit`
+- `RFieldPat` → `CheckedFieldPat`
+
+The `ResolvedBody` type alias was kept (it points to
+`Stashed<Ptr<CheckedBody<'db>>>`) because the integration tests in the
+`sage` crate still reference `resolve_body` directly and need a stable
+type.
+
+#### Step 3 — `TypedBody` and `fn_body` query
+
+**3a — `TypedBody` defined** in `sage-ir/src/typed_body.rs`:
+
+```rust
+pub struct TypedBody<'db> {
+    pub body: ResolvedBody<'db>,
+    pub errors: Vec<String>,
+}
+```
+
+Design deviation from the original plan: diagnostics are pre-rendered
+to `Vec<String>` rather than stored as `Vec<Diagnostic<'db>>`. Reason:
+`Diagnostic<'db>` holds `Ptr<Ty<'db>>` into the inference egraph's
+`Stash`, and that `Stash` doesn't implement `salsa::Update` (it
+contains a `HashMap`), so it cannot be stored in a salsa-tracked return
+value. Pre-rendering keeps the memoized `fn_body` return type simple
+while preserving full error message fidelity.
+
+`TypedBody` implements `PartialEq`, `Eq`, `Hash`, and
+`unsafe impl salsa::Update` to satisfy salsa's tracked-function
+requirements.
+
+**3b — `resolve_body` de-tracked.** The `#[salsa::tracked(returns(ref))]`
+attribute was removed; it's now a plain function. Memoization is at the
+`fn_body` level.
+
+**3c — `fn_body` tracked function** sequences
+`resolve_body` → `fn_signature` → `type_check_body` and returns
+`TypedBody`. `FnSymbol::body(db)` is the ergonomic inherent method.
+
+**3d — `sage-test-harness` uses `fn_sym.body(db)`** exclusively.
+The harness no longer directly calls `resolve_body` or `type_check_body`.
+
+**3e — Visibility not restricted** because the `sage` crate's
+`body_resolve_tests.rs` integration tests still call `resolve_body`
+directly to test name resolution in isolation (without type checking).
+This is deferred to a cleanup step.
+
 ### Remaining work
 
-- Fuse `resolve_body` + type inference into a single `body()` query.
-- Propagate scope through `resolve_module_path` chain so the
-  `dummy_root` pattern in std-prelude and derive resolution can be
-  eliminated (low priority — correctness unaffected since those paths
-  only resolve external modules).
+#### Step 4 — Snapshot tests (deferred)
+
+Rewrite `body_resolve_tests` and `type_check_tests` as expect-test
+snapshots against `TypedBody` output.
+
+#### Step 5 — Cleanup (deferred)
+
+Restrict `resolve_body` and `type_check_body` visibility once
+integration tests are migrated to use `fn_body`.
+
+#### Low-priority follow-ups
+
+- Propagate scope through `resolve_module_path` so the `dummy_root`
+  pattern in std-prelude and derive resolution can be eliminated
+  (correctness unaffected since those paths only resolve external
+  modules).
+- Fold inference results directly into `CheckedExpr` nodes (single-pass
+  body walk).
+- Replace pre-rendered `Vec<String>` with structured diagnostics once a
+  salsa-friendly diagnostic type is designed (e.g. span + message code
+  without internal Ty pointers).

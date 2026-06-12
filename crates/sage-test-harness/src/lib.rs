@@ -1,14 +1,11 @@
 use expect_test::Expect;
 pub use expect_test::expect;
-use sage_infer::check::type_check_body;
 use sage_ir::Db;
-use sage_ir::body_resolve::resolve_body;
 use sage_ir::db::Database;
 use sage_ir::item::{FnAst, ItemAst};
 use sage_ir::module::ModSymbol;
 use sage_ir::resolve::SourceRoot;
 use sage_ir::scope::ScopeSymbol;
-use sage_ir::sig_lower::fn_signature;
 use sage_ir::source::SourceFile;
 use sage_ir::symbol::FnSymbol;
 use salsa::Database as _;
@@ -68,11 +65,9 @@ impl TestCrate {
         source_root: SourceRoot,
     ) -> Vec<String> {
         let scope = ScopeSymbol::Module(module, source_root);
-        let resolved = resolve_body(db, fn_ast, scope);
         let fn_sym = FnSymbol::local(fn_ast, scope);
-        let sig = fn_signature(db, fn_sym, scope);
-        let result = type_check_body(db, &resolved, sig, scope);
-        result.render_errors(db)
+        let typed = fn_sym.body(db);
+        typed.errors.clone()
     }
 
     fn setup<'db>(&self, db: &'db Database) -> (SourceRoot, ModSymbol<'db>) {

@@ -1,10 +1,10 @@
-use sage_ir::ty::{InferVarIndex, Ty, TyData};
+use crate::ty::{InferVarIndex, Ty, TyData};
 use sage_stash::{Ptr, Stash};
 
-use crate::bound::Bound;
-use crate::egraph::VersionedEGraph;
-use crate::runtime::Runtime;
-use crate::version::{Universe, VarInfo, Version};
+use super::bound::Bound;
+use super::egraph::VersionedEGraph;
+use super::runtime::Runtime;
+use super::version::{Universe, VarInfo, Version};
 
 /// The inference context — owns the egraph, runtime, and typing state.
 pub struct InferCtx<'db> {
@@ -140,7 +140,7 @@ impl<'db> InferCtx<'db> {
     /// on inference vars; reports errors on mismatch.
     /// Convention: `b` is the "expected" type for error reporting.
     pub fn require_eq(&mut self, a: Ptr<Ty<'db>>, b: Ptr<Ty<'db>>) {
-        use crate::skeleton::decompose;
+        use super::skeleton::decompose;
 
         let a_canon = self.egraph.find_mut(a);
         let b_canon = self.egraph.find_mut(b);

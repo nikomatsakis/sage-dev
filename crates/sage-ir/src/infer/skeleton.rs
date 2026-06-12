@@ -1,7 +1,7 @@
-use sage_ir::generic_param::GenericParam;
-use sage_ir::symbol::Symbol;
-use sage_ir::ty::{Const, FloatTy, InferVarIndex, IntTy, Lifetime, Ty, TyData, UintTy};
-use sage_ir::types::Mutability;
+use crate::generic_param::GenericParam;
+use crate::symbol::Symbol;
+use crate::ty::{Const, FloatTy, InferVarIndex, IntTy, Lifetime, Ty, TyData, UintTy};
+use crate::types::Mutability;
 use sage_stash::{Ptr, Stash};
 use smallvec::SmallVec;
 
@@ -153,7 +153,7 @@ fn leaf<'db>(skeleton: Skeleton<'db>) -> Decomposed<'db> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sage_ir::ty::{IntTy, Ty, TyData};
+    use crate::ty::{IntTy, Ty, TyData};
 
     #[test]
     fn round_trip_leaf() {

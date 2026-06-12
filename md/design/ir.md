@@ -188,7 +188,7 @@ defs (`SymbolData::Ext`).
 
 ### `LocalId` and scopes — the `Ribs` structure
 
-`LocalId(u32)` indexes into `RBody.locals: Slice<LocalVar>`.
+`LocalId(u32)` indexes into `CheckedBody.locals: Slice<LocalVar>`.
 Lexical scope is managed by a shared `Ribs` struct (`ribs.rs`)
 that both `sig_lower` and `body_resolve` use. `Ribs` is
 namespace-aware: each entry is `(Name, Namespace, RibEntry)`.
@@ -208,9 +208,9 @@ arms, if-let, while-let. `sig_lower` pushes generic params as
 
 ### `resolve_body` — the entry point
 
-`resolve_body` in `body_resolve.rs` is a
-`#[salsa::tracked(returns(ref))]` function. It takes
-`(db, FnAst, ScopeSymbol)` and returns `&ResolvedBody`.
+`resolve_body` in `body_resolve.rs` is a plain function (called by
+the tracked `fn_body` query in `typed_body.rs`). It takes
+`(db, FnAst, ScopeSymbol)` and returns `ResolvedBody`.
 
 The `BodyResolver` struct holds a `Resolver` (for module-level
 resolution) and a `Ribs` (for lexical scope). It walks the

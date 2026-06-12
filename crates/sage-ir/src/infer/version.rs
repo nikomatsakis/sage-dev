@@ -1,4 +1,4 @@
-use sage_ir::ty::InferVarIndex;
+use crate::ty::InferVarIndex;
 
 /// Version tree node identifier.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -77,7 +77,6 @@ impl VersionTree {
         child
     }
 
-    /// Remove a version and its subtree.
     /// Remove a version and its subtree. Returns all removed version IDs.
     pub fn remove(&mut self, v: Version) -> Vec<Version> {
         assert_ne!(v, Version::ROOT, "cannot remove root version");
