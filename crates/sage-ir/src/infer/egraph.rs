@@ -1,9 +1,10 @@
 use rustc_hash::{FxHashMap, FxHashSet};
-use sage_ir::ty::{InferVarIndex, Ty, TyData};
+
+use crate::ty::{InferVarIndex, Ty, TyData};
 use sage_stash::{Ptr, Stash};
 
-use crate::bound::Bound;
-use crate::version::{VarInfo, Version, VersionTree};
+use super::bound::Bound;
+use super::version::{VarInfo, Version, VersionTree};
 
 /// Per-version mutable inference state (sparse diff from ancestry).
 #[derive(Debug, Default)]
@@ -224,7 +225,7 @@ impl<'db> VersionedEGraph<'db> {
     }
 
     fn recanon(&mut self, ty: Ptr<Ty<'db>>) -> Option<Ptr<Ty<'db>>> {
-        use crate::skeleton::{Children, decompose, recompose};
+        use super::skeleton::{Children, decompose, recompose};
 
         let d = decompose(&self.stash, ty);
         if d.children.is_empty() {

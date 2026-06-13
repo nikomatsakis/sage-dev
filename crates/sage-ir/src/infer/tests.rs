@@ -1,9 +1,9 @@
-use sage_ir::ty::{InferVarIndex, IntTy, TyData};
+use crate::ty::{InferVarIndex, IntTy, TyData};
 
-use crate::bound::Bound;
-use crate::egraph::VersionedEGraph;
-use crate::infer_ctx::InferCtx;
-use crate::version::{Universe, VarInfo, Version, VersionTree};
+use super::bound::Bound;
+use super::egraph::VersionedEGraph;
+use super::infer_ctx::InferCtx;
+use super::version::{Universe, VarInfo, Version, VersionTree};
 
 // ---------------------------------------------------------------------------
 // Version tree tests

@@ -200,7 +200,7 @@ impl TestCrate {
         }
         visited.push(module);
 
-        if matches!(module.data(), ModSymbolData::Ext(_)) {
+        if matches!(module.data(), ModSymbol::Ext(_)) {
             return;
         }
 
@@ -214,7 +214,7 @@ impl TestCrate {
         let stash = memmap.stash(db);
         let entries = memmap.entries(db);
         for entry in &stash[entries] {
-            if let MemmapEntry::Item(sage_ir::item::ItemAst::Mod(mod_item)) = entry {
+            if let MemmapEntry::Item(sage_ir::item::LocalModItemSym::Mod(mod_item)) = entry {
                 if let Some(child) =
                     sage_ir::resolve::resolve_mod(db, module, *mod_item, source_root)
                 {
@@ -244,7 +244,7 @@ pub fn fmt_symbol(db: &dyn sage_ir::Db, sym: Symbol) -> String {
             None => format!("<ext {}:{}>", ext.crate_num.0, ext.def_index.0),
         };
     }
-    match sym.data() {
+    match sym {
         SymbolData::Fn(s) => format!("<local Function {}>", s.as_ast().unwrap().name(db).text(db)),
         SymbolData::Struct(s) => {
             format!("<local Struct {}>", s.as_ast().unwrap().name(db).text(db))
@@ -257,11 +257,11 @@ pub fn fmt_symbol(db: &dyn sage_ir::Db, sym: Symbol) -> String {
             format!("<local Trait {}>", s.as_ast().unwrap().name(db).text(db))
         }
         SymbolData::Impl(_) => "<local Impl>".to_owned(),
-        SymbolData::Mod(m) => match m.data() {
-            sage_ir::module::ModSymbolData::Ast(a) => {
+        SymbolData::Mod(m) => match m {
+            sage_ir::module::ModSymbol::Ast(a) => {
                 format!("<local Mod {}>", a.name(db).text(db))
             }
-            sage_ir::module::ModSymbolData::Ext(_) => unreachable!(),
+            sage_ir::module::ModSymbol::Ext(_) => unreachable!(),
         },
         SymbolData::TypeAlias(s) => {
             format!(
@@ -290,23 +290,23 @@ pub fn fmt_symbol(db: &dyn sage_ir::Db, sym: Symbol) -> String {
 
 fn item_kind_and_name(
     db: &dyn sage_ir::Db,
-    item: sage_ir::item::ItemAst<'_>,
+    item: sage_ir::item::LocalModItemSym<'_>,
 ) -> (&'static str, Option<String>) {
-    use sage_ir::item::ItemAst;
+    use sage_ir::item::LocalModItemSym;
     match item {
-        ItemAst::Function(f) => ("Function", Some(f.name(db).text(db).clone())),
-        ItemAst::Struct(s) => ("Struct", Some(s.name(db).text(db).clone())),
-        ItemAst::Enum(e) => ("Enum", Some(e.name(db).text(db).clone())),
-        ItemAst::Trait(t) => ("Trait", Some(t.name(db).text(db).clone())),
-        ItemAst::TypeAlias(t) => ("TypeAlias", Some(t.name(db).text(db).clone())),
-        ItemAst::Const(c) => ("Const", Some(c.name(db).text(db).clone())),
-        ItemAst::Static(s) => ("Static", Some(s.name(db).text(db).clone())),
-        ItemAst::Mod(m) => ("Mod", Some(m.name(db).text(db).clone())),
-        ItemAst::Impl(_) => ("Impl", None),
-        ItemAst::Use(_) => ("Use", None),
-        ItemAst::MacroDef(d) => ("MacroDef", Some(d.name(db).text(db).clone())),
-        ItemAst::MacroInvocation(_) => ("MacroInvocation", None),
-        ItemAst::Error(..) => ("Error", None),
+        LocalModItemSym::Function(f) => ("Function", Some(f.name(db).text(db).clone())),
+        LocalModItemSym::Struct(s) => ("Struct", Some(s.name(db).text(db).clone())),
+        LocalModItemSym::Enum(e) => ("Enum", Some(e.name(db).text(db).clone())),
+        LocalModItemSym::Trait(t) => ("Trait", Some(t.name(db).text(db).clone())),
+        LocalModItemSym::TypeAlias(t) => ("TypeAlias", Some(t.name(db).text(db).clone())),
+        LocalModItemSym::Const(c) => ("Const", Some(c.name(db).text(db).clone())),
+        LocalModItemSym::Static(s) => ("Static", Some(s.name(db).text(db).clone())),
+        LocalModItemSym::Mod(m) => ("Mod", Some(m.name(db).text(db).clone())),
+        LocalModItemSym::Impl(_) => ("Impl", None),
+        LocalModItemSym::Use(_) => ("Use", None),
+        LocalModItemSym::MacroDef(d) => ("MacroDef", Some(d.name(db).text(db).clone())),
+        LocalModItemSym::MacroInvocation(_) => ("MacroInvocation", None),
+        LocalModItemSym::Error(..) => ("Error", None),
     }
 }
 
@@ -449,15 +449,13 @@ fn fmt_name_path(db: &dyn sage_ir::Db, path: &[sage_ir::name::Name]) -> String {
 }
 
 fn fmt_module(db: &dyn sage_ir::Db, module: ModSymbol) -> String {
-    match module.data() {
-        ModSymbolData::Ast(ast) => {
-            match (ast.file(db), ast.inline_unexpanded_items(db).is_some()) {
-                (Some(f), _) => format!("\"{}\"", f.path(db)),
-                (None, true) => format!("inline \"{}\"", ast.name(db).text(db)),
-                (None, false) => format!("decl \"{}\"", ast.name(db).text(db)),
-            }
-        }
-        ModSymbolData::Ext(ext) => format!("extern({},{})", ext.crate_num.0, ext.def_index.0),
+    match module {
+        ModSymbol::Ast(ast) => match (ast.file(db), ast.inline_unexpanded_items(db).is_some()) {
+            (Some(f), _) => format!("\"{}\"", f.path(db)),
+            (None, true) => format!("inline \"{}\"", ast.name(db).text(db)),
+            (None, false) => format!("decl \"{}\"", ast.name(db).text(db)),
+        },
+        ModSymbol::Ext(ext) => format!("extern({},{})", ext.crate_num.0, ext.def_index.0),
     }
 }
 

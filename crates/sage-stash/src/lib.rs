@@ -286,6 +286,8 @@ impl StashDirect for i8 {}
 impl StashDirect for i16 {}
 impl StashDirect for i32 {}
 impl StashDirect for i64 {}
+impl<T> StashDirect for PhantomData<T> {}
+impl StashDirect for () {}
 
 // ---------------------------------------------------------------------------
 // StashCopy — deep-copy values between stashes
@@ -485,7 +487,7 @@ pub struct Stashed<T> {
     fingerprint: Fingerprint,
 }
 
-impl<T: StashHash> Stashed<T> {
+impl<T: StashHash + Copy> Stashed<T> {
     pub fn new(stash: Stash, root: T) -> Self {
         let mut hasher = FingerprintHasher::new();
         root.stash_hash(&stash, &mut hasher);
@@ -496,15 +498,17 @@ impl<T: StashHash> Stashed<T> {
             fingerprint,
         }
     }
-}
 
-impl<T> Stashed<T> {
-    pub fn root(&self) -> &T {
-        &self.root
+    pub fn root(&self) -> T {
+        self.root
     }
 
     pub fn stash(&self) -> &Stash {
         &self.stash
+    }
+
+    pub fn open(&self) -> (&Stash, T) {
+        (&self.stash, self.root)
     }
 
     pub fn copy_into(&self, target: &mut Stash) -> T
@@ -512,6 +516,16 @@ impl<T> Stashed<T> {
         T: StashCopy,
     {
         self.root.stash_copy(&self.stash, target)
+    }
+}
+
+impl<'db, T: StashData<'db> + Copy> Stashed<Ptr<T>> {
+    pub fn root_deref(&self) -> T {
+        self.stash[self.root]
+    }
+
+    pub fn open_deref(&self) -> (&Stash, T) {
+        (&self.stash, self.root_deref())
     }
 }
 

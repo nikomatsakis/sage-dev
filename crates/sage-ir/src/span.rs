@@ -37,7 +37,7 @@ impl<'db> ParseSource<'db> {
     }
 
     /// Parse this source into items via the appropriate tracked wrapper.
-    pub fn parse(&self, db: &'db dyn crate::Db) -> &'db [crate::item::ItemAst<'db>] {
+    pub fn parse(&self, db: &'db dyn crate::Db) -> &'db [crate::item::LocalModItemSym<'db>] {
         match self {
             ParseSource::SourceFile(f) => crate::lower::parse_source_file(db, *f),
             ParseSource::MacroExpansion(exp) => crate::lower::parse_macro_expansion(db, *exp),

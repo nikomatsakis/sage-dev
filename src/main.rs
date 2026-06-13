@@ -41,7 +41,7 @@ fn main() {
     run_sage_with(&cwd, &p, |sage| {
         if let Some(module_path) = &module {
             let segments: Vec<&str> = module_path.split("::").collect();
-            match resolve_module_path(sage.db, sage.root, sage.source_root, &segments) {
+            match resolve_module_path(sage.db, sage.root, sage.source_root(), &segments) {
                 Some(module) => {
                     let items = module_items(sage.db, module);
                     println!("=== ModSymbol: {} ({} items) ===", module_path, items.len());

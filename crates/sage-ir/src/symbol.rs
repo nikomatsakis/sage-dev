@@ -5,14 +5,21 @@
 //! local symbols inherit the underlying `ItemAst`'s salsa id; external
 //! symbols use the structural `(CrateNum, DefIndex)` pair.
 
-use sage_stash::{AllocStashData, StashDirect};
+use sage_stash::{StashDirect, Stashed};
 
-use crate::generic_param::AstGenericParam;
-use crate::item::{ItemAst, MacroDefAst, MacroInvocationAst, StructAst, UseGroupAst};
-use crate::module::{CrateNum, DefIndex, ModSymbol};
-use crate::name::Name;
-use crate::span::AbsoluteSpan;
-use crate::ty::{FloatTy, IntTy, UintTy};
+use crate::ty::{Binder, FloatTy, IntTy, StructSig, UintTy};
+
+/// Opaque crate number (matches rustc's CrateNum).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub struct CrateNum(pub u32);
+
+impl StashDirect for CrateNum {}
+
+/// Opaque definition index within a crate.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub struct DefIndex(pub u32);
+
+impl StashDirect for DefIndex {}
 
 // ---------------------------------------------------------------------------
 // Intrinsic — compiler-known built-in symbols
@@ -55,12 +62,6 @@ impl Intrinsic {
 
 impl StashDirect for Intrinsic {}
 
-/// A resolved symbol — local item or external definition.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update, AllocStashData)]
-pub struct Symbol<'db> {
-    data: SymbolData<'db>,
-}
-
 /// The kind of an external symbol, mirroring rustc's `DefKind`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub enum SymExtKind {
@@ -81,277 +82,133 @@ pub enum SymExtKind {
 
 /// External symbol — a thin handle into rustc's metadata. Plain
 /// `Copy` struct, structural identity.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
-pub struct SymExt {
+#[salsa::interned(debug)]
+pub struct SymExt<'db> {
     pub crate_num: CrateNum,
     pub def_index: DefIndex,
     pub kind: SymExtKind,
 }
 
-impl SymExt {
-    pub const fn new(crate_num: CrateNum, def_index: DefIndex, kind: SymExtKind) -> Self {
-        Self {
-            crate_num,
-            def_index,
-            kind,
-        }
-    }
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
-pub enum SymbolData<'db> {
-    Fn(FnSymbol<'db>),
-    Struct(StructSymbol<'db>),
-    TupleStructCtor(StructSymbol<'db>),
-    Enum(EnumSymbol<'db>),
-    Trait(TraitSymbol<'db>),
-    Impl(ImplSymbol<'db>),
-    Mod(ModSymbol<'db>),
-    TypeAlias(TypeAliasSymbol<'db>),
-    Const(ConstSymbol<'db>),
-    Static(StaticSymbol<'db>),
-    MacroDef(MacroDefAst<'db>),
-    Use(UseGroupAst<'db>),
-    MacroInvocation(MacroInvocationAst<'db>),
-    GenericParam(AstGenericParam<'db>),
-    Intrinsic(Intrinsic),
-    Error(AbsoluteSpan<'db>),
-    Unknown(SymExt),
-}
-
-impl StashDirect for SymbolData<'_> {}
-impl StashDirect for SymExt {}
+impl<'db> StashDirect for SymExt<'db> {}
 impl StashDirect for SymExtKind {}
-
-impl<'db> Symbol<'db> {
-    pub fn ast(item: ItemAst<'db>) -> Self {
-        let data = match item {
-            ItemAst::Function(f) => SymbolData::Fn(FnSymbol::ast(f)),
-            ItemAst::Struct(s) => SymbolData::Struct(StructSymbol::ast(s)),
-            ItemAst::Enum(e) => SymbolData::Enum(EnumSymbol::ast(e)),
-            ItemAst::Trait(t) => SymbolData::Trait(TraitSymbol::ast(t)),
-            ItemAst::Impl(i) => SymbolData::Impl(ImplSymbol::ast(i)),
-            ItemAst::TypeAlias(t) => SymbolData::TypeAlias(TypeAliasSymbol::ast(t)),
-            ItemAst::Const(c) => SymbolData::Const(ConstSymbol::ast(c)),
-            ItemAst::Static(s) => SymbolData::Static(StaticSymbol::ast(s)),
-            ItemAst::Mod(m) => SymbolData::Mod(ModSymbol::ast(m)),
-            ItemAst::Use(u) => SymbolData::Use(u),
-            ItemAst::MacroDef(d) => SymbolData::MacroDef(d),
-            ItemAst::MacroInvocation(m) => SymbolData::MacroInvocation(m),
-            ItemAst::Error(span) => SymbolData::Error(span),
-        };
-        Self { data }
-    }
-
-    pub fn tuple_struct_ctor(s: StructAst<'db>) -> Self {
-        Self {
-            data: SymbolData::TupleStructCtor(StructSymbol::ast(s)),
-        }
-    }
-
-    pub fn ext(ext: SymExt) -> Self {
-        let data = match ext.kind {
-            SymExtKind::Fn => SymbolData::Fn(FnSymbol::ext(ext)),
-            SymExtKind::Struct => SymbolData::Struct(StructSymbol::ext(ext)),
-            SymExtKind::TupleStructCtor => SymbolData::TupleStructCtor(StructSymbol::ext(ext)),
-            SymExtKind::Enum => SymbolData::Enum(EnumSymbol::ext(ext)),
-            SymExtKind::Trait => SymbolData::Trait(TraitSymbol::ext(ext)),
-            SymExtKind::Impl => SymbolData::Impl(ImplSymbol::ext(ext)),
-            SymExtKind::Mod => SymbolData::Mod(ModSymbol::ext(ext)),
-            SymExtKind::TypeAlias => SymbolData::TypeAlias(TypeAliasSymbol::ext(ext)),
-            SymExtKind::Const => SymbolData::Const(ConstSymbol::ext(ext)),
-            SymExtKind::Static => SymbolData::Static(StaticSymbol::ext(ext)),
-            SymExtKind::MacroDef | SymExtKind::Use | SymExtKind::Other => SymbolData::Unknown(ext),
-        };
-        Self { data }
-    }
-
-    pub fn intrinsic(i: Intrinsic) -> Self {
-        Self {
-            data: SymbolData::Intrinsic(i),
-        }
-    }
-
-    pub fn external(crate_num: CrateNum, def_index: DefIndex) -> Self {
-        Self::ext(SymExt::new(crate_num, def_index, SymExtKind::Other))
-    }
-
-    pub fn data(self) -> SymbolData<'db> {
-        self.data
-    }
-
-    /// Extract the `SymExt` handle if this symbol is external.
-    pub fn as_ext(self) -> Option<SymExt> {
-        match self.data {
-            SymbolData::Fn(s) => s.as_ext(),
-            SymbolData::Struct(s) => s.as_ext(),
-            SymbolData::TupleStructCtor(s) => s.as_ext(),
-            SymbolData::Enum(s) => s.as_ext(),
-            SymbolData::Trait(s) => s.as_ext(),
-            SymbolData::Impl(s) => s.as_ext(),
-            SymbolData::Mod(m) => match m.data() {
-                crate::module::ModSymbolData::Ext(ext) => Some(ext),
-                crate::module::ModSymbolData::Ast(_) => None,
-            },
-            SymbolData::TypeAlias(s) => s.as_ext(),
-            SymbolData::Const(s) => s.as_ext(),
-            SymbolData::Static(s) => s.as_ext(),
-            SymbolData::Unknown(ext) => Some(ext),
-            SymbolData::MacroDef(_)
-            | SymbolData::Use(_)
-            | SymbolData::MacroInvocation(_)
-            | SymbolData::GenericParam(_)
-            | SymbolData::Intrinsic(_)
-            | SymbolData::Error(_) => None,
-        }
-    }
-
-    /// True if this symbol is workspace-local (backed by AST).
-    pub fn is_local(self) -> bool {
-        self.as_ext().is_none()
-    }
-
-    /// True if this symbol is external (backed by `SymExt`).
-    pub fn is_external(self) -> bool {
-        self.as_ext().is_some()
-    }
-
-    /// The name of this symbol, if it has one.
-    pub fn name(self, db: &'db dyn crate::Db) -> Option<Name<'db>> {
-        match self.data {
-            SymbolData::Fn(s) => s.as_ast().map(|f| f.name(db)),
-            SymbolData::Struct(s) => s.as_ast().map(|s| s.name(db)),
-            SymbolData::TupleStructCtor(s) => s.as_ast().map(|s| s.name(db)),
-            SymbolData::Enum(s) => s.as_ast().map(|e| e.name(db)),
-            SymbolData::Trait(s) => s.as_ast().map(|t| t.name(db)),
-            SymbolData::TypeAlias(s) => s.as_ast().map(|t| t.name(db)),
-            SymbolData::Const(s) => s.as_ast().map(|c| c.name(db)),
-            SymbolData::Static(s) => s.as_ast().map(|s| s.name(db)),
-            SymbolData::Mod(m) => match m.data() {
-                crate::module::ModSymbolData::Ast(a) => Some(a.name(db)),
-                crate::module::ModSymbolData::Ext(_) => None,
-            },
-            SymbolData::MacroDef(d) => Some(d.name(db)),
-            SymbolData::GenericParam(p) => p.name(db),
-            SymbolData::Impl(_)
-            | SymbolData::Use(_)
-            | SymbolData::MacroInvocation(_)
-            | SymbolData::Intrinsic(_)
-            | SymbolData::Error(_)
-            | SymbolData::Unknown(_) => None,
-        }
-    }
-}
-
-impl<'db> From<ItemAst<'db>> for Symbol<'db> {
-    fn from(item: ItemAst<'db>) -> Self {
-        Self::ast(item)
-    }
-}
-
-impl From<SymExt> for Symbol<'_> {
-    fn from(ext: SymExt) -> Self {
-        Self::ext(ext)
-    }
-}
-
-impl<'db> From<ModSymbol<'db>> for Symbol<'db> {
-    fn from(m: ModSymbol<'db>) -> Self {
-        Self {
-            data: SymbolData::Mod(m),
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Per-kind symbol wrappers
 // ---------------------------------------------------------------------------
 
-macro_rules! define_kind_symbol {
+macro_rules! define_kind_symbols {
     (
-        $(#[$meta:meta])*
-        $vis:vis struct $Name:ident, $AstTy:ty, $DataName:ident;
+        $SymVis:vis struct $SymName:ident<$SymLt:lifetime> { data: $SymPrivateData:ident<$SymPrivateDataLt:lifetime>}
+        $SymDataVis:vis enum $SymData:ident<$SymDataLt:lifetime> { .. }
+
+        $(
+            $(#[$meta:meta])*
+            $vis:vis enum $Name:ident<$lt:lifetime> { Ast($AstTy:ty), Ext($ExtKind:path) }
+        )*
     ) => {
-        $(#[$meta])*
         #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
-        $vis struct $Name<'db> {
-            data: $DataName<'db>,
+        $SymVis struct $SymName<$SymLt> {
+            data: $SymPrivateData<$SymLt>,
         }
 
         #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
-        enum $DataName<'db> {
-            Ast($AstTy),
-            Ext(SymExt),
+        enum $SymPrivateData<$SymLt> {
+            $(
+                $Name($AstTy),
+            )*
+            Ext(SymExt<$SymLt>),
         }
 
-        impl<'db> $Name<'db> {
-            pub fn ast(ast: $AstTy) -> Self {
-                Self { data: $DataName::Ast(ast) }
-            }
+        #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+        $SymDataVis enum $SymData<$SymLt> {
+            $(
+                $Name($Name<$SymLt>),
+            )*
+        }
 
-            pub fn ext(ext: SymExt) -> Self {
-                Self { data: $DataName::Ext(ext) }
-            }
-
-            pub fn as_ast(self) -> Option<$AstTy> {
-                match self.data {
-                    $DataName::Ast(ast) => Some(ast),
-                    $DataName::Ext(_) => None,
-                }
-            }
-
-            pub fn as_ext(self) -> Option<SymExt> {
-                match self.data {
-                    $DataName::Ast(_) => None,
-                    $DataName::Ext(ext) => Some(ext),
+        impl<$SymLt> From<SymExt<$SymLt>> for $SymName<$SymLt> {
+            fn from(ext: SymExt<$SymLt>) -> Self {
+                Self {
+                    data: $SymPrivateData::Ext(ext)
                 }
             }
         }
 
-        impl<'db> From<$AstTy> for $Name<'db> {
-            fn from(ast: $AstTy) -> Self {
-                Self::ast(ast)
+        impl<$SymLt> $SymName<$SymLt> {
+            $SymVis fn data(self, db: &$SymLt dyn crate::Db) -> $SymData<$SymLt> {
+                match self.data {
+                    $(
+                        $SymPrivateData::$Name(ast) => ast.into(),
+                    )*
+                    $SymPrivateData::Ext(ext) => match ext.kind(db) {
+                        $(
+                            $ExtKind => $Name::Ext(ext).into(),
+                        )*
+                        _ => todo!("NDM: add all variants here")
+                    }
+                }
             }
         }
 
-        impl From<SymExt> for $Name<'_> {
-            fn from(ext: SymExt) -> Self {
-                Self::ext(ext)
+        $(
+            impl<$SymLt> From<$AstTy> for $SymName<$SymLt> {
+                fn from(ast: $AstTy) -> Self {
+                    Self {
+                        data: $SymPrivateData::$Name(ast)
+                    }
+                }
             }
-        }
 
-        impl StashDirect for $Name<'_> {}
+            impl<$SymLt> From<$AstTy> for $SymData<$SymLt> {
+                fn from(ast: $AstTy) -> Self {
+                    $SymData::$Name(ast.into())
+                }
+            }
+
+            impl<$SymLt> From<$Name<$SymLt>> for $SymData<$SymLt> {
+                fn from(sym: $Name<$SymLt>) -> Self {
+                    $SymData::$Name(sym)
+                }
+            }
+        )*
+
+
+        $(
+            $(#[$meta])*
+            #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+            $vis enum $Name<$lt> {
+                Ast($AstTy),
+                Ext(SymExt<$lt>),
+            }
+
+            impl<$lt> From<SymExt<$lt>> for $Name<$lt> {
+                fn from(ext: SymExt<$lt>) -> Self {
+                    Self::Ext(ext)
+                }
+            }
+
+            impl<$lt> From<$AstTy> for $Name<$lt> {
+                fn from(ast: $AstTy) -> Self {
+                    Self::Ast(ast)
+                }
+            }
+
+            impl<$lt> StashDirect for $Name<$lt> {}
+        )*
     };
 }
 
-define_kind_symbol! {
-    pub struct FnSymbol, crate::item::FnAst<'db>, FnSymbolData;
-}
+define_kind_symbols! {
+    pub struct Symbol<'db> { data: SymbolDataPriv<'db> }
+    pub enum SymbolData<'db> { .. }
 
-define_kind_symbol! {
-    pub struct StructSymbol, crate::item::StructAst<'db>, StructSymbolData;
-}
-
-define_kind_symbol! {
-    pub struct EnumSymbol, crate::item::EnumAst<'db>, EnumSymbolData;
-}
-
-define_kind_symbol! {
-    pub struct TraitSymbol, crate::item::TraitAst<'db>, TraitSymbolData;
-}
-
-define_kind_symbol! {
-    pub struct TypeAliasSymbol, crate::item::TypeAliasAst<'db>, TypeAliasSymbolData;
-}
-
-define_kind_symbol! {
-    pub struct ConstSymbol, crate::item::ConstAst<'db>, ConstSymbolData;
-}
-
-define_kind_symbol! {
-    pub struct StaticSymbol, crate::item::StaticAst<'db>, StaticSymbolData;
-}
-
-define_kind_symbol! {
-    pub struct ImplSymbol, crate::item::ImplAst<'db>, ImplSymbolData;
+    pub enum FnSymbol<'db> { Ast(crate::item::FnAst<'db>), Ext(SymExtKind::Fn) }
+    pub enum StructSymbol<'db> { Ast(crate::item::StructAst<'db>), Ext(SymExtKind::Struct) }
+    pub enum EnumSymbol<'db> { Ast(crate::item::EnumAst<'db>), Ext(SymExtKind::Enum) }
+    pub enum TraitSymbol<'db> { Ast(crate::item::TraitAst<'db>), Ext(SymExtKind::Trait) }
+    pub enum TypeAliasSymbol<'db> { Ast(crate::item::TypeAliasAst<'db>), Ext(SymExtKind::TypeAlias) }
+    pub enum ConstSymbol<'db> { Ast(crate::item::ConstAst<'db>), Ext(SymExtKind::Const) }
+    pub enum StaticSymbol<'db> { Ast(crate::item::StaticAst<'db>), Ext(SymExtKind::Static) }
+    pub enum ImplSymbol<'db> { Ast(crate::item::ImplAst<'db>), Ext(SymExtKind::Impl) }
+    pub enum ModSymbol<'db> { Ast(crate::item::ModAst<'db>), Ext(SymExtKind::Mod) }
 }

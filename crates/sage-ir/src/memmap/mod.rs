@@ -108,9 +108,9 @@ pub fn module_memmap<'db>(
     module: ModSymbol<'db>,
     source_root: SourceRoot,
 ) -> ExpandedModule<'db> {
-    match module.data() {
-        crate::module::ModSymbolData::Ast(ast) => *expanded_module(db, ast, source_root),
-        crate::module::ModSymbolData::Ext(_) => {
+    match module {
+        crate::module::ModSymbol::Ast(ast) => *expanded_module(db, ast, source_root),
+        crate::module::ModSymbol::Ext(_) => {
             let mut stash = Stash::new();
             let root = stash.alloc_slice(&[]);
             let memmap = Stashed::new(stash, root);

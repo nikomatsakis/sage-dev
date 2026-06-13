@@ -1,41 +1,35 @@
-use sage_ir::Db;
-use sage_ir::body::{BinaryOp, Literal};
-use sage_ir::module::ModSymbol;
-use sage_ir::name::Name;
-use sage_ir::resolve::SourceRoot;
-use sage_ir::resolved::*;
-use sage_ir::sig_lower::struct_signature;
-use sage_ir::symbol::SymbolData;
-use sage_ir::ty::*;
-use sage_ir::ty_fold::instantiate_struct_sig;
+use crate::Db;
+use crate::body::{BinaryOp, Literal};
+use crate::name::Name;
+use crate::resolved::*;
+use crate::scope::ScopeSymbol;
+use crate::sig_lower::{struct_sig, struct_signature};
+use crate::symbol::SymbolData;
+use crate::ty::*;
+use crate::ty_fold::instantiate_struct_sig;
 use sage_stash::{Ptr, Stash, StashCopy, Stashed};
 
-use crate::infer_ctx::{Diagnostic, DiagnosticKind, InferCtx};
+use super::infer_ctx::{Diagnostic, DiagnosticKind, InferCtx};
 
-pub struct TypeCheckResult<'db> {
-    pub diagnostics: Vec<Diagnostic<'db>>,
-    stash: Stash,
+pub(crate) struct TypeCheckResult<'db> {
+    pub(crate) diagnostics: Vec<Diagnostic<'db>>,
+    pub(crate) ty_stash: Stash,
 }
 
 impl<'db> TypeCheckResult<'db> {
-    pub fn render_errors(&self, db: &'db dyn Db) -> Vec<String> {
+    pub(crate) fn render_errors(&self, db: &'db dyn Db) -> Vec<String> {
         self.diagnostics
             .iter()
-            .map(|d| render_diagnostic(db, &self.stash, d))
+            .map(|d| render_diagnostic(db, &self.ty_stash, d))
             .collect()
-    }
-
-    pub fn has_errors(&self) -> bool {
-        !self.diagnostics.is_empty()
     }
 }
 
-pub fn type_check_body<'db>(
+pub(crate) fn type_check_body<'db>(
     db: &'db dyn Db,
     resolved: &ResolvedBody<'db>,
     sig: &Stashed<Binder<'db, FnSig<'db>>>,
-    module: ModSymbol<'db>,
-    source_root: SourceRoot,
+    scope: ScopeSymbol<'db>,
 ) -> TypeCheckResult<'db> {
     let mut ctx = InferCtx::new();
 
@@ -56,8 +50,7 @@ pub fn type_check_body<'db>(
 
     let env = CheckEnv {
         db,
-        module,
-        source_root,
+        scope,
         ret_ty: sig_data.ret,
     };
 
@@ -67,14 +60,16 @@ pub fn type_check_body<'db>(
 
     ctx.finalize();
 
-    let (diagnostics, stash) = ctx.into_parts();
-    TypeCheckResult { diagnostics, stash }
+    let (diagnostics, ty_stash) = ctx.into_parts();
+    TypeCheckResult {
+        diagnostics,
+        ty_stash,
+    }
 }
 
 struct CheckEnv<'db> {
     db: &'db dyn Db,
-    module: ModSymbol<'db>,
-    source_root: SourceRoot,
+    scope: ScopeSymbol<'db>,
     ret_ty: Ptr<Ty<'db>>,
 }
 
@@ -119,14 +114,14 @@ fn check_expr<'db>(
     ctx: &mut InferCtx<'db>,
     env: &CheckEnv<'db>,
     body_stash: &Stash,
-    expr: &RExpr<'db>,
+    expr: &CheckedExpr<'db>,
 ) -> Ptr<Ty<'db>> {
     match &expr.kind {
-        RExprKind::Literal(lit) => check_literal(ctx, *lit),
+        CheckedExprKind::Literal(lit) => check_literal(ctx, *lit),
 
-        RExprKind::Path(res) => check_path(ctx, *res),
+        CheckedExprKind::Path(res) => check_path(ctx, *res),
 
-        RExprKind::Block(stmts, tail) => {
+        CheckedExprKind::Block(stmts, tail) => {
             let stmts_slice = &body_stash[*stmts];
             for stmt in stmts_slice {
                 check_stmt(ctx, env, body_stash, stmt);
@@ -140,7 +135,7 @@ fn check_expr<'db>(
             }
         }
 
-        RExprKind::Binary(lhs_ptr, op, rhs_ptr) => {
+        CheckedExprKind::Binary(lhs_ptr, op, rhs_ptr) => {
             let lhs_expr = &body_stash[*lhs_ptr];
             let rhs_expr = &body_stash[*rhs_ptr];
             let lhs_ty = check_expr(ctx, env, body_stash, lhs_expr);
@@ -148,12 +143,12 @@ fn check_expr<'db>(
             check_binary_op(ctx, *op, lhs_ty, rhs_ty)
         }
 
-        RExprKind::Unary(_op, operand_ptr) => {
+        CheckedExprKind::Unary(_op, operand_ptr) => {
             let operand_expr = &body_stash[*operand_ptr];
             check_expr(ctx, env, body_stash, operand_expr)
         }
 
-        RExprKind::If(cond_ptr, then_ptr, else_ptr) => {
+        CheckedExprKind::If(cond_ptr, then_ptr, else_ptr) => {
             let cond_expr = &body_stash[*cond_ptr];
             let cond_ty = check_expr(ctx, env, body_stash, cond_expr);
             let bool_ty = ctx.alloc_ty(TyData::Bool);
@@ -178,7 +173,7 @@ fn check_expr<'db>(
             result_ty
         }
 
-        RExprKind::Match(scrutinee_ptr, arms) => {
+        CheckedExprKind::Match(scrutinee_ptr, arms) => {
             let scrutinee_expr = &body_stash[*scrutinee_ptr];
             let _scrutinee_ty = check_expr(ctx, env, body_stash, scrutinee_expr);
             let result_ty = ctx.fresh_ty_var();
@@ -192,7 +187,7 @@ fn check_expr<'db>(
             result_ty
         }
 
-        RExprKind::Return(val) => {
+        CheckedExprKind::Return(val) => {
             if let Some(val_ptr) = val {
                 let val_expr = &body_stash[*val_ptr];
                 let val_ty = check_expr(ctx, env, body_stash, val_expr);
@@ -201,7 +196,7 @@ fn check_expr<'db>(
             ctx.alloc_ty(TyData::Never)
         }
 
-        RExprKind::Assign(lhs_ptr, rhs_ptr) => {
+        CheckedExprKind::Assign(lhs_ptr, rhs_ptr) => {
             let lhs_expr = &body_stash[*lhs_ptr];
             let rhs_expr = &body_stash[*rhs_ptr];
             let lhs_ty = check_place_expr(ctx, env, body_stash, lhs_expr);
@@ -210,7 +205,7 @@ fn check_expr<'db>(
             ctx.unit_ty()
         }
 
-        RExprKind::Tuple(elems) => {
+        CheckedExprKind::Tuple(elems) => {
             let elem_tys: Vec<Ptr<Ty<'db>>> = body_stash[*elems]
                 .iter()
                 .map(|e| check_expr(ctx, env, body_stash, e))
@@ -219,7 +214,7 @@ fn check_expr<'db>(
             ctx.alloc_ty(TyData::Tuple(elems_slice))
         }
 
-        RExprKind::Array(elems) => {
+        CheckedExprKind::Array(elems) => {
             let result_ty = ctx.fresh_ty_var();
             for elem in &body_stash[*elems] {
                 let elem_ty = check_expr(ctx, env, body_stash, elem);
@@ -228,27 +223,29 @@ fn check_expr<'db>(
             ctx.alloc_ty(TyData::Slice(result_ty))
         }
 
-        RExprKind::Ref(inner_ptr, mutability) => {
+        CheckedExprKind::Ref(inner_ptr, mutability) => {
             let inner_expr = &body_stash[*inner_ptr];
             let inner_ty = check_expr(ctx, env, body_stash, inner_expr);
             ctx.alloc_ty(TyData::Ref(inner_ty, *mutability, Lifetime::Erased))
         }
 
-        RExprKind::StructLit(res, fields) => check_struct_lit(ctx, env, body_stash, *res, *fields),
+        CheckedExprKind::StructLit(res, fields) => {
+            check_struct_lit(ctx, env, body_stash, *res, *fields)
+        }
 
-        RExprKind::Field(obj_ptr, field_name) => {
+        CheckedExprKind::Field(obj_ptr, field_name) => {
             let obj_expr = &body_stash[*obj_ptr];
             let obj_ty = check_expr(ctx, env, body_stash, obj_expr);
             check_field_access(ctx, env, obj_ty, *field_name)
         }
 
-        RExprKind::Loop(body_ptr) => {
+        CheckedExprKind::Loop(body_ptr) => {
             let body_expr = &body_stash[*body_ptr];
             let _ = check_expr(ctx, env, body_stash, body_expr);
             ctx.alloc_ty(TyData::Never)
         }
 
-        RExprKind::While(cond_ptr, body_ptr) => {
+        CheckedExprKind::While(cond_ptr, body_ptr) => {
             let cond_expr = &body_stash[*cond_ptr];
             let cond_ty = check_expr(ctx, env, body_stash, cond_expr);
             let bool_ty = ctx.alloc_ty(TyData::Bool);
@@ -258,7 +255,7 @@ fn check_expr<'db>(
             ctx.unit_ty()
         }
 
-        RExprKind::WhileLet(_, scrutinee_ptr, body_ptr) => {
+        CheckedExprKind::WhileLet(_, scrutinee_ptr, body_ptr) => {
             let scrutinee_expr = &body_stash[*scrutinee_ptr];
             let _ = check_expr(ctx, env, body_stash, scrutinee_expr);
             let body_expr = &body_stash[*body_ptr];
@@ -266,7 +263,7 @@ fn check_expr<'db>(
             ctx.unit_ty()
         }
 
-        RExprKind::For(_pat, iter_ptr, body_ptr) => {
+        CheckedExprKind::For(_pat, iter_ptr, body_ptr) => {
             let iter_expr = &body_stash[*iter_ptr];
             let _ = check_expr(ctx, env, body_stash, iter_expr);
             let body_expr = &body_stash[*body_ptr];
@@ -274,14 +271,14 @@ fn check_expr<'db>(
             ctx.unit_ty()
         }
 
-        RExprKind::Break(_) | RExprKind::Continue => ctx.alloc_ty(TyData::Never),
+        CheckedExprKind::Break(_) | CheckedExprKind::Continue => ctx.alloc_ty(TyData::Never),
 
-        RExprKind::Cast(_expr_ptr, _ty_ast) => {
+        CheckedExprKind::Cast(_expr_ptr, _ty_ast) => {
             // TODO: check the inner expression, resolve the target type
             ctx.fresh_ty_var()
         }
 
-        RExprKind::IfLet(_pat, scrutinee_ptr, then_ptr, else_ptr) => {
+        CheckedExprKind::IfLet(_pat, scrutinee_ptr, then_ptr, else_ptr) => {
             let scrutinee_expr = &body_stash[*scrutinee_ptr];
             let _ = check_expr(ctx, env, body_stash, scrutinee_expr);
 
@@ -301,15 +298,15 @@ fn check_expr<'db>(
             result_ty
         }
 
-        RExprKind::Call(_, _) => todo!("function call type checking"),
-        RExprKind::MethodCall(_, _, _) => todo!("method call type checking"),
-        RExprKind::Index(_, _) => todo!("index expression type checking"),
-        RExprKind::Closure(_, _) => todo!("closure type checking"),
-        RExprKind::Await(_) => todo!("await type checking"),
-        RExprKind::Try(_) => todo!("try operator type checking"),
-        RExprKind::Range(_, _) => todo!("range expression type checking"),
-        RExprKind::MacroCall(_, _) => todo!("macro call type checking"),
-        RExprKind::Missing => ctx.alloc_ty(TyData::Error),
+        CheckedExprKind::Call(_, _) => todo!("function call type checking"),
+        CheckedExprKind::MethodCall(_, _, _) => todo!("method call type checking"),
+        CheckedExprKind::Index(_, _) => todo!("index expression type checking"),
+        CheckedExprKind::Closure(_, _) => todo!("closure type checking"),
+        CheckedExprKind::Await(_) => todo!("await type checking"),
+        CheckedExprKind::Try(_) => todo!("try operator type checking"),
+        CheckedExprKind::Range(_, _) => todo!("range expression type checking"),
+        CheckedExprKind::MacroCall(_, _) => todo!("macro call type checking"),
+        CheckedExprKind::Missing => ctx.alloc_ty(TyData::Error),
     }
 }
 
@@ -317,7 +314,7 @@ fn check_place_expr<'db>(
     ctx: &mut InferCtx<'db>,
     env: &CheckEnv<'db>,
     body_stash: &Stash,
-    expr: &RExpr<'db>,
+    expr: &CheckedExpr<'db>,
 ) -> Ptr<Ty<'db>> {
     check_expr(ctx, env, body_stash, expr)
 }
@@ -330,10 +327,10 @@ fn check_stmt<'db>(
     ctx: &mut InferCtx<'db>,
     env: &CheckEnv<'db>,
     body_stash: &Stash,
-    stmt: &RStmt<'db>,
+    stmt: &CheckedStmt<'db>,
 ) {
     match &stmt.kind {
-        RStmtKind::Let(pat_ptr, _ty_annot, init) => {
+        CheckedStmtKind::Let(pat_ptr, _ty_annot, init) => {
             let pat = &body_stash[*pat_ptr];
             let declared_ty = ctx.local_type(extract_bind_local(pat));
 
@@ -343,26 +340,26 @@ fn check_stmt<'db>(
                 ctx.require_coerce(init_ty, declared_ty);
             }
         }
-        RStmtKind::Expr(expr_ptr) => {
+        CheckedStmtKind::Expr(expr_ptr) => {
             let expr = &body_stash[*expr_ptr];
             check_expr(ctx, env, body_stash, expr);
         }
     }
 }
 
-fn extract_bind_local(pat: &RPat) -> u32 {
+fn extract_bind_local(pat: &CheckedPat) -> u32 {
     match pat.kind {
-        RPatKind::Bind(LocalId(id), _) => id,
-        RPatKind::Wildcard
-        | RPatKind::Path(_)
-        | RPatKind::Tuple(_)
-        | RPatKind::Struct(_, _)
-        | RPatKind::TupleStruct(_, _)
-        | RPatKind::Ref(_, _)
-        | RPatKind::Literal(_)
-        | RPatKind::Or(_)
-        | RPatKind::Rest
-        | RPatKind::Missing => 0,
+        CheckedPatKind::Bind(LocalId(id), _) => id,
+        CheckedPatKind::Wildcard
+        | CheckedPatKind::Path(_)
+        | CheckedPatKind::Tuple(_)
+        | CheckedPatKind::Struct(_, _)
+        | CheckedPatKind::TupleStruct(_, _)
+        | CheckedPatKind::Ref(_, _)
+        | CheckedPatKind::Literal(_)
+        | CheckedPatKind::Or(_)
+        | CheckedPatKind::Rest
+        | CheckedPatKind::Missing => 0,
     }
 }
 
@@ -375,7 +372,7 @@ fn check_struct_lit<'db>(
     env: &CheckEnv<'db>,
     body_stash: &Stash,
     res: Res<'db>,
-    fields: sage_stash::Slice<RFieldInit<'db>>,
+    fields: sage_stash::Slice<CheckedFieldInit<'db>>,
 ) -> Ptr<Ty<'db>> {
     let Res::Def(sym) = res else {
         return ctx.alloc_ty(TyData::Error);
@@ -385,12 +382,7 @@ fn check_struct_lit<'db>(
         return ctx.alloc_ty(TyData::Error);
     };
 
-    // TODO(symbol-signatures RFD): use symbol-level query instead of as_ast()
-    let Some(struct_ast) = struct_sym.as_ast() else {
-        return ctx.alloc_ty(TyData::Error);
-    };
-
-    let sig = struct_signature(env.db, struct_ast, env.module, env.source_root);
+    let sig = get_struct_sig(env, struct_sym);
     let sig_stash = sig.stash();
     let binder = sig.root();
 
@@ -436,16 +428,11 @@ fn check_field_access<'db>(
         return ctx.fresh_ty_var();
     };
 
-    let SymbolData::Struct(struct_sym) = sym.data() else {
+    let SymbolData::StructSymbol(struct_sym) = sym.data(ctx.db) else {
         return ctx.fresh_ty_var();
     };
 
-    // TODO(symbol-signatures RFD): use symbol-level query instead of as_ast()
-    let Some(struct_ast) = struct_sym.as_ast() else {
-        return ctx.fresh_ty_var();
-    };
-
-    let sig = struct_signature(env.db, struct_ast, env.module, env.source_root);
+    let sig = struct_sym.sig(ctx.db);
     let sig_stash = sig.stash();
     let binder = sig.root();
 
@@ -475,7 +462,7 @@ fn check_literal<'db>(ctx: &mut InferCtx<'db>, lit: Literal) -> Ptr<Ty<'db>> {
             let str_ty = ctx.alloc_ty(TyData::Str);
             ctx.alloc_ty(TyData::Ref(
                 str_ty,
-                sage_ir::types::Mutability::Shared,
+                crate::types::Mutability::Shared,
                 Lifetime::Static,
             ))
         }
@@ -583,8 +570,8 @@ fn fmt_ty(db: &dyn Db, stash: &Stash, ty: Ptr<Ty>) -> String {
         }
         TyData::Ref(inner, m, _) => {
             let prefix = match m {
-                sage_ir::types::Mutability::Shared => "&",
-                sage_ir::types::Mutability::Mut => "&mut ",
+                crate::types::Mutability::Shared => "&",
+                crate::types::Mutability::Mut => "&mut ",
             };
             format!("{prefix}{}", fmt_ty(db, stash, inner))
         }

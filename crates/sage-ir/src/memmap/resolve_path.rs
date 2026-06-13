@@ -6,7 +6,7 @@
 use sage_stash::{Slice, Stash};
 
 use crate::Db;
-use crate::item::{ItemAst, MacroDefAst};
+use crate::item::{LocalModItemSym, MacroDefAst};
 use crate::module::{ModSymbol, ModSymbolData};
 use crate::name::Name;
 use crate::resolve::{ResolutionError, SourceRoot, definition, symbol_to_module};
@@ -44,7 +44,7 @@ fn memmap_first_segment<'db, 's>(
             .map(|p| (p, rest))
             .ok_or(ResolutionError::Unresolved),
         _ => {
-            if let Some(sym) = definition(db, current_module, first) {
+            if let Some(sym) = definition(db, current_module, first, source_root) {
                 if let Some(child_mod) = symbol_to_module(db, sym, source_root, current_module) {
                     return Ok((child_mod, rest));
                 }
@@ -73,7 +73,7 @@ fn memmap_resolve_path_to_module<'db>(
 
     let mut current = first_module;
     for seg in rest {
-        let sym = definition(db, current, *seg)?;
+        let sym = definition(db, current, *seg, source_root)?;
         current = symbol_to_module(db, sym, source_root, current)?;
     }
     Some(current)
@@ -135,7 +135,7 @@ fn resolve_macro_path_to_defs<'db>(
         loop {
             let is_inline = matches!(
                 current.data(),
-                ModSymbolData::Ast(a) if a.inline_unexpanded_items(db).is_some()
+                ModSymbol::Ast(a) if a.inline_unexpanded_items(db).is_some()
             );
             if !is_inline {
                 break;
@@ -180,7 +180,7 @@ fn resolve_macro_path_to_defs<'db>(
 
             // 1. Local items in this module's snapshot.
             for entry in &stash[entries] {
-                if let MemmapEntry::Item(ItemAst::Mod(_)) = entry {
+                if let MemmapEntry::Item(LocalModItemSym::Mod(_)) = entry {
                     if let Some(m) = item_as_child_module(db, entry, first, source_root, module) {
                         let mut defs = Vec::new();
                         if let Some(def) = walk_path_to_macro(db, m, source_root, rest) {
@@ -196,7 +196,7 @@ fn resolve_macro_path_to_defs<'db>(
                 if let MemmapEntry::MacroUse(mu) = entry {
                     for exp in &stash[mu.expansions] {
                         for sub_entry in &stash[exp.entries] {
-                            if let MemmapEntry::Item(ItemAst::Mod(_)) = sub_entry {
+                            if let MemmapEntry::Item(LocalModItemSym::Mod(_)) = sub_entry {
                                 if let Some(m) =
                                     item_as_child_module(db, sub_entry, first, source_root, module)
                                 {
@@ -222,15 +222,15 @@ fn resolve_macro_path_to_defs<'db>(
                     else {
                         continue;
                     };
-                    let glob_ast = match glob_target.data() {
-                        ModSymbolData::Ast(a) => a,
-                        ModSymbolData::Ext(_) => continue,
+                    let glob_ast = match glob_target {
+                        ModSymbol::Ast(a) => a,
+                        ModSymbol::Ext(_) => continue,
                     };
                     let source_memmap = expanded_module(db, glob_ast, source_root);
                     let src_stash = source_memmap.stash(db);
                     let src_entries = source_memmap.entries(db);
                     for src_entry in &src_stash[src_entries] {
-                        if let MemmapEntry::Item(ItemAst::Mod(_)) = src_entry {
+                        if let MemmapEntry::Item(LocalModItemSym::Mod(_)) = src_entry {
                             if let Some(m) =
                                 item_as_child_module(db, src_entry, first, source_root, glob_target)
                             {
@@ -295,12 +295,12 @@ fn walk_path_to_macro<'db>(
 
     for (i, seg) in segments.iter().enumerate() {
         if i < segments.len() - 1 {
-            let sym = definition(db, current, *seg)?;
+            let sym = definition(db, current, *seg, source_root)?;
             current = symbol_to_module(db, sym, source_root, current)?;
         } else {
-            let current_ast = match current.data() {
-                ModSymbolData::Ast(a) => a,
-                ModSymbolData::Ext(_) => return None,
+            let current_ast = match current {
+                ModSymbol::Ast(a) => a,
+                ModSymbol::Ext(_) => return None,
             };
             let target_memmap = expanded_module(db, current_ast, source_root);
             let target_stash = target_memmap.stash(db);
@@ -354,9 +354,9 @@ pub(super) fn find_macro_in_module<'db>(
     name: Name<'db>,
     source_root: SourceRoot,
 ) -> Option<MacroDefAst<'db>> {
-    let ast = match module.data() {
-        ModSymbolData::Ast(a) => a,
-        ModSymbolData::Ext(_) => return None,
+    let ast = match module {
+        ModSymbol::Ast(a) => a,
+        ModSymbol::Ext(_) => return None,
     };
     let memmap = expanded_module(db, ast, source_root);
     let stash = memmap.stash(db);
@@ -381,13 +381,14 @@ fn item_as_child_module<'db>(
     let MemmapEntry::Item(item) = entry else {
         return None;
     };
-    let ItemAst::Mod(mod_item) = item else {
+    let LocalModItemSym::Mod(mod_item) = item else {
         return None;
     };
     if mod_item.name(db) != first {
         return None;
     }
-    let sym = Symbol::ast(*item);
+    let scope = crate::scope::ScopeSymbol::Module(parent, source_root);
+    let sym = Symbol::local(*item, scope);
     symbol_to_module(db, sym, source_root, parent)
 }
 

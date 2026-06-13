@@ -24,7 +24,7 @@
 
 use sage_stash::{AllocStashData, Slice, Stash, StashDirect, Stashed};
 
-use crate::item::{ItemAst, MacroDefAst, StructAst};
+use crate::item::{LocalModItemSym, MacroDefAst, StructAst};
 use crate::module::{CrateNum, DefIndex};
 use crate::name::Name;
 use crate::span::AbsoluteSpan;
@@ -45,7 +45,7 @@ impl StashDirect for BuiltinMacroKind {}
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub enum MemmapEntry<'db> {
     /// A declared item — struct, fn, impl, mod, macro_rules!, etc.
-    Item(ItemAst<'db>),
+    Item(LocalModItemSym<'db>),
 
     /// Implicit constructor for a tuple struct or unit struct.
     TupleStructCtor(StructAst<'db>),

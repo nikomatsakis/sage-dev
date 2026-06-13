@@ -1,8 +1,11 @@
 use sage_ir::db::Database;
 use sage_ir::generic_param::{ExtGenericParam, GenericParam, GenericParamKind};
-use sage_ir::item::ItemAst;
+use sage_ir::item::{LocalModItemSym, ModAst};
 use sage_ir::lower::parse_source_file;
+use sage_ir::module::ModSymbol;
 use sage_ir::name::Name;
+use sage_ir::resolve::SourceRoot;
+use sage_ir::scope::ScopeSymbol;
 use sage_ir::source::SourceFile;
 use sage_ir::symbol::Symbol;
 use sage_ir::ty::*;
@@ -16,9 +19,12 @@ fn identity_fold() {
     let db = Database::default();
     db.attach(|db| {
         let file = SourceFile::new(db, "lib.rs".to_owned(), "struct Foo;".to_owned());
+        let source_root = SourceRoot::new(db, vec![file]);
+        let root_module = ModSymbol::ast(ModAst::crate_root(db, file));
+        let scope = ScopeSymbol::Module(root_module, source_root);
         let items = parse_source_file(db, file);
         let sym = match items[0] {
-            ItemAst::Struct(s) => Symbol::ast(ItemAst::Struct(s)),
+            LocalModItemSym::Struct(s) => Symbol::local(LocalModItemSym::Struct(s), scope),
             _ => panic!("expected struct"),
         };
 
@@ -65,8 +71,11 @@ fn instantiate_identity_fn() {
             "lib.rs".to_owned(),
             "fn identity<T>(x: T) -> T {}".to_owned(),
         );
+        let source_root = SourceRoot::new(db, vec![file]);
+        let root_module = ModSymbol::ast(ModAst::crate_root(db, file));
+        let scope = ScopeSymbol::Module(root_module, source_root);
         let items = parse_source_file(db, file);
-        let fn_sym = Symbol::ast(items[0]);
+        let fn_sym = Symbol::local(items[0], scope);
 
         let param_t = ExtGenericParam::new(
             db,
@@ -116,8 +125,11 @@ fn instantiate_struct_sig() {
             "lib.rs".to_owned(),
             "struct Pair<A, B> { first: A, second: B }".to_owned(),
         );
+        let source_root = SourceRoot::new(db, vec![file]);
+        let root_module = ModSymbol::ast(ModAst::crate_root(db, file));
+        let scope = ScopeSymbol::Module(root_module, source_root);
         let items = parse_source_file(db, file);
-        let struct_sym = Symbol::ast(items[0]);
+        let struct_sym = Symbol::local(items[0], scope);
 
         let name_first = Name::new(db, "first".to_owned());
         let name_second = Name::new(db, "second".to_owned());
@@ -192,13 +204,16 @@ fn instantiate_nested_type_args() {
             "lib.rs".to_owned(),
             "struct HashMap;\nstruct Vec;".to_owned(),
         );
-        let items = parse_source_file(db, file);
-        let hashmap_sym = Symbol::ast(items[0]);
-        let vec_sym = Symbol::ast(items[1]);
-
         let file2 = SourceFile::new(db, "fn.rs".to_owned(), "fn foo<K, V>() {}".to_owned());
+        let source_root = SourceRoot::new(db, vec![file, file2]);
+        let root_module = ModSymbol::ast(ModAst::crate_root(db, file));
+        let scope = ScopeSymbol::Module(root_module, source_root);
+        let items = parse_source_file(db, file);
+        let hashmap_sym = Symbol::local(items[0], scope);
+        let vec_sym = Symbol::local(items[1], scope);
+
         let fn_items = parse_source_file(db, file2);
-        let fn_sym = Symbol::ast(fn_items[0]);
+        let fn_sym = Symbol::local(fn_items[0], scope);
 
         let param_k = ExtGenericParam::new(
             db,
@@ -285,8 +300,11 @@ fn param_not_in_subst_passes_through() {
     let db = Database::default();
     db.attach(|db| {
         let file = SourceFile::new(db, "lib.rs".to_owned(), "fn foo<T, U>() {}".to_owned());
+        let source_root = SourceRoot::new(db, vec![file]);
+        let root_module = ModSymbol::ast(ModAst::crate_root(db, file));
+        let scope = ScopeSymbol::Module(root_module, source_root);
         let items = parse_source_file(db, file);
-        let fn_sym = Symbol::ast(items[0]);
+        let fn_sym = Symbol::local(items[0], scope);
 
         let param_t = ExtGenericParam::new(
             db,

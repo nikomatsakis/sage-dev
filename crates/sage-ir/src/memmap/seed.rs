@@ -10,7 +10,7 @@
 use sage_stash::{Slice, Stash};
 
 use crate::Db;
-use crate::item::{ItemAst, StructKind};
+use crate::item::{LocalModItemSym, StructKind};
 use crate::types::UseKind;
 
 use super::data::*;
@@ -18,16 +18,16 @@ use super::data::*;
 /// Seed MEM-map entries from parse_source_file items.
 pub(super) fn seed_from_items<'db>(
     db: &'db dyn Db,
-    items: &[ItemAst<'db>],
+    items: &[LocalModItemSym<'db>],
     stash: &mut Stash,
 ) -> Slice<MemmapEntry<'db>> {
     let mut entries: Vec<MemmapEntry<'db>> = Vec::new();
     for &item in items {
         match item {
-            ItemAst::MacroDef(def) => {
+            LocalModItemSym::MacroDef(def) => {
                 entries.push(MemmapEntry::MacroDef(def));
             }
-            ItemAst::MacroInvocation(inv) => {
+            LocalModItemSym::MacroInvocation(inv) => {
                 let input = MacroInput::new(db, inv.input_tokens(db).clone(), inv.span(db));
                 let path = stash.alloc_slice(inv.path(db));
                 let expansions = stash.alloc_slice(&[]);
@@ -37,7 +37,7 @@ pub(super) fn seed_from_items<'db>(
                     expansions,
                 }));
             }
-            ItemAst::Use(group) => {
+            LocalModItemSym::Use(group) => {
                 let imports = group.imports(db);
                 let import_stash = imports.stash();
                 for import in &import_stash[*imports.root()] {
@@ -57,10 +57,10 @@ pub(super) fn seed_from_items<'db>(
                     }
                 }
             }
-            ItemAst::Error(..) => {}
+            LocalModItemSym::Error(..) => {}
             _ => {
                 entries.push(MemmapEntry::Item(item));
-                if let ItemAst::Struct(s) = item {
+                if let LocalModItemSym::Struct(s) = item {
                     if matches!(s.kind(db), StructKind::Tuple | StructKind::Unit) {
                         entries.push(MemmapEntry::TupleStructCtor(s));
                     }

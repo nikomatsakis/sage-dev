@@ -36,7 +36,7 @@ pub enum Intrinsic {
 ```
 
 `Symbol` is a plain `Copy` newtype; identity flows from the inner
-data. Constructors: `Symbol::ast(item)`, `Symbol::ext(ext)`,
+data. Constructors: `Symbol::local(item, scope)`, `Symbol::ext(ext)`,
 `Symbol::external(cn, di)`, `Symbol::intrinsic(i)`. Inspect via
 `.data()`.
 
@@ -188,7 +188,7 @@ defs (`SymbolData::Ext`).
 
 ### `LocalId` and scopes — the `Ribs` structure
 
-`LocalId(u32)` indexes into `RBody.locals: Slice<LocalVar>`.
+`LocalId(u32)` indexes into `CheckedBody.locals: Slice<LocalVar>`.
 Lexical scope is managed by a shared `Ribs` struct (`ribs.rs`)
 that both `sig_lower` and `body_resolve` use. `Ribs` is
 namespace-aware: each entry is `(Name, Namespace, RibEntry)`.
@@ -208,9 +208,9 @@ arms, if-let, while-let. `sig_lower` pushes generic params as
 
 ### `resolve_body` — the entry point
 
-`resolve_body` in `body_resolve.rs` is a
-`#[salsa::tracked(returns(ref))]` function. It takes
-`(db, FnAst, ModSymbol, SourceRoot)` and returns `&ResolvedBody`.
+`resolve_body` in `body_resolve.rs` is a plain function (called by
+the tracked `fn_body` query in `typed_body.rs`). It takes
+`(db, FnAst, ScopeSymbol)` and returns `ResolvedBody`.
 
 The `BodyResolver` struct holds a `Resolver` (for module-level
 resolution) and a `Ribs` (for lexical scope). It walks the
@@ -288,12 +288,14 @@ produced.
 
 The `Resolver` struct (`resolve/mod.rs`) is the primary interface
 for module-level name resolution. It holds `db`, `source_root`,
-and cycle-detection state:
+a `ScopeSymbol` (which determines the starting module for public
+entry points), and cycle-detection state:
 
 ```rust
 pub struct Resolver<'db> {
     db: &'db dyn Db,
     source_root: SourceRoot,
+    scope: ScopeSymbol<'db>,
     in_flight: Vec<InFlightQuery<'db>>,
 }
 
@@ -306,11 +308,13 @@ struct InFlightQuery<'db> {
 
 Methods:
 
-- `resolve_name(module, name, ns)` — resolve a single name.
-- `resolve_segments(module, &[Name], ns)` — resolve a path given
-  as a name slice.
-- `resolve_path(module, Path, ns)` — thin wrapper that extracts
-  segments from a salsa-interned Path.
+- `resolve_name(name, ns)` — resolve a single name from the
+  resolver's scope module.
+- `resolve_segments(&[Name], ns)` — resolve a path from the
+  resolver's scope module.
+- `resolve_segments_in(module, &[Name], ns)` — resolve a path
+  starting from an explicit module (used internally for
+  multi-segment traversal).
 - `resolve_member(module, name, ns)` — resolve in a module's
   direct contents (memmap-aware).
 - `resolve_module_path(root, &[&str])` — convenience for walking

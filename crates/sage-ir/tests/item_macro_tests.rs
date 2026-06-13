@@ -5,13 +5,13 @@
 //! and that Display impls render them correctly.
 
 use sage_ir::db::Database;
-use sage_ir::item::ItemAst;
+use sage_ir::item::LocalModItemSym;
 use sage_ir::lower::parse_source_file;
 use sage_ir::resolve::item_name;
 use sage_ir::source::SourceFile;
 use salsa::Database as _;
 
-fn parse<'db>(db: &'db Database, code: &str) -> Vec<ItemAst<'db>> {
+fn parse<'db>(db: &'db Database, code: &str) -> Vec<LocalModItemSym<'db>> {
     let file = SourceFile::new(db, "lib.rs".to_owned(), code.to_owned());
     parse_source_file(db, file).clone()
 }
@@ -29,7 +29,7 @@ fn parse_source_file_produces_macro_def() {
         let macro_def = items
             .iter()
             .find_map(|i| match i {
-                ItemAst::MacroDef(d) => Some(*d),
+                LocalModItemSym::MacroDef(d) => Some(*d),
                 _ => None,
             })
             .expect("expected ItemAst::MacroDef");
@@ -51,7 +51,7 @@ fn parse_source_file_produces_macro_invocation() {
         let inv = items
             .iter()
             .find_map(|i| match i {
-                ItemAst::MacroInvocation(v) => Some(*v),
+                LocalModItemSym::MacroInvocation(v) => Some(*v),
                 _ => None,
             })
             .expect("expected ItemAst::MacroInvocation");
@@ -75,7 +75,7 @@ fn parse_source_file_multi_segment_macro_path() {
         let inv = items
             .iter()
             .find_map(|i| match i {
-                ItemAst::MacroInvocation(v) => Some(*v),
+                LocalModItemSym::MacroInvocation(v) => Some(*v),
                 _ => None,
             })
             .expect("expected ItemAst::MacroInvocation");
@@ -97,7 +97,7 @@ fn item_name_returns_none_for_macro_def() {
         let items = parse(db, "macro_rules! m { () => {} }");
         let macro_def_item = items
             .iter()
-            .find(|i| matches!(i, ItemAst::MacroDef(_)))
+            .find(|i| matches!(i, LocalModItemSym::MacroDef(_)))
             .copied()
             .expect("expected a MacroDef item");
 
@@ -116,7 +116,7 @@ fn item_name_returns_none_for_macro_invocation() {
         let items = parse(db, "m!();");
         let inv_item = items
             .iter()
-            .find(|i| matches!(i, ItemAst::MacroInvocation(_)))
+            .find(|i| matches!(i, LocalModItemSym::MacroInvocation(_)))
             .copied()
             .expect("expected a MacroInvocation item");
 
@@ -135,7 +135,7 @@ fn display_item_macro_def() {
         let items = parse(db, "macro_rules! m { () => { struct X; } }");
         let macro_def_item = items
             .iter()
-            .find(|i| matches!(i, ItemAst::MacroDef(_)))
+            .find(|i| matches!(i, LocalModItemSym::MacroDef(_)))
             .copied()
             .expect("expected a MacroDef item");
 
@@ -164,7 +164,7 @@ fn display_item_macro_invocation() {
         let items = parse(db, "foo::m!();");
         let inv_item = items
             .iter()
-            .find(|i| matches!(i, ItemAst::MacroInvocation(_)))
+            .find(|i| matches!(i, LocalModItemSym::MacroInvocation(_)))
             .copied()
             .expect("expected a MacroInvocation item");
 

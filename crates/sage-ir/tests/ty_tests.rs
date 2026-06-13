@@ -1,8 +1,11 @@
 use sage_ir::db::Database;
 use sage_ir::generic_param::{ExtGenericParam, GenericParam, GenericParamKind};
-use sage_ir::item::ItemAst;
+use sage_ir::item::{LocalModItemSym, ModAst};
 use sage_ir::lower::parse_source_file;
+use sage_ir::module::ModSymbol;
 use sage_ir::name::Name;
+use sage_ir::resolve::SourceRoot;
+use sage_ir::scope::ScopeSymbol;
 use sage_ir::source::SourceFile;
 use sage_ir::symbol::Symbol;
 use sage_ir::ty::*;
@@ -14,9 +17,12 @@ fn ty_adt_round_trip() {
     let db = Database::default();
     db.attach(|db| {
         let file = SourceFile::new(db, "lib.rs".to_owned(), "struct Foo;".to_owned());
+        let source_root = SourceRoot::new(db, vec![file]);
+        let root_module = ModSymbol::ast(ModAst::crate_root(db, file));
+        let scope = ScopeSymbol::Module(root_module, source_root);
         let items = parse_source_file(db, file);
         let sym = match items[0] {
-            ItemAst::Struct(s) => Symbol::ast(ItemAst::Struct(s)),
+            LocalModItemSym::Struct(s) => Symbol::local(LocalModItemSym::Struct(s), scope),
             _ => panic!("expected struct"),
         };
 
@@ -45,8 +51,11 @@ fn binder_fn_sig_round_trip() {
     let db = Database::default();
     db.attach(|db| {
         let file = SourceFile::new(db, "lib.rs".to_owned(), "fn foo<T>() {}".to_owned());
+        let source_root = SourceRoot::new(db, vec![file]);
+        let root_module = ModSymbol::ast(ModAst::crate_root(db, file));
+        let scope = ScopeSymbol::Module(root_module, source_root);
         let items = parse_source_file(db, file);
-        let fn_sym = Symbol::ast(items[0]);
+        let fn_sym = Symbol::local(items[0], scope);
 
         let param_t = ExtGenericParam::new(
             db,

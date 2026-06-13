@@ -1,20 +1,22 @@
-//! Signature lowering: `TypeRefAst` → `Ty`.
+//! Signature lowering: `TypeRefAst`/`TypeCst` → `Ty`.
 //!
-//! `SigLowerCtx` reads from a syntactic signature stash and writes
-//! resolved `Ty` nodes into a destination stash. Generic params are
-//! tracked so references to them produce `TyData::Param`.
+//! `SigLowerCtx` reads from a syntactic signature stash (`TypeRefAst`)
+//! and writes resolved `Ty` nodes into a destination stash.
+//!
+//! `CstLowerCtx` does the same but reads from a CST stash (`TypeCst`).
+//! Both track generic params so references to them produce `TyData::Param`.
 
 use sage_stash::{Ptr, Stash, Stashed};
 
 use crate::Db;
 use crate::generic_param::{AstGenericParam, GenericParam, GenericParamKind};
-use crate::item::{EnumAst, FnAst, StructAst};
-use crate::module::ModSymbol;
+use crate::item::{FnAst, StructAst};
 use crate::name::Name;
-use crate::resolve::{Namespace, Resolver, SourceRoot};
+use crate::resolve::{Namespace, Resolver};
 use crate::ribs::{RibEntry, Ribs};
+use crate::scope::ScopeSymbol;
 use crate::sig_ast::*;
-use crate::symbol::{Intrinsic, Symbol, SymbolData};
+use crate::symbol::{EnumSymbol, FnSymbol, Intrinsic, StructSymbol, Symbol, SymbolData};
 use crate::ty::*;
 
 // ---------------------------------------------------------------------------
@@ -23,7 +25,6 @@ use crate::ty::*;
 
 struct SigLowerCtx<'a, 'db> {
     resolver: Resolver<'db>,
-    module: ModSymbol<'db>,
     src: &'a Stash,
     dst: &'a mut Stash,
     ribs: Ribs<'db>,
@@ -134,9 +135,7 @@ impl<'a, 'db> SigLowerCtx<'a, 'db> {
 
         // No rib hit — resolve via module-level path resolution.
         let names: Vec<_> = segments.iter().map(|s| s.name).collect();
-        let sym = self
-            .resolver
-            .resolve_segments(self.module, &names, Namespace::Type);
+        let sym = self.resolver.resolve_segments(&names, Namespace::Type);
 
         match sym {
             Ok(sym) => self.symbol_to_ty(sym, type_args),
@@ -151,7 +150,7 @@ impl<'a, 'db> SigLowerCtx<'a, 'db> {
         sym: Symbol<'db>,
         type_args: sage_stash::Slice<Ptr<Ty<'db>>>,
     ) -> Ty<'db> {
-        match sym.data() {
+        match sym {
             SymbolData::Intrinsic(intrinsic) => Ty {
                 data: intrinsic_to_ty_data(intrinsic),
             },
@@ -198,33 +197,47 @@ fn build_generics_ribs<'db>(
     let params = &src[generics];
     let mut generic_params = Vec::new();
     for (i, param) in params.iter().enumerate() {
-        let (name, kind) = match param {
-            crate::sig_ast::GenericParam::Type { name, .. } => (*name, GenericParamKind::Type),
-            crate::sig_ast::GenericParam::Lifetime { name, .. } => {
-                (*name, GenericParamKind::Lifetime)
+        let (name, span, kind) = match param {
+            crate::sig_ast::GenericParam::Type { name, span, .. } => {
+                (name, span, GenericParamKind::Type)
             }
-            crate::sig_ast::GenericParam::Const { name, .. } => (*name, GenericParamKind::Const),
+            crate::sig_ast::GenericParam::Lifetime { name, span, .. } => {
+                (name, span, GenericParamKind::Lifetime)
+            }
+            crate::sig_ast::GenericParam::Const { name, span, .. } => {
+                (name, span, GenericParamKind::Const)
+            }
         };
-        let ast_param = AstGenericParam::new(db, kind, Some(name), parent, i as u32);
+        let ast_param = AstGenericParam::new(db, kind, Some(*name), *span, parent, i as u32);
         let gp = GenericParam::Ast(ast_param);
-        ribs.add(name, Namespace::Type, RibEntry::Param(gp));
+        ribs.add(*name, Namespace::Type, RibEntry::Param(gp));
         generic_params.push(gp);
     }
     dst.alloc_slice(&generic_params)
 }
 
+
 // ---------------------------------------------------------------------------
 // Signature queries
 // ---------------------------------------------------------------------------
 
+/// Symbol-keyed function signature query.
 #[salsa::tracked(returns(ref))]
 pub fn fn_signature<'db>(
     db: &'db dyn Db,
-    fn_ast: FnAst<'db>,
-    module: ModSymbol<'db>,
-    source_root: SourceRoot,
+    sym: FnSymbol<'db>,
+    scope: ScopeSymbol<'db>,
 ) -> Stashed<Binder<'db, FnSig<'db>>> {
-    lower_fn_sig(db, fn_ast, module, source_root, None, &Stash::new())
+    let fn_ast = sym
+        .as_ast()
+        .expect("external fn_signature not yet supported");
+    lower_fn_sig(db, fn_ast, scope, None, &Stash::new())
+}
+
+/// Single-keyed function signature query — reads scope from the symbol.
+pub fn fn_sig<'db>(db: &'db dyn Db, sym: FnSymbol<'db>) -> &'db Stashed<Binder<'db, FnSig<'db>>> {
+    let scope = sym.scope().expect("fn_sig requires a scoped symbol");
+    fn_signature(db, sym, scope)
 }
 
 /// Lower a function signature with an optional self type for impl-block methods.
@@ -234,8 +247,7 @@ pub fn fn_signature<'db>(
 pub fn lower_fn_sig<'db>(
     db: &'db dyn Db,
     fn_ast: FnAst<'db>,
-    module: ModSymbol<'db>,
-    source_root: SourceRoot,
+    scope: ScopeSymbol<'db>,
     self_type: Option<Ty<'db>>,
     self_type_src: &Stash,
 ) -> Stashed<Binder<'db, FnSig<'db>>> {
@@ -246,7 +258,7 @@ pub fn lower_fn_sig<'db>(
     let mut dst = Stash::new();
     let mut ribs = Ribs::new();
     ribs.push_scope();
-    let parent = Symbol::ast(crate::item::ItemAst::Function(fn_ast));
+    let parent = Symbol::local(crate::item::LocalModItemSym::Function(fn_ast), scope);
     let generics = build_generics_ribs(db, src, data.generics, &mut dst, &mut ribs, parent);
 
     if let Some(ty) = self_type {
@@ -257,8 +269,7 @@ pub fn lower_fn_sig<'db>(
     }
 
     let mut cx = SigLowerCtx {
-        resolver: Resolver::new(db, source_root),
-        module,
+        resolver: Resolver::new(db, scope),
         src,
         dst: &mut dst,
         ribs,
@@ -287,53 +298,72 @@ pub fn lower_fn_sig<'db>(
     Stashed::new(dst, binder)
 }
 
-#[salsa::tracked(returns(ref))]
-pub fn struct_signature<'db>(
-    db: &'db dyn Db,
-    struct_ast: StructAst<'db>,
-    module: ModSymbol<'db>,
-    source_root: SourceRoot,
-) -> Stashed<Binder<'db, StructSig<'db>>> {
-    let sig_ast = struct_ast.signature(db);
-    let src = sig_ast.stash();
-    let data = &src[*sig_ast.root()];
-
-    let mut dst = Stash::new();
-    let mut ribs = Ribs::new();
-    ribs.push_scope();
-    let parent = Symbol::ast(crate::item::ItemAst::Struct(struct_ast));
-    let generics = build_generics_ribs(db, src, data.generics, &mut dst, &mut ribs, parent);
-
-    let mut cx = SigLowerCtx {
-        resolver: Resolver::new(db, source_root),
-        module,
-        src,
-        dst: &mut dst,
-        ribs,
-    };
-
-    let field_sigs: Vec<_> = src[data.fields]
-        .iter()
-        .map(|f| {
-            let ty_val = cx.lower_ptr_type_ref(f.ty);
-            let ty = cx.dst.alloc(ty_val);
-            FieldSig { name: f.name, ty }
-        })
-        .collect();
-    let fields = cx.dst.alloc_slice(&field_sigs);
-
-    let struct_sig = StructSig { fields };
-    let binder = Binder::new(struct_sig, generics);
-    Stashed::new(dst, binder)
+impl<'db> StructSymbol<'db> {
+    /// Compute signature of a struct (generics, where-clauses).
+    pub fn sig(self, db: &'db dyn crate::Db) -> Stashed<Binder<'db, StructSig<'db>>> {
+        match self {
+            StructSymbol::Ast(struct_ast) => struct_ast.sig(db),
+            StructSymbol::Ext(_sym_ext) => todo!("sig from external struct"),
+        }
+    }
 }
 
+#[salsa::tracked]
+impl<'db> StructAst<'db> {
+    pub fn sig(self, db: &'db dyn Db) -> Stashed<Binder<'db, StructSig<'db>>> {
+        let scope = self.scope(db);
+        let sig_ast = self.signature(db);
+        let src = sig_ast.stash();
+        let data = &src[*sig_ast.root()];
+
+        let mut dst = Stash::new();
+        let mut ribs = Ribs::new();
+        ribs.push_scope();
+        let generics =
+            build_generics_ribs(db, src, data.generics, &mut dst, &mut ribs, self.into());
+
+        let mut cx = SigLowerCtx {
+            resolver: Resolver::new(db, scope),
+            src,
+            dst: &mut dst,
+            ribs,
+        };
+
+        let field_sigs: Vec<_> = src[data.fields]
+            .iter()
+            .map(|f| {
+                let ty_val = cx.lower_ptr_type_ref(f.ty);
+                let ty = cx.dst.alloc(ty_val);
+                FieldSig { name: f.name, ty }
+            })
+            .collect();
+        let fields = cx.dst.alloc_slice(&field_sigs);
+
+        let struct_sig = StructSig { fields };
+        let binder = Binder::new(struct_sig, generics);
+        Stashed::new(dst, binder)
+    }
+}
+
+/// Single-keyed enum signature query — reads scope from the symbol.
+pub fn enum_sig<'db>(
+    db: &'db dyn Db,
+    sym: EnumSymbol<'db>,
+) -> &'db Stashed<Binder<'db, EnumSig<'db>>> {
+    let scope = sym.scope().expect("enum_sig requires a scoped symbol");
+    enum_signature(db, sym, scope)
+}
+
+/// Symbol-keyed enum signature query.
 #[salsa::tracked(returns(ref))]
 pub fn enum_signature<'db>(
     db: &'db dyn Db,
-    enum_ast: EnumAst<'db>,
-    module: ModSymbol<'db>,
-    source_root: SourceRoot,
+    sym: EnumSymbol<'db>,
+    scope: ScopeSymbol<'db>,
 ) -> Stashed<Binder<'db, EnumSig<'db>>> {
+    let enum_ast = sym
+        .as_ast()
+        .expect("external enum_signature not yet supported");
     let sig_ast = enum_ast.signature(db);
     let src = sig_ast.stash();
     let data = &src[*sig_ast.root()];
@@ -341,12 +371,11 @@ pub fn enum_signature<'db>(
     let mut dst = Stash::new();
     let mut ribs = Ribs::new();
     ribs.push_scope();
-    let parent = Symbol::ast(crate::item::ItemAst::Enum(enum_ast));
+    let parent = Symbol::local(crate::item::LocalModItemSym::Enum(enum_ast), scope);
     let generics = build_generics_ribs(db, src, data.generics, &mut dst, &mut ribs, parent);
 
     let mut cx = SigLowerCtx {
-        resolver: Resolver::new(db, source_root),
-        module,
+        resolver: Resolver::new(db, scope),
         src,
         dst: &mut dst,
         ribs,
@@ -376,3 +405,6 @@ pub fn enum_signature<'db>(
     let binder = Binder::new(enum_sig, generics);
     Stashed::new(dst, binder)
 }
+
+// Re-export CstLowerCtx from its new home.
+pub use crate::check::CstLowerCtx;

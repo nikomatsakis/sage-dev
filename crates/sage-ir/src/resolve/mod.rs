@@ -1,9 +1,10 @@
 use crate::Db;
 use crate::item::*;
-use crate::module::{ModSymbol, ModSymbolData};
 use crate::name::Name;
+use crate::scope::ScopeSymbol;
 use crate::source::SourceFile;
 use crate::symbol::{Intrinsic, Symbol, SymbolData};
+use crate::symbol::{ModSymbol, ModSymbolData};
 
 // ---------------------------------------------------------------------------
 // Namespace
@@ -24,30 +25,34 @@ pub enum Namespace {
 }
 
 /// Whether an item lives in the given namespace.
-pub(crate) fn item_in_namespace(_db: &dyn Db, item: ItemAst<'_>, ns: Namespace) -> bool {
+pub(crate) fn item_in_namespace(_db: &dyn Db, item: LocalModItemSym<'_>, ns: Namespace) -> bool {
     match item {
         // Structs live in Type only. The value-namespace entry for
         // tuple/unit structs is handled by `MemmapEntry::TupleStructCtor`.
-        ItemAst::Struct(_) => matches!(ns, Namespace::Type),
+        LocalModItemSym::Struct(_) => matches!(ns, Namespace::Type),
 
         // Type-namespace-only items.
-        ItemAst::Enum(_) | ItemAst::Trait(_) | ItemAst::TypeAlias(_) | ItemAst::Mod(_) => {
+        LocalModItemSym::Enum(_)
+        | LocalModItemSym::Trait(_)
+        | LocalModItemSym::TypeAlias(_)
+        | LocalModItemSym::Mod(_) => {
             matches!(ns, Namespace::Type)
         }
 
         // Value-namespace-only items.
-        ItemAst::Function(_) | ItemAst::Const(_) | ItemAst::Static(_) => {
+        LocalModItemSym::Function(_) | LocalModItemSym::Const(_) | LocalModItemSym::Static(_) => {
             matches!(ns, Namespace::Value)
         }
 
         // `macro_rules!` definitions live in the bang-macro namespace.
-        ItemAst::MacroDef(_) => matches!(ns, Namespace::Macro(MacroKind::Bang)),
+        LocalModItemSym::MacroDef(_) => matches!(ns, Namespace::Macro(MacroKind::Bang)),
 
         // Items with no name: they're never looked up by name, so
         // they don't occupy any namespace.
-        ItemAst::Impl(_) | ItemAst::Use(_) | ItemAst::MacroInvocation(_) | ItemAst::Error(..) => {
-            false
-        }
+        LocalModItemSym::Impl(_)
+        | LocalModItemSym::Use(_)
+        | LocalModItemSym::MacroInvocation(_)
+        | LocalModItemSym::Error(..) => false,
     }
 }
 
@@ -70,15 +75,13 @@ pub struct SourceRoot {
 
 /// Format a module for logging.
 fn module_label(db: &dyn Db, module: ModSymbol<'_>) -> String {
-    match module.data() {
-        ModSymbolData::Ast(ast) => {
-            match (ast.file(db), ast.inline_unexpanded_items(db).is_some()) {
-                (Some(f), _) => format!("\"{}\"", f.path(db)),
-                (None, true) => format!("inline \"{}\"", ast.name(db).text(db)),
-                (None, false) => format!("decl \"{}\"", ast.name(db).text(db)),
-            }
-        }
-        ModSymbolData::Ext(ext) => format!("extern({}, {})", ext.crate_num.0, ext.def_index.0),
+    match module {
+        ModSymbol::Ast(ast) => match (ast.file(db), ast.inline_unexpanded_items(db).is_some()) {
+            (Some(f), _) => format!("\"{}\"", f.path(db)),
+            (None, true) => format!("inline \"{}\"", ast.name(db).text(db)),
+            (None, false) => format!("decl \"{}\"", ast.name(db).text(db)),
+        },
+        ModSymbol::Ext(ext) => format!("extern({}, {})", ext.crate_num.0, ext.def_index.0),
     }
 }
 
@@ -87,22 +90,24 @@ pub fn definition<'db>(
     db: &'db dyn Db,
     module: ModSymbol<'db>,
     name: Name<'db>,
+    source_root: SourceRoot,
 ) -> Option<Symbol<'db>> {
     db.log_query(format!(
         "definition({}, \"{}\")",
         module_label(db, module),
         name.text(db)
     ));
-    match module.data() {
-        ModSymbolData::Ast(ast) => {
+    match module {
+        ModSymbol::Ast(ast) => {
+            let scope = ScopeSymbol::Module(module, source_root);
             for item in ast.unexpanded_items(db) {
                 if item_name(db, item) == Some(name) {
-                    return Some(Symbol::ast(item));
+                    return Some(Symbol::local(item, scope));
                 }
             }
             None
         }
-        ModSymbolData::Ext(ext) => {
+        ModSymbol::Ext(ext) => {
             let raw = db.tcx().module_children(ext.crate_num, ext.def_index);
             let name_text = name.text(db);
             raw.into_iter()
@@ -119,10 +124,11 @@ pub fn definition_in_ns<'db>(
     module: ModSymbol<'db>,
     name: Name<'db>,
     ns: Namespace,
+    source_root: SourceRoot,
 ) -> Option<Symbol<'db>> {
-    match module.data() {
-        ModSymbolData::Ast(_) => definition(db, module, name),
-        ModSymbolData::Ext(ext) => {
+    match module {
+        ModSymbol::Ast(_) => definition(db, module, name, source_root),
+        ModSymbol::Ext(ext) => {
             let raw = db.tcx().module_children(ext.crate_num, ext.def_index);
             let name_text = name.text(db);
             raw.into_iter()
@@ -202,26 +208,26 @@ pub fn resolve_module_path<'db>(
     source_root: SourceRoot,
     segments: &[&str],
 ) -> Option<ModSymbol<'db>> {
-    let mut resolver = Resolver::new(db, source_root);
+    let mut resolver = Resolver::new(db, ScopeSymbol::Module(root, source_root));
     resolver.resolve_module_path(root, segments)
 }
 
 /// Extract the name from an item, if it has one.
-pub fn item_name<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Option<Name<'db>> {
+pub fn item_name<'db>(db: &'db dyn Db, item: LocalModItemSym<'db>) -> Option<Name<'db>> {
     match item {
-        ItemAst::Function(f) => Some(f.name(db)),
-        ItemAst::Struct(s) => Some(s.name(db)),
-        ItemAst::Enum(e) => Some(e.name(db)),
-        ItemAst::Trait(t) => Some(t.name(db)),
-        ItemAst::TypeAlias(t) => Some(t.name(db)),
-        ItemAst::Const(c) => Some(c.name(db)),
-        ItemAst::Static(s) => Some(s.name(db)),
-        ItemAst::Mod(m) => Some(m.name(db)),
-        ItemAst::Impl(_)
-        | ItemAst::Use(_)
-        | ItemAst::MacroDef(_)
-        | ItemAst::MacroInvocation(_)
-        | ItemAst::Error(..) => None,
+        LocalModItemSym::Function(f) => Some(f.name(db)),
+        LocalModItemSym::Struct(s) => Some(s.name(db)),
+        LocalModItemSym::Enum(e) => Some(e.name(db)),
+        LocalModItemSym::Trait(t) => Some(t.name(db)),
+        LocalModItemSym::TypeAlias(t) => Some(t.name(db)),
+        LocalModItemSym::Const(c) => Some(c.name(db)),
+        LocalModItemSym::Static(s) => Some(s.name(db)),
+        LocalModItemSym::Mod(m) => Some(m.name(db)),
+        LocalModItemSym::Impl(_)
+        | LocalModItemSym::Use(_)
+        | LocalModItemSym::MacroDef(_)
+        | LocalModItemSym::MacroInvocation(_)
+        | LocalModItemSym::Error(..) => None,
     }
 }
 
@@ -250,11 +256,11 @@ fn parent_dir_for(path: &str) -> String {
 
 /// Items declared in a module (from `parse_source_file` or the inline
 /// items list for local modules; empty for external).
-pub fn module_items<'db>(db: &'db dyn Db, module: ModSymbol<'db>) -> Vec<ItemAst<'db>> {
+pub fn module_items<'db>(db: &'db dyn Db, module: ModSymbol<'db>) -> Vec<LocalModItemSym<'db>> {
     db.log_query(format!("module_items({})", module_label(db, module)));
-    match module.data() {
-        ModSymbolData::Ast(ast) => ast.unexpanded_items(db),
-        ModSymbolData::Ext(_) => Vec::new(),
+    match module {
+        ModSymbol::Ast(ast) => ast.unexpanded_items(db),
+        ModSymbol::Ext(_) => Vec::new(),
     }
 }
 
@@ -273,8 +279,8 @@ pub fn resolve_name<'db>(
     name: Name<'db>,
     ns: Namespace,
 ) -> Result<Symbol<'db>, ResolutionError> {
-    let mut resolver = Resolver::new(db, source_root);
-    resolver.resolve_name(module, name, ns)
+    let mut resolver = Resolver::new(db, ScopeSymbol::Module(module, source_root));
+    resolver.resolve_name(name, ns)
 }
 
 // ---------------------------------------------------------------------------
@@ -298,32 +304,47 @@ struct InFlightQuery<'db> {
 pub struct Resolver<'db> {
     db: &'db dyn Db,
     source_root: SourceRoot,
+    scope: ScopeSymbol<'db>,
     in_flight: Vec<InFlightQuery<'db>>,
 }
 
 impl<'db> Resolver<'db> {
-    pub fn new(db: &'db dyn Db, source_root: SourceRoot) -> Self {
+    pub fn new(db: &'db dyn Db, scope: ScopeSymbol<'db>) -> Self {
+        let source_root = scope.source_root(db);
         Self {
             db,
             source_root,
+            scope,
             in_flight: Vec::new(),
         }
     }
 
-    /// Resolve a single name in a module's scope.
-    ///
-    /// Full fallback chain: module members → extern prelude → std prelude → intrinsics.
+    /// Resolve a single name using the resolver's scope as the starting module.
     pub fn resolve_name(
         &mut self,
-        module: ModSymbol<'db>,
         name: Name<'db>,
         ns: Namespace,
     ) -> Result<Symbol<'db>, ResolutionError> {
+        let module = self.scope.module(self.db);
         resolve_plain_name(self, module, name, ns)
     }
 
-    /// Resolve a slice of name segments to a symbol.
+    /// Resolve a slice of name segments using the resolver's scope as the
+    /// starting module.
     pub fn resolve_segments(
+        &mut self,
+        segments: &[Name<'db>],
+        final_ns: Namespace,
+    ) -> Result<Symbol<'db>, ResolutionError> {
+        let module = self.scope.module(self.db);
+        self.resolve_segments_in(module, segments, final_ns)
+    }
+
+    /// Resolve a slice of name segments starting from an explicit module.
+    ///
+    /// Used by internal helpers that traverse into child modules during
+    /// multi-segment path resolution.
+    pub fn resolve_segments_in(
         &mut self,
         module: ModSymbol<'db>,
         segments: &[Name<'db>],
@@ -340,17 +361,28 @@ impl<'db> Resolver<'db> {
         let (first_module, rest) = dispatch_first_segment(self, module, segments)?;
 
         if rest.is_empty() {
-            return match first_module.data() {
-                ModSymbolData::Ext(ext) => Ok(Symbol::ext(ext)),
-                ModSymbolData::Ast(_) => Err(ResolutionError::Unresolved),
+            return match first_module {
+                ModSymbol::Ext(ext) => Ok(Symbol::ext(ext)),
+                ModSymbol::Ast(_) => Err(ResolutionError::Unresolved),
             };
         }
 
         resolve_remainder(self, first_module, rest, final_ns)
     }
 
-    /// Resolve a slice of name segments to a module.
+    /// Resolve a slice of name segments to a module, starting from the
+    /// resolver's scope.
     pub fn resolve_segments_to_module(
+        &mut self,
+        segments: &[Name<'db>],
+    ) -> Result<ModSymbol<'db>, ResolutionError> {
+        let module = self.scope.module(self.db);
+        self.resolve_segments_to_module_in(module, segments)
+    }
+
+    /// Resolve a slice of name segments to a module, starting from an
+    /// explicit module.
+    pub fn resolve_segments_to_module_in(
         &mut self,
         module: ModSymbol<'db>,
         segments: &[Name<'db>],
@@ -385,7 +417,7 @@ impl<'db> Resolver<'db> {
             let sym = self
                 .resolve_member(current, name, Namespace::Type)
                 .ok()
-                .or_else(|| definition(self.db, current, name))?;
+                .or_else(|| definition(self.db, current, name, self.source_root))?;
             current = symbol_to_module(self.db, sym, self.source_root, current)?;
         }
         Some(current)
@@ -424,11 +456,11 @@ fn resolve_member_impl<'db>(
     let db = resolver.db;
     let source_root = resolver.source_root;
 
-    let result = match module.data() {
-        ModSymbolData::Ext(_) => {
-            definition_in_ns(db, module, name, ns).ok_or(ResolutionError::Unresolved)
+    let result = match module {
+        ModSymbol::Ext(_) => {
+            definition_in_ns(db, module, name, ns, source_root).ok_or(ResolutionError::Unresolved)
         }
-        ModSymbolData::Ast(ast) => {
+        ModSymbol::Ast(ast) => {
             let memmap = expanded_module(db, ast, source_root);
             let stash = memmap.stash(db);
             let entries = memmap.entries(db);
@@ -475,12 +507,13 @@ fn walk_entries<'db>(
     use crate::memmap::MemmapEntry;
 
     let db = resolver.db;
+    let scope = ScopeSymbol::Module(module, resolver.source_root);
 
     for entry in &stash[entries] {
         match entry {
             MemmapEntry::Item(item) => {
                 if item_name(db, *item) == Some(name) && item_in_namespace(db, *item, ns) {
-                    let sym = Symbol::ast(*item);
+                    let sym = Symbol::local(*item, scope);
                     if !named.contains(&sym) {
                         named.push(sym);
                     }
@@ -488,7 +521,7 @@ fn walk_entries<'db>(
             }
             MemmapEntry::TupleStructCtor(s) => {
                 if s.name(db) == name && matches!(ns, Namespace::Value) {
-                    let sym = Symbol::tuple_struct_ctor(*s);
+                    let sym = Symbol::tuple_struct_ctor_local(*s, scope);
                     if !named.contains(&sym) {
                         named.push(sym);
                     }
@@ -502,7 +535,7 @@ fn walk_entries<'db>(
             MemmapEntry::Redirect { name: n, target } => {
                 if *n == name {
                     let target_vec: Vec<_> = stash[*target].to_vec();
-                    if let Ok(sym) = resolver.resolve_segments(module, &target_vec, ns) {
+                    if let Ok(sym) = resolver.resolve_segments_in(module, &target_vec, ns) {
                         if !named.contains(&sym) {
                             named.push(sym);
                         }
@@ -511,7 +544,7 @@ fn walk_entries<'db>(
             }
             MemmapEntry::Glob { path } => {
                 let path_vec: Vec<_> = stash[*path].to_vec();
-                let Ok(target) = resolver.resolve_segments_to_module(module, &path_vec) else {
+                let Ok(target) = resolver.resolve_segments_to_module_in(module, &path_vec) else {
                     continue;
                 };
                 let sym = resolver.resolve_member(target, name, ns).ok();
@@ -622,9 +655,9 @@ fn resolve_remainder<'db>(
     final_ns: Namespace,
 ) -> Result<Symbol<'db>, ResolutionError> {
     if segments.is_empty() {
-        return match start.data() {
-            ModSymbolData::Ext(ext) => Ok(Symbol::ext(ext)),
-            ModSymbolData::Ast(_) => Err(ResolutionError::Unresolved),
+        return match start {
+            ModSymbol::Ext(ext) => Ok(Symbol::ext(ext)),
+            ModSymbol::Ast(_) => Err(ResolutionError::Unresolved),
         };
     }
 
@@ -666,18 +699,19 @@ fn resolve_in_std_prelude<'db>(
     let std_crate = db.tcx().extern_crate("std")?;
     let std_root = ModSymbol::external(std_crate, crate::module::DefIndex(0));
 
-    let prelude_name = Name::new(db, "prelude".to_owned());
-    let prelude_sym = definition(db, std_root, prelude_name)?;
     let dummy_root = SourceRoot::new(db, Vec::new());
+
+    let prelude_name = Name::new(db, "prelude".to_owned());
+    let prelude_sym = definition(db, std_root, prelude_name, dummy_root)?;
     let prelude_mod = symbol_to_module(db, prelude_sym, dummy_root, std_root)?;
 
     let v1_name = Name::new(db, "v1".to_owned());
-    let v1_sym = definition(db, prelude_mod, v1_name)?;
+    let v1_sym = definition(db, prelude_mod, v1_name, dummy_root)?;
     let v1_mod = symbol_to_module(db, v1_sym, dummy_root, prelude_mod)?;
 
     let ext = match v1_mod.data() {
-        ModSymbolData::Ext(e) => e,
-        ModSymbolData::Ast(_) => return None,
+        ModSymbol::Ext(e) => e,
+        ModSymbol::Ast(_) => return None,
     };
     let raw = db.tcx().module_children(ext.crate_num, ext.def_index);
     let name_text = name.text(db);
@@ -693,10 +727,10 @@ pub(crate) fn symbol_to_module<'db>(
     source_root: SourceRoot,
     parent: ModSymbol<'db>,
 ) -> Option<ModSymbol<'db>> {
-    match sym.data() {
-        SymbolData::Mod(m) => match m.data() {
-            ModSymbolData::Ast(decl) => resolve_mod(db, parent, decl, source_root),
-            ModSymbolData::Ext(ext) => Some(ModSymbol::external(ext.crate_num, ext.def_index)),
+    match sym {
+        SymbolData::Mod(m) => match m {
+            ModSymbol::Ast(decl) => resolve_mod(db, parent, decl, source_root),
+            ModSymbol::Ext(ext) => Some(ModSymbol::external(ext.crate_num, ext.def_index)),
         },
         SymbolData::Unknown(ext) => {
             if !db.tcx().is_module(ext.crate_num, ext.def_index) {

@@ -4,7 +4,7 @@
 //! No macro expansion yet — invocations are recorded but unresolved.
 
 use sage_ir::db::Database;
-use sage_ir::item::{ItemAst, ModAst, StructKind};
+use sage_ir::item::{LocalModItemSym, ModAst, StructKind};
 use sage_ir::memmap::{MemmapEntry, module_memmap};
 use sage_ir::module::ModSymbol;
 use sage_ir::name::Name;
@@ -79,7 +79,7 @@ fn p1_named_import_beats_glob() {
 
         // Should resolve to b::Foo (named import), not a::Foo (glob)
         let sym = result.unwrap();
-        match sym.data() {
+        match sym {
             SymbolData::Unknown(_) => panic!("expected local symbol"),
             _ => {}
         }
@@ -114,7 +114,7 @@ fn p4_glob_beats_std_prelude() {
 
         // Should resolve to custom::Option (glob), not std::Option (prelude)
         let sym = result.unwrap();
-        match sym.data() {
+        match sym {
             SymbolData::Unknown(_) => panic!("should resolve to local, not std prelude"),
             _ => {}
         }
@@ -261,7 +261,7 @@ fn struct_kind_tuple() {
             Namespace::Type,
         )
         .unwrap();
-        match sym.data() {
+        match sym {
             SymbolData::Struct(s) => assert_eq!(s.as_ast().unwrap().kind(db), StructKind::Tuple),
             other => panic!("expected Struct, got {other:?}"),
         }
@@ -282,7 +282,7 @@ fn struct_kind_unit() {
             Namespace::Type,
         )
         .unwrap();
-        match sym.data() {
+        match sym {
             SymbolData::Struct(s) => assert_eq!(s.as_ast().unwrap().kind(db), StructKind::Unit),
             other => panic!("expected Struct, got {other:?}"),
         }
@@ -303,7 +303,7 @@ fn struct_kind_braced() {
             Namespace::Type,
         )
         .unwrap();
-        match sym.data() {
+        match sym {
             SymbolData::Struct(s) => assert_eq!(s.as_ast().unwrap().kind(db), StructKind::Braced),
             other => panic!("expected Struct, got {other:?}"),
         }
@@ -325,7 +325,7 @@ fn tuple_struct_emits_ctor_entry() {
         let entries = get_entries(db, memmap);
         let has_item = entries
             .iter()
-            .any(|e| matches!(e, MemmapEntry::Item(ItemAst::Struct(_))));
+            .any(|e| matches!(e, MemmapEntry::Item(LocalModItemSym::Struct(_))));
         let has_ctor = entries
             .iter()
             .any(|e| matches!(e, MemmapEntry::TupleStructCtor(_)));

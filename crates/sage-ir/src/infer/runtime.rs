@@ -2,10 +2,11 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
-use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+use std::task::{Context, Poll, Waker};
 
 use rustc_hash::FxHashMap;
-use sage_ir::ty::InferVarIndex;
+
+use crate::ty::InferVarIndex;
 
 type BoxFuture = Pin<Box<dyn Future<Output = ()>>>;
 
@@ -77,7 +78,6 @@ impl Runtime {
                 }
             }
         }
-        // Also re-queue anything left in suspended (shouldn't happen, but defensive)
         for (_id, task) in self.suspended.drain() {
             self.ready.push_back(task);
         }
@@ -88,12 +88,10 @@ impl Runtime {
     /// queue is empty.
     pub fn drain(&mut self) {
         while let Some(mut task) = self.ready.pop_front() {
-            let waker = noop_waker();
+            let waker = Waker::noop();
             let mut cx = Context::from_waker(&waker);
             match task.future.as_mut().poll(&mut cx) {
-                Poll::Ready(()) => {
-                    // Task complete — drop it.
-                }
+                Poll::Ready(()) => {}
                 Poll::Pending => {
                     self.suspended.insert(task.id, task);
                 }
@@ -106,7 +104,7 @@ impl Runtime {
     pub fn block_on<F: Future>(&mut self, future: F) -> F::Output {
         let mut future = Box::pin(future);
         loop {
-            let waker = noop_waker();
+            let waker = Waker::noop();
             let mut cx = Context::from_waker(&waker);
             match future.as_mut().poll(&mut cx) {
                 Poll::Ready(result) => {
@@ -131,12 +129,4 @@ impl Runtime {
 
 thread_local! {
     pub static CURRENT_TASK: RefCell<Option<TaskId>> = const { RefCell::new(None) };
-}
-
-fn noop_waker() -> Waker {
-    const VTABLE: RawWakerVTable =
-        RawWakerVTable::new(|data| RawWaker::new(data, &VTABLE), |_| {}, |_| {}, |_| {});
-    let raw = RawWaker::new(std::ptr::null(), &VTABLE);
-    // Safety: the vtable functions are trivial no-ops.
-    unsafe { Waker::from_raw(raw) }
 }

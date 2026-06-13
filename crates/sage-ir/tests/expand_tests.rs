@@ -2,7 +2,7 @@ use std::path::Path;
 
 use expect_test::expect;
 use sage_ir::db::Database;
-use sage_ir::item::ItemAst;
+use sage_ir::item::LocalModItemSym;
 use sage_ir::item::ModAst;
 use sage_ir::module::ModSymbol;
 use sage_ir::resolve::{SourceRoot, module_items, resolve_module_path};
@@ -62,8 +62,8 @@ fn resolve_cmd_get_module() {
         assert!(module.is_some(), "failed to resolve cmd::get module");
 
         let module = module.unwrap();
-        let file = match module.data() {
-            sage_ir::module::ModSymbolData::Ast(a) => {
+        let file = match module {
+            sage_ir::module::ModSymbol::Ast(a) => {
                 a.file(db).expect("expected file-backed local module")
             }
             _ => panic!("expected local module"),
@@ -82,7 +82,7 @@ fn resolve_cmd_get_use_imports() {
         let items = module_items(db, module);
         let mut out = String::new();
         for item in &items {
-            if let ItemAst::Use(group) = item {
+            if let LocalModItemSym::Use(group) = item {
                 out.push_str(&format!("{group}\n"));
             }
         }
@@ -143,8 +143,8 @@ fn resolve_clients_module() {
         assert!(module.is_some(), "failed to resolve clients module");
 
         let module = module.unwrap();
-        let file = match module.data() {
-            sage_ir::module::ModSymbolData::Ast(a) => {
+        let file = match module {
+            sage_ir::module::ModSymbol::Ast(a) => {
                 a.file(db).expect("expected file-backed local module")
             }
             _ => panic!("expected local module"),

@@ -110,8 +110,8 @@ m!();
         assert!(
             matches!(
                 exp_entries[0],
-                MemmapEntry::Item(sage_ir::item::ItemAst::Error(..))
-                    | MemmapEntry::Item(sage_ir::item::ItemAst::Impl(_))
+                MemmapEntry::Item(sage_ir::item::LocalModItemSym::Error(..))
+                    | MemmapEntry::Item(sage_ir::item::LocalModItemSym::Impl(_))
             ),
             "expected anonymous impl entry, got {:?}",
             exp_entries[0]
