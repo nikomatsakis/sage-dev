@@ -1,11 +1,11 @@
+use crate::scope::ScopeSymbol;
 use crate::span::AbsoluteSpan;
-use crate::types::{Attr, UseImports};
+use crate::types::UseImports;
 
 /// A use declaration, desugared into flat imports.
 #[salsa::tracked(debug)]
 pub struct LocalUseSym<'db> {
-    #[returns(ref)]
-    pub attrs: Vec<Attr<'db>>,
+    pub scope: ScopeSymbol<'db>,
 
     #[tracked]
     #[returns(ref)]

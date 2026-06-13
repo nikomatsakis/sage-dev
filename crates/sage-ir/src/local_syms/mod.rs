@@ -1,17 +1,17 @@
 use sage_stash::StashDirect;
 
-use crate::item::consts::LocalConstSym;
-use crate::item::enums::LocalEnumSym;
-use crate::item::fns::LocalFnSym;
-use crate::item::impls::LocalImplSym;
-use crate::item::macro_defs::LocalMacroDefSym;
-use crate::item::macro_invocations::LocalMacroInvocationSym;
-use crate::item::mods::LocalModSym;
-use crate::item::statics::LocalStaticSym;
-use crate::item::structs::LocalStructSym;
-use crate::item::traits::LocalTraitSym;
-use crate::item::type_aliases::LocalTypeAliasSym;
-use crate::item::uses::LocalUseSym;
+use crate::local_syms::consts::LocalConstSym;
+use crate::local_syms::enums::LocalEnumSym;
+use crate::local_syms::fns::LocalFnSym;
+use crate::local_syms::impls::LocalImplSym;
+use crate::local_syms::macro_defs::LocalMacroDefSym;
+use crate::local_syms::macro_invocations::LocalMacroInvocationSym;
+use crate::local_syms::mods::LocalModSym;
+use crate::local_syms::statics::LocalStaticSym;
+use crate::local_syms::structs::LocalStructSym;
+use crate::local_syms::traits::LocalTraitSym;
+use crate::local_syms::type_aliases::LocalTypeAliasSym;
+use crate::local_syms::uses::LocalUseSym;
 use crate::source::SourceFile;
 use crate::span::{AbsoluteSpan, ParseSource};
 

@@ -1,21 +1,15 @@
 use sage_stash::StashDirect;
 
-use crate::item::LocalModItemSym;
-use crate::sig_ast::*;
+use crate::cst::impls::ImplCst;
+use crate::scope::ScopeSymbol;
 use crate::span::AbsoluteSpan;
-use crate::types::Attr;
 
 #[salsa::tracked(debug)]
 pub struct LocalImplSym<'db> {
-    #[returns(ref)]
-    pub attrs: Vec<Attr<'db>>,
-
-    #[tracked]
-    #[returns(ref)]
-    pub signature: ImplSigAst<'db>,
+    pub scope: ScopeSymbol<'db>,
 
     #[returns(ref)]
-    pub items: Vec<LocalModItemSym<'db>>,
+    pub cst: ImplCst<'db>,
 
     #[tracked]
     pub span: AbsoluteSpan<'db>,

@@ -1,30 +1,15 @@
-use crate::body::FunctionBody;
+use crate::cst::fns::FnCst;
 use crate::name::Name;
-use crate::sig_ast::*;
+use crate::scope::ScopeSymbol;
 use crate::span::AbsoluteSpan;
-use crate::types::Attr;
 
 #[salsa::tracked(debug)]
 pub struct LocalFnSym<'db> {
     pub name: Name<'db>,
+    pub scope: ScopeSymbol<'db>,
 
-    #[tracked]
     #[returns(ref)]
-    pub attrs: Vec<Attr<'db>>,
-
-    #[tracked]
-    #[returns(ref)]
-    pub signature: FnSigAst<'db>,
-
-    #[tracked]
-    pub is_async: bool,
-
-    #[tracked]
-    pub is_unsafe: bool,
-
-    #[tracked]
-    #[returns(ref)]
-    pub body: FunctionBody<'db>,
+    pub cst: FnCst<'db>,
 
     #[tracked]
     pub span: AbsoluteSpan<'db>,

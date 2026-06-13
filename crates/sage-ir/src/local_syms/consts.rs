@@ -1,19 +1,15 @@
+use crate::cst::consts::ConstCst;
 use crate::name::Name;
-use crate::sig_ast::ConstSigAst;
+use crate::scope::ScopeSymbol;
 use crate::span::AbsoluteSpan;
-use crate::types::Attr;
 
 #[salsa::tracked(debug)]
 pub struct LocalConstSym<'db> {
     pub name: Name<'db>,
+    pub scope: ScopeSymbol<'db>,
 
-    #[tracked]
     #[returns(ref)]
-    pub attrs: Vec<Attr<'db>>,
-
-    #[tracked]
-    #[returns(ref)]
-    pub signature: ConstSigAst<'db>,
+    pub cst: ConstCst<'db>,
 
     #[tracked]
     pub span: AbsoluteSpan<'db>,
