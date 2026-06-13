@@ -1,5 +1,6 @@
 use sage_stash::{AllocStashData, Ptr, Slice, Stashed};
 
+use crate::cst::attrs::AttrCst;
 use crate::cst::expr::ExprCst;
 use crate::cst::generics::GenericParamCst;
 use crate::cst::ty::TypeCst;
@@ -11,6 +12,7 @@ pub type FnCst<'db> = Stashed<Ptr<FnCstData<'db>>>;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct FnCstData<'db> {
+    pub attrs: Slice<AttrCst<'db>>,
     pub name: Name<'db>,
     pub generics: Slice<GenericParamCst<'db>>,
     pub params: Slice<ParamCst<'db>>,

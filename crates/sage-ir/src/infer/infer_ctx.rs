@@ -33,8 +33,9 @@ pub enum DiagnosticKind<'db> {
 }
 
 impl<'db> InferCtx<'db> {
-    pub fn new() -> Self {
+    pub fn new(db: &'db dyn crate::Db) -> Self {
         Self {
+            db,
             egraph: VersionedEGraph::new(),
             runtime: Runtime::new(),
             current_universe: Universe(1),

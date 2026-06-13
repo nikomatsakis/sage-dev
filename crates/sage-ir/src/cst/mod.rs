@@ -3,6 +3,7 @@
 //! CST nodes are stash-allocated, carry relative spans, and mirror
 //! TreeSitter structure. Nothing smart — just syntax.
 
+pub mod attrs;
 pub mod consts;
 pub mod enums;
 pub mod expr;
