@@ -1,6 +1,6 @@
 use sage_ir::db::Database;
 use sage_ir::generic_param::{ExtGenericParam, GenericParam, GenericParamKind};
-use sage_ir::item::{ItemAst, ModAst};
+use sage_ir::item::{LocalModItemSym, ModAst};
 use sage_ir::lower::parse_source_file;
 use sage_ir::module::ModSymbol;
 use sage_ir::name::Name;
@@ -22,7 +22,7 @@ fn ty_adt_round_trip() {
         let scope = ScopeSymbol::Module(root_module, source_root);
         let items = parse_source_file(db, file);
         let sym = match items[0] {
-            ItemAst::Struct(s) => Symbol::local(ItemAst::Struct(s), scope),
+            LocalModItemSym::Struct(s) => Symbol::local(LocalModItemSym::Struct(s), scope),
             _ => panic!("expected struct"),
         };
 

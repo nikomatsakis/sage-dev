@@ -25,30 +25,34 @@ pub enum Namespace {
 }
 
 /// Whether an item lives in the given namespace.
-pub(crate) fn item_in_namespace(_db: &dyn Db, item: ItemAst<'_>, ns: Namespace) -> bool {
+pub(crate) fn item_in_namespace(_db: &dyn Db, item: LocalModItemSym<'_>, ns: Namespace) -> bool {
     match item {
         // Structs live in Type only. The value-namespace entry for
         // tuple/unit structs is handled by `MemmapEntry::TupleStructCtor`.
-        ItemAst::Struct(_) => matches!(ns, Namespace::Type),
+        LocalModItemSym::Struct(_) => matches!(ns, Namespace::Type),
 
         // Type-namespace-only items.
-        ItemAst::Enum(_) | ItemAst::Trait(_) | ItemAst::TypeAlias(_) | ItemAst::Mod(_) => {
+        LocalModItemSym::Enum(_)
+        | LocalModItemSym::Trait(_)
+        | LocalModItemSym::TypeAlias(_)
+        | LocalModItemSym::Mod(_) => {
             matches!(ns, Namespace::Type)
         }
 
         // Value-namespace-only items.
-        ItemAst::Function(_) | ItemAst::Const(_) | ItemAst::Static(_) => {
+        LocalModItemSym::Function(_) | LocalModItemSym::Const(_) | LocalModItemSym::Static(_) => {
             matches!(ns, Namespace::Value)
         }
 
         // `macro_rules!` definitions live in the bang-macro namespace.
-        ItemAst::MacroDef(_) => matches!(ns, Namespace::Macro(MacroKind::Bang)),
+        LocalModItemSym::MacroDef(_) => matches!(ns, Namespace::Macro(MacroKind::Bang)),
 
         // Items with no name: they're never looked up by name, so
         // they don't occupy any namespace.
-        ItemAst::Impl(_) | ItemAst::Use(_) | ItemAst::MacroInvocation(_) | ItemAst::Error(..) => {
-            false
-        }
+        LocalModItemSym::Impl(_)
+        | LocalModItemSym::Use(_)
+        | LocalModItemSym::MacroInvocation(_)
+        | LocalModItemSym::Error(..) => false,
     }
 }
 
@@ -209,21 +213,21 @@ pub fn resolve_module_path<'db>(
 }
 
 /// Extract the name from an item, if it has one.
-pub fn item_name<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Option<Name<'db>> {
+pub fn item_name<'db>(db: &'db dyn Db, item: LocalModItemSym<'db>) -> Option<Name<'db>> {
     match item {
-        ItemAst::Function(f) => Some(f.name(db)),
-        ItemAst::Struct(s) => Some(s.name(db)),
-        ItemAst::Enum(e) => Some(e.name(db)),
-        ItemAst::Trait(t) => Some(t.name(db)),
-        ItemAst::TypeAlias(t) => Some(t.name(db)),
-        ItemAst::Const(c) => Some(c.name(db)),
-        ItemAst::Static(s) => Some(s.name(db)),
-        ItemAst::Mod(m) => Some(m.name(db)),
-        ItemAst::Impl(_)
-        | ItemAst::Use(_)
-        | ItemAst::MacroDef(_)
-        | ItemAst::MacroInvocation(_)
-        | ItemAst::Error(..) => None,
+        LocalModItemSym::Function(f) => Some(f.name(db)),
+        LocalModItemSym::Struct(s) => Some(s.name(db)),
+        LocalModItemSym::Enum(e) => Some(e.name(db)),
+        LocalModItemSym::Trait(t) => Some(t.name(db)),
+        LocalModItemSym::TypeAlias(t) => Some(t.name(db)),
+        LocalModItemSym::Const(c) => Some(c.name(db)),
+        LocalModItemSym::Static(s) => Some(s.name(db)),
+        LocalModItemSym::Mod(m) => Some(m.name(db)),
+        LocalModItemSym::Impl(_)
+        | LocalModItemSym::Use(_)
+        | LocalModItemSym::MacroDef(_)
+        | LocalModItemSym::MacroInvocation(_)
+        | LocalModItemSym::Error(..) => None,
     }
 }
 
@@ -252,7 +256,7 @@ fn parent_dir_for(path: &str) -> String {
 
 /// Items declared in a module (from `parse_source_file` or the inline
 /// items list for local modules; empty for external).
-pub fn module_items<'db>(db: &'db dyn Db, module: ModSymbol<'db>) -> Vec<ItemAst<'db>> {
+pub fn module_items<'db>(db: &'db dyn Db, module: ModSymbol<'db>) -> Vec<LocalModItemSym<'db>> {
     db.log_query(format!("module_items({})", module_label(db, module)));
     match module {
         ModSymbol::Ast(ast) => ast.unexpanded_items(db),

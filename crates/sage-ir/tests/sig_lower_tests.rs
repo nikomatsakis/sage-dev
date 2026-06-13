@@ -18,7 +18,7 @@ fn fn_signature_generics_and_params() {
         );
         let items = parse_source_file(db, file);
         let func = match items[0] {
-            ItemAst::Function(f) => f,
+            LocalModItemSym::Function(f) => f,
             _ => panic!("expected function"),
         };
         let sig = func.signature(db);
@@ -66,7 +66,7 @@ fn struct_signature_generics_and_fields() {
         );
         let items = parse_source_file(db, file);
         let s = match items[0] {
-            ItemAst::Struct(s) => s,
+            LocalModItemSym::Struct(s) => s,
             _ => panic!("expected struct"),
         };
         let sig = s.signature(db);
@@ -94,7 +94,7 @@ fn path_with_type_args() {
         );
         let items = parse_source_file(db, file);
         let func = match items[0] {
-            ItemAst::Function(f) => f,
+            LocalModItemSym::Function(f) => f,
             _ => panic!("expected function"),
         };
         let sig = func.signature(db);
@@ -140,7 +140,7 @@ fn enum_signature_variants() {
         );
         let items = parse_source_file(db, file);
         let e = match items[0] {
-            ItemAst::Enum(e) => e,
+            LocalModItemSym::Enum(e) => e,
             _ => panic!("expected enum"),
         };
         let sig = e.signature(db);

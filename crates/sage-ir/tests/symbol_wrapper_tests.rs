@@ -18,7 +18,7 @@ fn fn_symbol_from_ast() {
         let scope = ScopeSymbol::Module(root, source_root);
         let items = parse_source_file(db, file);
         let fn_ast = match items[0] {
-            ItemAst::Function(f) => f,
+            LocalModItemSym::Function(f) => f,
             _ => panic!("expected function"),
         };
         let fn_sym = FnSymbol::local(fn_ast, scope);
@@ -37,7 +37,7 @@ fn struct_symbol_from_ast() {
         let scope = ScopeSymbol::Module(root, source_root);
         let items = parse_source_file(db, file);
         let struct_ast = match items[0] {
-            ItemAst::Struct(s) => s,
+            LocalModItemSym::Struct(s) => s,
             _ => panic!("expected struct"),
         };
         let struct_sym = StructSymbol::local(struct_ast, scope);
@@ -64,7 +64,7 @@ fn trait_symbol_round_trip() {
         let scope = ScopeSymbol::Module(root, source_root);
         let items = parse_source_file(db, file);
         let trait_ast = match items[0] {
-            ItemAst::Trait(t) => t,
+            LocalModItemSym::Trait(t) => t,
             _ => panic!("expected trait"),
         };
         let trait_sym = TraitSymbol::local(trait_ast, scope);

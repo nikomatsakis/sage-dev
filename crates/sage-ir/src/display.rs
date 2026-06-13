@@ -19,22 +19,22 @@ fn with_db(f: impl FnOnce(&dyn salsa::Database) -> fmt::Result) -> fmt::Result {
 
 // -- Item --
 
-impl fmt::Display for ItemAst<'_> {
+impl fmt::Display for LocalModItemSym<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ItemAst::Function(v) => fmt::Display::fmt(v, f),
-            ItemAst::Struct(v) => fmt::Display::fmt(v, f),
-            ItemAst::Enum(v) => fmt::Display::fmt(v, f),
-            ItemAst::Trait(v) => fmt::Display::fmt(v, f),
-            ItemAst::Impl(v) => fmt::Display::fmt(v, f),
-            ItemAst::TypeAlias(v) => fmt::Display::fmt(v, f),
-            ItemAst::Const(v) => fmt::Display::fmt(v, f),
-            ItemAst::Static(v) => fmt::Display::fmt(v, f),
-            ItemAst::Mod(v) => fmt::Display::fmt(v, f),
-            ItemAst::Use(v) => fmt::Display::fmt(v, f),
-            ItemAst::MacroDef(v) => fmt::Display::fmt(v, f),
-            ItemAst::MacroInvocation(v) => fmt::Display::fmt(v, f),
-            ItemAst::Error(span) => write!(f, "{{error {}..{}}}", span.start, span.end),
+            LocalModItemSym::Function(v) => fmt::Display::fmt(v, f),
+            LocalModItemSym::Struct(v) => fmt::Display::fmt(v, f),
+            LocalModItemSym::Enum(v) => fmt::Display::fmt(v, f),
+            LocalModItemSym::Trait(v) => fmt::Display::fmt(v, f),
+            LocalModItemSym::Impl(v) => fmt::Display::fmt(v, f),
+            LocalModItemSym::TypeAlias(v) => fmt::Display::fmt(v, f),
+            LocalModItemSym::Const(v) => fmt::Display::fmt(v, f),
+            LocalModItemSym::Static(v) => fmt::Display::fmt(v, f),
+            LocalModItemSym::Mod(v) => fmt::Display::fmt(v, f),
+            LocalModItemSym::Use(v) => fmt::Display::fmt(v, f),
+            LocalModItemSym::MacroDef(v) => fmt::Display::fmt(v, f),
+            LocalModItemSym::MacroInvocation(v) => fmt::Display::fmt(v, f),
+            LocalModItemSym::Error(span) => write!(f, "{{error {}..{}}}", span.start, span.end),
         }
     }
 }

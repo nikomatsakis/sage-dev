@@ -255,7 +255,7 @@ pub fn lower_fn_sig<'db>(
     let mut dst = Stash::new();
     let mut ribs = Ribs::new();
     ribs.push_scope();
-    let parent = Symbol::local(crate::item::ItemAst::Function(fn_ast), scope);
+    let parent = Symbol::local(crate::item::LocalModItemSym::Function(fn_ast), scope);
     let generics = build_generics_ribs(db, src, data.generics, &mut dst, &mut ribs, parent);
 
     if let Some(ty) = self_type {
@@ -368,7 +368,7 @@ pub fn enum_signature<'db>(
     let mut dst = Stash::new();
     let mut ribs = Ribs::new();
     ribs.push_scope();
-    let parent = Symbol::local(crate::item::ItemAst::Enum(enum_ast), scope);
+    let parent = Symbol::local(crate::item::LocalModItemSym::Enum(enum_ast), scope);
     let generics = build_generics_ribs(db, src, data.generics, &mut dst, &mut ribs, parent);
 
     let mut cx = SigLowerCtx {

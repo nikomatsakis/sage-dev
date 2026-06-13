@@ -4,7 +4,7 @@
 //! No macro expansion yet — invocations are recorded but unresolved.
 
 use sage_ir::db::Database;
-use sage_ir::item::{ItemAst, ModAst, StructKind};
+use sage_ir::item::{LocalModItemSym, ModAst, StructKind};
 use sage_ir::memmap::{MemmapEntry, module_memmap};
 use sage_ir::module::ModSymbol;
 use sage_ir::name::Name;
@@ -325,7 +325,7 @@ fn tuple_struct_emits_ctor_entry() {
         let entries = get_entries(db, memmap);
         let has_item = entries
             .iter()
-            .any(|e| matches!(e, MemmapEntry::Item(ItemAst::Struct(_))));
+            .any(|e| matches!(e, MemmapEntry::Item(LocalModItemSym::Struct(_))));
         let has_ctor = entries
             .iter()
             .any(|e| matches!(e, MemmapEntry::TupleStructCtor(_)));

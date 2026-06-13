@@ -9,7 +9,7 @@ use std::path::Path;
 
 use expect_test::expect;
 use sage_ir::Db;
-use sage_ir::item::ItemAst;
+use sage_ir::item::LocalModItemSym;
 use sage_ir::resolve::{module_items, resolve_module_path};
 
 use sage::driver::run_sage_with;
@@ -55,8 +55,8 @@ fn resolve_cmd_get_with_real_tcx() {
         let item_names: Vec<_> = items
             .iter()
             .filter_map(|item| match item {
-                ItemAst::Struct(s) => Some(s.name(sage.db).text(sage.db).to_string()),
-                ItemAst::Function(f) => Some(f.name(sage.db).text(sage.db).to_string()),
+                LocalModItemSym::Struct(s) => Some(s.name(sage.db).text(sage.db).to_string()),
+                LocalModItemSym::Function(f) => Some(f.name(sage.db).text(sage.db).to_string()),
                 _ => None,
             })
             .collect();
@@ -78,7 +78,7 @@ fn resolve_use_imports_with_real_tcx() {
         let items = module_items(sage.db, module);
         let mut out = String::new();
         for item in items {
-            if let ItemAst::Use(group) = item {
+            if let LocalModItemSym::Use(group) = item {
                 out.push_str(&format!("{group}\n"));
             }
         }
@@ -105,7 +105,7 @@ fn expand_derives_cmd_get() {
         let items = module_items(sage.db, module);
         assert!(
             items.iter().any(
-                |item| matches!(item, ItemAst::Struct(s) if s.name(sage.db).text(sage.db) == "Get")
+                |item| matches!(item, LocalModItemSym::Struct(s) if s.name(sage.db).text(sage.db) == "Get")
             ),
             "expected Get struct in cmd/get.rs"
         );
@@ -178,12 +178,12 @@ fn expand_no_derives() {
         let items = sage_ir::resolve::module_items(sage.db, sage.root);
         for item in items {
             let has_derive = match item {
-                ItemAst::Struct(s) => s.attrs(sage.db).iter().any(|a| {
+                LocalModItemSym::Struct(s) => s.attrs(sage.db).iter().any(|a| {
                     a.path(sage.db)
                         .first()
                         .is_some_and(|s| s.text(sage.db) == "derive")
                 }),
-                ItemAst::Enum(e) => e.attrs(sage.db).iter().any(|a| {
+                LocalModItemSym::Enum(e) => e.attrs(sage.db).iter().any(|a| {
                     a.path(sage.db)
                         .first()
                         .is_some_and(|s| s.text(sage.db) == "derive")
@@ -208,7 +208,7 @@ fn expand_derives_cmd_get_full() {
         let get_struct = items
             .iter()
             .find(
-                |item| matches!(item, ItemAst::Struct(s) if s.name(sage.db).text(sage.db) == "Get"),
+                |item| matches!(item, LocalModItemSym::Struct(s) if s.name(sage.db).text(sage.db) == "Get"),
             )
             .expect("Get struct not found in cmd/get.rs");
 
@@ -378,7 +378,7 @@ fn expand_derives_clap_parser() {
         let items = module_items(sage.db, module);
         let cli_struct = items
             .iter()
-            .find(|i| matches!(i, ItemAst::Struct(s) if s.name(sage.db).text(sage.db) == "Cli"))
+            .find(|i| matches!(i, LocalModItemSym::Struct(s) if s.name(sage.db).text(sage.db) == "Cli"))
             .expect("Cli struct not found");
 
         let results =
@@ -419,7 +419,7 @@ fn expanded_items_are_valid_ir() {
         let items = module_items(sage.db, module);
         let cli_struct = items
             .iter()
-            .find(|i| matches!(i, ItemAst::Struct(s) if s.name(sage.db).text(sage.db) == "Cli"))
+            .find(|i| matches!(i, LocalModItemSym::Struct(s) if s.name(sage.db).text(sage.db) == "Cli"))
             .expect("Cli struct not found");
 
         let results =
@@ -432,7 +432,7 @@ fn expanded_items_are_valid_ir() {
                     assert!(
                         matches!(
                             item,
-                            ItemAst::Impl(_) | ItemAst::Function(_) | ItemAst::Const(_)
+                            LocalModItemSym::Impl(_) | LocalModItemSym::Function(_) | LocalModItemSym::Const(_)
                         ),
                         "unexpected expanded item kind: {item:?}",
                     );
@@ -549,7 +549,7 @@ fn snapshot_expanded_clap_parser() {
         let items = module_items(sage.db, module);
         let cli_struct = items
             .iter()
-            .find(|i| matches!(i, ItemAst::Struct(s) if s.name(sage.db).text(sage.db) == "Cli"))
+            .find(|i| matches!(i, LocalModItemSym::Struct(s) if s.name(sage.db).text(sage.db) == "Cli"))
             .expect("Cli struct not found");
 
         let results =

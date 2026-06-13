@@ -2,7 +2,7 @@ use expect_test::Expect;
 pub use expect_test::expect;
 use sage_ir::Db;
 use sage_ir::db::Database;
-use sage_ir::item::{FnAst, ItemAst};
+use sage_ir::item::{FnAst, LocalModItemSym};
 use sage_ir::module::ModSymbol;
 use sage_ir::resolve::SourceRoot;
 use sage_ir::scope::ScopeSymbol;
@@ -47,7 +47,7 @@ impl TestCrate {
 
             let items = sage_ir::resolve::module_items(db, root);
             for item in &items {
-                if let ItemAst::Function(fn_ast) = item {
+                if let LocalModItemSym::Function(fn_ast) = item {
                     let errors = self.check_function(db, *fn_ast, root, source_root);
                     all_errors.extend(errors);
                 }

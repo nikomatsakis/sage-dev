@@ -6,7 +6,7 @@
 use sage_stash::{Slice, Stash};
 
 use crate::Db;
-use crate::item::{ItemAst, MacroDefAst};
+use crate::item::{LocalModItemSym, MacroDefAst};
 use crate::module::{ModSymbol, ModSymbolData};
 use crate::name::Name;
 use crate::resolve::{ResolutionError, SourceRoot, definition, symbol_to_module};
@@ -180,7 +180,7 @@ fn resolve_macro_path_to_defs<'db>(
 
             // 1. Local items in this module's snapshot.
             for entry in &stash[entries] {
-                if let MemmapEntry::Item(ItemAst::Mod(_)) = entry {
+                if let MemmapEntry::Item(LocalModItemSym::Mod(_)) = entry {
                     if let Some(m) = item_as_child_module(db, entry, first, source_root, module) {
                         let mut defs = Vec::new();
                         if let Some(def) = walk_path_to_macro(db, m, source_root, rest) {
@@ -196,7 +196,7 @@ fn resolve_macro_path_to_defs<'db>(
                 if let MemmapEntry::MacroUse(mu) = entry {
                     for exp in &stash[mu.expansions] {
                         for sub_entry in &stash[exp.entries] {
-                            if let MemmapEntry::Item(ItemAst::Mod(_)) = sub_entry {
+                            if let MemmapEntry::Item(LocalModItemSym::Mod(_)) = sub_entry {
                                 if let Some(m) =
                                     item_as_child_module(db, sub_entry, first, source_root, module)
                                 {
@@ -230,7 +230,7 @@ fn resolve_macro_path_to_defs<'db>(
                     let src_stash = source_memmap.stash(db);
                     let src_entries = source_memmap.entries(db);
                     for src_entry in &src_stash[src_entries] {
-                        if let MemmapEntry::Item(ItemAst::Mod(_)) = src_entry {
+                        if let MemmapEntry::Item(LocalModItemSym::Mod(_)) = src_entry {
                             if let Some(m) =
                                 item_as_child_module(db, src_entry, first, source_root, glob_target)
                             {
@@ -381,7 +381,7 @@ fn item_as_child_module<'db>(
     let MemmapEntry::Item(item) = entry else {
         return None;
     };
-    let ItemAst::Mod(mod_item) = item else {
+    let LocalModItemSym::Mod(mod_item) = item else {
         return None;
     };
     if mod_item.name(db) != first {

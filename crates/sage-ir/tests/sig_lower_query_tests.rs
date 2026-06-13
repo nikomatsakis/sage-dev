@@ -14,7 +14,7 @@ use sage_ir::ty::*;
 use sage_ir::types::Mutability;
 use salsa::Database as _;
 
-fn setup<'db>(db: &'db Database, src: &str) -> (SourceRoot, ModSymbol<'db>, Vec<ItemAst<'db>>) {
+fn setup<'db>(db: &'db Database, src: &str) -> (SourceRoot, ModSymbol<'db>, Vec<LocalModItemSym<'db>>) {
     let file = SourceFile::new(db, "lib.rs".to_owned(), src.to_owned());
     let source_root = SourceRoot::new(db, vec![file]);
     let root = ModSymbol::ast(ModAst::crate_root(db, file));
@@ -29,7 +29,7 @@ fn fn_identity_generic() {
         let (source_root, module, items) = setup(db, "fn identity<T>(x: T) -> T {}");
         let scope = ScopeSymbol::Module(module, source_root);
         let fn_ast = match items[0] {
-            ItemAst::Function(f) => f,
+            LocalModItemSym::Function(f) => f,
             _ => panic!("expected function"),
         };
 
@@ -64,7 +64,7 @@ fn fn_add_primitives() {
         let (source_root, module, items) = setup(db, "fn add(a: i32, b: i32) -> i32 {}");
         let scope = ScopeSymbol::Module(module, source_root);
         let fn_ast = match items[0] {
-            ItemAst::Function(f) => f,
+            LocalModItemSym::Function(f) => f,
             _ => panic!("expected function"),
         };
 
@@ -92,7 +92,7 @@ fn struct_pair_generic() {
         let (source_root, module, items) = setup(db, "struct Pair<A, B> { first: A, second: B }");
         let scope = ScopeSymbol::Module(module, source_root);
         let struct_ast = match items[0] {
-            ItemAst::Struct(s) => s,
+            LocalModItemSym::Struct(s) => s,
             _ => panic!("expected struct"),
         };
 
@@ -125,7 +125,7 @@ fn fn_takes_ref() {
         let (source_root, module, items) = setup(db, "fn takes_ref(x: &str) -> &[u8] {}");
         let scope = ScopeSymbol::Module(module, source_root);
         let fn_ast = match items[0] {
-            ItemAst::Function(f) => f,
+            LocalModItemSym::Function(f) => f,
             _ => panic!("expected function"),
         };
 
@@ -165,7 +165,7 @@ fn enum_with_fields() {
         let (source_root, module, items) = setup(db, "enum Option<T> { None, Some { value: T } }");
         let scope = ScopeSymbol::Module(module, source_root);
         let enum_ast = match items[0] {
-            ItemAst::Enum(e) => e,
+            LocalModItemSym::Enum(e) => e,
             _ => panic!("expected enum"),
         };
 
@@ -198,7 +198,7 @@ fn fn_no_return_type_is_unit() {
         let (source_root, module, items) = setup(db, "fn noop() {}");
         let scope = ScopeSymbol::Module(module, source_root);
         let fn_ast = match items[0] {
-            ItemAst::Function(f) => f,
+            LocalModItemSym::Function(f) => f,
             _ => panic!("expected function"),
         };
 
@@ -220,13 +220,13 @@ fn fn_no_return_type_is_unit() {
 
 fn find_impl_method<'db>(
     db: &'db dyn salsa::Database,
-    items: &[ItemAst<'db>],
+    items: &[LocalModItemSym<'db>],
     method_name: &str,
 ) -> FnAst<'db> {
     for item in items {
-        if let ItemAst::Impl(impl_ast) = item {
+        if let LocalModItemSym::Impl(impl_ast) = item {
             for sub in impl_ast.items(db) {
-                if let ItemAst::Function(f) = sub {
+                if let LocalModItemSym::Function(f) = sub {
                     if f.name(db).text(db) == method_name {
                         return *f;
                     }
@@ -249,10 +249,10 @@ fn impl_method_self_return_resolves() {
 
         // Build the self type: Adt(Foo, [])
         let foo_struct = match items[0] {
-            ItemAst::Struct(s) => s,
+            LocalModItemSym::Struct(s) => s,
             _ => panic!("expected struct"),
         };
-        let foo_sym = sage_ir::symbol::Symbol::local(ItemAst::Struct(foo_struct), scope);
+        let foo_sym = sage_ir::symbol::Symbol::local(LocalModItemSym::Struct(foo_struct), scope);
         let mut stash = sage_stash::Stash::new();
         let empty_args = stash.alloc_slice::<sage_stash::Ptr<Ty>>(&[]);
         let self_ty = Ty {
@@ -286,10 +286,10 @@ fn impl_method_ref_self_param() {
         let method = find_impl_method(db, &items, "bar");
 
         let foo_struct = match items[0] {
-            ItemAst::Struct(s) => s,
+            LocalModItemSym::Struct(s) => s,
             _ => panic!("expected struct"),
         };
-        let foo_sym = sage_ir::symbol::Symbol::local(ItemAst::Struct(foo_struct), scope);
+        let foo_sym = sage_ir::symbol::Symbol::local(LocalModItemSym::Struct(foo_struct), scope);
         let mut stash = sage_stash::Stash::new();
         let empty_args = stash.alloc_slice::<sage_stash::Ptr<Ty>>(&[]);
         let self_ty = Ty {
@@ -338,10 +338,10 @@ fn generic_impl_self_resolves_with_params() {
         let method = find_impl_method(db, &items, "into_self");
 
         let wrapper_struct = match items[0] {
-            ItemAst::Struct(s) => s,
+            LocalModItemSym::Struct(s) => s,
             _ => panic!("expected struct"),
         };
-        let wrapper_sym = sage_ir::symbol::Symbol::local(ItemAst::Struct(wrapper_struct), scope);
+        let wrapper_sym = sage_ir::symbol::Symbol::local(LocalModItemSym::Struct(wrapper_struct), scope);
 
         // Lower the struct signature to get its generics (this creates AstGenericParams
         // inside a tracked function context)

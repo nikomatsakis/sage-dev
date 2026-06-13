@@ -3,7 +3,7 @@
 use sage_stash::{Slice, Stash};
 
 use crate::Db;
-use crate::item::ItemAst;
+use crate::item::LocalModItemSym;
 use crate::name::Name;
 use crate::resolve::{MacroKind, Namespace, Resolver, SourceRoot, item_in_namespace, item_name};
 use crate::scope::ScopeSymbol;
@@ -264,4 +264,4 @@ fn name_available_via_glob<'db>(
 }
 
 #[allow(dead_code)]
-fn _use_item(_: ItemAst<'_>) {}
+fn _use_item(_: LocalModItemSym<'_>) {}

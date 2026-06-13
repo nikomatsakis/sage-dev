@@ -1,12 +1,13 @@
 pub mod body;
 pub(crate) mod body_resolve;
+pub mod cst;
 pub mod db;
 pub mod derive;
 pub mod display;
 pub mod dump;
 pub mod generic_param;
 pub(crate) mod infer;
-pub mod item;
+pub mod local_syms;
 pub mod lower;
 pub mod memmap;
 pub mod name;

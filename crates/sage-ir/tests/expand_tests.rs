@@ -2,7 +2,7 @@ use std::path::Path;
 
 use expect_test::expect;
 use sage_ir::db::Database;
-use sage_ir::item::ItemAst;
+use sage_ir::item::LocalModItemSym;
 use sage_ir::item::ModAst;
 use sage_ir::module::ModSymbol;
 use sage_ir::resolve::{SourceRoot, module_items, resolve_module_path};
@@ -82,7 +82,7 @@ fn resolve_cmd_get_use_imports() {
         let items = module_items(db, module);
         let mut out = String::new();
         for item in &items {
-            if let ItemAst::Use(group) = item {
+            if let LocalModItemSym::Use(group) = item {
                 out.push_str(&format!("{group}\n"));
             }
         }

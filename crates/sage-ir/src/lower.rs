@@ -15,14 +15,17 @@ use crate::types::*;
 
 /// Tracked wrapper: parse a real source file.
 #[salsa::tracked(returns(ref))]
-pub fn parse_source_file<'db>(db: &'db dyn Db, file: SourceFile) -> Vec<ItemAst<'db>> {
+pub fn parse_source_file<'db>(db: &'db dyn Db, file: SourceFile) -> Vec<LocalModItemSym<'db>> {
     db.log_query(format!("parse_source_file(\"{}\")", file.path(db)));
     parse_source_text(db, ParseSource::SourceFile(file), file.text(db))
 }
 
 /// Tracked wrapper: parse macro expansion output.
 #[salsa::tracked(returns(ref))]
-pub fn parse_macro_expansion<'db>(db: &'db dyn Db, exp: MacroExpansion<'db>) -> Vec<ItemAst<'db>> {
+pub fn parse_macro_expansion<'db>(
+    db: &'db dyn Db,
+    exp: MacroExpansion<'db>,
+) -> Vec<LocalModItemSym<'db>> {
     parse_source_text(db, ParseSource::MacroExpansion(exp), exp.text(db))
 }
 
@@ -32,7 +35,7 @@ pub fn parse_source_text<'db>(
     db: &'db dyn Db,
     source: ParseSource<'db>,
     text: &'db str,
-) -> Vec<ItemAst<'db>> {
+) -> Vec<LocalModItemSym<'db>> {
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(&tree_sitter_rust::LANGUAGE.into())
@@ -75,7 +78,7 @@ impl<'db> LowerCtx<'db> {
         }
     }
 
-    fn lower_items(&self, parent: Node<'_>) -> Vec<ItemAst<'db>> {
+    fn lower_items(&self, parent: Node<'_>) -> Vec<LocalModItemSym<'db>> {
         let mut items = Vec::new();
         let mut pending_attr_nodes: Vec<(Node<'_>, AttrNodeKind)> = Vec::new();
         let mut cursor = parent.walk();
@@ -213,22 +216,22 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
 
     // -- Item dispatch --------------------------------------------------------
 
-    fn lower_item(&self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> ItemAst<'db> {
+    fn lower_item(&self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> LocalModItemSym<'db> {
         match node.kind() {
-            "function_item" => ItemAst::Function(self.lower_function(node, attrs)),
-            "struct_item" => ItemAst::Struct(self.lower_struct(node, attrs)),
-            "enum_item" => ItemAst::Enum(self.lower_enum(node, attrs)),
-            "trait_item" => ItemAst::Trait(self.lower_trait(node, attrs)),
-            "impl_item" => ItemAst::Impl(self.lower_impl(node, attrs)),
-            "type_item" => ItemAst::TypeAlias(self.lower_type_alias(node, attrs)),
-            "const_item" => ItemAst::Const(self.lower_const(node, attrs)),
-            "static_item" => ItemAst::Static(self.lower_static(node, attrs)),
-            "mod_item" => ItemAst::Mod(self.lower_mod(node, attrs)),
+            "function_item" => LocalModItemSym::Function(self.lower_function(node, attrs)),
+            "struct_item" => LocalModItemSym::Struct(self.lower_struct(node, attrs)),
+            "enum_item" => LocalModItemSym::Enum(self.lower_enum(node, attrs)),
+            "trait_item" => LocalModItemSym::Trait(self.lower_trait(node, attrs)),
+            "impl_item" => LocalModItemSym::Impl(self.lower_impl(node, attrs)),
+            "type_item" => LocalModItemSym::TypeAlias(self.lower_type_alias(node, attrs)),
+            "const_item" => LocalModItemSym::Const(self.lower_const(node, attrs)),
+            "static_item" => LocalModItemSym::Static(self.lower_static(node, attrs)),
+            "mod_item" => LocalModItemSym::Mod(self.lower_mod(node, attrs)),
             "use_declaration" => self.lower_use(node, attrs),
             "macro_definition" => self.lower_macro_def_item(node),
             "macro_invocation" => self.lower_macro_invocation_item(node),
             "expression_statement" => self.lower_expression_statement(node),
-            _ => ItemAst::Error(self.abs_span(node)),
+            _ => LocalModItemSym::Error(self.abs_span(node)),
         }
     }
 
@@ -821,7 +824,7 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
         ModAst::new(db, name, None, None, attrs, items, span)
     }
 
-    fn lower_use(&self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> ItemAst<'db> {
+    fn lower_use(&self, node: Node<'_>, attrs: Vec<Attr<'db>>) -> LocalModItemSym<'db> {
         let db = self.db();
         let span = self.abs_span(node);
         let mut raw_imports = Vec::new();
@@ -846,7 +849,7 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
             .collect();
         let imports_slice = stash.alloc_slice(&import_asts);
         let imports = sage_stash::Stashed::new(stash, imports_slice);
-        ItemAst::Use(UseGroupAst::new(db, attrs, imports, span))
+        LocalModItemSym::Use(UseGroupAst::new(db, attrs, imports, span))
     }
 
     fn flatten_use_tree(
@@ -946,44 +949,44 @@ impl<'a, 'db> ItemLowerCtx<'a, 'db> {
 
     // -- Macros ---------------------------------------------------------------
 
-    fn lower_macro_def_item(&self, node: Node<'_>) -> ItemAst<'db> {
+    fn lower_macro_def_item(&self, node: Node<'_>) -> LocalModItemSym<'db> {
         let db = self.db();
         let name_node = match node.child_by_field_name("name") {
             Some(n) => n,
-            None => return ItemAst::Error(self.abs_span(node)),
+            None => return LocalModItemSym::Error(self.abs_span(node)),
         };
         let name = self.intern_name(name_node);
         let span = self.abs_span(node);
         let body_tokens = crate::ts_helpers::extract_macro_body_tokens(node, self.parent.text);
 
-        ItemAst::MacroDef(MacroDefAst::new(db, name, body_tokens, span))
+        LocalModItemSym::MacroDef(MacroDefAst::new(db, name, body_tokens, span))
     }
 
-    fn lower_expression_statement(&self, node: Node<'_>) -> ItemAst<'db> {
+    fn lower_expression_statement(&self, node: Node<'_>) -> LocalModItemSym<'db> {
         let invoc = node
             .named_children(&mut node.walk())
             .find(|c| c.kind() == "macro_invocation");
         match invoc {
             Some(invoc_node) => self.lower_macro_invocation_item(invoc_node),
-            None => ItemAst::Error(self.abs_span(node)),
+            None => LocalModItemSym::Error(self.abs_span(node)),
         }
     }
 
-    fn lower_macro_invocation_item(&self, node: Node<'_>) -> ItemAst<'db> {
+    fn lower_macro_invocation_item(&self, node: Node<'_>) -> LocalModItemSym<'db> {
         let db = self.db();
         let macro_node = match node.child_by_field_name("macro") {
             Some(n) => n,
-            None => return ItemAst::Error(self.abs_span(node)),
+            None => return LocalModItemSym::Error(self.abs_span(node)),
         };
         let segments =
             crate::ts_helpers::collect_macro_path_segments(db, macro_node, self.parent.text);
         if segments.is_empty() {
-            return ItemAst::Error(self.abs_span(node));
+            return LocalModItemSym::Error(self.abs_span(node));
         }
         let span = self.abs_span(node);
         let input_tokens =
             crate::ts_helpers::extract_macro_invocation_tokens(node, self.parent.text);
-        ItemAst::MacroInvocation(MacroInvocationAst::new(db, segments, input_tokens, span))
+        LocalModItemSym::MacroInvocation(MacroInvocationAst::new(db, segments, input_tokens, span))
     }
 
     fn collect_path_segments(&self, node: Node<'_>, out: &mut Vec<Name<'db>>) {

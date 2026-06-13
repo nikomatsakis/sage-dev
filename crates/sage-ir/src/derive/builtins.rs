@@ -16,7 +16,7 @@ const GEN_REL_SPAN: RelativeSpan = RelativeSpan { start: 0, end: 0 };
 pub fn expand_builtin<'db>(
     db: &'db dyn Db,
     derive_name: Name<'db>,
-    item: ItemAst<'db>,
+    item: LocalModItemSym<'db>,
 ) -> Vec<ImplAst<'db>> {
     let name_text = derive_name.text(db);
     let item_name = crate::resolve::item_name(db, item)
@@ -36,7 +36,7 @@ pub fn expand_builtin<'db>(
 }
 
 /// `impl Debug for T { fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result { ... } }`
-fn expand_debug<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
+fn expand_debug<'db>(db: &'db dyn Db, item: LocalModItemSym<'db>) -> Vec<ImplAst<'db>> {
     let type_name = match item_info(db, item) {
         Some(name) => name,
         None => return Vec::new(),
@@ -86,14 +86,14 @@ fn expand_debug<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
         db,
         Vec::new(),
         impl_sig,
-        vec![ItemAst::Function(fmt_fn)],
+        vec![LocalModItemSym::Function(fmt_fn)],
         gen_abs_span(db),
     );
     vec![impl_item]
 }
 
 /// `impl Clone for T { fn clone(&self) -> Self { ... } }`
-fn expand_clone<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
+fn expand_clone<'db>(db: &'db dyn Db, item: LocalModItemSym<'db>) -> Vec<ImplAst<'db>> {
     let type_name = match item_info(db, item) {
         Some(name) => name,
         None => return Vec::new(),
@@ -136,14 +136,14 @@ fn expand_clone<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
         db,
         Vec::new(),
         impl_sig,
-        vec![ItemAst::Function(clone_fn)],
+        vec![LocalModItemSym::Function(clone_fn)],
         gen_abs_span(db),
     );
     vec![impl_item]
 }
 
 /// `impl Default for T { fn default() -> Self { ... } }`
-fn expand_default<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>> {
+fn expand_default<'db>(db: &'db dyn Db, item: LocalModItemSym<'db>) -> Vec<ImplAst<'db>> {
     let type_name = match item_info(db, item) {
         Some(name) => name,
         None => return Vec::new(),
@@ -182,7 +182,7 @@ fn expand_default<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>>
         db,
         Vec::new(),
         impl_sig,
-        vec![ItemAst::Function(default_fn)],
+        vec![LocalModItemSym::Function(default_fn)],
         gen_abs_span(db),
     );
     vec![impl_item]
@@ -192,7 +192,7 @@ fn expand_default<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Vec<ImplAst<'db>>
 fn expand_marker<'db>(
     db: &'db dyn Db,
     derive_name: Name<'db>,
-    item: ItemAst<'db>,
+    item: LocalModItemSym<'db>,
 ) -> Vec<ImplAst<'db>> {
     let type_name = match item_info(db, item) {
         Some(name) => name,
@@ -223,10 +223,10 @@ fn expand_marker<'db>(
 // ---------------------------------------------------------------------------
 
 /// Extract the type name from a struct or enum item.
-fn item_info<'db>(db: &'db dyn Db, item: ItemAst<'db>) -> Option<Name<'db>> {
+fn item_info<'db>(db: &'db dyn Db, item: LocalModItemSym<'db>) -> Option<Name<'db>> {
     match item {
-        ItemAst::Struct(s) => Some(s.name(db)),
-        ItemAst::Enum(e) => Some(e.name(db)),
+        LocalModItemSym::Struct(s) => Some(s.name(db)),
+        LocalModItemSym::Enum(e) => Some(e.name(db)),
         _ => None,
     }
 }

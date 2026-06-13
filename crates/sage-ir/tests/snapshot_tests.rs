@@ -77,7 +77,7 @@ fn mini_redis_bodies() {
 
             out.push_str(&format!("// --- {} ---\n", rel.display()));
             for item in items {
-                if let sage_ir::item::ItemAst::Function(f) = item {
+                if let sage_ir::item::LocalModItemSym::Function(f) = item {
                     struct FnBody<'a>(sage_ir::item::FnAst<'a>);
                     impl std::fmt::Display for FnBody<'_> {
                         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

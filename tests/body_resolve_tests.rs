@@ -5,7 +5,7 @@ use std::path::Path;
 use expect_test::expect;
 use sage_ir::Db;
 use sage_ir::display::pretty_print_resolved;
-use sage_ir::item::ItemAst;
+use sage_ir::item::LocalModItemSym;
 use sage_ir::resolve::{module_items, resolve_module_path};
 use sage_ir::sig_ast::TypeRefAstKind;
 use sage_ir::symbol::FnSymbol;
@@ -26,7 +26,7 @@ fn find_method<'db>(
 ) -> sage_ir::item::FnAst<'db> {
     let items = module_items(db, module);
     for item in items {
-        if let ItemAst::Impl(impl_item) = item {
+        if let LocalModItemSym::Impl(impl_item) = item {
             let sig = impl_item.signature(db);
             let stash = sig.stash();
             let data = &stash[*sig.root()];
@@ -35,7 +35,7 @@ fn find_method<'db>(
                 let segments = &stash[path.segments];
                 if segments.last().map(|s| s.name.text(db).as_str()) == Some(type_name) {
                     for sub_item in impl_item.items(db) {
-                        if let ItemAst::Function(f) = sub_item {
+                        if let LocalModItemSym::Function(f) = sub_item {
                             if f.name(db).text(db) == method_name {
                                 return *f;
                             }
