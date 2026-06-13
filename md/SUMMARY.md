@@ -6,6 +6,7 @@
   - [Overview](./design/overview.md)
   - [Architecture](./design/arch.md)
   - [IR](./design/ir.md)
+  - [Checking](./design/checking.md)
   - [Stash](./design/stash.md)
   - [Spans](./design/spans.md)
   - [Research](./design/research/README.md)

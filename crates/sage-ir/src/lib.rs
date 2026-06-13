@@ -1,5 +1,6 @@
 pub mod body;
 pub(crate) mod body_resolve;
+pub mod check;
 pub mod cst;
 pub mod db;
 pub mod derive;

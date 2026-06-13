@@ -38,6 +38,20 @@ impl<'db> Ribs<'db> {
         }
     }
 
+    /// Adds generic parameters to the current scope.
+    pub fn add_generic_params(
+        &mut self,
+        db: &'db dyn crate::Db,
+        params: impl Iterator<Item = GenericParam<'db>>,
+    ) {
+        self.push_scope();
+        for gp in params {
+            if let Some(name) = gp.name(db) {
+                self.add(name, Namespace::Type, RibEntry::Param(gp));
+            }
+        }
+    }
+
     pub fn lookup(&self, name: Name<'db>, ns: Namespace) -> Option<RibEntry<'db>> {
         for scope in self.scopes.iter().rev() {
             for (n, entry_ns, entry) in scope.iter().rev() {

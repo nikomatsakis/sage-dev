@@ -12,3 +12,6 @@ and shared vocabulary; the other pages drill into specific areas.
   testing strategy.
 - [IR](./ir.md) — field-level reference: every item kind, body
   representation, MEM-map data model, span tracking, display.
+- [Checking](./checking.md) — design tenets for the CST checking
+  layer: code organization, query design, two-stash data flow,
+  resolution model.

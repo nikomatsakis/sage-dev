@@ -154,6 +154,18 @@ impl<'db, T> Binder<'db, T> {
     }
 }
 
+pub trait BinderExt<'db> {
+    fn iter_symbols(&self) -> impl Iterator<Item = GenericParam<'db>>;
+}
+
+impl<'db, T> BinderExt<'db> for Stashed<Binder<'db, T>> {
+    fn iter_symbols(&self) -> impl Iterator<Item = GenericParam<'db>> {
+        let stash = self.stash();
+        let generics = self.root().generics;
+        stash[generics].iter().copied()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Signature types
 // ---------------------------------------------------------------------------

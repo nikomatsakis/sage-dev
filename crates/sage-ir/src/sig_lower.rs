@@ -1,8 +1,10 @@
-//! Signature lowering: `TypeRefAst` → `Ty`.
+//! Signature lowering: `TypeRefAst`/`TypeCst` → `Ty`.
 //!
-//! `SigLowerCtx` reads from a syntactic signature stash and writes
-//! resolved `Ty` nodes into a destination stash. Generic params are
-//! tracked so references to them produce `TyData::Param`.
+//! `SigLowerCtx` reads from a syntactic signature stash (`TypeRefAst`)
+//! and writes resolved `Ty` nodes into a destination stash.
+//!
+//! `CstLowerCtx` does the same but reads from a CST stash (`TypeCst`).
+//! Both track generic params so references to them produce `TyData::Param`.
 
 use sage_stash::{Ptr, Stash, Stashed};
 
@@ -214,6 +216,7 @@ fn build_generics_ribs<'db>(
     dst.alloc_slice(&generic_params)
 }
 
+
 // ---------------------------------------------------------------------------
 // Signature queries
 // ---------------------------------------------------------------------------
@@ -402,3 +405,6 @@ pub fn enum_signature<'db>(
     let binder = Binder::new(enum_sig, generics);
     Stashed::new(dst, binder)
 }
+
+// Re-export CstLowerCtx from its new home.
+pub use crate::check::CstLowerCtx;

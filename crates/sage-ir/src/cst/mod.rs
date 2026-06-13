@@ -4,6 +4,7 @@
 //! TreeSitter structure. Nothing smart — just syntax.
 
 pub mod attrs;
+pub mod check;
 pub mod consts;
 pub mod enums;
 pub mod expr;
