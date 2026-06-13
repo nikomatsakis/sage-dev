@@ -27,7 +27,7 @@ pub enum SymbolData<'db> {
 Callers typically do:
 
 ```rust
-match sym.data() {
+match sym {
     SymbolData::Ast(ItemAst::Function(f)) => { /* fn-specific */ }
     SymbolData::Ast(ItemAst::Struct(s)) => { /* struct-specific */ }
     // ...
@@ -193,12 +193,12 @@ These iterate the known variants. Alternatively each per-kind wrapper already ha
 
 ## Migration
 
-The migration is mechanical but wide — every `match sym.data()` in the codebase changes shape.
+The migration is mechanical but wide — every `match sym` in the codebase changes shape.
 
 ### Before
 
 ```rust
-match sym.data() {
+match sym {
     SymbolData::Ast(ItemAst::Function(f)) => { ... }
     SymbolData::Ast(ItemAst::Struct(s)) => { ... }
     SymbolData::Ast(_) => { ... }
@@ -210,7 +210,7 @@ match sym.data() {
 ### After
 
 ```rust
-match sym.data() {
+match sym {
     SymbolData::Fn(fn_sym) => { ... }
     SymbolData::Struct(struct_sym) => { ... }
     SymbolData::TupleStructCtor(struct_sym) => { ... }
@@ -240,7 +240,7 @@ Or they match the relevant variants and use `_` for the rest.
 
 Add the `SymExtKind` enum. Add a `kind` field to `SymExt` (default `Other` for back-compat). Add `kind` to `RawChild`. Update `ProxyTcxDb` to populate it from rustc's `DefKind`. Remove `ModExt` and switch `ModSymbol` to store `SymExt` (with `kind: SymExtKind::Mod`).
 
-**Implemented.** The `sym_ext_kind_for_def_kind` mapping lives in `src/tcx_impl.rs` (alongside the existing `namespaces_for_def_kind`). `ModExt` is fully removed; `ModSymbol::external(cn, di)` now constructs `SymExt::new(cn, di, SymExtKind::Mod)` internally. The `From<ModExt> for SymExt` impl is removed since `ModSymbolData::Ext` now holds `SymExt` directly. No deviations from plan.
+**Implemented.** The `sym_ext_kind_for_def_kind` mapping lives in `src/tcx_impl.rs` (alongside the existing `namespaces_for_def_kind`). `ModExt` is fully removed; `ModSymbol::external(cn, di)` now constructs `SymExt::new(cn, di, SymExtKind::Mod)` internally. The `From<ModExt> for SymExt` impl is removed since `ModSymbol::Ext` now holds `SymExt` directly. No deviations from plan.
 
 ### Step 2: Add `ImplSymbol` and `StashDirect` impls ✅
 
@@ -256,7 +256,7 @@ Replace the three-variant `SymbolData` with the per-kind enum. Update `Symbol::a
 
 ### Step 4: Migrate callers ✅
 
-Mechanically update every `match sym.data()` across:
+Mechanically update every `match sym` across:
 - `resolve.rs` — `symbol_to_module` and friends
 - `display.rs` — `fmt_res`
 - `body_resolve.rs` — if it dispatches on `SymbolData`

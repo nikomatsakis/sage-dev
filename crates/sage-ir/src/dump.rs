@@ -32,9 +32,9 @@ pub fn dump_expanded_module<'db>(
         root
     };
     let module = resolve_module_path(db, start, source_root, &segments)?;
-    let ast = match module.data() {
-        ModSymbolData::Ast(a) => a,
-        ModSymbolData::Ext(_) => return None,
+    let ast = match module {
+        ModSymbol::Ast(a) => a,
+        ModSymbol::Ext(_) => return None,
     };
     Some(*expanded_module(db, ast, source_root))
 }

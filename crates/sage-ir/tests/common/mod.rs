@@ -200,7 +200,7 @@ impl TestCrate {
         }
         visited.push(module);
 
-        if matches!(module.data(), ModSymbolData::Ext(_)) {
+        if matches!(module.data(), ModSymbol::Ext(_)) {
             return;
         }
 
@@ -244,7 +244,7 @@ pub fn fmt_symbol(db: &dyn sage_ir::Db, sym: Symbol) -> String {
             None => format!("<ext {}:{}>", ext.crate_num.0, ext.def_index.0),
         };
     }
-    match sym.data() {
+    match sym {
         SymbolData::Fn(s) => format!("<local Function {}>", s.as_ast().unwrap().name(db).text(db)),
         SymbolData::Struct(s) => {
             format!("<local Struct {}>", s.as_ast().unwrap().name(db).text(db))
@@ -257,11 +257,11 @@ pub fn fmt_symbol(db: &dyn sage_ir::Db, sym: Symbol) -> String {
             format!("<local Trait {}>", s.as_ast().unwrap().name(db).text(db))
         }
         SymbolData::Impl(_) => "<local Impl>".to_owned(),
-        SymbolData::Mod(m) => match m.data() {
-            sage_ir::module::ModSymbolData::Ast(a) => {
+        SymbolData::Mod(m) => match m {
+            sage_ir::module::ModSymbol::Ast(a) => {
                 format!("<local Mod {}>", a.name(db).text(db))
             }
-            sage_ir::module::ModSymbolData::Ext(_) => unreachable!(),
+            sage_ir::module::ModSymbol::Ext(_) => unreachable!(),
         },
         SymbolData::TypeAlias(s) => {
             format!(
@@ -449,15 +449,13 @@ fn fmt_name_path(db: &dyn sage_ir::Db, path: &[sage_ir::name::Name]) -> String {
 }
 
 fn fmt_module(db: &dyn sage_ir::Db, module: ModSymbol) -> String {
-    match module.data() {
-        ModSymbolData::Ast(ast) => {
-            match (ast.file(db), ast.inline_unexpanded_items(db).is_some()) {
-                (Some(f), _) => format!("\"{}\"", f.path(db)),
-                (None, true) => format!("inline \"{}\"", ast.name(db).text(db)),
-                (None, false) => format!("decl \"{}\"", ast.name(db).text(db)),
-            }
-        }
-        ModSymbolData::Ext(ext) => format!("extern({},{})", ext.crate_num.0, ext.def_index.0),
+    match module {
+        ModSymbol::Ast(ast) => match (ast.file(db), ast.inline_unexpanded_items(db).is_some()) {
+            (Some(f), _) => format!("\"{}\"", f.path(db)),
+            (None, true) => format!("inline \"{}\"", ast.name(db).text(db)),
+            (None, false) => format!("decl \"{}\"", ast.name(db).text(db)),
+        },
+        ModSymbol::Ext(ext) => format!("extern({},{})", ext.crate_num.0, ext.def_index.0),
     }
 }
 

@@ -67,6 +67,8 @@ pub fn fn_body<'db>(
 
 impl<'db> FnSymbol<'db> {
     pub fn body(self, db: &'db dyn Db) -> &'db TypedBody<'db> {
+        match self {}
+
         let scope = self
             .scope()
             .expect("FnSymbol::body requires a scoped symbol");

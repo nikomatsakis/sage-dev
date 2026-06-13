@@ -62,8 +62,8 @@ fn resolve_cmd_get_module() {
         assert!(module.is_some(), "failed to resolve cmd::get module");
 
         let module = module.unwrap();
-        let file = match module.data() {
-            sage_ir::module::ModSymbolData::Ast(a) => {
+        let file = match module {
+            sage_ir::module::ModSymbol::Ast(a) => {
                 a.file(db).expect("expected file-backed local module")
             }
             _ => panic!("expected local module"),
@@ -143,8 +143,8 @@ fn resolve_clients_module() {
         assert!(module.is_some(), "failed to resolve clients module");
 
         let module = module.unwrap();
-        let file = match module.data() {
-            sage_ir::module::ModSymbolData::Ast(a) => {
+        let file = match module {
+            sage_ir::module::ModSymbol::Ast(a) => {
                 a.file(db).expect("expected file-backed local module")
             }
             _ => panic!("expected local module"),

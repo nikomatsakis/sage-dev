@@ -8,6 +8,7 @@ use super::version::{Universe, VarInfo, Version};
 
 /// The inference context — owns the egraph, runtime, and typing state.
 pub struct InferCtx<'db> {
+    pub db: &'db dyn crate::Db,
     pub egraph: VersionedEGraph<'db>,
     pub runtime: Runtime,
     current_universe: Universe,

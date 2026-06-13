@@ -3,10 +3,10 @@ pub mod builtins;
 use crate::Db;
 use crate::item::*;
 use crate::lower::parse_source_file;
-use crate::module::{CrateNum, DefIndex, ModSymbol};
 use crate::name::Name;
 use crate::resolve::{MacroKind, Namespace, SourceRoot, definition_in_ns, resolve_name};
 use crate::source::SourceFile;
+use crate::symbol::ModSymbol;
 use crate::symbol::Symbol;
 use crate::types::{AttrKind, TokenTree};
 

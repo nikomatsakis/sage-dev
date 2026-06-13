@@ -4,10 +4,10 @@ use sage_stash::{Slice, Stash};
 
 use crate::Db;
 use crate::item::ItemAst;
-use crate::module::{ModSymbol, ModSymbolData};
 use crate::name::Name;
 use crate::resolve::{MacroKind, Namespace, Resolver, SourceRoot, item_in_namespace, item_name};
 use crate::scope::ScopeSymbol;
+use crate::symbol::ModSymbol;
 
 use super::data::*;
 use super::expanded_module;
@@ -28,9 +28,9 @@ pub fn memmap_errors<'db>(
     module: ModSymbol<'db>,
     source_root: SourceRoot,
 ) -> Vec<MemmapError<'db>> {
-    let ast = match module.data() {
-        ModSymbolData::Ast(a) => a,
-        ModSymbolData::Ext(_) => return Vec::new(),
+    let ast = match module {
+        ModSymbol::Ast(a) => a,
+        ModSymbol::Ext(_) => return Vec::new(),
     };
     let memmap = expanded_module(db, ast, source_root);
     let stash = memmap.stash(db);
@@ -231,9 +231,9 @@ fn name_available_via_glob<'db>(
             let Ok(target) = resolver.resolve_segments_to_module(&path_vec) else {
                 continue;
             };
-            let target_ast = match target.data() {
-                ModSymbolData::Ast(a) => a,
-                ModSymbolData::Ext(_) => continue,
+            let target_ast = match target {
+                ModSymbol::Ast(a) => a,
+                ModSymbol::Ext(_) => continue,
             };
             let source_memmap = expanded_module(db, target_ast, source_root);
             let src_stash = source_memmap.stash(db);

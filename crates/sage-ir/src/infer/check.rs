@@ -367,17 +367,6 @@ fn extract_bind_local(pat: &CheckedPat) -> u32 {
 // Struct literal and field access
 // ---------------------------------------------------------------------------
 
-fn get_struct_sig<'db>(
-    env: &CheckEnv<'db>,
-    struct_sym: crate::symbol::StructSymbol<'db>,
-) -> &'db Stashed<Binder<'db, StructSig<'db>>> {
-    if struct_sym.scope().is_some() {
-        struct_sig(env.db, struct_sym)
-    } else {
-        struct_signature(env.db, struct_sym, env.scope)
-    }
-}
-
 fn check_struct_lit<'db>(
     ctx: &mut InferCtx<'db>,
     env: &CheckEnv<'db>,
@@ -439,11 +428,11 @@ fn check_field_access<'db>(
         return ctx.fresh_ty_var();
     };
 
-    let SymbolData::Struct(struct_sym) = sym.data() else {
+    let SymbolData::StructSymbol(struct_sym) = sym.data(ctx.db) else {
         return ctx.fresh_ty_var();
     };
 
-    let sig = get_struct_sig(env, struct_sym);
+    let sig = struct_sym.sig(ctx.db);
     let sig_stash = sig.stash();
     let binder = sig.root();
 

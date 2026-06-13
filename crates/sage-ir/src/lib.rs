@@ -9,7 +9,6 @@ pub(crate) mod infer;
 pub mod item;
 pub mod lower;
 pub mod memmap;
-pub mod module;
 pub mod name;
 pub mod resolve;
 pub mod resolved;

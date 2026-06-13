@@ -905,46 +905,38 @@ fn fmt_res(f: &mut fmt::Formatter<'_>, res: &Res<'_>) -> fmt::Result {
                     None => write!(f, "<ext {}:{}>", ext.crate_num.0, ext.def_index.0),
                 };
             }
-            match sym.data() {
-                SymbolData::Fn(s) => write!(f, "<def {}>", s.as_ast().unwrap().name(db).text(db)),
-                SymbolData::Struct(s) => {
+            match sym.data(db) {
+                SymbolData::FnSymbol(s) => {
+                    write!(f, "<def {}>", s.as_ast().unwrap().name(db).text(db))
+                }
+                SymbolData::StructSymbol(s) => {
                     write!(f, "<def {}>", s.as_ast().unwrap().name(db).text(db))
                 }
                 SymbolData::TupleStructCtor(s) => {
                     write!(f, "<ctor {}>", s.as_ast().unwrap().name(db).text(db))
                 }
-                SymbolData::Enum(s) => {
+                SymbolData::EnumSymbol(s) => {
                     write!(f, "<def {}>", s.as_ast().unwrap().name(db).text(db))
                 }
-                SymbolData::Trait(s) => {
+                SymbolData::TraitSymbol(s) => {
                     write!(f, "<def {}>", s.as_ast().unwrap().name(db).text(db))
                 }
-                SymbolData::TypeAlias(s) => {
+                SymbolData::TypeAliasSymbol(s) => {
                     write!(f, "<def {}>", s.as_ast().unwrap().name(db).text(db))
                 }
-                SymbolData::Const(s) => {
+                SymbolData::ConstSymbol(s) => {
                     write!(f, "<def {}>", s.as_ast().unwrap().name(db).text(db))
                 }
-                SymbolData::Static(s) => {
+                SymbolData::StaticSymbol(s) => {
                     write!(f, "<def {}>", s.as_ast().unwrap().name(db).text(db))
                 }
-                SymbolData::Mod(m) => match m.data() {
-                    crate::module::ModSymbolData::Ast(a) => {
+                SymbolData::ModSymbol(m) => match m {
+                    crate::module::ModSymbol::Ast(a) => {
                         write!(f, "<def {}>", a.name(db).text(db))
                     }
-                    crate::module::ModSymbolData::Ext(_) => unreachable!(),
+                    crate::module::ModSymbol::Ext(_) => unreachable!(),
                 },
-                SymbolData::Impl(_) => write!(f, "<def ?>"),
-                SymbolData::MacroDef(_) => write!(f, "<def ?>"),
-                SymbolData::Use(_) => write!(f, "<def ?>"),
-                SymbolData::MacroInvocation(_) => write!(f, "<def ?>"),
-                SymbolData::GenericParam(p) => match p.name(db) {
-                    Some(n) => write!(f, "<param {}>", n.text(db)),
-                    None => write!(f, "<param ?>"),
-                },
-                SymbolData::Intrinsic(i) => write!(f, "<intrinsic {i:?}>"),
-                SymbolData::Error(_) => write!(f, "<def ?>"),
-                SymbolData::Unknown(_) => unreachable!(),
+                SymbolData::ImplSymbol(_) => write!(f, "<def ?>"),
             }
         }
         Res::Local(id) => write!(f, "<local:{}>", id.0),

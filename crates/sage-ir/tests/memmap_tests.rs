@@ -79,7 +79,7 @@ fn p1_named_import_beats_glob() {
 
         // Should resolve to b::Foo (named import), not a::Foo (glob)
         let sym = result.unwrap();
-        match sym.data() {
+        match sym {
             SymbolData::Unknown(_) => panic!("expected local symbol"),
             _ => {}
         }
@@ -114,7 +114,7 @@ fn p4_glob_beats_std_prelude() {
 
         // Should resolve to custom::Option (glob), not std::Option (prelude)
         let sym = result.unwrap();
-        match sym.data() {
+        match sym {
             SymbolData::Unknown(_) => panic!("should resolve to local, not std prelude"),
             _ => {}
         }
@@ -261,7 +261,7 @@ fn struct_kind_tuple() {
             Namespace::Type,
         )
         .unwrap();
-        match sym.data() {
+        match sym {
             SymbolData::Struct(s) => assert_eq!(s.as_ast().unwrap().kind(db), StructKind::Tuple),
             other => panic!("expected Struct, got {other:?}"),
         }
@@ -282,7 +282,7 @@ fn struct_kind_unit() {
             Namespace::Type,
         )
         .unwrap();
-        match sym.data() {
+        match sym {
             SymbolData::Struct(s) => assert_eq!(s.as_ast().unwrap().kind(db), StructKind::Unit),
             other => panic!("expected Struct, got {other:?}"),
         }
@@ -303,7 +303,7 @@ fn struct_kind_braced() {
             Namespace::Type,
         )
         .unwrap();
-        match sym.data() {
+        match sym {
             SymbolData::Struct(s) => assert_eq!(s.as_ast().unwrap().kind(db), StructKind::Braced),
             other => panic!("expected Struct, got {other:?}"),
         }

@@ -286,6 +286,8 @@ impl StashDirect for i8 {}
 impl StashDirect for i16 {}
 impl StashDirect for i32 {}
 impl StashDirect for i64 {}
+impl<T> StashDirect for PhantomData<T> {}
+impl StashDirect for () {}
 
 // ---------------------------------------------------------------------------
 // StashCopy — deep-copy values between stashes

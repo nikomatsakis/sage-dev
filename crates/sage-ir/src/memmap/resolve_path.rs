@@ -135,7 +135,7 @@ fn resolve_macro_path_to_defs<'db>(
         loop {
             let is_inline = matches!(
                 current.data(),
-                ModSymbolData::Ast(a) if a.inline_unexpanded_items(db).is_some()
+                ModSymbol::Ast(a) if a.inline_unexpanded_items(db).is_some()
             );
             if !is_inline {
                 break;
@@ -222,9 +222,9 @@ fn resolve_macro_path_to_defs<'db>(
                     else {
                         continue;
                     };
-                    let glob_ast = match glob_target.data() {
-                        ModSymbolData::Ast(a) => a,
-                        ModSymbolData::Ext(_) => continue,
+                    let glob_ast = match glob_target {
+                        ModSymbol::Ast(a) => a,
+                        ModSymbol::Ext(_) => continue,
                     };
                     let source_memmap = expanded_module(db, glob_ast, source_root);
                     let src_stash = source_memmap.stash(db);
@@ -298,9 +298,9 @@ fn walk_path_to_macro<'db>(
             let sym = definition(db, current, *seg, source_root)?;
             current = symbol_to_module(db, sym, source_root, current)?;
         } else {
-            let current_ast = match current.data() {
-                ModSymbolData::Ast(a) => a,
-                ModSymbolData::Ext(_) => return None,
+            let current_ast = match current {
+                ModSymbol::Ast(a) => a,
+                ModSymbol::Ext(_) => return None,
             };
             let target_memmap = expanded_module(db, current_ast, source_root);
             let target_stash = target_memmap.stash(db);
@@ -354,9 +354,9 @@ pub(super) fn find_macro_in_module<'db>(
     name: Name<'db>,
     source_root: SourceRoot,
 ) -> Option<MacroDefAst<'db>> {
-    let ast = match module.data() {
-        ModSymbolData::Ast(a) => a,
-        ModSymbolData::Ext(_) => return None,
+    let ast = match module {
+        ModSymbol::Ast(a) => a,
+        ModSymbol::Ext(_) => return None,
     };
     let memmap = expanded_module(db, ast, source_root);
     let stash = memmap.stash(db);

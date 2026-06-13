@@ -5,6 +5,7 @@
 //! using de Bruijn indices.
 
 use crate::name::Name;
+use crate::span::RelativeSpan;
 use crate::symbol::Symbol;
 
 // ---------------------------------------------------------------------------
@@ -28,6 +29,7 @@ impl sage_stash::StashDirect for GenericParamKind {}
 pub struct AstGenericParam<'db> {
     pub kind: GenericParamKind,
     pub name: Option<Name<'db>>,
+    pub span: RelativeSpan,
     pub parent: Symbol<'db>,
     pub index: u32,
 }

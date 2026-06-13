@@ -218,7 +218,7 @@ The plan is organised around milestones, each ending in a *demonstrable capabili
 
 * **Per-kind tracked structs renamed to `*Ast`.** `ModItem` → `ModAst`, `FunctionItem` → `FnAst`, `StructItem` → `StructAst`, etc.; `UseGroup` → `UseGroupAst`; `MacroDefItem` → `MacroDefAst`; `MacroInvocationItem` → `MacroInvocationAst`. `Item<'db>` → `ItemAst<'db>`.
 * **`Symbol<'db>` is a `Copy` wrapper-of-enum**, no longer salsa-interned. Variants are `SymbolData::Ast(ItemAst)` and `SymbolData::Ext(SymExt)`. `SymExt` is a plain `Copy` struct holding `(CrateNum, DefIndex)`.
-* **`ModSymbol<'db>` is a `Copy` wrapper-of-enum**, no longer salsa-interned. Variants are `ModSymbolData::Ast(ModAst)` and `ModSymbolData::Ext(ModExt)`. `ModExt` is a plain `Copy` struct.
+* **`ModSymbol<'db>` is a `Copy` wrapper-of-enum**, no longer salsa-interned. Variants are `ModSymbol::Ast(ModAst)` and `ModSymbol::Ext(ModExt)`. `ModExt` is a plain `Copy` struct.
 * **`ModAst` carries `parent` and `file` fields directly.** The old `ModSymbolKind::{Local, LocalInline}` distinction is gone; `Local`/`LocalInline` are now expressible via field combinations on `ModAst`:
   * crate root: `parent = None`, `file = Some(crate_file)`, `items = None`.
   * file-based child (`mod foo;`): `parent = Some(parent_mod)`, `file = Some(child_file)`, `items = None`.
