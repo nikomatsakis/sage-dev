@@ -36,7 +36,7 @@ pub enum LifetimeCst<'db> {
 
 use crate::cst::paths::Resolution;
 use crate::resolve::Namespace;
-use crate::sig_lower::CstLowerCtx;
+use crate::check::CstLowerCtx;
 use crate::symbol::{Intrinsic, SymbolData};
 
 impl<'db> TypeCst<'db> {
@@ -114,6 +114,29 @@ impl<'db> TypeCst<'db> {
             TypeCstKind::Infer | TypeCstKind::Error => Ty {
                 data: TyData::Error,
             },
+        }
+    }
+}
+
+impl<'db> TypeCst<'db> {
+    /// Lower a type annotation inside a body context (e.g. cast, let).
+    /// Allocates into the BodyCtx's egraph stash.
+    pub(crate) fn check_in_body(self, cx: &mut crate::check::BodyCtx<'_, 'db>) -> Ty<'db> {
+        let src = cx.src;
+        match self.kind {
+            TypeCstKind::Path(path_ptr) => {
+                let path = src[path_ptr];
+                let res = cx.resolve_path(path, Namespace::Type);
+                match res {
+                    crate::tytree::Res::Def(sym) => {
+                        let type_args = cx.stash_mut().alloc_slice(&[]);
+                        resolution_to_ty(sym, type_args)
+                    }
+                    _ => Ty { data: TyData::Error },
+                }
+            }
+            TypeCstKind::Never => Ty { data: TyData::Never },
+            _ => Ty { data: TyData::Error }, // TODO: full type lowering in body
         }
     }
 }

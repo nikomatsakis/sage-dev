@@ -5,7 +5,7 @@ use crate::name::Name;
 use crate::scope::ScopeSymbol;
 use crate::span::AbsoluteSpan;
 use crate::ty::{Binder, FnSig};
-use crate::typed_body::TypedBody;
+use crate::tytree::TyBody;
 
 #[salsa::tracked(debug)]
 pub struct LocalFnSym<'db> {
@@ -25,9 +25,9 @@ impl<'db> LocalFnSym<'db> {
     /// Computes the signature: generics, parameter types, return type.
     #[salsa::tracked]
     pub fn sig(self, db: &'db dyn crate::Db) -> Stashed<Binder<'db, FnSig<'db>>> {
+        use crate::check::CstLowerCtx;
         use crate::cst::generics::CheckGenerics;
         use crate::resolve::Resolver;
-        use crate::sig_lower::CstLowerCtx;
         use crate::symbol::Symbol;
 
         let (src, cst) = self.cst(db).open_deref();
@@ -61,51 +61,44 @@ impl<'db> LocalFnSym<'db> {
         cx.finish(binder)
     }
 
-    /// Resolves and type-checks the function body.
+    /// Resolves and type-checks the function body in a single walk.
     #[salsa::tracked(returns(ref))]
-    pub fn body(self, db: &'db dyn crate::Db) -> TypedBody<'db> {
-        use crate::cst::check::BodyCheckCtx;
-        use crate::infer::check::type_check_body;
+    pub fn body(self, db: &'db dyn crate::Db) -> TyBody<'db> {
+        use crate::check::BodyCtx;
         use crate::resolve::Resolver;
         use crate::ty::BinderExt;
 
+        let sig = self.sig(db);
         let (src, cst) = self.cst(db).open_deref();
 
-        let mut bx = BodyCheckCtx::new(src, Resolver::new(db, self.scope(db)));
+        let mut bx = BodyCtx::new(db, src, Resolver::new(db, self.scope(db)));
 
         // Bring generics into scope.
-        bx.ribs.add_generic_params(db, self.sig(db).iter_symbols());
+        bx.resolver.ribs.add_generic_params(db, sig.iter_symbols());
 
-        // Bind function parameters as locals.
-        for param in &src[cst.params] {
-            if let Some(name) = param.name {
-                bx.add_binding(name, param.span);
-            }
-        }
+        // Import the signature's param/return types into the body stash.
+        let imported = bx.import_fn_sig(&sig);
 
-        // Resolve the body expression.
+        // Bind function parameters as locals with their declared types.
+        let params_cst = &src[cst.params];
+        bx.bind_params(&imported.params, params_cst);
+
+        // Walk the body CST: resolve names + infer types → TyExpr.
         let body_expr = match cst.body {
-            Some(body_ptr) => bx.check_expr(&src[body_ptr]),
+            Some(body_ptr) => src[body_ptr].check(&mut bx),
             None => {
-                let missing = crate::resolved::CheckedExpr {
-                    kind: crate::resolved::CheckedExprKind::Missing,
-                    span: Default::default(),
-                };
-                bx.out.alloc(missing)
+                let ty = bx.alloc_ty(crate::ty::TyData::Error);
+                bx.alloc_expr(crate::tytree::TyExprKind::Missing, ty, cst.span)
             }
         };
 
-        let span = cst.span;
-        let resolved = bx.finish(body_expr, span);
+        // Constrain body type against declared return type.
+        let body_ty = bx.stash()[body_expr].ty;
+        bx.require_coerce(body_ty, imported.ret);
 
-        // Run type inference.
-        let sig = self.sig(db);
-        let result = type_check_body(db, &resolved, &sig, self.scope(db));
-        let errors = result.render_errors(db);
+        // Resolve remaining inference variables.
+        bx.finalize();
 
-        TypedBody {
-            body: resolved,
-            errors,
-        }
+        bx.finish(body_expr, cst.span)
     }
 }

@@ -4,7 +4,7 @@ use crate::cst::ty::TypeCst;
 use crate::name::Name;
 use crate::resolve::Namespace;
 use crate::ribs::RibEntry;
-use crate::sig_lower::CstLowerCtx;
+use crate::check::CstLowerCtx;
 use crate::span::RelativeSpan;
 use crate::symbol::Symbol;
 use crate::ty::Ty;
@@ -32,7 +32,7 @@ pub enum Resolution<'db> {
     /// The `Self` type in an impl/trait context.
     SelfTy(Ty<'db>),
     /// A local variable binding.
-    Local(crate::resolved::LocalId),
+    Local(crate::tytree::LocalId),
     /// Resolution failed.
     Error,
 }
@@ -49,7 +49,7 @@ impl<'db> PathCst<'db> {
         let rest = &segments[1..];
 
         // Check ribs (generics, locals, Self).
-        if let Some(entry) = cx.ribs.lookup(first.name, ns) {
+        if let Some(entry) = cx.resolver.ribs.lookup(first.name, ns) {
             if rest.is_empty() {
                 return match entry {
                     RibEntry::Param(param) => Resolution::Param(param),

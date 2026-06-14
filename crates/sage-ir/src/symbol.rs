@@ -126,6 +126,9 @@ macro_rules! define_kind_symbols {
             )*
         }
 
+        impl<$SymLt> StashDirect for $SymName<$SymLt> {}
+        impl<$SymLt> StashDirect for $SymData<$SymLt> {}
+
         impl<$SymLt> From<SymExt<$SymLt>> for $SymName<$SymLt> {
             fn from(ext: SymExt<$SymLt>) -> Self {
                 Self {

@@ -31,7 +31,7 @@ impl<'db> LocalStructSym<'db> {
     pub fn sig(self, db: &'db dyn crate::Db) -> Stashed<Binder<'db, StructSig<'db>>> {
         use crate::cst::generics::CheckGenerics;
         use crate::resolve::Resolver;
-        use crate::sig_lower::CstLowerCtx;
+        use crate::check::CstLowerCtx;
         use crate::symbol::Symbol;
 
         let (src, cst) = self.cst(db).open_deref();
@@ -56,13 +56,13 @@ impl<'db> LocalStructSym<'db> {
     #[salsa::tracked]
     pub fn fields(self, db: &'db dyn crate::Db) -> Stashed<StructFields<'db>> {
         use crate::resolve::Resolver;
-        use crate::sig_lower::CstLowerCtx;
+        use crate::check::CstLowerCtx;
         use crate::ty::FieldSig;
 
         let (src, cst) = self.cst(db).open_deref();
 
         let mut cx = CstLowerCtx::new(src, Resolver::new(db, self.scope(db)));
-        cx.ribs.add_generic_params(db, self.sig(db).iter_symbols());
+        cx.resolver.ribs.add_generic_params(db, self.sig(db).iter_symbols());
 
         let field_sigs: Vec<_> = src[cst.fields]
             .iter()

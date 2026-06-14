@@ -1,10 +1,11 @@
 use crate::Db;
-use crate::item::*;
+use crate::local_syms::LocalModItemSym;
 use crate::name::Name;
+use crate::ribs::Ribs;
 use crate::scope::ScopeSymbol;
 use crate::source::SourceFile;
 use crate::symbol::{Intrinsic, Symbol, SymbolData};
-use crate::symbol::{ModSymbol, ModSymbolData};
+use crate::symbol::{ModSymbol, SymExt};
 
 // ---------------------------------------------------------------------------
 // Namespace
@@ -306,16 +307,20 @@ pub struct Resolver<'db> {
     source_root: SourceRoot,
     scope: ScopeSymbol<'db>,
     in_flight: Vec<InFlightQuery<'db>>,
+    pub ribs: Ribs<'db>,
 }
 
 impl<'db> Resolver<'db> {
     pub fn new(db: &'db dyn Db, scope: ScopeSymbol<'db>) -> Self {
         let source_root = scope.source_root(db);
+        let mut ribs = Ribs::new();
+        ribs.push_scope();
         Self {
             db,
             source_root,
             scope,
             in_flight: Vec::new(),
+            ribs,
         }
     }
 

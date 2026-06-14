@@ -26,7 +26,7 @@ pub struct UseImportAst<'db> {
     /// The full path as written, e.g. [foo, bar].
     pub path: Slice<Name<'db>>,
     pub kind: UseKind<'db>,
-    pub span: RelativeSpan,
+    pub(crate)  span: RelativeSpan,
 }
 
 /// The stashed collection of use imports for a `use` declaration.

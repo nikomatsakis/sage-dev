@@ -1,6 +1,6 @@
 use crate::generic_param::GenericParam;
 use crate::name::Name;
-use crate::resolved::LocalId;
+use crate::tytree::LocalId;
 use crate::symbol::Symbol;
 use crate::ty::Ty;
 

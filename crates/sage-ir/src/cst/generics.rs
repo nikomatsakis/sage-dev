@@ -6,7 +6,7 @@ use crate::generic_param::{AstGenericParam, GenericParam, GenericParamKind};
 use crate::name::Name;
 use crate::resolve::Namespace;
 use crate::ribs::RibEntry;
-use crate::sig_lower::CstLowerCtx;
+use crate::check::CstLowerCtx;
 use crate::span::RelativeSpan;
 use crate::symbol::Symbol;
 
@@ -70,7 +70,7 @@ impl<'db> CheckGenerics<'db> for Slice<GenericParamCst<'db>> {
             };
             let ast_param = AstGenericParam::new(db, kind, Some(name), span, parent, i as u32);
             let gp = GenericParam::Ast(ast_param);
-            cx.ribs.add(name, Namespace::Type, RibEntry::Param(gp));
+            cx.resolver.ribs.add(name, Namespace::Type, RibEntry::Param(gp));
             generic_params.push(gp);
         }
         cx.dst.alloc_slice(&generic_params)
