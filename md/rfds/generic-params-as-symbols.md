@@ -22,8 +22,8 @@ The current representation uses de Bruijn indices:
 Binder {
     bound_vars: [BoundVarInfo { kind: Type }],
     value: FnSig {
-        params: [Ty { data: TyData::BoundVar(BoundVar { binder_index: 0, param_index: 0 }) }],
-        ret: Ptr<Ty> → TyData::BoundVar(BoundVar { binder_index: 0, param_index: 0 }),
+        params: [Ty { data: Ty::BoundVar(BoundVar { binder_index: 0, param_index: 0 }) }],
+        ret: Ptr<Ty> → Ty::BoundVar(BoundVar { binder_index: 0, param_index: 0 }),
     },
 }
 ```
@@ -201,8 +201,8 @@ Example: `fn identity<T>(x: T) -> T` becomes:
 Binder {
     generics: [GenericParam::Ast(AstGenericParam { kind: Type, name: "T", parent: identity, index: 0 })],
     value: FnSig {
-        params: [Ty { data: TyData::Param(GenericParam::Ast(...)) }],
-        ret: Ptr<Ty> → TyData::Param(GenericParam::Ast(...)),
+        params: [Ty { data: Ty::Param(GenericParam::Ast(...)) }],
+        ret: Ptr<Ty> → Ty::Param(GenericParam::Ast(...)),
     },
 }
 ```
@@ -232,7 +232,7 @@ enum SubstTarget<'db> {
 impl TyFolder for Substitute<'_> {
     fn fold_ty(&mut self, ty: Ty<'db>) -> Ty<'db> {
         match ty.data {
-            TyData::Param(param) => {
+            Ty::Param(param) => {
                 match self.subst.get(&param) {
                     Some(SubstTarget::Ty(t)) => *t,
                     _ => ty,  // not in scope of this substitution (e.g., outer impl param)
@@ -258,7 +258,7 @@ impl TyFolder for Substitute<'_> {
 
 For the type-checking setup, the function's *own* generics are left as `Param` nodes (they're universals in scope). Only when *calling* another function do you substitute its params with your locals.
 
-Note that `TyData::Param`, `Lifetime::Param`, and `Const::Param` are all leaf nodes — the default `fold_ty`/`fold_lifetime`/`fold_const` passes them through unchanged. Only folders that specifically need to substitute (like `Substitute`) override for them.
+Note that `Ty::Param`, `Lifetime::Param`, and `Const::Param` are all leaf nodes — the default `fold_ty`/`fold_lifetime`/`fold_const` passes them through unchanged. Only folders that specifically need to substitute (like `Substitute`) override for them.
 
 ### No binder shifting, ever
 
@@ -301,7 +301,7 @@ This is deferred — higher-ranked types are not needed for the initial type ela
 
 | Current | New |
 |---------|-----|
-| `BoundVar { binder_index, param_index }` | `TyData::Param(GenericParam)` / `Lifetime::Param(GenericParam)` |
+| `BoundVar { binder_index, param_index }` | `Ty::Param(GenericParam)` / `Lifetime::Param(GenericParam)` |
 | `Binder<'db, T> { bound_vars: Slice<BoundVarInfo>, value }` | `Binder<'db, T> { generics: Slice<GenericParam<'db>>, value: T }` |
 | `BoundVarInfo { kind }` | `GenericParam` enum (`Ast`/`Ext`/`AlphaEquiv` variants, each with a `kind` field) |
 | `Instantiate` folder (substitutes de Bruijn) | `Substitute` folder (substitutes `GenericParam`s) |
@@ -328,13 +328,13 @@ This is deferred — higher-ranked types are not needed for the initial type ela
 
 Add `AstGenericParam` tracked struct, `ExtGenericParam` and `AlphaEquivParam` interned structs, and the `GenericParam` enum. Add a `GenericParam` variant to `SymbolData`. Create `AstGenericParam` instances during item lowering (where `BoundVarInfo` is currently created).
 
-### Step 2: Add `TyData::Param` and `Lifetime::Param` variants
+### Step 2: Add `Ty::Param` and `Lifetime::Param` variants
 
-Add `TyData::Param(GenericParam)` and `Lifetime::Param(GenericParam)`. Initially unused — existing code still produces `BoundVar`.
+Add `Ty::Param(GenericParam)` and `Lifetime::Param(GenericParam)`. Initially unused — existing code still produces `BoundVar`.
 
 ### Step 3: Migrate `SigLowerCtx` to produce `Param` instead of `BoundVar`
 
-When lowering `TypeRefAst` → `Ty`, resolve generic parameter names to their `AstGenericParam` and emit `TyData::Param(GenericParam::Ast(...))` instead of `TyData::BoundVar(...)`.
+When lowering `TypeRefAst` → `Ty`, resolve generic parameter names to their `AstGenericParam` and emit `Ty::Param(GenericParam::Ast(...))` instead of `Ty::BoundVar(...)`.
 
 ### Step 4: Migrate `Binder<T>` to carry `GenericParam`
 
@@ -354,6 +354,6 @@ Remove `BoundVar`, `BoundVarInfo`, `BoundVarKind`, the old `Instantiate` folder,
 
 2. ~~**External crate generics.**~~ **Resolved:** `ExtGenericParam` is `#[salsa::interned]` with `kind`, `name`, `parent`, `index`. Created on-demand when importing foreign signatures. `AlphaEquivParam` is also `#[salsa::interned]` with `kind` and `index` — used during signature normalization/canonicalization.
 
-3. ~~**Const generics.**~~ **Resolved:** `Const` gets a `Const::Param(GenericParam<'db>)` variant, symmetric with `TyData::Param` and `Lifetime::Param`. Invariant: `param.kind() == Const`.
+3. ~~**Const generics.**~~ **Resolved:** `Const` gets a `Const::Param(GenericParam<'db>)` variant, symmetric with `Ty::Param` and `Lifetime::Param`. Invariant: `param.kind() == Const`.
 
 4. ~~**`where` clauses.**~~ **Not blocking:** Where-clauses will reference `GenericParam`s naturally, but their own representation is a separate design problem (future RFD). Nothing here needs to be resolved first.

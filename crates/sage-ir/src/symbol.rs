@@ -5,9 +5,9 @@
 //! local symbols inherit the underlying `ItemAst`'s salsa id; external
 //! symbols use the structural `(CrateNum, DefIndex)` pair.
 
-use sage_stash::{StashDirect, Stashed};
+use sage_stash::StashDirect;
 
-use crate::ty::{Binder, FloatTy, IntTy, StructSig, UintTy};
+use crate::ty::{FloatTy, IntTy, UintTy};
 
 /// Opaque crate number (matches rustc's CrateNum).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
@@ -205,13 +205,13 @@ define_kind_symbols! {
     pub struct Symbol<'db> { data: SymbolDataPriv<'db> }
     pub enum SymbolData<'db> { .. }
 
-    pub enum FnSymbol<'db> { Ast(crate::item::FnAst<'db>), Ext(SymExtKind::Fn) }
-    pub enum StructSymbol<'db> { Ast(crate::item::StructAst<'db>), Ext(SymExtKind::Struct) }
-    pub enum EnumSymbol<'db> { Ast(crate::item::EnumAst<'db>), Ext(SymExtKind::Enum) }
-    pub enum TraitSymbol<'db> { Ast(crate::item::TraitAst<'db>), Ext(SymExtKind::Trait) }
-    pub enum TypeAliasSymbol<'db> { Ast(crate::item::TypeAliasAst<'db>), Ext(SymExtKind::TypeAlias) }
-    pub enum ConstSymbol<'db> { Ast(crate::item::ConstAst<'db>), Ext(SymExtKind::Const) }
-    pub enum StaticSymbol<'db> { Ast(crate::item::StaticAst<'db>), Ext(SymExtKind::Static) }
-    pub enum ImplSymbol<'db> { Ast(crate::item::ImplAst<'db>), Ext(SymExtKind::Impl) }
-    pub enum ModSymbol<'db> { Ast(crate::item::ModAst<'db>), Ext(SymExtKind::Mod) }
+    pub enum FnSymbol<'db> { Ast(crate::local_syms::fns::LocalFnSym<'db>), Ext(SymExtKind::Fn) }
+    pub enum StructSymbol<'db> { Ast(crate::local_syms::structs::LocalStructSym<'db>), Ext(SymExtKind::Struct) }
+    pub enum EnumSymbol<'db> { Ast(crate::local_syms::enums::LocalEnumSym<'db>), Ext(SymExtKind::Enum) }
+    pub enum TraitSymbol<'db> { Ast(crate::local_syms::traits::LocalTraitSym<'db>), Ext(SymExtKind::Trait) }
+    pub enum TypeAliasSymbol<'db> { Ast(crate::local_syms::type_aliases::LocalTypeAliasSym<'db>), Ext(SymExtKind::TypeAlias) }
+    pub enum ConstSymbol<'db> { Ast(crate::local_syms::consts::LocalConstSym<'db>), Ext(SymExtKind::Const) }
+    pub enum StaticSymbol<'db> { Ast(crate::local_syms::statics::LocalStaticSym<'db>), Ext(SymExtKind::Static) }
+    pub enum ImplSymbol<'db> { Ast(crate::local_syms::impls::LocalImplSym<'db>), Ext(SymExtKind::Impl) }
+    pub enum ModSymbol<'db> { Ast(crate::local_syms::mods::LocalModSym<'db>), Ext(SymExtKind::Mod) }
 }

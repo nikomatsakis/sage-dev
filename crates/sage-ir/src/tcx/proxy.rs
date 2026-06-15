@@ -1,7 +1,7 @@
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
-use crate::module::{CrateNum, DefIndex};
+use crate::symbol::{CrateNum, DefIndex};
 
 use super::{RawChild, TcxDb};
 

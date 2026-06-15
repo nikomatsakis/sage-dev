@@ -6,11 +6,11 @@
 use sage_stash::{Slice, Stash};
 
 use crate::Db;
-use crate::item::{LocalModItemSym, MacroDefAst};
-use crate::module::{ModSymbol, ModSymbolData};
+use crate::local_syms::LocalModItemSym;
+use crate::local_syms::macro_defs::LocalMacroDefSym;
 use crate::name::Name;
 use crate::resolve::{ResolutionError, SourceRoot, definition, symbol_to_module};
-use crate::symbol::Symbol;
+use crate::symbol::{DefIndex, ModSymbol, Symbol};
 
 use super::data::*;
 use super::expanded_module;
@@ -32,7 +32,7 @@ fn memmap_first_segment<'db, 's>(
             }
             let crate_name = rest[0].text(db);
             if let Some(crate_num) = db.tcx().extern_crate(crate_name) {
-                let ext_mod = ModSymbol::external(crate_num, crate::module::DefIndex(0));
+                let ext_mod = ModSymbol::external(crate_num, DefIndex(0));
                 return Ok((ext_mod, &rest[1..]));
             }
             Err(ResolutionError::Unresolved)
@@ -50,7 +50,7 @@ fn memmap_first_segment<'db, 's>(
                 }
             }
             if let Some(crate_num) = db.tcx().extern_crate(first_text) {
-                let ext_mod = ModSymbol::external(crate_num, crate::module::DefIndex(0));
+                let ext_mod = ModSymbol::external(crate_num, DefIndex(0));
                 return Ok((ext_mod, rest));
             }
             Err(ResolutionError::Unresolved)
@@ -99,21 +99,21 @@ fn resolve_macro_path_to_defs<'db>(
     stash: &Stash,
     entries: Slice<MemmapEntry<'db>>,
     segments: &[Name<'db>],
-) -> Vec<MacroDefAst<'db>> {
+) -> Vec<LocalMacroDefSym<'db>> {
     if segments.is_empty() {
         return Vec::new();
     }
 
     if segments.len() == 1 {
         let name = segments[0];
-        let mut named: Vec<MacroDefAst<'db>> = Vec::new();
+        let mut named: Vec<LocalMacroDefSym<'db>> = Vec::new();
         collect_named_macro_defs(db, stash, entries, name, &mut named);
         if !named.is_empty() {
             return dedup(named);
         }
 
         // Glob fallback.
-        let mut globbed: Vec<MacroDefAst<'db>> = Vec::new();
+        let mut globbed: Vec<LocalMacroDefSym<'db>> = Vec::new();
         for entry in &stash[entries] {
             if let MemmapEntry::Glob { path } = entry {
                 let path_vec: Vec<_> = stash[*path].to_vec();
@@ -158,7 +158,7 @@ fn resolve_macro_path_to_defs<'db>(
         "self" => {
             if rest.len() == 1 {
                 let name = rest[0];
-                let mut named: Vec<MacroDefAst<'db>> = Vec::new();
+                let mut named: Vec<LocalMacroDefSym<'db>> = Vec::new();
                 collect_named_macro_defs(db, stash, entries, name, &mut named);
                 return dedup(named);
             }
@@ -263,7 +263,7 @@ fn collect_named_macro_defs<'db>(
     stash: &Stash,
     entries: Slice<MemmapEntry<'db>>,
     name: Name<'db>,
-    out: &mut Vec<MacroDefAst<'db>>,
+    out: &mut Vec<LocalMacroDefSym<'db>>,
 ) {
     for entry in &stash[entries] {
         match entry {
@@ -288,7 +288,7 @@ fn walk_path_to_macro<'db>(
     mut current: ModSymbol<'db>,
     source_root: SourceRoot,
     segments: &[Name<'db>],
-) -> Option<MacroDefAst<'db>> {
+) -> Option<LocalMacroDefSym<'db>> {
     if segments.is_empty() {
         return None;
     }
@@ -338,7 +338,7 @@ fn resolve_redirect_to_macro<'db>(
     current_module: ModSymbol<'db>,
     source_root: SourceRoot,
     segments: &[Name<'db>],
-) -> Option<MacroDefAst<'db>> {
+) -> Option<LocalMacroDefSym<'db>> {
     if segments.is_empty() {
         return None;
     }
@@ -353,7 +353,7 @@ pub(super) fn find_macro_in_module<'db>(
     module: ModSymbol<'db>,
     name: Name<'db>,
     source_root: SourceRoot,
-) -> Option<MacroDefAst<'db>> {
+) -> Option<LocalMacroDefSym<'db>> {
     let ast = match module {
         ModSymbol::Ast(a) => a,
         ModSymbol::Ext(_) => return None,
@@ -392,8 +392,8 @@ fn item_as_child_module<'db>(
     symbol_to_module(db, sym, source_root, parent)
 }
 
-fn dedup<'db>(mut defs: Vec<MacroDefAst<'db>>) -> Vec<MacroDefAst<'db>> {
-    let mut out: Vec<MacroDefAst<'db>> = Vec::new();
+fn dedup<'db>(mut defs: Vec<LocalMacroDefSym<'db>>) -> Vec<LocalMacroDefSym<'db>> {
+    let mut out: Vec<LocalMacroDefSym<'db>> = Vec::new();
     defs.retain(|def| {
         if out.contains(def) {
             false

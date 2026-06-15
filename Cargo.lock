@@ -856,6 +856,7 @@ dependencies = [
  "rustc-hash",
  "sage-stash-macros",
  "salsa",
+ "smallvec",
  "xxhash-rust",
 ]
 

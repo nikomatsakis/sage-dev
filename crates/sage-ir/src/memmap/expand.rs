@@ -11,7 +11,7 @@
 use sage_stash::{Slice, Stash};
 
 use crate::Db;
-use crate::module::ModSymbol;
+use crate::symbol::ModSymbol;
 use crate::resolve::SourceRoot;
 use crate::span::{MacroExpansion, ParseSource};
 

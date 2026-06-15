@@ -43,8 +43,8 @@ Benefits:
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub enum MemmapEntry<'db> {
     Item(ItemAst<'db>),
-    TupleStructCtor(StructAst<'db>),
-    MacroDef(MacroDefAst<'db>),
+    TupleStructCtor(LocalStructSym<'db>),
+    MacroDef(LocalMacroDefSym<'db>),
     Redirect { name: Name<'db>, target: Slice<Name<'db>> },
     Glob { path: Slice<Name<'db>> },
     MacroUse(MacroUse<'db>),

@@ -3,7 +3,7 @@
 use sage_stash::{Slice, Stash};
 
 use crate::Db;
-use crate::item::LocalModItemSym;
+use crate::local_syms::LocalModItemSym;
 use crate::name::Name;
 use crate::resolve::{MacroKind, Namespace, Resolver, SourceRoot, item_in_namespace, item_name};
 use crate::scope::ScopeSymbol;

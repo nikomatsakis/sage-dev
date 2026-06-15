@@ -1,4 +1,4 @@
-use crate::module::{CrateNum, DefIndex};
+use crate::symbol::{CrateNum, DefIndex};
 
 use super::{RawChild, TcxDb};
 

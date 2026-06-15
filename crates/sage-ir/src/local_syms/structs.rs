@@ -29,13 +29,13 @@ impl<'db> LocalStructSym<'db> {
     /// each, and returns a `Binder` wrapping a (currently empty) `StructSig`.
     #[salsa::tracked]
     pub fn sig(self, db: &'db dyn crate::Db) -> Stashed<Binder<'db, StructSig<'db>>> {
+        use crate::check::Check;
         use crate::cst::generics::CheckGenerics;
         use crate::resolve::Resolver;
-        use crate::check::CstLowerCtx;
         use crate::symbol::Symbol;
 
         let (src, cst) = self.cst(db).open_deref();
-        let mut cx = CstLowerCtx::new(src, Resolver::new(db, self.scope(db)));
+        let mut cx = Check::new(src, Resolver::new(db, self.scope(db)));
 
         let parent: Symbol<'db> = self.into();
         let generics = cst.generics.check(db, &mut cx, parent);
@@ -55,24 +55,26 @@ impl<'db> LocalStructSym<'db> {
     /// each field's type from the CST with those params in scope.
     #[salsa::tracked]
     pub fn fields(self, db: &'db dyn crate::Db) -> Stashed<StructFields<'db>> {
+        use crate::check::Check;
         use crate::resolve::Resolver;
-        use crate::check::CstLowerCtx;
         use crate::ty::FieldSig;
 
         let (src, cst) = self.cst(db).open_deref();
 
-        let mut cx = CstLowerCtx::new(src, Resolver::new(db, self.scope(db)));
-        cx.resolver.ribs.add_generic_params(db, self.sig(db).iter_symbols());
+        let mut cx = Check::new(src, Resolver::new(db, self.scope(db)));
+        cx.resolver
+            .ribs
+            .add_generic_params(db, self.sig(db).iter_symbols());
 
         let field_sigs: Vec<_> = src[cst.fields]
             .iter()
             .map(|f| {
                 let ty_val = cx.src[f.ty].check(&mut cx);
-                let ty = cx.dst.alloc(ty_val);
+                let ty = cx.target_stash.alloc(ty_val);
                 FieldSig { name: f.name, ty }
             })
             .collect();
-        let fields = cx.dst.alloc_slice(&field_sigs);
+        let fields = cx.target_stash.alloc_slice(&field_sigs);
 
         cx.finish(StructFields { fields })
     }

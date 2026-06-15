@@ -1,12 +1,12 @@
 use sage_stash::{AllocStashData, Ptr, Slice};
 
+use crate::check::Check;
 use crate::cst::paths::PathCst;
 use crate::cst::ty::TypeCst;
 use crate::generic_param::{AstGenericParam, GenericParam, GenericParamKind};
 use crate::name::Name;
 use crate::resolve::Namespace;
 use crate::ribs::RibEntry;
-use crate::check::CstLowerCtx;
 use crate::span::RelativeSpan;
 use crate::symbol::Symbol;
 
@@ -42,7 +42,7 @@ pub trait CheckGenerics<'db> {
     fn check(
         self,
         db: &'db dyn crate::Db,
-        cx: &mut CstLowerCtx<'_, 'db>,
+        cx: &mut Check<'_, 'db>,
         parent: Symbol<'db>,
     ) -> Slice<GenericParam<'db>>;
 }
@@ -51,28 +51,26 @@ impl<'db> CheckGenerics<'db> for Slice<GenericParamCst<'db>> {
     fn check(
         self,
         db: &'db dyn crate::Db,
-        cx: &mut CstLowerCtx<'_, 'db>,
+        cx: &mut Check<'_, 'db>,
         parent: Symbol<'db>,
     ) -> Slice<GenericParam<'db>> {
         let params = &cx.src[self];
         let mut generic_params = Vec::new();
         for (i, param) in params.iter().enumerate() {
-            let (name, span, kind) = match param {
-                GenericParamCst::Type { name, span, .. } => {
-                    (*name, *span, GenericParamKind::Type)
-                }
+            let (name, span, kind) = match *param {
+                GenericParamCst::Type { name, span, .. } => (name, span, GenericParamKind::Type),
                 GenericParamCst::Lifetime { name, span, .. } => {
-                    (*name, *span, GenericParamKind::Lifetime)
+                    (name, span, GenericParamKind::Lifetime)
                 }
-                GenericParamCst::Const { name, span, .. } => {
-                    (*name, *span, GenericParamKind::Const)
-                }
+                GenericParamCst::Const { name, span, .. } => (name, span, GenericParamKind::Const),
             };
             let ast_param = AstGenericParam::new(db, kind, Some(name), span, parent, i as u32);
             let gp = GenericParam::Ast(ast_param);
-            cx.resolver.ribs.add(name, Namespace::Type, RibEntry::Param(gp));
+            cx.resolver
+                .ribs
+                .add(name, Namespace::Type, RibEntry::Param(gp));
             generic_params.push(gp);
         }
-        cx.dst.alloc_slice(&generic_params)
+        cx.target_stash.alloc_slice(&generic_params)
     }
 }

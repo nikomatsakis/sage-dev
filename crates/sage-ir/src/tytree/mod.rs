@@ -48,13 +48,13 @@ pub struct TyBodyData<'db> {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct TyExpr<'db> {
-    pub kind: TyExprKind<'db>,
+    pub data: TyExprData<'db>,
     pub ty: Ptr<Ty<'db>>,
     pub span: RelativeSpan,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
-pub enum TyExprKind<'db> {
+pub enum TyExprData<'db> {
     Literal(Literal),
     Path(Res<'db>),
     Block(Slice<TyStmt<'db>>, Option<Ptr<TyExpr<'db>>>),
@@ -101,7 +101,11 @@ pub struct TyStmt<'db> {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub enum TyStmtKind<'db> {
-    Let(Ptr<TyPat<'db>>, Option<Ptr<Ty<'db>>>, Option<Ptr<TyExpr<'db>>>),
+    Let(
+        Ptr<TyPat<'db>>,
+        Option<Ptr<Ty<'db>>>,
+        Option<Ptr<TyExpr<'db>>>,
+    ),
     Expr(Ptr<TyExpr<'db>>),
 }
 

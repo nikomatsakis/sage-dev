@@ -14,7 +14,10 @@ use sage_ir::ty::*;
 use sage_ir::types::Mutability;
 use salsa::Database as _;
 
-fn setup<'db>(db: &'db Database, src: &str) -> (SourceRoot, ModSymbol<'db>, Vec<LocalModItemSym<'db>>) {
+fn setup<'db>(
+    db: &'db Database,
+    src: &str,
+) -> (SourceRoot, ModSymbol<'db>, Vec<LocalModItemSym<'db>>) {
     let file = SourceFile::new(db, "lib.rs".to_owned(), src.to_owned());
     let source_root = SourceRoot::new(db, vec![file]);
     let root = ModSymbol::ast(ModAst::crate_root(db, file));
@@ -45,13 +48,13 @@ fn fn_identity_generic() {
         let params = &stash[fn_sig.params];
         assert_eq!(params.len(), 1);
         match stash[params[0]].data {
-            TyData::Param(p) => assert_eq!(p, generics[0]),
+            Ty::Param(p) => assert_eq!(p, generics[0]),
             other => panic!("expected Param, got {other:?}"),
         }
 
         let ret = &stash[fn_sig.ret];
         match ret.data {
-            TyData::Param(p) => assert_eq!(p, generics[0]),
+            Ty::Param(p) => assert_eq!(p, generics[0]),
             other => panic!("expected Param, got {other:?}"),
         }
     });
@@ -77,11 +80,11 @@ fn fn_add_primitives() {
         let fn_sig = &binder.value;
         let params = &stash[fn_sig.params];
         assert_eq!(params.len(), 2);
-        assert!(matches!(stash[params[0]].data, TyData::Int(IntTy::I32)));
-        assert!(matches!(stash[params[1]].data, TyData::Int(IntTy::I32)));
+        assert!(matches!(stash[params[0]].data, Ty::Int(IntTy::I32)));
+        assert!(matches!(stash[params[1]].data, Ty::Int(IntTy::I32)));
 
         let ret = &stash[fn_sig.ret];
-        assert!(matches!(ret.data, TyData::Int(IntTy::I32)));
+        assert!(matches!(ret.data, Ty::Int(IntTy::I32)));
     });
 }
 
@@ -107,12 +110,12 @@ fn struct_pair_generic() {
         assert_eq!(fields.len(), 2);
         assert_eq!(fields[0].name.text(db), "first");
         match stash[fields[0].ty].data {
-            TyData::Param(p) => assert_eq!(p, generics[0]),
+            Ty::Param(p) => assert_eq!(p, generics[0]),
             other => panic!("expected Param(A), got {other:?}"),
         }
         assert_eq!(fields[1].name.text(db), "second");
         match stash[fields[1].ty].data {
-            TyData::Param(p) => assert_eq!(p, generics[1]),
+            Ty::Param(p) => assert_eq!(p, generics[1]),
             other => panic!("expected Param(B), got {other:?}"),
         }
     });
@@ -136,19 +139,19 @@ fn fn_takes_ref() {
         let params = &stash[fn_sig.params];
         assert_eq!(params.len(), 1);
         match stash[params[0]].data {
-            TyData::Ref(inner, sage_ir::types::Mutability::Shared, Lifetime::Erased) => {
-                assert!(matches!(stash[inner].data, TyData::Str));
+            Ty::Ref(inner, sage_ir::types::Mutability::Shared, Lifetime::Erased) => {
+                assert!(matches!(stash[inner].data, Ty::Str));
             }
             _ => panic!("expected &str, got {:?}", stash[params[0]].data),
         }
 
         let ret = &stash[fn_sig.ret];
         match ret.data {
-            TyData::Ref(inner, sage_ir::types::Mutability::Shared, Lifetime::Erased) => {
+            Ty::Ref(inner, sage_ir::types::Mutability::Shared, Lifetime::Erased) => {
                 // tree-sitter-rust 0.24 parses [u8] as array_type in this context
                 match stash[inner].data {
-                    TyData::Slice(elem) | TyData::Array(elem, _) => {
-                        assert!(matches!(stash[elem].data, TyData::Uint(UintTy::U8)));
+                    Ty::Slice(elem) | Ty::Array(elem, _) => {
+                        assert!(matches!(stash[elem].data, Ty::Uint(UintTy::U8)));
                     }
                     other => panic!("expected [u8], got {other:?}"),
                 }
@@ -185,7 +188,7 @@ fn enum_with_fields() {
         let some_fields = &stash[variants[1].fields];
         assert_eq!(some_fields.len(), 1);
         match stash[some_fields[0].ty].data {
-            TyData::Param(p) => assert_eq!(p, generics[0]),
+            Ty::Param(p) => assert_eq!(p, generics[0]),
             other => panic!("expected Param(T), got {other:?}"),
         }
     });
@@ -208,7 +211,7 @@ fn fn_no_return_type_is_unit() {
 
         let ret = &stash[fn_sig.ret];
         match ret.data {
-            TyData::Tuple(elems) => assert!(stash[elems].is_empty()),
+            Ty::Tuple(elems) => assert!(stash[elems].is_empty()),
             _ => panic!("expected unit tuple for no return type"),
         }
     });
@@ -256,7 +259,7 @@ fn impl_method_self_return_resolves() {
         let mut stash = sage_stash::Stash::new();
         let empty_args = stash.alloc_slice::<sage_stash::Ptr<Ty>>(&[]);
         let self_ty = Ty {
-            data: TyData::Adt(foo_sym, empty_args),
+            data: Ty::Adt(foo_sym, empty_args),
         };
 
         let sig = lower_fn_sig(db, method, scope, Some(self_ty), &stash);
@@ -266,7 +269,7 @@ fn impl_method_self_return_resolves() {
         // Return type should be Adt(Foo, [])
         let ret = &sig_stash[fn_sig.ret];
         match ret.data {
-            TyData::Adt(sym, args) => {
+            Ty::Adt(sym, args) => {
                 assert_eq!(sym, foo_sym);
                 assert!(sig_stash[args].is_empty());
             }
@@ -293,7 +296,7 @@ fn impl_method_ref_self_param() {
         let mut stash = sage_stash::Stash::new();
         let empty_args = stash.alloc_slice::<sage_stash::Ptr<Ty>>(&[]);
         let self_ty = Ty {
-            data: TyData::Adt(foo_sym, empty_args),
+            data: Ty::Adt(foo_sym, empty_args),
         };
 
         let sig = lower_fn_sig(db, method, scope, Some(self_ty), &stash);
@@ -304,22 +307,20 @@ fn impl_method_ref_self_param() {
         let params = &sig_stash[fn_sig.params];
         assert_eq!(params.len(), 1);
         match sig_stash[params[0]].data {
-            TyData::Ref(inner, Mutability::Shared, Lifetime::Erased) => {
-                match sig_stash[inner].data {
-                    TyData::Adt(sym, args) => {
-                        assert_eq!(sym, foo_sym);
-                        assert!(sig_stash[args].is_empty());
-                    }
-                    other => panic!("expected Adt(Foo) inside &self, got {other:?}"),
+            Ty::Ref(inner, Mutability::Shared, Lifetime::Erased) => match sig_stash[inner].data {
+                Ty::Adt(sym, args) => {
+                    assert_eq!(sym, foo_sym);
+                    assert!(sig_stash[args].is_empty());
                 }
-            }
+                other => panic!("expected Adt(Foo) inside &self, got {other:?}"),
+            },
             other => panic!("expected &Foo for &self param, got {other:?}"),
         }
 
         // Return type should be Adt(Foo, [])
         let ret = &sig_stash[fn_sig.ret];
         match ret.data {
-            TyData::Adt(sym, _) => assert_eq!(sym, foo_sym),
+            Ty::Adt(sym, _) => assert_eq!(sym, foo_sym),
             other => panic!("expected Adt(Foo) return, got {other:?}"),
         }
     });
@@ -341,7 +342,8 @@ fn generic_impl_self_resolves_with_params() {
             LocalModItemSym::Struct(s) => s,
             _ => panic!("expected struct"),
         };
-        let wrapper_sym = sage_ir::symbol::Symbol::local(LocalModItemSym::Struct(wrapper_struct), scope);
+        let wrapper_sym =
+            sage_ir::symbol::Symbol::local(LocalModItemSym::Struct(wrapper_struct), scope);
 
         // Lower the struct signature to get its generics (this creates AstGenericParams
         // inside a tracked function context)
@@ -355,12 +357,12 @@ fn generic_impl_self_resolves_with_params() {
         // Build self type: Adt(Wrapper, [Param(T)]) using the struct's own generic param
         let mut stash = sage_stash::Stash::new();
         let param_ty = Ty {
-            data: TyData::Param(gp),
+            data: Ty::Param(gp),
         };
         let param_ptr = stash.alloc(param_ty);
         let args = stash.alloc_slice(&[param_ptr]);
         let self_ty = Ty {
-            data: TyData::Adt(wrapper_sym, args),
+            data: Ty::Adt(wrapper_sym, args),
         };
 
         let sig = lower_fn_sig(db, method, scope, Some(self_ty), &stash);
@@ -371,34 +373,32 @@ fn generic_impl_self_resolves_with_params() {
         let params = &sig_stash[fn_sig.params];
         assert_eq!(params.len(), 1);
         match sig_stash[params[0]].data {
-            TyData::Ref(inner, Mutability::Shared, Lifetime::Erased) => {
-                match sig_stash[inner].data {
-                    TyData::Adt(sym, args) => {
-                        assert_eq!(sym, wrapper_sym);
-                        let type_args = &sig_stash[args];
-                        assert_eq!(type_args.len(), 1);
-                        match sig_stash[type_args[0]].data {
-                            TyData::Param(p) => assert_eq!(p, gp),
-                            other => {
-                                panic!("expected Param(T) in wrapper type args, got {other:?}")
-                            }
+            Ty::Ref(inner, Mutability::Shared, Lifetime::Erased) => match sig_stash[inner].data {
+                Ty::Adt(sym, args) => {
+                    assert_eq!(sym, wrapper_sym);
+                    let type_args = &sig_stash[args];
+                    assert_eq!(type_args.len(), 1);
+                    match sig_stash[type_args[0]].data {
+                        Ty::Param(p) => assert_eq!(p, gp),
+                        other => {
+                            panic!("expected Param(T) in wrapper type args, got {other:?}")
                         }
                     }
-                    other => panic!("expected Adt(Wrapper<T>) in &self, got {other:?}"),
                 }
-            }
+                other => panic!("expected Adt(Wrapper<T>) in &self, got {other:?}"),
+            },
             other => panic!("expected &Wrapper<T>, got {other:?}"),
         }
 
         // Return type Self should be Adt(Wrapper, [Param(T)])
         let ret = &sig_stash[fn_sig.ret];
         match ret.data {
-            TyData::Adt(sym, args) => {
+            Ty::Adt(sym, args) => {
                 assert_eq!(sym, wrapper_sym);
                 let type_args = &sig_stash[args];
                 assert_eq!(type_args.len(), 1);
                 match sig_stash[type_args[0]].data {
-                    TyData::Param(p) => assert_eq!(p, gp),
+                    Ty::Param(p) => assert_eq!(p, gp),
                     other => panic!("expected Param(T) in Self return, got {other:?}"),
                 }
             }

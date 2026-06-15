@@ -1,10 +1,10 @@
 use sage_stash::{AllocStashData, Ptr, Slice};
 
+use crate::check::Check;
 use crate::cst::ty::TypeCst;
 use crate::name::Name;
 use crate::resolve::Namespace;
 use crate::ribs::RibEntry;
-use crate::check::CstLowerCtx;
 use crate::span::RelativeSpan;
 use crate::symbol::Symbol;
 use crate::ty::Ty;
@@ -39,7 +39,7 @@ pub enum Resolution<'db> {
 
 impl<'db> PathCst<'db> {
     /// Resolve this path to a `Resolution` — checks ribs first, then module scope.
-    pub(crate) fn resolve(self, cx: &mut CstLowerCtx<'_, 'db>, ns: Namespace) -> Resolution<'db> {
+    pub(crate) fn resolve(self, cx: &mut Check<'_, 'db>, ns: Namespace) -> Resolution<'db> {
         let segments = &cx.src[self.segments];
         if segments.is_empty() {
             return Resolution::Error;
@@ -73,16 +73,13 @@ impl<'db> PathCst<'db> {
 }
 
 impl<'db> PathSegmentCst<'db> {
-    pub(crate) fn check_type_args(
-        &self,
-        cx: &mut CstLowerCtx<'_, 'db>,
-    ) -> Slice<Ptr<Ty<'db>>> {
+    pub(crate) fn check_type_args(&self, cx: &mut Check<'_, 'db>) -> Slice<Ptr<Ty<'db>>> {
         let src_args = &cx.src[self.type_args];
         if src_args.is_empty() {
-            return cx.dst.alloc_slice(&[]);
+            return cx.target_stash.alloc_slice(&[]);
         }
         let tys: Vec<_> = src_args.iter().map(|a| a.check(cx)).collect();
-        let ptrs: Vec<_> = tys.into_iter().map(|t| cx.dst.alloc(t)).collect();
-        cx.dst.alloc_slice(&ptrs)
+        let ptrs: Vec<_> = tys.into_iter().map(|t| cx.target_stash.alloc(t)).collect();
+        cx.target_stash.alloc_slice(&ptrs)
     }
 }

@@ -10,7 +10,7 @@
 use sage_stash::{Slice, Stash};
 
 use crate::Db;
-use crate::item::{LocalModItemSym, StructKind};
+use crate::local_syms::LocalModItemSym;
 use crate::types::UseKind;
 
 use super::data::*;
@@ -60,11 +60,7 @@ pub(super) fn seed_from_items<'db>(
             LocalModItemSym::Error(..) => {}
             _ => {
                 entries.push(MemmapEntry::Item(item));
-                if let LocalModItemSym::Struct(s) = item {
-                    if matches!(s.kind(db), StructKind::Tuple | StructKind::Unit) {
-                        entries.push(MemmapEntry::TupleStructCtor(s));
-                    }
-                }
+                // TODO: re-add TupleStructCtor once LocalStructSym tracks struct kind
             }
         }
     }

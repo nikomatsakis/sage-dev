@@ -1,6 +1,6 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::ty::{InferVarIndex, Ty, TyData};
+use crate::ty::{InferVarIndex, Ty};
 use sage_stash::{Ptr, Stash};
 
 use super::bound::Bound;
@@ -17,7 +17,6 @@ struct VersionState<'db> {
 
 /// The versioned egraph: union-find + bounds over a stash of types.
 pub struct VersionedEGraph<'db> {
-    pub stash: Stash,
     versions: VersionTree,
     states: Vec<VersionState<'db>>,
     current: Version,
@@ -28,7 +27,6 @@ impl<'db> VersionedEGraph<'db> {
         let versions = VersionTree::new();
         let states = vec![VersionState::default()];
         Self {
-            stash: Stash::new(),
             versions,
             states,
             current: Version::ROOT,
@@ -134,17 +132,17 @@ impl<'db> VersionedEGraph<'db> {
     // -----------------------------------------------------------------------
 
     /// Union two types. Prefers non-InferVar as the representative.
-    pub fn union(&mut self, a: Ptr<Ty<'db>>, b: Ptr<Ty<'db>>) -> Ptr<Ty<'db>> {
+    pub fn union(&mut self, stash: &Stash, a: Ptr<Ty<'db>>, b: Ptr<Ty<'db>>) -> Ptr<Ty<'db>> {
         let a_root = self.find(a);
         let b_root = self.find(b);
         if a_root == b_root {
             return a_root;
         }
 
-        let a_data = self.stash[a_root];
-        let b_data = self.stash[b_root];
-        let (child, parent) = match (&a_data.data, &b_data.data) {
-            (TyData::InferVar(_), _) => (a_root, b_root),
+        let a_data = stash[a_root];
+        let b_data = stash[b_root];
+        let (child, parent) = match (a_data, b_data) {
+            (Ty::InferVar(_), _) => (a_root, b_root),
             _ => (b_root, a_root),
         };
 
@@ -167,11 +165,11 @@ impl<'db> VersionedEGraph<'db> {
         Bound::None
     }
 
-    pub fn set_bound(&mut self, ty: Ptr<Ty<'db>>, bound: Bound<'db>) {
+    pub fn set_bound(&mut self, stash: &Stash, ty: Ptr<Ty<'db>>, bound: Bound<'db>) {
         debug_assert!(
-            matches!(self.stash[ty].data, TyData::InferVar(_)),
+            matches!(stash[ty], Ty::InferVar(_)),
             "set_bound called on non-InferVar type: {:?}",
-            self.stash[ty].data
+            stash[ty]
         );
         self.states[self.current.0 as usize]
             .bounds
@@ -190,7 +188,7 @@ impl<'db> VersionedEGraph<'db> {
             .insert(parent_ty);
     }
 
-    pub fn rebuild(&mut self) -> Vec<Ptr<Ty<'db>>> {
+    pub fn rebuild(&mut self, stash: &mut Stash) -> Vec<Ptr<Ty<'db>>> {
         let mut changed = Vec::new();
         loop {
             let worklist = std::mem::take(&mut self.states[self.current.0 as usize].worklist);
@@ -201,7 +199,7 @@ impl<'db> VersionedEGraph<'db> {
                 let deps = self.collect_dependents(merged);
                 for dep in deps {
                     let old_canon = self.find(dep);
-                    if let Some(new_ty) = self.recanon(dep) {
+                    if let Some(new_ty) = self.recanon(stash, dep) {
                         if new_ty != old_canon {
                             self.set_parent(dep, new_ty);
                             self.states[self.current.0 as usize].worklist.push(dep);
@@ -224,10 +222,10 @@ impl<'db> VersionedEGraph<'db> {
         deps
     }
 
-    fn recanon(&mut self, ty: Ptr<Ty<'db>>) -> Option<Ptr<Ty<'db>>> {
+    fn recanon(&mut self, stash: &mut Stash, ty: Ptr<Ty<'db>>) -> Option<Ptr<Ty<'db>>> {
         use super::skeleton::{Children, decompose, recompose};
 
-        let d = decompose(&self.stash, ty);
+        let d = decompose(&stash, ty);
         if d.children.is_empty() {
             return None;
         }
@@ -237,19 +235,6 @@ impl<'db> VersionedEGraph<'db> {
             return None;
         }
 
-        Some(recompose(&mut self.stash, d.skeleton, &new_children))
-    }
-
-    // -----------------------------------------------------------------------
-    // Convenience: alloc into stash and get Ptr
-    // -----------------------------------------------------------------------
-
-    pub fn alloc_ty(&mut self, data: TyData<'db>) -> Ptr<Ty<'db>> {
-        self.stash.alloc(Ty { data })
-    }
-
-    /// Read the TyData for a given type pointer.
-    pub fn ty_data(&self, ty: Ptr<Ty<'db>>) -> TyData<'db> {
-        self.stash[ty].data
+        Some(recompose(stash, d.skeleton, &new_children))
     }
 }

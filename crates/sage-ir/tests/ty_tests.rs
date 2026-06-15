@@ -28,18 +28,18 @@ fn ty_adt_round_trip() {
 
         let mut stash = Stash::new();
         let i32_ty = stash.alloc(Ty {
-            data: TyData::Int(IntTy::I32),
+            data: Ty::Int(IntTy::I32),
         });
         let args = stash.alloc_slice(&[i32_ty]);
         let adt = stash.alloc(Ty {
-            data: TyData::Adt(sym, args),
+            data: Ty::Adt(sym, args),
         });
 
         match stash[adt].data {
-            TyData::Adt(s, a) => {
+            Ty::Adt(s, a) => {
                 assert_eq!(s, sym);
                 assert_eq!(stash[a].len(), 1);
-                assert!(matches!(stash[stash[a][0]].data, TyData::Int(IntTy::I32)));
+                assert!(matches!(stash[stash[a][0]].data, Ty::Int(IntTy::I32)));
             }
             _ => panic!("expected Adt"),
         }
@@ -70,7 +70,7 @@ fn binder_fn_sig_round_trip() {
         let generics = stash.alloc_slice(&[gp]);
 
         let param_ty = Ty {
-            data: TyData::Param(gp),
+            data: Ty::Param(gp),
         };
         let p0 = stash.alloc(param_ty);
         let p1 = stash.alloc(param_ty);
@@ -84,7 +84,7 @@ fn binder_fn_sig_round_trip() {
         assert_eq!(stash[stored.generics].len(), 1);
         assert_eq!(stash[stored.value.params].len(), 2);
         match stash[stored.value.ret].data {
-            TyData::Param(p) => assert_eq!(p, gp),
+            Ty::Param(p) => assert_eq!(p, gp),
             _ => panic!("expected Param"),
         }
     });
@@ -99,8 +99,8 @@ fn struct_sig_round_trip() {
         let name_first = Name::new(db, "first".to_owned());
         let name_second = Name::new(db, "second".to_owned());
 
-        let bool_ty = stash.alloc(Ty { data: TyData::Bool });
-        let str_ty = stash.alloc(Ty { data: TyData::Str });
+        let bool_ty = stash.alloc(Ty { data: Ty::Bool });
+        let str_ty = stash.alloc(Ty { data: Ty::Str });
 
         let fields = stash.alloc_slice(&[
             FieldSig {
@@ -120,8 +120,8 @@ fn struct_sig_round_trip() {
         let fs = &stash[stored.fields];
         assert_eq!(fs.len(), 2);
         assert_eq!(fs[0].name.text(db), "first");
-        assert!(matches!(stash[fs[0].ty].data, TyData::Bool));
-        assert!(matches!(stash[fs[1].ty].data, TyData::Str));
+        assert!(matches!(stash[fs[0].ty].data, Ty::Bool));
+        assert!(matches!(stash[fs[1].ty].data, Ty::Str));
     });
 }
 
@@ -130,17 +130,17 @@ fn primitive_types() {
     let mut stash = Stash::new();
 
     let cases = [
-        TyData::Bool,
-        TyData::Char,
-        TyData::Int(IntTy::I8),
-        TyData::Int(IntTy::I128),
-        TyData::Uint(UintTy::U64),
-        TyData::Uint(UintTy::Usize),
-        TyData::Float(FloatTy::F32),
-        TyData::Float(FloatTy::F64),
-        TyData::Str,
-        TyData::Never,
-        TyData::Error,
+        Ty::Bool,
+        Ty::Char,
+        Ty::Int(IntTy::I8),
+        Ty::Int(IntTy::I128),
+        Ty::Uint(UintTy::U64),
+        Ty::Uint(UintTy::Usize),
+        Ty::Float(FloatTy::F32),
+        Ty::Float(FloatTy::F64),
+        Ty::Str,
+        Ty::Never,
+        Ty::Error,
     ];
 
     for data in &cases {

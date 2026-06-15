@@ -14,7 +14,7 @@ The current signature queries (`fn_signature`, `struct_signature`, `enum_signatu
 #[salsa::tracked(returns(ref))]
 pub fn struct_signature<'db>(
     db: &'db dyn Db,
-    struct_ast: StructAst<'db>,
+    struct_ast: LocalStructSym<'db>,
     module: ModSymbol<'db>,
     source_root: SourceRoot,
 ) -> Stashed<Binder<'db, StructSig<'db>>>;
@@ -126,7 +126,7 @@ The scope is a tracked field on the salsa-tracked AST structs (`StructAst`, `FnA
 
 ```rust
 #[salsa::tracked(debug)]
-pub struct StructAst<'db> {
+pub struct LocalStructSym<'db> {
     pub name: Name<'db>,
     #[tracked]
     pub scope: ScopeSymbol<'db>,

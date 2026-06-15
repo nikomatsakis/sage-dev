@@ -24,7 +24,7 @@ pub struct Symbol<'db> {
 
 pub enum SymbolData<'db> {
     Ast(ItemAst<'db>),
-    TupleStructCtor(StructAst<'db>),
+    TupleStructCtor(LocalStructSym<'db>),
     Ext(SymExt),
     Intrinsic(Intrinsic),
 }

@@ -432,7 +432,7 @@ Each returns `Stashed<Binder<'db, XSig<'db>>>`:
 fn fn_signature<'db>(db: &'db dyn Db, fn_sym: FnAst<'db>, module: ModSymbol<'db>, source_root: SourceRoot) -> Stashed<Binder<'db, FnSig<'db>>>;
 
 #[salsa::tracked(returns(ref))]
-fn struct_signature<'db>(db: &'db dyn Db, struct_sym: StructAst<'db>, module: ModSymbol<'db>, source_root: SourceRoot) -> Stashed<Binder<'db, StructSig<'db>>>;
+fn struct_signature<'db>(db: &'db dyn Db, struct_sym: LocalStructSym<'db>, module: ModSymbol<'db>, source_root: SourceRoot) -> Stashed<Binder<'db, StructSig<'db>>>;
 
 #[salsa::tracked(returns(ref))]
 fn enum_signature<'db>(db: &'db dyn Db, enum_sym: EnumAst<'db>, module: ModSymbol<'db>, source_root: SourceRoot) -> Stashed<Binder<'db, EnumSig<'db>>>;
@@ -481,7 +481,7 @@ impl<'a, 'db> SigLowerCtx<'a, 'db> {
             TypeRefAstKind::Path(path) => self.lower_path_type(self.src[path]),
             TypeRefAstKind::Reference(inner, m) => {
                 let inner = self.lower_type_ref(self.src[inner]);
-                self.dst.alloc(Ty { data: TyData::Ref(inner, m, Lifetime::Erased) })
+                self.dst.alloc(Ty { data: Ty::Ref(inner, m, Lifetime::Erased) })
             }
             TypeRefAstKind::Tuple(elems) => {
                 let elems: Vec<_> = self.src[elems].iter()
@@ -489,19 +489,19 @@ impl<'a, 'db> SigLowerCtx<'a, 'db> {
                     .collect();
                 let tys: Vec<_> = elems.iter().map(|ptr| self.dst[*ptr]).collect();
                 let elems = self.dst.alloc_slice(&tys);
-                self.dst.alloc(Ty { data: TyData::Tuple(elems) })
+                self.dst.alloc(Ty { data: Ty::Tuple(elems) })
             }
             TypeRefAstKind::Slice(inner) => {
                 let inner = self.lower_type_ref(self.src[inner]);
-                self.dst.alloc(Ty { data: TyData::Slice(inner) })
+                self.dst.alloc(Ty { data: Ty::Slice(inner) })
             }
             TypeRefAstKind::Array(inner) => {
                 let inner = self.lower_type_ref(self.src[inner]);
-                self.dst.alloc(Ty { data: TyData::Array(inner, /* copy const */) })
+                self.dst.alloc(Ty { data: Ty::Array(inner, /* copy const */) })
             }
-            TypeRefAstKind::Never => self.dst.alloc(Ty { data: TyData::Never }),
+            TypeRefAstKind::Never => self.dst.alloc(Ty { data: Ty::Never }),
             TypeRefAstKind::Infer | TypeRefAstKind::Error =>
-                self.dst.alloc(Ty { data: TyData::Error }),
+                self.dst.alloc(Ty { data: Ty::Error }),
         }
     }
 }
@@ -509,10 +509,10 @@ impl<'a, 'db> SigLowerCtx<'a, 'db> {
 
 `lower_path_type` is where it gets interesting:
 
-1. **Single segment, matches a generic param** → `TyData::BoundVar(...)`.
-2. **Single segment, primitive name** (`bool`, `i32`, `str`, ...) → `TyData::Bool`, `TyData::Int(I32)`, etc.
-3. **Otherwise** → resolve the path via `resolve_name` / `resolve_path` in the type namespace → `Symbol`. Then lower any type arguments on the final path segment. Produce `TyData::Adt(symbol, args)`.
-4. **Resolution failure** → `TyData::Error`.
+1. **Single segment, matches a generic param** → `Ty::BoundVar(...)`.
+2. **Single segment, primitive name** (`bool`, `i32`, `str`, ...) → `Ty::Bool`, `Ty::Int(I32)`, etc.
+3. **Otherwise** → resolve the path via `resolve_name` / `resolve_path` in the type namespace → `Symbol`. Then lower any type arguments on the final path segment. Produce `Ty::Adt(symbol, args)`.
+4. **Resolution failure** → `Ty::Error`.
 
 Step 1 checks generics first, matching how Rust scoping works: a generic param `T` shadows any item named `T` in scope.
 
@@ -558,34 +558,34 @@ The default implementation does a structural copy — walk each `TyData` variant
 ```rust
 fn default_fold_ty<'db>(folder: &mut impl TyFolder<'db>, ty: Ty<'db>) -> Ty<'db> {
     let data = match ty.data {
-        TyData::Adt(sym, args) => {
+        Ty::Adt(sym, args) => {
             let args = fold_slice(folder, args);
-            TyData::Adt(sym, args)
+            Ty::Adt(sym, args)
         }
-        TyData::Ref(inner, m, lt) => {
+        Ty::Ref(inner, m, lt) => {
             let inner = folder.fold_ty(folder.source()[inner]);
             let inner = folder.target().alloc(inner);
-            TyData::Ref(inner, m, lt)
+            Ty::Ref(inner, m, lt)
         }
-        TyData::Tuple(elems) => {
+        Ty::Tuple(elems) => {
             let elems = fold_slice(folder, elems);
-            TyData::Tuple(elems)
+            Ty::Tuple(elems)
         }
-        TyData::Slice(inner) => {
+        Ty::Slice(inner) => {
             let inner = folder.fold_ty(folder.source()[inner]);
             let inner = folder.target().alloc(inner);
-            TyData::Slice(inner)
+            Ty::Slice(inner)
         }
-        TyData::Array(inner, c) => {
+        Ty::Array(inner, c) => {
             let inner = folder.fold_ty(folder.source()[inner]);
             let inner = folder.target().alloc(inner);
-            TyData::Array(inner, c)
+            Ty::Array(inner, c)
         }
-        TyData::FnPtr(params, ret) => {
+        Ty::FnPtr(params, ret) => {
             let params = fold_slice(folder, params);
             let ret = folder.fold_ty(folder.source()[ret]);
             let ret = folder.target().alloc(ret);
-            TyData::FnPtr(params, ret)
+            Ty::FnPtr(params, ret)
         }
         // Leaves — no indirection to follow
         leaf => leaf,
@@ -621,12 +621,12 @@ impl<'db> TyFolder<'db> for Instantiate<'_, 'db> {
 
     fn fold_ty(&mut self, ty: Ty<'db>) -> Ty<'db> {
         match ty.data {
-            TyData::BoundVar(bv) if bv.binder_index == 0 => {
+            Ty::BoundVar(bv) if bv.binder_index == 0 => {
                 self.args[bv.param_index as usize]
             }
-            TyData::BoundVar(bv) => {
+            Ty::BoundVar(bv) => {
                 Ty {
-                    data: TyData::BoundVar(BoundVar {
+                    data: Ty::BoundVar(BoundVar {
                         binder_index: bv.binder_index - 1,
                         ..bv
                     }),
@@ -760,7 +760,7 @@ Note: `body_resolve.rs:390` reads `function.params(db)` to push parameter bindin
 **Types.** Add `ty.rs` with `Ty`, `TyData`, `BoundVar`, `Binder`, `BoundVarInfo`, `BoundVarKind`, `Lifetime`, `Const`, `IntTy`, `UintTy`, `FloatTy`, `FnSig`, `StructSig`, `EnumSig`, `FieldSig`, `VariantSig`. All derive `AllocStashData`, `Copy`, etc.
 
 **Tests.** Write unit tests for stash round-tripping, mirroring step A:
-1. Build a `Ty` with `TyData::Adt(symbol, args)` in a stash. Verify the args slice contains the expected types.
+1. Build a `Ty` with `Ty::Adt(symbol, args)` in a stash. Verify the args slice contains the expected types.
 2. Build a `Binder<FnSig>` with two `BoundVarInfo { kind: Type }` entries and a `FnSig` whose param types reference `BoundVar { binder_index: 0, param_index: 0 }`. Verify all fields accessible.
 3. Verify `Stashed` equality: two identical `Binder<FnSig>` stashes are `==`; one with a different return type is `!=`.
 
@@ -792,7 +792,7 @@ These tests fail initially (the new `SymbolData` variants don't exist). Write th
    - `struct Pair<A, B>(A, B);` → constructor signature is `Binder { bound_vars: [Type, Type], value: FnSig { params: [BoundVar(0,0), BoundVar(0,1)], ret: Adt(Pair, [BoundVar(0,0), BoundVar(0,1)]) } }`.
    - `struct Unit;` → constructor signature is `FnSig { params: [], ret: Adt(Unit, []) }`.
 6. Mini-redis integration: for each function and struct in mini-redis, call the signature query and produce a snapshot dump. Dual snapshot: result + query log (same pattern as `body_resolve_tests`).
-7. Resolved body with type annotations: `let x: Vec<i32> = ...` → the `RStmtKind::Let` contains a `Ty` with `TyData::Adt(vec_symbol, [Int(I32)])`.
+7. Resolved body with type annotations: `let x: Vec<i32> = ...` → the `RStmtKind::Let` contains a `Ty` with `Ty::Adt(vec_symbol, [Int(I32)])`.
 
 **Implementation.** Implement `SigLowerCtx` — reads `TypeRefAst` from the syntactic signature stash, writes `Ty` into a resolved signature stash. Generic param tracking and name resolution. Implement `fn_signature`, `struct_signature`, `enum_signature` as salsa tracked functions. Implement `tuple_struct_ctor_signature` that derives a `FnSig` from a `StructSig`. Wire body resolver to use `SigLowerCtx` for type annotations.
 

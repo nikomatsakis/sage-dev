@@ -16,7 +16,7 @@ Make `Symbol::data()` return a per-kind `SymbolData` that tells callers "this is
 ```rust
 pub enum SymbolData<'db> {
     Ast(ItemAst<'db>),
-    TupleStructCtor(StructAst<'db>),
+    TupleStructCtor(LocalStructSym<'db>),
     Ext(SymExt),
     Intrinsic(Intrinsic),
 }
@@ -51,7 +51,7 @@ pub enum SymbolData<'db> {
     TypeAlias(TypeAliasSymbol<'db>),
     Const(ConstSymbol<'db>),
     Static(StaticSymbol<'db>),
-    MacroDef(MacroDefAst<'db>),
+    MacroDef(LocalMacroDefSym<'db>),
     Use(UseGroupAst<'db>),
     MacroInvocation(MacroInvocationAst<'db>),
     Error(AbsoluteSpan),
@@ -299,4 +299,4 @@ After all callers use per-kind constructors, the `Symbol::ast(item)` constructor
 
 ## Resolved decisions (continued)
 
-- **Macro/use wrappers:** No per-kind wrappers for `MacroDef`, `Use`, or `MacroInvocation`. These are only ever local, so `SymbolData` stores the AST directly (e.g., `MacroDef(MacroDefAst<'db>)`) without a `*Symbol` wrapper.
+- **Macro/use wrappers:** No per-kind wrappers for `MacroDef`, `Use`, or `MacroInvocation`. These are only ever local, so `SymbolData` stores the AST directly (e.g., `MacroDef(LocalMacroDefSym<'db>)`) without a `*Symbol` wrapper.

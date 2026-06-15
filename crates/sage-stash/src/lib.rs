@@ -1,5 +1,4 @@
 use std::any::TypeId;
-use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::num::NonZeroU32;
@@ -7,8 +6,10 @@ use std::ops::{Index, IndexMut};
 #[cfg(debug_assertions)]
 use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
+use rustc_hash::FxHashMap;
 pub use rustc_hash::FxHasher;
 pub use sage_stash_macros::AllocStashData;
+use smallvec::SmallVec;
 
 // ---------------------------------------------------------------------------
 // Debug-mode stash identity
@@ -481,6 +482,7 @@ impl StashHasher for FingerprintHasher {
 // Stashed<T> — pairs a Stash with a root value
 // ---------------------------------------------------------------------------
 
+#[derive(Clone)]
 pub struct Stashed<T> {
     stash: Stash,
     root: T,
@@ -566,6 +568,7 @@ impl<T> Ord for Stashed<T> {
 // ---------------------------------------------------------------------------
 
 /// Entry metadata: type id, byte offset into `buf`, element count, FxHash.
+#[derive(Clone)]
 struct Entry {
     type_id: TypeId,
     offset: u32,
@@ -582,10 +585,11 @@ struct InternKey {
 }
 
 /// Type-erased heterogeneous storage for `Copy`-only data with thin handles.
+#[derive(Clone)]
 pub struct Stash {
     buf: Vec<u8>,
     entries: Vec<Entry>,
-    intern_map: HashMap<InternKey, EntryIndex>,
+    intern_map: FxHashMap<InternKey, EntryIndex>,
     #[cfg(debug_assertions)]
     id: u32,
 }
@@ -595,7 +599,7 @@ impl Stash {
         Self {
             buf: Vec::new(),
             entries: Vec::new(),
-            intern_map: HashMap::new(),
+            intern_map: FxHashMap::default(),
             #[cfg(debug_assertions)]
             id: next_stash_id(),
         }
@@ -649,6 +653,15 @@ impl Stash {
             }
         }
         unreachable!()
+    }
+
+    /// Hash-cons a contiguous slice. Equal content always produces equal `Slice`s.
+    pub fn alloc_slice_from_iter<'db, T: AllocStashData<'db>>(
+        &mut self,
+        values: impl IntoIterator<Item = T>,
+    ) -> Slice<T> {
+        let v: SmallVec<[T; 16]> = values.into_iter().collect();
+        self.alloc_slice(&v)
     }
 
     /// Hash-cons a contiguous slice. Equal content always produces equal `Slice`s.

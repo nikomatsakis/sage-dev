@@ -2,22 +2,22 @@ use sage_stash::{Stash, StashHash, Stashed};
 
 use crate::resolve::Resolver;
 
-pub struct CstLowerCtx<'a, 'db> {
+pub struct Check<'a, 'db> {
     pub resolver: Resolver<'db>,
     pub src: &'a Stash,
-    pub dst: Stash,
+    pub target_stash: Stash,
 }
 
-impl<'a, 'db> CstLowerCtx<'a, 'db> {
+impl<'a, 'db> Check<'a, 'db> {
     pub fn new(src: &'a Stash, resolver: Resolver<'db>) -> Self {
         Self {
             resolver,
             src,
-            dst: Stash::new(),
+            target_stash: Stash::new(),
         }
     }
 
     pub fn finish<T: StashHash + Copy>(self, root: T) -> Stashed<T> {
-        Stashed::new(self.dst, root)
+        Stashed::new(self.target_stash, root)
     }
 }

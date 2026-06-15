@@ -1,17 +1,5 @@
 use sage_stash::StashDirect;
 
-use crate::local_syms::consts::LocalConstSym;
-use crate::local_syms::enums::LocalEnumSym;
-use crate::local_syms::fns::LocalFnSym;
-use crate::local_syms::impls::LocalImplSym;
-use crate::local_syms::macro_defs::LocalMacroDefSym;
-use crate::local_syms::macro_invocations::LocalMacroInvocationSym;
-use crate::local_syms::mods::LocalModSym;
-use crate::local_syms::statics::LocalStaticSym;
-use crate::local_syms::structs::LocalStructSym;
-use crate::local_syms::traits::LocalTraitSym;
-use crate::local_syms::type_aliases::LocalTypeAliasSym;
-use crate::local_syms::uses::LocalUseSym;
 use crate::source::SourceFile;
 use crate::span::{AbsoluteSpan, ParseSource};
 
@@ -19,18 +7,18 @@ use crate::span::{AbsoluteSpan, ParseSource};
 /// handles are just IDs.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub enum LocalModItemSym<'db> {
-    Function(LocalFnSym<'db>),
-    Struct(LocalStructSym<'db>),
-    Enum(LocalEnumSym<'db>),
-    Trait(LocalTraitSym<'db>),
-    Impl(LocalImplSym<'db>),
-    TypeAlias(LocalTypeAliasSym<'db>),
-    Const(LocalConstSym<'db>),
-    Static(LocalStaticSym<'db>),
-    Mod(LocalModSym<'db>),
-    Use(LocalUseSym<'db>),
-    MacroDef(LocalMacroDefSym<'db>),
-    MacroInvocation(LocalMacroInvocationSym<'db>),
+    Function(fns::LocalFnSym<'db>),
+    Struct(structs::LocalStructSym<'db>),
+    Enum(enums::LocalEnumSym<'db>),
+    Trait(traits::LocalTraitSym<'db>),
+    Impl(impls::LocalImplSym<'db>),
+    TypeAlias(type_aliases::LocalTypeAliasSym<'db>),
+    Const(consts::LocalConstSym<'db>),
+    Static(statics::LocalStaticSym<'db>),
+    Mod(mods::LocalModSym<'db>),
+    Use(uses::LocalUseSym<'db>),
+    MacroDef(macro_defs::LocalMacroDefSym<'db>),
+    MacroInvocation(macro_invocations::LocalMacroInvocationSym<'db>),
     /// Unrecognized or unsupported item node.
     Error(AbsoluteSpan<'db>),
 }

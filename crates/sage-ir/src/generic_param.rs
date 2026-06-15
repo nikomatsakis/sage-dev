@@ -1,7 +1,7 @@
 //! Generic parameters as salsa-tracked symbols.
 //!
 //! Each generic parameter (type, lifetime, const) becomes a stable salsa identity.
-//! Types reference these directly via `TyData::Param(GenericParam)` rather than
+//! Types reference these directly via `Ty::Param(GenericParam)` rather than
 //! using de Bruijn indices.
 
 use crate::name::Name;

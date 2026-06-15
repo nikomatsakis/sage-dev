@@ -24,10 +24,12 @@
 
 use sage_stash::{AllocStashData, Slice, Stash, StashDirect, Stashed};
 
-use crate::item::{LocalModItemSym, MacroDefAst, StructAst};
-use crate::module::{CrateNum, DefIndex};
+use crate::local_syms::LocalModItemSym;
+use crate::local_syms::macro_defs::LocalMacroDefSym;
+use crate::local_syms::structs::LocalStructSym;
 use crate::name::Name;
 use crate::span::AbsoluteSpan;
+use crate::symbol::{CrateNum, DefIndex};
 
 /// A macro invocation's input tokens, created during parsing/lowering.
 /// Has stable salsa identity from the parse site — never mutated.
@@ -48,10 +50,10 @@ pub enum MemmapEntry<'db> {
     Item(LocalModItemSym<'db>),
 
     /// Implicit constructor for a tuple struct or unit struct.
-    TupleStructCtor(StructAst<'db>),
+    TupleStructCtor(LocalStructSym<'db>),
 
     /// A `macro_rules!` definition.
-    MacroDef(MacroDefAst<'db>),
+    MacroDef(LocalMacroDefSym<'db>),
 
     /// A `use foo::bar [as baz]` import.
     Redirect {
@@ -115,7 +117,7 @@ pub struct Expansion<'db> {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, salsa::Update)]
 pub enum MacroCallee<'db> {
     /// Local `macro_rules!` definition.
-    Rules(MacroDefAst<'db>),
+    Rules(LocalMacroDefSym<'db>),
 
     /// Builtin macro.
     Builtin(BuiltinMacroKind),

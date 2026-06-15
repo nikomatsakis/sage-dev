@@ -139,17 +139,17 @@ pub fn definition_in_ns<'db>(
     }
 }
 
-/// Resolve a `mod foo` declaration ModAst to its resolved ModSymbol.
+/// Resolve a `mod foo` declaration LocalModSym to its resolved ModSymbol.
 ///
-/// For inline modules (`mod foo { ... }`), mints a resolved ModAst
+/// For inline modules (`mod foo { ... }`), mints a resolved LocalModSym
 /// that wraps the declaration with parent context (and no `file`).
 /// For file-based modules (`mod foo;`), looks up `foo.rs` or
-/// `foo/mod.rs` in the source root and mints a ModAst with the
+/// `foo/mod.rs` in the source root and mints a LocalModSym with the
 /// resolved file.
 pub fn resolve_mod<'db>(
     db: &'db dyn Db,
     parent: ModSymbol<'db>,
-    decl: ModAst<'db>,
+    decl: LocalModSym<'db>,
     source_root: SourceRoot,
 ) -> Option<ModSymbol<'db>> {
     resolve_mod_tracked(db, parent, decl, source_root).map(ModSymbol::ast)
@@ -159,11 +159,11 @@ pub fn resolve_mod<'db>(
 fn resolve_mod_tracked<'db>(
     db: &'db dyn Db,
     parent: ModSymbol<'db>,
-    decl: ModAst<'db>,
+    decl: LocalModSym<'db>,
     source_root: SourceRoot,
-) -> Option<ModAst<'db>> {
+) -> Option<LocalModSym<'db>> {
     if let Some(items) = decl.inline_unexpanded_items(db) {
-        let inline = ModAst::new(
+        let inline = LocalModSym::new(
             db,
             decl.name(db),
             Some(parent),
@@ -187,7 +187,7 @@ fn resolve_mod_tracked<'db>(
 
     for candidate in &candidates {
         if let Some(child_file) = lookup_source_file(db, source_root, candidate) {
-            let resolved = ModAst::new(
+            let resolved = LocalModSym::new(
                 db,
                 decl.name(db),
                 Some(parent),
@@ -592,7 +592,7 @@ fn resolve_plain_name<'db>(
     }
 
     if let Some(crate_num) = db.tcx().extern_crate(name.text(db)) {
-        return Ok(Symbol::external(crate_num, crate::module::DefIndex(0)));
+        return Ok(Symbol::external(crate_num, DefIndex(0)));
     }
 
     if let Some(sym) = resolve_in_std_prelude(db, name, ns) {
@@ -629,7 +629,7 @@ fn dispatch_first_segment<'db, 's>(
                 .tcx()
                 .extern_crate(crate_name)
                 .ok_or(ResolutionError::Unresolved)?;
-            let ext_mod = ModSymbol::external(cn, crate::module::DefIndex(0));
+            let ext_mod = ModSymbol::external(cn, DefIndex(0));
             Ok((ext_mod, &rest[1..]))
         }
         "crate" => Ok((module.crate_root(db), rest)),
@@ -645,7 +645,7 @@ fn dispatch_first_segment<'db, 's>(
                 }
             }
             if let Some(cn) = db.tcx().extern_crate(first_text) {
-                let ext_mod = ModSymbol::external(cn, crate::module::DefIndex(0));
+                let ext_mod = ModSymbol::external(cn, DefIndex(0));
                 return Ok((ext_mod, rest));
             }
             Err(ResolutionError::Unresolved)
@@ -702,7 +702,7 @@ fn resolve_in_std_prelude<'db>(
     ns: Namespace,
 ) -> Option<Symbol<'db>> {
     let std_crate = db.tcx().extern_crate("std")?;
-    let std_root = ModSymbol::external(std_crate, crate::module::DefIndex(0));
+    let std_root = ModSymbol::external(std_crate, DefIndex(0));
 
     let dummy_root = SourceRoot::new(db, Vec::new());
 

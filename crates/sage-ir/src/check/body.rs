@@ -1,10 +1,13 @@
+use std::ops::{Deref, DerefMut};
+
 use sage_stash::{Ptr, Stash, StashCopy, Stashed};
 
+use crate::check::Check;
 use crate::name::Name;
 use crate::resolve::{Namespace, Resolver};
 use crate::ribs::RibEntry;
 use crate::span::RelativeSpan;
-use crate::ty::{Binder, FnSig, InferVarIndex, Ty, TyData};
+use crate::ty::{Binder, FnSig, InferVarIndex, Ty};
 use crate::tytree::*;
 use crate::tytree::{LocalId, LocalVar};
 
@@ -40,10 +43,8 @@ pub enum DiagnosticKind<'db> {
 /// Unified body-checking context: resolves names and infers types in a
 /// single CST walk, producing `TyExpr` nodes directly into the egraph's
 /// stash.
-pub struct BodyCtx<'a, 'db> {
-    // Resolution
-    pub resolver: Resolver<'db>,
-    pub src: &'a Stash,
+pub struct BodyCheck<'a, 'db> {
+    check: Check<'a, 'db>,
 
     // Inference engine
     pub db: &'db dyn crate::Db,
@@ -57,11 +58,24 @@ pub struct BodyCtx<'a, 'db> {
     diagnostics: Vec<Diagnostic<'db>>,
 }
 
-impl<'a, 'db> BodyCtx<'a, 'db> {
+impl<'a, 'db> DerefMut for BodyCheck<'a, 'db> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.check
+    }
+}
+
+impl<'a, 'db> Deref for BodyCheck<'a, 'db> {
+    type Target = Check<'a, 'db>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.check
+    }
+}
+
+impl<'a, 'db> BodyCheck<'a, 'db> {
     pub fn new(db: &'db dyn crate::Db, src: &'a Stash, resolver: Resolver<'db>) -> Self {
         Self {
-            resolver,
-            src,
+            check: Check::new(src, resolver),
             db,
             egraph: VersionedEGraph::new(),
             runtime: Runtime::new(),
@@ -77,11 +91,11 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
     // ------------------------------------------------------------------
 
     pub fn stash(&self) -> &Stash {
-        &self.egraph.stash
+        &self.target_stash
     }
 
     pub fn stash_mut(&mut self) -> &mut Stash {
-        &mut self.egraph.stash
+        &mut self.target_stash
     }
 
     // ------------------------------------------------------------------
@@ -164,27 +178,23 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
     // ------------------------------------------------------------------
 
     pub fn fresh_ty_var(&mut self) -> Ptr<Ty<'db>> {
-        let data = self.fresh_ty_var_data();
-        self.egraph.alloc_ty(data)
+        let ty = self.fresh_ty_var_data();
+        self.target_stash.alloc(ty)
     }
 
-    pub fn fresh_ty_var_data(&mut self) -> TyData<'db> {
+    pub fn fresh_ty_var_data(&mut self) -> Ty<'db> {
         let universe = self.current_universe;
         let idx = self.egraph.alloc_var(VarInfo { universe });
-        TyData::InferVar(idx)
+        Ty::InferVar(idx)
     }
 
     // ------------------------------------------------------------------
     // Type allocation
     // ------------------------------------------------------------------
 
-    pub fn alloc_ty(&mut self, data: TyData<'db>) -> Ptr<Ty<'db>> {
-        self.egraph.alloc_ty(data)
-    }
-
     pub fn unit_ty(&mut self) -> Ptr<Ty<'db>> {
-        let elems = self.egraph.stash.alloc_slice(&[]);
-        self.egraph.alloc_ty(TyData::Tuple(elems))
+        let elems = self.target_stash.alloc_slice(&[]);
+        self.target_stash.alloc(Ty::Tuple(elems))
     }
 
     // ------------------------------------------------------------------
@@ -204,8 +214,8 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
     }
 
     pub fn set_bound(&mut self, ty: Ptr<Ty<'db>>, bound: Bound<'db>) {
-        self.egraph.set_bound(ty, bound);
-        if let TyData::InferVar(idx) = self.egraph.ty_data(ty) {
+        self.egraph.set_bound(&self.check.target_stash, ty, bound);
+        if let Ty::InferVar(idx) = self.target_stash[ty] {
             self.runtime.wake_variable(idx);
         }
     }
@@ -215,7 +225,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
     // ------------------------------------------------------------------
 
     pub fn assume_eq(&mut self, a: Ptr<Ty<'db>>, b: Ptr<Ty<'db>>) {
-        self.egraph.union(a, b);
+        self.egraph.union(&self.check.target_stash, a, b);
     }
 
     pub fn require_eq(&mut self, a: Ptr<Ty<'db>>, b: Ptr<Ty<'db>>) {
@@ -227,32 +237,33 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             return;
         }
 
-        let a_data = self.egraph.ty_data(a_canon);
-        let b_data = self.egraph.ty_data(b_canon);
+        let dst = &self.check.target_stash;
+        let a_data = dst[a_canon];
+        let b_data = dst[b_canon];
 
         match (a_data, b_data) {
-            (TyData::InferVar(_), TyData::InferVar(_)) => {
-                self.egraph.union(a_canon, b_canon);
+            (Ty::InferVar(_), Ty::InferVar(_)) => {
+                self.egraph.union(dst, a_canon, b_canon);
                 return;
             }
-            (TyData::InferVar(idx), _) => {
-                self.egraph.set_bound(a_canon, Bound::Exactly(b_canon));
-                self.egraph.union(a_canon, b_canon);
+            (Ty::InferVar(idx), _) => {
+                self.egraph.set_bound(dst, a_canon, Bound::Exactly(b_canon));
+                self.egraph.union(dst, a_canon, b_canon);
                 self.runtime.wake_variable(idx);
                 return;
             }
-            (_, TyData::InferVar(idx)) => {
-                self.egraph.set_bound(b_canon, Bound::Exactly(a_canon));
-                self.egraph.union(b_canon, a_canon);
+            (_, Ty::InferVar(idx)) => {
+                self.egraph.set_bound(dst, b_canon, Bound::Exactly(a_canon));
+                self.egraph.union(dst, b_canon, a_canon);
                 self.runtime.wake_variable(idx);
                 return;
             }
-            (TyData::Error, _) | (_, TyData::Error) => return,
+            (Ty::Error, _) | (_, Ty::Error) => return,
             _ => {}
         }
 
-        let da = decompose(&self.egraph.stash, a_canon);
-        let db_decomposed = decompose(&self.egraph.stash, b_canon);
+        let da = decompose(dst, a_canon);
+        let db_decomposed = decompose(dst, b_canon);
 
         if da.skeleton != db_decomposed.skeleton {
             self.report_type_mismatch(b_canon, a_canon);
@@ -281,12 +292,12 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             return;
         }
 
-        let a_data = self.egraph.ty_data(a_canon);
-        let b_data = self.egraph.ty_data(b_canon);
+        let a_data = self.target_stash[a_canon];
+        let b_data = self.target_stash[b_canon];
 
         match (a_data, b_data) {
-            (TyData::Never, _) => {}
-            (TyData::Ref(inner_a, m_a, _), TyData::Ref(inner_b, m_b, _)) if m_a == m_b => {
+            (Ty::Never, _) => {}
+            (Ty::Ref(inner_a, m_a, _), Ty::Ref(inner_b, m_b, _)) if m_a == m_b => {
                 self.require_sub(inner_a, inner_b);
             }
             _ => self.require_eq(a_canon, b_canon),
@@ -321,9 +332,10 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         let version = self.egraph.current_version();
         let var_count = self.egraph.version_tree().variable_count_at(version);
 
+        let dst = &mut self.check.target_stash;
         for i in 0..var_count.0 {
             let idx = InferVarIndex(i);
-            let ty = self.egraph.alloc_ty(TyData::InferVar(idx));
+            let ty = dst.alloc(Ty::InferVar(idx));
             let canon = self.egraph.find_mut(ty);
 
             if canon != ty {
@@ -333,16 +345,16 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             let bound = self.egraph.get_bound(ty);
             match bound {
                 Bound::None => {
-                    let error_ty = self.egraph.alloc_ty(TyData::Error);
-                    self.egraph.set_bound(ty, Bound::Exactly(error_ty));
-                    self.egraph.union(ty, error_ty);
+                    let error_ty = dst.alloc(Ty::Error);
+                    self.egraph.set_bound(dst, ty, Bound::Exactly(error_ty));
+                    self.egraph.union(dst, ty, error_ty);
                     self.diagnostics.push(Diagnostic {
                         kind: DiagnosticKind::UnresolvedInferVar { var: idx },
                     });
                 }
                 Bound::AtLeast(bound_ty) => {
-                    self.egraph.set_bound(ty, Bound::Exactly(bound_ty));
-                    self.egraph.union(ty, bound_ty);
+                    self.egraph.set_bound(dst, ty, Bound::Exactly(bound_ty));
+                    self.egraph.union(dst, ty, bound_ty);
                 }
                 Bound::Exactly(_) => {}
             }
@@ -374,13 +386,17 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
     // TyExpr allocation
     // ------------------------------------------------------------------
 
+    pub fn alloc_ty(&mut self, ty: Ty<'db>) -> Ptr<Ty<'db>> {
+        self.target_stash.alloc(ty)
+    }
+
     pub fn alloc_expr(
         &mut self,
-        kind: TyExprKind<'db>,
+        data: TyExprData<'db>,
         ty: Ptr<Ty<'db>>,
         span: RelativeSpan,
     ) -> Ptr<TyExpr<'db>> {
-        self.egraph.stash.alloc(TyExpr { kind, ty, span })
+        self.target_stash.alloc(TyExpr { data, ty, span })
     }
 
     // ------------------------------------------------------------------
@@ -394,12 +410,13 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         let binder = sig.root();
         let fn_sig = binder.value;
 
-        let params: Vec<Ptr<Ty<'db>>> = sig_stash[fn_sig.params]
+        let params: smallvec::SmallVec<[Ptr<Ty<'db>>; 16]> = sig_stash[fn_sig.params]
             .iter()
-            .map(|p| p.stash_copy(sig_stash, &mut self.egraph.stash))
+            .map(|p| p.stash_copy(sig_stash, &mut self.target_stash))
             .collect();
+        let params = self.target_stash.alloc_slice(&params);
 
-        let ret = fn_sig.ret.stash_copy(sig_stash, &mut self.egraph.stash);
+        let ret = fn_sig.ret.stash_copy(sig_stash, &mut self.target_stash);
 
         FnSig { params, ret }
     }
@@ -430,7 +447,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
     // ------------------------------------------------------------------
 
     pub fn finish(self, root: Ptr<TyExpr<'db>>, span: RelativeSpan) -> TyBody<'db> {
-        let mut stash = self.egraph.stash;
+        let mut stash = self.check.target_stash;
         let locals = stash.alloc_slice(&self.local_vars);
         let body = stash.alloc(TyBodyData { root, locals, span });
         Stashed::new(stash, body)

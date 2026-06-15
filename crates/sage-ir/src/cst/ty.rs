@@ -3,6 +3,7 @@ use sage_stash::{AllocStashData, Ptr, Slice};
 use crate::cst::paths::PathCst;
 use crate::name::Name;
 use crate::span::RelativeSpan;
+use crate::ty::{Const, Lifetime, Ty};
 use crate::types::Mutability;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
@@ -34,13 +35,13 @@ pub enum LifetimeCst<'db> {
 // Type checking: TypeCst → Ty
 // ---------------------------------------------------------------------------
 
+use crate::check::Check;
 use crate::cst::paths::Resolution;
 use crate::resolve::Namespace;
-use crate::check::CstLowerCtx;
-use crate::symbol::{Intrinsic, SymbolData};
+use crate::symbol::{Intrinsic, Symbol, SymbolData};
 
 impl<'db> TypeCst<'db> {
-    pub(crate) fn check(self, cx: &mut CstLowerCtx<'_, 'db>) -> Ty<'db> {
+    pub(crate) fn check(self, cx: &mut Check<'_, 'db>) -> Ty<'db> {
         let src = cx.src;
         match self.kind {
             TypeCstKind::Path(path_ptr) => {
@@ -49,116 +50,72 @@ impl<'db> TypeCst<'db> {
                 let type_args = segments
                     .last()
                     .map(|s| s.check_type_args(cx))
-                    .unwrap_or_else(|| cx.dst.alloc_slice(&[]));
+                    .unwrap_or_else(|| cx.target_stash.alloc_slice(&[]));
                 match path.resolve(cx, Namespace::Type) {
-                    Resolution::Param(param) => Ty {
-                        data: TyData::Param(param),
-                    },
+                    Resolution::Param(param) => Ty::Param(param),
                     Resolution::Sym(sym) => resolution_to_ty(sym, type_args),
                     Resolution::SelfTy(ty) => ty,
-                    Resolution::Local(_) | Resolution::Error => Ty {
-                        data: TyData::Error,
-                    },
+                    Resolution::Local(_) | Resolution::Error => Ty::Error,
                 }
             }
             TypeCstKind::Reference(inner, m) => {
                 let inner_ty = src[inner].check(cx);
-                let inner = cx.dst.alloc(inner_ty);
-                Ty {
-                    data: TyData::Ref(inner, m, Lifetime::Erased),
-                }
+                let inner = cx.target_stash.alloc(inner_ty);
+                Ty::Ref(inner, m, Lifetime::Erased)
             }
             TypeCstKind::Tuple(elems) => {
                 let tys: Vec<_> = src[elems].iter().map(|e| e.check(cx)).collect();
-                let ptrs: Vec<_> = tys.into_iter().map(|t| cx.dst.alloc(t)).collect();
-                let elems = cx.dst.alloc_slice(&ptrs);
-                Ty {
-                    data: TyData::Tuple(elems),
-                }
+                let ptrs: Vec<_> = tys.into_iter().map(|t| cx.target_stash.alloc(t)).collect();
+                let elems = cx.target_stash.alloc_slice(&ptrs);
+                Ty::Tuple(elems)
             }
             TypeCstKind::Slice(inner) => {
                 let inner_ty = src[inner].check(cx);
-                let inner = cx.dst.alloc(inner_ty);
-                Ty {
-                    data: TyData::Slice(inner),
-                }
+                let inner = cx.target_stash.alloc(inner_ty);
+                Ty::Slice(inner)
             }
             TypeCstKind::Array(inner) => {
                 let inner_ty = src[inner].check(cx);
-                let inner = cx.dst.alloc(inner_ty);
-                Ty {
-                    data: TyData::Array(inner, Const::Literal(0)),
-                }
+                let inner = cx.target_stash.alloc(inner_ty);
+                Ty::Array(inner, Const::Literal(0))
             }
             TypeCstKind::Fn(params, ret) => {
                 let param_tys: Vec<_> = src[params].iter().map(|p| p.check(cx)).collect();
-                let param_ptrs: Vec<_> = param_tys.into_iter().map(|t| cx.dst.alloc(t)).collect();
-                let param_slice = cx.dst.alloc_slice(&param_ptrs);
+                let param_ptrs: Vec<_> = param_tys
+                    .into_iter()
+                    .map(|t| cx.target_stash.alloc(t))
+                    .collect();
+                let param_slice = cx.target_stash.alloc_slice(&param_ptrs);
                 let ret_ty = match ret {
                     Some(r) => src[r].check(cx),
                     None => {
-                        let unit = cx.dst.alloc_slice(&[]);
-                        Ty {
-                            data: TyData::Tuple(unit),
-                        }
+                        let unit = cx.target_stash.alloc_slice(&[]);
+                        Ty::Tuple(unit)
                     }
                 };
-                let ret_ptr = cx.dst.alloc(ret_ty);
-                Ty {
-                    data: TyData::FnPtr(param_slice, ret_ptr),
-                }
+                let ret_ptr = cx.target_stash.alloc(ret_ty);
+                Ty::FnPtr(param_slice, ret_ptr)
             }
-            TypeCstKind::Never => Ty {
-                data: TyData::Never,
-            },
-            TypeCstKind::Infer | TypeCstKind::Error => Ty {
-                data: TyData::Error,
-            },
-        }
-    }
-}
-
-impl<'db> TypeCst<'db> {
-    /// Lower a type annotation inside a body context (e.g. cast, let).
-    /// Allocates into the BodyCtx's egraph stash.
-    pub(crate) fn check_in_body(self, cx: &mut crate::check::BodyCtx<'_, 'db>) -> Ty<'db> {
-        let src = cx.src;
-        match self.kind {
-            TypeCstKind::Path(path_ptr) => {
-                let path = src[path_ptr];
-                let res = cx.resolve_path(path, Namespace::Type);
-                match res {
-                    crate::tytree::Res::Def(sym) => {
-                        let type_args = cx.stash_mut().alloc_slice(&[]);
-                        resolution_to_ty(sym, type_args)
-                    }
-                    _ => Ty { data: TyData::Error },
-                }
-            }
-            TypeCstKind::Never => Ty { data: TyData::Never },
-            _ => Ty { data: TyData::Error }, // TODO: full type lowering in body
+            TypeCstKind::Never => Ty::Never,
+            TypeCstKind::Infer | TypeCstKind::Error => Ty::Error,
         }
     }
 }
 
 fn resolution_to_ty<'db>(sym: Symbol<'db>, type_args: Slice<Ptr<Ty<'db>>>) -> Ty<'db> {
     match sym {
-        SymbolData::Intrinsic(intrinsic) => Ty {
-            data: intrinsic_to_ty_data(intrinsic),
-        },
-        _ => Ty {
-            data: TyData::Adt(sym, type_args),
-        },
+        SymbolData::Intrinsic(intrinsic) => intrinsic_to_ty(intrinsic),
+        _ => Ty::Adt(sym, type_args),
     }
 }
 
-fn intrinsic_to_ty_data(intrinsic: Intrinsic) -> TyData<'static> {
+fn intrinsic_to_ty(intrinsic: Intrinsic) -> Ty<'static> {
     match intrinsic {
-        Intrinsic::Bool => TyData::Bool,
-        Intrinsic::Char => TyData::Char,
-        Intrinsic::Str => TyData::Str,
-        Intrinsic::Int(i) => TyData::Int(i),
-        Intrinsic::Uint(u) => TyData::Uint(u),
-        Intrinsic::Float(f) => TyData::Float(f),
+        Intrinsic::Bool => Ty::Bool,
+        Intrinsic::Char => Ty::Char,
+        Intrinsic::Str => Ty::Str,
+        Intrinsic::Int(i) => Ty::Int(i),
+        Intrinsic::Uint(u) => Ty::Uint(u),
+        Intrinsic::Float(f) => Ty::Float(f),
     }
 }

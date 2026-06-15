@@ -4,9 +4,8 @@ mod proxy;
 pub use noop::NoopTcxDb;
 pub use proxy::{ProxyTcxDb, TcxRequest};
 
-use crate::module::{CrateNum, DefIndex};
 use crate::resolve::Namespace;
-use crate::symbol::SymExtKind;
+use crate::symbol::{CrateNum, DefIndex, SymExtKind};
 
 /// A single child of an external module — raw owned data, no salsa interning.
 #[derive(Clone, Debug)]
