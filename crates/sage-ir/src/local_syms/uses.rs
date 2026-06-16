@@ -1,3 +1,5 @@
+use sage_stash::StashDirect;
+
 use crate::scope::ScopeSymbol;
 use crate::span::AbsoluteSpan;
 use crate::types::UseImports;
@@ -14,3 +16,5 @@ pub struct LocalUseSym<'db> {
     #[tracked]
     pub span: AbsoluteSpan<'db>,
 }
+
+impl StashDirect for LocalUseSym<'_> {}

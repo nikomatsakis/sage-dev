@@ -9,6 +9,7 @@ pub mod local_syms;
 pub mod lower;
 pub mod memmap;
 pub mod name;
+pub mod parse;
 pub mod resolve;
 pub mod ribs;
 pub mod scope;
@@ -19,8 +20,8 @@ pub mod tcx;
 mod ts_helpers;
 pub mod ty;
 pub mod ty_fold;
-pub mod tytree;
 pub mod types;
+pub mod tytree;
 
 /// The salsa database trait for sage-ir.
 #[salsa::db]

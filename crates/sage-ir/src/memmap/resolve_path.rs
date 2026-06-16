@@ -135,7 +135,7 @@ fn resolve_macro_path_to_defs<'db>(
         loop {
             let is_inline = matches!(
                 current.data(),
-                ModSymbol::Ast(a) if a.inline_unexpanded_items(db).is_some()
+                ModSymbol::Ast(a) if matches!(a.body_source(db), crate::local_syms::mods::ModBodySource::Inline)
             );
             if !is_inline {
                 break;

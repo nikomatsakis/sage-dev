@@ -423,35 +423,101 @@ without a two-phase parse.
 
 ## Implementation plan
 
-### Phase 1: Skeleton + structs (get the pipeline flowing)
+### Phase 1: Skeleton + structs (get the pipeline flowing) — DONE
 
-- `parse/mod.rs`: `parse_str_to_cst` with tree-sitter setup + dispatch
-- `parse/items.rs`: `parse_struct` only (simplest item with generics + fields)
-- `parse/types.rs`: `parse_type` (Path, Reference, Tuple, primitives)
-- `parse/paths.rs`: `parse_path`
-- `parse/generics.rs`: `parse_generics`
-- `parse/attrs.rs`: `parse_attrs` (can start as no-op returning empty slice)
-- `parse/util.rs`: helpers
-- Wire up `LocalModSym::unexpanded_items`
-- Verify: existing struct sig tests pass end-to-end
+- `parse/mod.rs`: `parse_str_to_cst` with tree-sitter setup + dispatch ✓
+- `parse/items.rs`: `parse_struct` ✓
+- `parse/types.rs`: `parse_type` (Path, Reference, Tuple, Array, Fn, Never, Unit) ✓
+- `parse/paths.rs`: `parse_path`, `parse_path_from_type_node` ✓
+- `parse/generics.rs`: `parse_generics`, `parse_where_clauses` ✓
+- `parse/attrs.rs`: `parse_attr_nodes` (full impl, not no-op) ✓
+- `parse/util.rs`: `item_start`, `node_name`, `relative_span`, `absolute_span` ✓
+- Wire up `LocalModSym::unexpanded_items` as `#[salsa::tracked(specify)]` ✓
+- Rename `ModSource` → `ModBodySource`, `Inline` is unit variant ✓
+- Add `Stashed<Slice<AttrCst>>` tracked field on `LocalModSym` ✓
+- Added `StashDirect` impls to all tracked syms that lacked them ✓
+- Verify: **blocked** — full pipeline depends on Symbol API (see below)
 
-### Phase 2: Functions (sigs + bodies)
+### Phase 2: Functions (sigs + bodies) — DONE
 
-- `parse/items.rs`: `parse_fn`
-- `parse/exprs.rs`: `parse_expr`, `parse_stmt`, `parse_pat`
-- Verify: fn sig + body tests pass
+- `parse/items.rs`: `parse_fn`, `parse_fn_params`, `parse_return_type` ✓
+- `parse/exprs.rs`: full expression parser (~40 node kinds) ✓
+- `parse/exprs.rs`: `parse_pat` (wildcard, bind, tuple, struct, tuple-struct, ref, or, literal, rest) ✓
+- `parse/exprs.rs`: `parse_let_stmt`, block expressions ✓
 
-### Phase 3: Remaining items
+### Phase 3: Remaining items — DONE
 
-- `parse_enum`, `parse_trait`, `parse_impl`, `parse_const`,
-  `parse_static`, `parse_type_alias`
-- `parse_mod` (inline + file-backed)
-- `parse_use`, `parse_macro_def`, `parse_macro_invocation`
+- `parse_enum` (with variants, named/tuple fields) ✓
+- `parse_trait` (with trait item body: fn, type, const) ✓
+- `parse_impl` (inherent + trait, with impl body) ✓
+- `parse_const`, `parse_static`, `parse_type_alias` ✓
+- `parse_mod` (inline with `specify` pattern + file-backed with resolution) ✓
+- `parse_use` (scoped_use_list, use_as_clause, use_wildcard, nesting) ✓
+- `parse_macro_def` (delegates to `ts_helpers::extract_macro_body_tokens`) ✓
+- `parse_macro_invocation` (from expression_statement wrapper) ✓
 
-### Phase 4: Macro expansion integration
+### Phase 4: Macro expansion integration — BLOCKED
 
-- Wire up `parse_str_to_cst` call from `memmap/expand.rs`
-- Verify: macro expansion tests pass
+- Wire up `parse_str_to_cst` call from `memmap/expand.rs`: the call
+  site exists but `expand.rs` uses `ModSymbol` methods that aren't
+  available yet (see blockers below).
+- Verify: blocked on Symbol API.
+
+### Blocker: Symbol/ModSymbol API
+
+The `symbol.rs` `define_kind_symbols!` macro generates bare enums
+(`ModSymbol { Ast(LocalModSym), Ext(SymExt) }`) but does NOT generate
+the convenience methods that `resolve/mod.rs` and `memmap/resolve_path.rs`
+expect:
+
+- `ModSymbol::external(cn, di)`, `ModSymbol::ast(lms)` — constructors
+- `ModSymbol.parent(db)` → walk `LocalModSym.parent` / ext parent
+- `ModSymbol.crate_root(db)` → walk up to root
+- `ModSymbol.data()` → self (it's already an enum — unclear why needed)
+- `ModSymbol.containing_file(db)` → walk source
+- `Symbol::local(item, scope)` → construct from LocalModItemSym
+- `Symbol::external(cn, di)` → construct from ext coords
+- `Symbol::ext(sym_ext)`, `Symbol::intrinsic(i)`
+- `Symbol::tuple_struct_ctor_local(s, scope)`
+- `SymbolData::Mod`, `SymbolData::Intrinsic`, `SymbolData::Unknown` variants
+
+These 58 errors are all pre-existing on the branch (the code didn't
+compile before this work either). They need a separate pass to add
+`impl ModSymbol` / `impl Symbol` blocks after the macro invocation.
+
+## Implementation notes / deviations from plan
+
+1. **All phases implemented together.** The RFD planned incremental
+   phases with verification between each. Since the crate didn't compile
+   pre-existing (symbol API missing), there was no way to run tests
+   between phases. All parse code was written in one pass.
+
+2. **`cst/mods.rs` simplified.** The old `InlineModCstData` (which
+   stored `Slice<LocalModItemSym>`) was removed. Inline mod children
+   now live exclusively in the `specify`'d `unexpanded_items` result,
+   as the RFD intended.
+
+3. **`unexpanded_items` for file-backed modules calls `parse_str_to_cst`
+   directly** (per the RFD), using the file's `ParseSource` and the
+   parent scope. For inline modules it panics (should always be
+   `specify`'d at parse time).
+
+4. **File resolution for `mod foo;`** is done at parse time in
+   `parse_mod`, looking up `{parent_dir}{name}.rs` or
+   `{parent_dir}{name}/mod.rs` in the `SourceRoot`. This matches
+   what `resolve_mod` used to do, but moved into the parser so that
+   `LocalModSym` is born with the correct `ModBodySource::File(f)`.
+
+5. **`resolve_mod` simplified.** Now just returns `Some(ModSymbol::Ast(decl))`
+   since the parser already set up the module correctly. The old
+   "mint a new LocalModSym with resolved file" pattern is gone.
+
+6. **Attribute parsing is real** (not a no-op). Parses path segments and
+   token-tree arguments. Does NOT yet handle doc comments or inner attrs.
+
+7. **Expression parser handles most common forms** but uses `Missing` for
+   unrecognized node kinds rather than erroring. This matches the RFD's
+   error recovery strategy.
 
 ## Open questions
 
@@ -462,19 +528,20 @@ without a two-phase parse.
    we need a disambiguation strategy (e.g., ordinal suffix).
 
 2. **Error recovery.** tree-sitter produces `ERROR` nodes for malformed
-   input. Strategy: emit `LocalModItemSym::Error(span)` and continue.
-   For partial items (e.g., function missing a body), parse what's
-   available and use `None`/`Missing` for absent parts.
+   input. Current strategy: skip ERROR nodes in `parse_item_list`.
+   For partial items (e.g., function missing a body), we parse what's
+   available and use `None`/`Missing` for absent parts. Could emit
+   `LocalModItemSym::Error(span)` for ERROR nodes in the future.
 
-3. **`use` item parsing.** The current `LocalUseSym` stores a
-   `Stashed` import tree. Need to understand the existing `UseKind` /
-   import resolution shape before implementing.
+3. **Inner attributes (`#![...]`).** The parser does not yet handle
+   inner attributes. They'll appear inside `declaration_list` bodies
+   and would need special handling in `parse_item_list`. Not in scope
+   for the initial implementation.
 
-4. **Inner attributes (`#![...]`).** The parser treats these as body
-   items — they'll appear in the `unexpanded_items` result (likely as a
-   new `LocalModItemSym` variant or attached to a sentinel). A later
-   query can scrape outer + inner attrs into a unified view. Not in
-   scope for the initial parser implementation.
+4. **Symbol API gap.** The `define_kind_symbols!` macro needs companion
+   `impl` blocks to provide the convenience constructors and accessors
+   that the resolve/memmap code expects. This is the main blocker for
+   end-to-end tests passing.
 
 ---
 

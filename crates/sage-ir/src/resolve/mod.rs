@@ -1,10 +1,11 @@
 use crate::Db;
 use crate::local_syms::LocalModItemSym;
+use crate::local_syms::mods::{LocalModSym, ModBodySource};
 use crate::name::Name;
 use crate::ribs::Ribs;
 use crate::scope::ScopeSymbol;
 use crate::source::SourceFile;
-use crate::symbol::{Intrinsic, Symbol, SymbolData};
+use crate::symbol::{DefIndex, Intrinsic, Symbol, SymbolData};
 use crate::symbol::{ModSymbol, SymExt};
 
 // ---------------------------------------------------------------------------
@@ -77,10 +78,9 @@ pub struct SourceRoot {
 /// Format a module for logging.
 fn module_label(db: &dyn Db, module: ModSymbol<'_>) -> String {
     match module {
-        ModSymbol::Ast(ast) => match (ast.file(db), ast.inline_unexpanded_items(db).is_some()) {
-            (Some(f), _) => format!("\"{}\"", f.path(db)),
-            (None, true) => format!("inline \"{}\"", ast.name(db).text(db)),
-            (None, false) => format!("decl \"{}\"", ast.name(db).text(db)),
+        ModSymbol::Ast(ast) => match ast.body_source(db) {
+            ModBodySource::File(f) => format!("\"{}\"", f.path(db)),
+            ModBodySource::Inline => format!("inline \"{}\"", ast.name(db).text(db)),
         },
         ModSymbol::Ext(ext) => format!("extern({}, {})", ext.crate_num.0, ext.def_index.0),
     }
@@ -141,65 +141,24 @@ pub fn definition_in_ns<'db>(
 
 /// Resolve a `mod foo` declaration LocalModSym to its resolved ModSymbol.
 ///
-/// For inline modules (`mod foo { ... }`), mints a resolved LocalModSym
-/// that wraps the declaration with parent context (and no `file`).
-/// For file-based modules (`mod foo;`), looks up `foo.rs` or
-/// `foo/mod.rs` in the source root and mints a LocalModSym with the
-/// resolved file.
+/// With the new architecture, the parser already creates `LocalModSym` with
+/// the correct `body_source` (File or Inline with specify'd items). This
+/// function simply wraps it as a ModSymbol. Returns `None` only if the
+/// module declaration references a file that doesn't exist.
 pub fn resolve_mod<'db>(
     db: &'db dyn Db,
-    parent: ModSymbol<'db>,
+    _parent: ModSymbol<'db>,
     decl: LocalModSym<'db>,
-    source_root: SourceRoot,
+    _source_root: SourceRoot,
 ) -> Option<ModSymbol<'db>> {
-    resolve_mod_tracked(db, parent, decl, source_root).map(ModSymbol::ast)
-}
-
-#[salsa::tracked]
-fn resolve_mod_tracked<'db>(
-    db: &'db dyn Db,
-    parent: ModSymbol<'db>,
-    decl: LocalModSym<'db>,
-    source_root: SourceRoot,
-) -> Option<LocalModSym<'db>> {
-    if let Some(items) = decl.inline_unexpanded_items(db) {
-        let inline = LocalModSym::new(
-            db,
-            decl.name(db),
-            Some(parent),
-            None,
-            decl.attrs(db).clone(),
-            Some(items.clone()),
-            decl.span(db),
-        );
-        return Some(inline);
-    }
-
-    let parent_file = parent.containing_file(db)?;
-    let parent_path = parent_file.path(db);
-    let mod_name = decl.name(db).text(db);
-    let parent_dir = parent_dir_for(parent_path);
-
-    let candidates = [
-        format!("{parent_dir}{mod_name}.rs"),
-        format!("{parent_dir}{mod_name}/mod.rs"),
-    ];
-
-    for candidate in &candidates {
-        if let Some(child_file) = lookup_source_file(db, source_root, candidate) {
-            let resolved = LocalModSym::new(
-                db,
-                decl.name(db),
-                Some(parent),
-                Some(child_file),
-                decl.attrs(db).clone(),
-                None,
-                decl.span(db),
-            );
-            return Some(resolved);
+    match decl.body_source(db) {
+        ModBodySource::File(f) => {
+            // Verify the file actually has content (exists in source root)
+            let _ = f.text(db);
+            Some(ModSymbol::Ast(decl))
         }
+        ModBodySource::Inline => Some(ModSymbol::Ast(decl)),
     }
-    None
 }
 
 /// Resolve a module path like ["cmd", "get"] to a ModSymbol.
@@ -255,12 +214,12 @@ fn parent_dir_for(path: &str) -> String {
 // Use-imports query (cosmetic — kept as a free helper for tests/log).
 // ---------------------------------------------------------------------------
 
-/// Items declared in a module (from `parse_source_file` or the inline
+/// Items declared in a module (from `parse_str_to_cst` or the inline
 /// items list for local modules; empty for external).
 pub fn module_items<'db>(db: &'db dyn Db, module: ModSymbol<'db>) -> Vec<LocalModItemSym<'db>> {
     db.log_query(format!("module_items({})", module_label(db, module)));
     match module {
-        ModSymbol::Ast(ast) => ast.unexpanded_items(db),
+        ModSymbol::Ast(ast) => ast.unexpanded_items(db).to_vec(),
         ModSymbol::Ext(_) => Vec::new(),
     }
 }

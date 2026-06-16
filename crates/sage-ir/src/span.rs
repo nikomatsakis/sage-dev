@@ -1,4 +1,4 @@
-use sage_stash::StashDirect;
+use sage_stash::{AllocStashData, StashDirect};
 
 use crate::memmap::MacroInput;
 use crate::source::SourceFile;
@@ -47,6 +47,8 @@ pub struct AbsoluteSpan<'db> {
     pub start: u32,
     pub end: u32,
 }
+
+impl StashDirect for AbsoluteSpan<'_> {}
 
 impl<'db> AbsoluteSpan<'db> {
     pub fn resolve(&self, relative: RelativeSpan) -> AbsoluteSpan<'db> {

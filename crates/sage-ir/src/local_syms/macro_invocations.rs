@@ -1,3 +1,5 @@
+use sage_stash::StashDirect;
+
 use crate::name::Name;
 use crate::scope::ScopeSymbol;
 use crate::span::AbsoluteSpan;
@@ -16,3 +18,5 @@ pub struct LocalMacroInvocationSym<'db> {
     #[tracked]
     pub span: AbsoluteSpan<'db>,
 }
+
+impl StashDirect for LocalMacroInvocationSym<'_> {}

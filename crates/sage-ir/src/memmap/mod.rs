@@ -45,8 +45,8 @@ use sage_stash::{Slice, Stash, Stashed};
 
 use crate::Db;
 use crate::local_syms::mods::LocalModSym;
-use crate::symbol::ModSymbol;
 use crate::resolve::SourceRoot;
+use crate::symbol::ModSymbol;
 
 /// The Minimally Expanded Member Map (MEM-map) for a single module.
 #[salsa::tracked(debug)]
@@ -78,7 +78,7 @@ pub fn expanded_module<'db>(
 ) -> ExpandedModule<'db> {
     let items = module.unexpanded_items(db);
     let mut stash = Stash::new();
-    let root = seed::seed_from_items(db, &items, &mut stash);
+    let root = seed::seed_from_items(db, items, &mut stash);
 
     expand::resolve_and_expand_macros(db, ModSymbol::ast(module), source_root, &mut stash, root);
 

@@ -1,11 +1,11 @@
-use sage_stash::StashDirect;
+use sage_stash::{AllocStashData, StashDirect};
 
 use crate::source::SourceFile;
 use crate::span::{AbsoluteSpan, ParseSource};
 
 /// Thin enum over all item kinds. `Copy` because salsa tracked struct
 /// handles are just IDs.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, salsa::Update)]
 pub enum LocalModItemSym<'db> {
     Function(fns::LocalFnSym<'db>),
     Struct(structs::LocalStructSym<'db>),
@@ -22,8 +22,6 @@ pub enum LocalModItemSym<'db> {
     /// Unrecognized or unsupported item node.
     Error(AbsoluteSpan<'db>),
 }
-
-impl StashDirect for LocalModItemSym<'_> {}
 
 impl<'db> LocalModItemSym<'db> {
     pub fn absolute_span(&self, db: &'db dyn crate::Db) -> AbsoluteSpan<'db> {

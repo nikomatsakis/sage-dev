@@ -1,3 +1,5 @@
+use sage_stash::StashDirect;
+
 use crate::cst::type_aliases::TypeAliasCst;
 use crate::name::Name;
 use crate::scope::ScopeSymbol;
@@ -14,3 +16,5 @@ pub struct LocalTypeAliasSym<'db> {
     #[tracked]
     pub span: AbsoluteSpan<'db>,
 }
+
+impl StashDirect for LocalTypeAliasSym<'_> {}

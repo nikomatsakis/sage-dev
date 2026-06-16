@@ -1,8 +1,8 @@
 use crate::generic_param::GenericParam;
 use crate::name::Name;
-use crate::tytree::LocalId;
 use crate::symbol::Symbol;
 use crate::ty::Ty;
+use crate::tytree::LocalId;
 
 use crate::resolve::Namespace;
 

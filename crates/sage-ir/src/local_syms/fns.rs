@@ -1,4 +1,4 @@
-use sage_stash::Stashed;
+use sage_stash::{StashDirect, Stashed};
 
 use crate::cst::fns::FnCst;
 use crate::name::Name;
@@ -19,6 +19,8 @@ pub struct LocalFnSym<'db> {
     #[tracked]
     pub span: AbsoluteSpan<'db>,
 }
+
+impl StashDirect for LocalFnSym<'_> {}
 
 #[salsa::tracked]
 impl<'db> LocalFnSym<'db> {

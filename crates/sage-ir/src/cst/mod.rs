@@ -10,6 +10,7 @@ pub mod expr;
 pub mod fns;
 pub mod generics;
 pub mod impls;
+pub mod mods;
 pub mod paths;
 pub mod statics;
 pub mod structs;
