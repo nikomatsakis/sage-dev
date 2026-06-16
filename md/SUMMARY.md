@@ -25,6 +25,7 @@
     - [Diagnostics Rendering](./rfds/diagnostics-rendering.md)
     - [Trait System](./rfds/trait-system.md)
     - [IR Reshape](./rfds/ir-reshape.md)
+    - [Parsing](./rfds/parse.md)
   - [Completed](./rfds/completed.md)
     - [Initial Setup](./rfds/initial-setup.md)
     - [Relative Span Model](./rfds/relative-span-model.md)
