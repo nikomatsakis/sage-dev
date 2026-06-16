@@ -12,14 +12,34 @@ exists and expects `&[LocalModItemSym]` as input.
 
 ```
 LocalModSym::unexpanded_items(db) -> &'db [LocalModItemSym]
-  ├── ModSource::File(f)   → parse_str_to_cst(db, ParseSource::SourceFile(f), f.text(db), scope)
-  └── ModSource::Inline(s) → borrow from stash (already parsed during parent's parse)
+  ├── ModSource::File(f)   → parse_str_to_cst(db, ..., f.text(db), scope)
+  └── ModSource::Inline    → panic! (never executes — value is specify'd at parse time)
 ```
 
-`unexpanded_items` is `#[salsa::tracked(returns(ref))]`. It is the
-memoization boundary — no separate tracked parse query on `SourceFile`
-or `MacroExpansion`. Salsa detects changes via the `SourceFile` input
-dependency and tracked-struct identity stability.
+`unexpanded_items` is `#[salsa::tracked(specify, returns(ref))]`. For
+file-backed modules it executes normally (parsing the file). For inline
+modules the parser `specify`'s the result at creation time, so the body
+never runs.
+
+```rust
+#[salsa::tracked(specify, returns(ref))]
+fn unexpanded_items(self, db: &'db dyn Db) -> Vec<LocalModItemSym<'db>> {
+    match self.source(db) {
+        ModSource::File(f) => {
+            let source = ParseSource::SourceFile(*f);
+            let scope = ScopeSymbol::from(self);
+            parse_str_to_cst(db, source, f.text(db), scope)
+        }
+        ModSource::Inline => {
+            panic!("unexpanded_items should be specify'd for inline modules")
+        }
+    }
+}
+```
+
+This eliminates the chicken-and-egg problem: the parser mints
+`LocalModSym` first (with `ModSource::Inline`), uses it as scope to
+recurse into children, then calls `specify` to store the result.
 
 Macro expansions re-enter through the same helper:
 
@@ -260,10 +280,11 @@ impl<'a, 'db> Parser<'a, 'db> {
         };
 
         if let Some(body) = node.child_by_field_name("body") {
-            // Inline mod: peek shows it has a body, so we know the source up front.
-            // Mint the module, then recurse with a child Parser.
-            let mut stash = Stash::new();
-            let attrs = self.parse_attr_nodes(&mut stash, pending_attrs, item_start);
+            // Inline mod: mint the symbol first (with ModSource::Inline),
+            // then recurse using it as the child scope.
+            let mod_sym = LocalModSym::new(
+                self.db, name, Some(self.scope), ModSource::Inline, abs_span,
+            );
 
             let child_parser = Parser {
                 db: self.db,
@@ -272,23 +293,16 @@ impl<'a, 'db> Parser<'a, 'db> {
                 text: self.text,
             };
             let children = child_parser.parse_item_list(body);
-            let items = stash.alloc_slice(&children);
 
-            let cst_data = InlineModCstData { attrs, name, items, span: RelativeSpan { start: 0, end: node.end_byte() as u32 - item_start } };
-            let root = stash.alloc(cst_data);
-            let cst = Stashed::new(stash, root);
+            // Specify the result — unexpanded_items will never execute for this mod.
+            LocalModSym::unexpanded_items::specify(self.db, mod_sym, children);
 
-            let mod_sym = LocalModSym::new(
-                self.db, name, Some(self.scope),
-                ModSource::Inline(cst), abs_span,
-            );
             LocalModItemSym::Mod(mod_sym)
         } else {
-            // File-backed mod: no body, resolve the file path.
+            // File-backed mod: unexpanded_items will execute and parse the file.
             let file = resolve_mod_file(self.db, name, self.scope);
             let mod_sym = LocalModSym::new(
-                self.db, name, Some(self.scope),
-                ModSource::File(file), abs_span,
+                self.db, name, Some(self.scope), ModSource::File(file), abs_span,
             );
             LocalModItemSym::Mod(mod_sym)
         }
@@ -297,22 +311,14 @@ impl<'a, 'db> Parser<'a, 'db> {
 ```
 
 Key points:
-- We peek at whether `body` exists before minting `LocalModSym`, so we
-  know `ModSource` at construction time (no deferred field setting).
-- The inline mod's CST (`InlineModCstData`) stores attrs, name, items,
-  and span. Children are `LocalModItemSym` handles (tracked struct IDs),
-  each with their own per-item stash.
-- `ModSource::Inline` holds `Stashed<Ptr<InlineModCstData>>` — the
-  complete inline mod CST including attrs.
-- A child `Parser` is created with `scope` set to the new module. This
-  means we need the `LocalModSym` before recursing — we solve this by
-  constructing it eagerly (we already know all fields).
-
-Note: there's a sequencing subtlety — we need `mod_sym` for the child
-scope but also need the children to build the CST. The code above shows
-a forward-reference to `mod_sym` for illustration; in practice, we can
-construct `mod_sym` in two steps or use the scope directly. See open
-questions.
+- `ModSource::Inline` is a unit variant — no data. The children live in
+  the `specify`'d `unexpanded_items` result, not in a stash on the mod.
+- The sequencing problem is solved: mint `LocalModSym` first → use it as
+  child scope → recurse → `specify` the result.
+- `specify` works because `mod_sym` was created in the current tracked
+  function (the parent's `unexpanded_items`). Salsa requires this.
+- Attrs on the mod itself can be stored as a tracked field on
+  `LocalModSym` (or ignored for now).
 
 ## Shared parse helpers
 
@@ -351,8 +357,11 @@ parse/
   util.rs         — node_text, child helpers, span arithmetic
 ```
 
-Also requires changes to `cst/inline_mods.rs` (renamed from `cst/mods.rs`):
-`InlineModCstData` gains `name: Name` and `span: RelativeSpan` fields.
+Also requires changes to `local_syms/mods.rs`:
+- `ModSource::Inline` becomes a unit variant (no data).
+- `unexpanded_items` gains `specify` attribute.
+- `cst/mods.rs` (and `InlineModCstData`) can be removed — inline mod
+  children live in the `specify`'d query result, not in a CST stash.
 
 ## Incrementality
 
@@ -407,34 +416,25 @@ without a two-phase parse.
 
 ## Open questions
 
-1. **`LocalModSym` sequencing for inline mods.** The child `Parser`
-   needs `mod_sym` for its scope, but `mod_sym` construction needs the
-   inline CST which includes the children. Resolution: construct
-   `mod_sym` first (we know all fields except `source`), or factor so
-   the scope is derived from `(name, parent)` without needing the full
-   struct yet. The peek-at-`body` approach (shown above) avoids deferred
-   field setting but introduces a forward reference.
-
-2. **Identity stability for tracked structs.** Salsa needs stable
+1. **Identity stability for tracked structs.** Salsa needs stable
    identity across re-parses. The identity fields for `LocalFnSym` are
    `(name, scope)`. If two functions have the same name in the same
    scope (which Rust forbids but we might encounter in malformed input),
    we need a disambiguation strategy (e.g., ordinal suffix).
 
-3. **Error recovery.** tree-sitter produces `ERROR` nodes for malformed
+2. **Error recovery.** tree-sitter produces `ERROR` nodes for malformed
    input. Strategy: emit `LocalModItemSym::Error(span)` and continue.
    For partial items (e.g., function missing a body), parse what's
    available and use `None`/`Missing` for absent parts.
 
-4. **`use` item parsing.** The current `LocalUseSym` stores a
+3. **`use` item parsing.** The current `LocalUseSym` stores a
    `Stashed` import tree. Need to understand the existing `UseKind` /
    import resolution shape before implementing.
 
-5. **`ModSource::Inline` type.** Currently defined as
-   `Stashed<Slice<LocalModItemSym>>` in the code. Should change to
-   `Stashed<Ptr<InlineModCstData>>` to carry attrs/name/span alongside
-   the child items. `unexpanded_items` would then open the stash and
-   return the items slice.
+4. **Inline mod attributes.** With `specify`, the inline mod's children
+   live in the query result — no CST stash needed. Where do the mod's
+   own outer attributes go? Options: a tracked field on `LocalModSym`,
+   or a lightweight `ModCst` stash for attrs only.
 
 ---
 
@@ -853,21 +853,16 @@ mod_item [0-47]
 
 Detection: `node.child_by_field_name("body").is_some()`
 
-**CST:** `Stashed<Ptr<InlineModCstData>>` (from `cst::inline_mods`)
+**No per-item CST stash.** Inline modules don't get their own CST —
+children are parsed recursively and the result is `specify`'d:
+
 ```rust
-InlineModCstData {
-    attrs: [],
-    name: Name("shapes"),
-    items: [LocalModItemSym::Struct(circle_sym)],
-    span: 0..47,
-}
+let mod_sym = LocalModSym::new(db, Name("shapes"), parent, ModSource::Inline, span);
+// recurse into body → [LocalModItemSym::Struct(circle_sym)]
+LocalModSym::unexpanded_items::specify(db, mod_sym, children);
 ```
 
-**Result:** `LocalModSym::new(db, Name("shapes"), parent, ModSource::Inline(cst), span)`
-
-The inline mod's CST stores child `LocalModItemSym` handles — the
-children are recursively parsed and minted as tracked structs (each with
-their own per-item stash).
+Children are tracked structs (each with their own per-item stash).
 
 #### A.14 File-backed module
 
