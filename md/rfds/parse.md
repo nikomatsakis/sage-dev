@@ -16,23 +16,29 @@ LocalModSym::unexpanded_items(db) -> &'db [LocalModItemSym]
   └── ModBodySource::Inline  → panic! (never executes — value is specify'd at parse time)
 ```
 
-`unexpanded_items` is `#[salsa::tracked(specify, returns(ref))]`. For
-file-backed modules it executes normally (parsing the file). For inline
-modules the parser `specify`'s the result at creation time, so the body
-never runs.
+`unexpanded_items` is a standalone `#[salsa::tracked(specify, returns(ref))]`
+function (not a method in a tracked impl block — salsa 0.26 only
+supports `specify` on standalone tracked functions). `LocalModSym`
+exposes a convenience inherent method that delegates to it.
 
 ```rust
 #[salsa::tracked(specify, returns(ref))]
-fn unexpanded_items(self, db: &'db dyn Db) -> Vec<LocalModItemSym<'db>> {
-    match self.body_source(db) {
+fn unexpanded_items<'db>(db: &'db dyn Db, module: LocalModSym<'db>) -> Vec<LocalModItemSym<'db>> {
+    match module.body_source(db) {
         ModBodySource::File(f) => {
             let source = ParseSource::SourceFile(*f);
-            let scope = ScopeSymbol::from(self);
+            let scope = ScopeSymbol::Module(module, module.source_root(db));
             parse_str_to_cst(db, source, f.text(db), scope)
         }
         ModBodySource::Inline => {
             panic!("unexpanded_items should be specify'd for inline modules")
         }
+    }
+}
+
+impl<'db> LocalModSym<'db> {
+    pub fn unexpanded_items(self, db: &'db dyn Db) -> &'db [LocalModItemSym<'db>] {
+        unexpanded_items(db, self)
     }
 }
 ```
@@ -313,16 +319,17 @@ impl<'a, 'db> Parser<'a, 'db> {
                 ModBodySource::Inline, attrs_cst, abs_span,
             );
 
+            let child_scope = ScopeSymbol::Module(mod_sym, self.scope.source_root(self.db));
             let child_parser = Parser {
                 db: self.db,
                 source: self.source,
-                scope: ScopeSymbol::from(mod_sym),
+                scope: child_scope,
                 text: self.text,
             };
             let children = child_parser.parse_item_list(body);
 
             // Specify the body — unexpanded_items will never execute for inline mods.
-            LocalModSym::unexpanded_items::specify(self.db, mod_sym, children);
+            unexpanded_items::specify(self.db, mod_sym, children);
 
             LocalModItemSym::Mod(mod_sym)
         } else {
@@ -463,12 +470,11 @@ without a two-phase parse.
    `Stashed` import tree. Need to understand the existing `UseKind` /
    import resolution shape before implementing.
 
-4. **Inner attributes (`#![...]`).** Outer attributes on a mod are
-   handled uniformly (stored on `LocalModSym` at parse time). Inner
-   attributes appear inside the module body — for inline mods they'll be
-   encountered during child parsing, for file-backed mods during
-   `unexpanded_items`. Strategy TBD: separate tracked field, or first
-   entries in the items list filtered out during MEM-map seeding.
+4. **Inner attributes (`#![...]`).** The parser treats these as body
+   items — they'll appear in the `unexpanded_items` result (likely as a
+   new `LocalModItemSym` variant or attached to a sentinel). A later
+   query can scrape outer + inner attrs into a unified view. Not in
+   scope for the initial parser implementation.
 
 ---
 
@@ -893,7 +899,7 @@ children are parsed recursively and the result is `specify`'d:
 ```rust
 let mod_sym = LocalModSym::new(db, Name("shapes"), parent, ModBodySource::Inline, attrs, span);
 // recurse into body → [LocalModItemSym::Struct(circle_sym)]
-LocalModSym::unexpanded_items::specify(db, mod_sym, children);
+unexpanded_items::specify(db, mod_sym, children);
 ```
 
 Children are tracked structs (each with their own per-item stash).
