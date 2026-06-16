@@ -28,3 +28,6 @@ pub enum ModSource<'db> {
 }
 
 impl StashDirect for LocalModSym<'_> {}
+
+#[salsa::tracked]
+impl<'db> LocalModSym<'db> {}
