@@ -521,11 +521,8 @@ compile before this work either). They need a separate pass to add
 
 ## Open questions
 
-1. **Identity stability for tracked structs.** Salsa needs stable
-   identity across re-parses. The identity fields for `LocalFnSym` are
-   `(name, scope)`. If two functions have the same name in the same
-   scope (which Rust forbids but we might encounter in malformed input),
-   we need a disambiguation strategy (e.g., ordinal suffix).
+1. ~~**Identity stability for tracked structs.**~~ Resolved: salsa
+   handles duplicate identity keys internally — no disambiguation needed.
 
 2. **Error recovery.** tree-sitter produces `ERROR` nodes for malformed
    input. Current strategy: skip ERROR nodes in `parse_item_list`.

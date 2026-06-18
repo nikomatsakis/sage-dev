@@ -80,7 +80,7 @@ pub fn expanded_module<'db>(
     let mut stash = Stash::new();
     let root = seed::seed_from_items(db, items, &mut stash);
 
-    expand::resolve_and_expand_macros(db, ModSymbol::ast(module), source_root, &mut stash, root);
+    expand::resolve_and_expand_macros(db, module.into(), source_root, &mut stash, root);
 
     let memmap = Stashed::new(stash, root);
     ExpandedModule::new(db, memmap)

@@ -7,10 +7,10 @@ use std::marker::PhantomData;
 
 use sage_stash::{AllocStashData, Ptr, Slice, StashHash, Stashed};
 
+use crate::cst::Mutability;
 use crate::generic_param::GenericParam;
 use crate::name::Name;
 use crate::symbol::Symbol;
-use crate::types::Mutability;
 
 // ---------------------------------------------------------------------------
 // Ty

@@ -1,7 +1,7 @@
+use crate::cst::Mutability;
 use crate::generic_param::GenericParam;
 use crate::symbol::Symbol;
 use crate::ty::{Const, FloatTy, InferVarIndex, IntTy, Lifetime, Ty, UintTy};
-use crate::types::Mutability;
 use sage_stash::{Ptr, Stash};
 use smallvec::SmallVec;
 

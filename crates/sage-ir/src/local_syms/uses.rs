@@ -1,8 +1,8 @@
 use sage_stash::StashDirect;
 
+use crate::cst::uses::UseImports;
 use crate::scope::ScopeSymbol;
 use crate::span::AbsoluteSpan;
-use crate::types::UseImports;
 
 /// A use declaration, desugared into flat imports.
 #[salsa::tracked(debug)]

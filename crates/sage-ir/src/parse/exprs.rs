@@ -1,9 +1,9 @@
 use sage_stash::{Ptr, Stash};
 
+use crate::cst::Mutability;
 use crate::cst::expr::*;
 use crate::name::Name;
 use crate::span::RelativeSpan;
-use crate::types::Mutability;
 
 use super::Parser;
 
@@ -802,14 +802,7 @@ impl<'a, 'db> Parser<'a, 'db> {
         let name_node = node.child_by_field_name("name");
         let path = name_node
             .map(|n| self.parse_path(stash, n, item_start))
-            .unwrap_or_else(|| {
-                let span = RelativeSpan {
-                    start: node.start_byte() as u32 - item_start,
-                    end: node.end_byte() as u32 - item_start,
-                };
-                let segments = stash.alloc_slice(&[]);
-                stash.alloc(crate::cst::paths::PathCst { segments, span })
-            });
+            .unwrap_or_else(|| stash.alloc(crate::cst::paths::Path::Relative));
 
         let mut fields = Vec::new();
         if let Some(body) = node.child_by_field_name("body") {
@@ -986,14 +979,7 @@ impl<'a, 'db> Parser<'a, 'db> {
         let type_node = node.child_by_field_name("type");
         let path = type_node
             .map(|n| self.parse_path(stash, n, item_start))
-            .unwrap_or_else(|| {
-                let span = RelativeSpan {
-                    start: node.start_byte() as u32 - item_start,
-                    end: node.end_byte() as u32 - item_start,
-                };
-                let segments = stash.alloc_slice(&[]);
-                stash.alloc(crate::cst::paths::PathCst { segments, span })
-            });
+            .unwrap_or_else(|| stash.alloc(crate::cst::paths::Path::Relative));
 
         let mut fields = Vec::new();
         let mut cursor = node.walk();
@@ -1036,14 +1022,7 @@ impl<'a, 'db> Parser<'a, 'db> {
         let type_node = node.child_by_field_name("type");
         let path = type_node
             .map(|n| self.parse_path(stash, n, item_start))
-            .unwrap_or_else(|| {
-                let span = RelativeSpan {
-                    start: node.start_byte() as u32 - item_start,
-                    end: node.end_byte() as u32 - item_start,
-                };
-                let segments = stash.alloc_slice(&[]);
-                stash.alloc(crate::cst::paths::PathCst { segments, span })
-            });
+            .unwrap_or_else(|| stash.alloc(crate::cst::paths::Path::Relative));
 
         let mut pats = Vec::new();
         let mut cursor = node.walk();

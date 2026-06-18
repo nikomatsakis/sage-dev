@@ -35,7 +35,7 @@ impl<'db> LocalStructSym<'db> {
         use crate::symbol::Symbol;
 
         let (src, cst) = self.cst(db).open_deref();
-        let mut cx = Check::new(src, Resolver::new(db, self.scope(db)));
+        let mut cx = Check::new(db, src, Resolver::new(db, self.scope(db)));
 
         let parent: Symbol<'db> = self.into();
         let generics = cst.generics.check(db, &mut cx, parent);
@@ -61,7 +61,7 @@ impl<'db> LocalStructSym<'db> {
 
         let (src, cst) = self.cst(db).open_deref();
 
-        let mut cx = Check::new(src, Resolver::new(db, self.scope(db)));
+        let mut cx = Check::new(db, src, Resolver::new(db, self.scope(db)));
         cx.resolver
             .ribs
             .add_generic_params(db, self.sig(db).iter_symbols());

@@ -75,7 +75,7 @@ impl<'a, 'db> Deref for BodyCheck<'a, 'db> {
 impl<'a, 'db> BodyCheck<'a, 'db> {
     pub fn new(db: &'db dyn crate::Db, src: &'a Stash, resolver: Resolver<'db>) -> Self {
         Self {
-            check: Check::new(src, resolver),
+            check: Check::new(db, src, resolver),
             db,
             egraph: VersionedEGraph::new(),
             runtime: Runtime::new(),
@@ -102,49 +102,126 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
     // Path resolution
     // ------------------------------------------------------------------
 
-    pub fn resolve_path(
+    pub fn resolve_path_new(
         &mut self,
-        path: crate::cst::paths::PathCst<'db>,
+        path: crate::cst::paths::Path<'db>,
         ns: Namespace,
     ) -> crate::tytree::Res<'db> {
+        use crate::cst::paths::Path;
         use crate::tytree::Res;
 
-        let segments = &self.src[path.segments];
-        if segments.is_empty() {
-            return Res::Err;
-        }
-
-        let first = &segments[0];
-        let rest = &segments[1..];
-
-        if let Some(entry) = self.resolver.ribs.lookup(first.name, ns) {
-            return match entry {
-                RibEntry::Local(id) => {
-                    if rest.is_empty() {
-                        Res::Local(id)
-                    } else {
-                        Res::Err
-                    }
+        match path {
+            Path::Relative => Res::Err,
+            Path::Anchor(_) => {
+                let names = self.path_to_names(path);
+                match self.resolver.resolve_segments(&names, ns) {
+                    Ok(sym) => Res::Def(sym),
+                    Err(_) => Res::Err,
                 }
-                RibEntry::Param(_) | RibEntry::SelfTy(_) => Res::Err,
-                RibEntry::Sym(sym) => {
-                    if rest.is_empty() {
-                        Res::Def(sym)
-                    } else {
-                        let names: Vec<_> = segments.iter().map(|s| s.name).collect();
+            }
+            Path::Segment(seg) => {
+                let prefix = self.src[seg.prefix];
+                match prefix {
+                    Path::Relative => {
+                        if let Some(entry) = self.resolver.ribs.lookup(seg.name, ns) {
+                            return match entry {
+                                RibEntry::Local(id) => Res::Local(id),
+                                RibEntry::Param(_) | RibEntry::SelfTy(_) => Res::Err,
+                                RibEntry::Sym(sym) => Res::Def(sym),
+                            };
+                        }
+                        let names = vec![seg.name];
+                        match self.resolver.resolve_segments(&names, ns) {
+                            Ok(sym) => Res::Def(sym),
+                            Err(_) => Res::Err,
+                        }
+                    }
+                    _ => {
+                        let names = self.path_to_names(path);
                         match self.resolver.resolve_segments(&names, ns) {
                             Ok(sym) => Res::Def(sym),
                             Err(_) => Res::Err,
                         }
                     }
                 }
-            };
+            }
         }
+    }
 
-        let names: Vec<_> = segments.iter().map(|s| s.name).collect();
-        match self.resolver.resolve_segments(&names, ns) {
-            Ok(sym) => Res::Def(sym),
-            Err(_) => Res::Err,
+    fn path_to_names(&self, path: crate::cst::paths::Path<'db>) -> Vec<crate::name::Name<'db>> {
+        use crate::cst::paths::{Path, PathAnchorKind};
+        use crate::name::Name;
+
+        let mut names = Vec::new();
+        self.collect_path_names(path, &mut names);
+        names
+    }
+
+    fn collect_path_names(
+        &self,
+        path: crate::cst::paths::Path<'db>,
+        out: &mut Vec<crate::name::Name<'db>>,
+    ) {
+        use crate::cst::paths::{Path, PathAnchorKind};
+        use crate::name::Name;
+
+        match path {
+            Path::Relative => {}
+            Path::Anchor(anchor) => match anchor.kind {
+                PathAnchorKind::ExternCrate(name) => {
+                    out.push(Name::new(self.db, String::new()));
+                    out.push(name);
+                }
+                PathAnchorKind::CurrentCrate => {
+                    out.push(Name::new(self.db, "crate".to_owned()));
+                }
+                PathAnchorKind::Self_ => {
+                    out.push(Name::new(self.db, "self".to_owned()));
+                }
+                PathAnchorKind::DollarCrate => {
+                    out.push(Name::new(self.db, "$crate".to_owned()));
+                }
+                PathAnchorKind::Super(inner_ptr) => {
+                    let inner = self.src[inner_ptr];
+                    self.collect_anchor_names(inner, out);
+                    out.push(Name::new(self.db, "super".to_owned()));
+                }
+            },
+            Path::Segment(seg) => {
+                let prefix = self.src[seg.prefix];
+                self.collect_path_names(prefix, out);
+                out.push(seg.name);
+            }
+        }
+    }
+
+    fn collect_anchor_names(
+        &self,
+        anchor: crate::cst::paths::PathAnchor<'db>,
+        out: &mut Vec<crate::name::Name<'db>>,
+    ) {
+        use crate::cst::paths::PathAnchorKind;
+        use crate::name::Name;
+
+        match anchor.kind {
+            PathAnchorKind::ExternCrate(name) => {
+                out.push(Name::new(self.db, String::new()));
+                out.push(name);
+            }
+            PathAnchorKind::CurrentCrate => {
+                out.push(Name::new(self.db, "crate".to_owned()));
+            }
+            PathAnchorKind::Self_ => {
+                out.push(Name::new(self.db, "self".to_owned()));
+            }
+            PathAnchorKind::DollarCrate => {
+                out.push(Name::new(self.db, "$crate".to_owned()));
+            }
+            PathAnchorKind::Super(inner_ptr) => {
+                let inner = self.src[inner_ptr];
+                self.collect_anchor_names(inner, out);
+                out.push(Name::new(self.db, "super".to_owned()));
+            }
         }
     }
 

@@ -1,8 +1,8 @@
 use sage_stash::{Ptr, Stash};
 
+use crate::cst::Mutability;
 use crate::cst::ty::{TypeCst, TypeCstKind};
 use crate::span::RelativeSpan;
-use crate::types::Mutability;
 
 use super::Parser;
 

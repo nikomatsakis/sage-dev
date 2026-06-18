@@ -1,11 +1,12 @@
 use sage_stash::{AllocStashData, Ptr, Slice, Stashed};
 
+use crate::cst::Mutability;
 use crate::cst::expr::{BinaryOp, Literal, UnaryOp};
 use crate::name::Name;
 use crate::span::RelativeSpan;
 use crate::symbol::Symbol;
 use crate::ty::Ty;
-use crate::types::{Mutability, TokenTree};
+use crate::types::TokenTree;
 
 // ---------------------------------------------------------------------------
 // Resolved-body primitives (shared with check/, ribs, cst/paths)

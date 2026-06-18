@@ -1,10 +1,10 @@
 use sage_stash::{AllocStashData, Ptr, Slice, StashDirect};
 
-use crate::cst::paths::PathCst;
+use crate::cst::Mutability;
+use crate::cst::paths::Path;
 use crate::cst::ty::TypeCst;
 use crate::name::Name;
 use crate::span::RelativeSpan;
-use crate::types::Mutability;
 
 // ---------------------------------------------------------------------------
 // Expression primitives (shared with tytree)
@@ -67,7 +67,7 @@ pub struct ExprCst<'db> {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub enum ExprCstKind<'db> {
     Literal(Literal),
-    Path(Ptr<PathCst<'db>>),
+    Path(Ptr<Path<'db>>),
     Block(Slice<StmtCst<'db>>, Option<Ptr<ExprCst<'db>>>),
     Call(Ptr<ExprCst<'db>>, Slice<ExprCst<'db>>),
     MethodCall(Ptr<ExprCst<'db>>, Name<'db>, Slice<ExprCst<'db>>),
@@ -95,7 +95,7 @@ pub enum ExprCstKind<'db> {
     Array(Slice<ExprCst<'db>>),
     Index(Ptr<ExprCst<'db>>, Ptr<ExprCst<'db>>),
     Cast(Ptr<ExprCst<'db>>, Ptr<TypeCst<'db>>),
-    StructLit(Ptr<PathCst<'db>>, Slice<FieldInitCst<'db>>),
+    StructLit(Ptr<Path<'db>>, Slice<FieldInitCst<'db>>),
     Range(Option<Ptr<ExprCst<'db>>>, Option<Ptr<ExprCst<'db>>>),
     IfLet(
         Ptr<PatCst<'db>>,
@@ -133,10 +133,10 @@ pub struct PatCst<'db> {
 pub enum PatCstKind<'db> {
     Wildcard,
     Bind(Name<'db>, Mutability),
-    Path(Ptr<PathCst<'db>>),
+    Path(Ptr<Path<'db>>),
     Tuple(Slice<PatCst<'db>>),
-    Struct(Ptr<PathCst<'db>>, Slice<FieldPatCst<'db>>),
-    TupleStruct(Ptr<PathCst<'db>>, Slice<PatCst<'db>>),
+    Struct(Ptr<Path<'db>>, Slice<FieldPatCst<'db>>),
+    TupleStruct(Ptr<Path<'db>>, Slice<PatCst<'db>>),
     Ref(Ptr<PatCst<'db>>, Mutability),
     Literal(Literal),
     Or(Slice<PatCst<'db>>),
@@ -191,7 +191,7 @@ impl<'db> ExprCst<'db> {
             }
             ExprCstKind::Path(path_ptr) => {
                 let path = check.src[*path_ptr];
-                let res = check.resolve_path(path, Namespace::Value);
+                let res = check.resolve_path_new(path, Namespace::Value);
                 let ty = res_to_ty(check, res);
                 (TyExprData::Path(res), ty)
             }
@@ -443,7 +443,7 @@ impl<'db> ExprCst<'db> {
             }
             ExprCstKind::StructLit(path_ptr, fields) => {
                 let path = check.src[*path_ptr];
-                let res = check.resolve_path(path, Namespace::Type);
+                let res = check.resolve_path_new(path, Namespace::Type);
                 let rfields: Vec<_> = check.src[*fields]
                     .iter()
                     .map(|fi| TyFieldInit {
@@ -515,7 +515,7 @@ impl<'db> PatCst<'db> {
             }
             PatCstKind::Path(path_ptr) => {
                 let path = cx.src[*path_ptr];
-                let res = cx.resolve_path(path, Namespace::Value);
+                let res = cx.resolve_path_new(path, Namespace::Value);
                 TyPatKind::Path(res)
             }
             PatCstKind::Tuple(pats) => {
@@ -525,7 +525,7 @@ impl<'db> PatCst<'db> {
             }
             PatCstKind::Struct(path_ptr, fields) => {
                 let path = cx.src[*path_ptr];
-                let res = cx.resolve_path(path, Namespace::Type);
+                let res = cx.resolve_path_new(path, Namespace::Type);
                 let rfields: Vec<_> = cx.src[*fields]
                     .iter()
                     .map(|fp| TyFieldPat {
@@ -539,7 +539,7 @@ impl<'db> PatCst<'db> {
             }
             PatCstKind::TupleStruct(path_ptr, pats) => {
                 let path = cx.src[*path_ptr];
-                let res = cx.resolve_path(path, Namespace::Value);
+                let res = cx.resolve_path_new(path, Namespace::Value);
                 let rpats: Vec<_> = cx.src[*pats].iter().map(|p| p.check(cx)).collect();
                 let pats_slice = cx.stash_mut().alloc_slice(&rpats);
                 TyPatKind::TupleStruct(res, pats_slice)
@@ -598,7 +598,7 @@ fn check_literal_ty<'db>(cx: &mut BodyCheck<'_, 'db>, lit: Literal) -> Ptr<Ty<'d
             let str_ty = cx.alloc_ty(Ty::Str);
             cx.alloc_ty(Ty::Ref(
                 str_ty,
-                crate::types::Mutability::Shared,
+                crate::cst::Mutability::Shared,
                 crate::ty::Lifetime::Static,
             ))
         }

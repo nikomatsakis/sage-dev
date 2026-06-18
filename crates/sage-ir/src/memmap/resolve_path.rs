@@ -104,6 +104,31 @@ fn resolve_macro_path_to_defs<'db>(
         return Vec::new();
     }
 
+    /*
+    Resolution order for the leading segment (highest priority first):**
+
+    1. **Block-scoped items** — items defined in an enclosing expression block (`{ struct Foo; ... Foo::method() }`)
+
+    2. **Current module** — items defined locally + named `use` imports
+
+    3. **Glob imports** — items pulled in via `use foo::*` (lower priority than named items, which is why a named item shadows a glob)
+
+    4. **Extern prelude** — all crate names. In edition 2018+, every dependency in `Cargo.toml` is implicitly here (equivalent to `extern crate foo;` in 2015). This is why you can write `serde::Serialize` without a `use`.
+
+    5. **Standard library prelude** — `std::prelude::rust_2021` (edition-dependent). Mainly injects traits (`Clone`, `Iterator`, etc.) and types (`Option`, `Result`, `Vec`, `String`, `Box`) into scope. For multi-segment paths this matters less since these are mostly single-segment names.
+
+    6. **Language/primitive prelude** — built-in type names (`i32`, `bool`, `str`, etc.). Lowest priority — a user-defined `struct bool;` shadows the primitive.
+
+    **Special first-segments that bypass this:**
+    - `crate` → crate root
+    - `self` → current module
+    - `super` → parent module
+    - `$crate` → (macro hygiene) defining crate
+
+    */
+
+    // The first segment
+
     if segments.len() == 1 {
         let name = segments[0];
         let mut named: Vec<LocalMacroDefSym<'db>> = Vec::new();

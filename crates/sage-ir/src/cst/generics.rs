@@ -1,7 +1,7 @@
 use sage_stash::{AllocStashData, Ptr, Slice};
 
 use crate::check::Check;
-use crate::cst::paths::PathCst;
+use crate::cst::paths::Path;
 use crate::cst::ty::TypeCst;
 use crate::generic_param::{AstGenericParam, GenericParam, GenericParamKind};
 use crate::name::Name;
@@ -30,7 +30,7 @@ pub enum GenericParamCst<'db> {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub enum TypeBoundCst<'db> {
-    Trait(Ptr<PathCst<'db>>),
+    Trait(Ptr<Path<'db>>),
     Lifetime(Name<'db>),
 }
 

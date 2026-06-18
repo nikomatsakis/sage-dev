@@ -1,10 +1,10 @@
 use sage_stash::{AllocStashData, Ptr, Slice};
 
-use crate::cst::paths::PathCst;
+use crate::cst::Mutability;
+use crate::cst::paths::Path;
 use crate::name::Name;
 use crate::span::RelativeSpan;
 use crate::ty::{Const, Lifetime, Ty};
-use crate::types::Mutability;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct TypeCst<'db> {
@@ -14,7 +14,7 @@ pub struct TypeCst<'db> {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub enum TypeCstKind<'db> {
-    Path(Ptr<PathCst<'db>>),
+    Path(Ptr<Path<'db>>),
     Reference(Ptr<TypeCst<'db>>, Mutability),
     Slice(Ptr<TypeCst<'db>>),
     Array(Ptr<TypeCst<'db>>),
@@ -46,9 +46,8 @@ impl<'db> TypeCst<'db> {
         match self.kind {
             TypeCstKind::Path(path_ptr) => {
                 let path = src[path_ptr];
-                let segments = &src[path.segments];
-                let type_args = segments
-                    .last()
+                let type_args = path
+                    .final_segment()
                     .map(|s| s.check_type_args(cx))
                     .unwrap_or_else(|| cx.target_stash.alloc_slice(&[]));
                 match path.resolve(cx, Namespace::Type) {
