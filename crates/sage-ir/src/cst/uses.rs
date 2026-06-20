@@ -6,7 +6,7 @@ use crate::span::RelativeSpan;
 
 /// A single flattened use import (stash-allocated).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
-pub struct UseImportAst<'db> {
+pub struct UseImportCst<'db> {
     /// The full path as a recursive Path CST node.
     pub path: Ptr<Path<'db>>,
     pub kind: UseKind<'db>,
@@ -14,7 +14,7 @@ pub struct UseImportAst<'db> {
 }
 
 /// The stashed collection of use imports for a `use` declaration.
-pub type UseImports<'db> = Stashed<Slice<UseImportAst<'db>>>;
+pub type UseImports<'db> = Stashed<Slice<UseImportCst<'db>>>;
 
 /// What a use import brings into scope.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update, AllocStashData)]

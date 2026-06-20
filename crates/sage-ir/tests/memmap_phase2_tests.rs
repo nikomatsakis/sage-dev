@@ -97,7 +97,7 @@ m!();
         let macro_uses: Vec<_> = stash[entries]
             .iter()
             .filter_map(|e| match e {
-                MemmapEntry::MacroUse(mu) => Some(*mu),
+                MemmapEntry::MacroInvocation(mu) => Some(*mu),
                 _ => None,
             })
             .collect();
@@ -141,7 +141,7 @@ m!();
         let macro_uses: Vec<_> = stash[entries]
             .iter()
             .filter_map(|e| match e {
-                MemmapEntry::MacroUse(mu) => Some(*mu),
+                MemmapEntry::MacroInvocation(mu) => Some(*mu),
                 _ => None,
             })
             .collect();
@@ -248,7 +248,7 @@ m!();
         let macro_uses: Vec<_> = stash[entries]
             .iter()
             .filter_map(|e| match e {
-                MemmapEntry::MacroUse(mu) => Some(*mu),
+                MemmapEntry::MacroInvocation(mu) => Some(*mu),
                 _ => None,
             })
             .collect();
@@ -318,7 +318,7 @@ m!();
         let macro_uses: Vec<_> = stash[entries]
             .iter()
             .filter_map(|e| match e {
-                MemmapEntry::MacroUse(mu) => Some(*mu),
+                MemmapEntry::MacroInvocation(mu) => Some(*mu),
                 _ => None,
             })
             .collect();
@@ -370,7 +370,7 @@ m!();
         let mu = stash[entries]
             .iter()
             .find_map(|e| match e {
-                MemmapEntry::MacroUse(mu) if !stash[mu.expansions].is_empty() => Some(*mu),
+                MemmapEntry::MacroInvocation(mu) if !stash[mu.expansions].is_empty() => Some(*mu),
                 _ => None,
             })
             .expect("should have an expanded macro use");
@@ -464,7 +464,7 @@ m!();
             entries: sage_stash::Slice<MemmapEntry>,
         ) -> bool {
             for entry in &stash[entries] {
-                if let MemmapEntry::MacroUse(mu) = entry {
+                if let MemmapEntry::MacroInvocation(mu) = entry {
                     let exps = &stash[mu.expansions];
                     if exps.is_empty() {
                         return true;

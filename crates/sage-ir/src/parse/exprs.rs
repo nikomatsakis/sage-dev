@@ -802,7 +802,7 @@ impl<'a, 'db> Parser<'a, 'db> {
         let name_node = node.child_by_field_name("name");
         let path = name_node
             .map(|n| self.parse_path(stash, n, item_start))
-            .unwrap_or_else(|| stash.alloc(crate::cst::paths::Path::Relative));
+            .unwrap_or_else(|| self.parse_path(stash, node, item_start));
 
         let mut fields = Vec::new();
         if let Some(body) = node.child_by_field_name("body") {
@@ -979,7 +979,7 @@ impl<'a, 'db> Parser<'a, 'db> {
         let type_node = node.child_by_field_name("type");
         let path = type_node
             .map(|n| self.parse_path(stash, n, item_start))
-            .unwrap_or_else(|| stash.alloc(crate::cst::paths::Path::Relative));
+            .unwrap_or_else(|| self.parse_path(stash, node, item_start));
 
         let mut fields = Vec::new();
         let mut cursor = node.walk();
@@ -1022,7 +1022,7 @@ impl<'a, 'db> Parser<'a, 'db> {
         let type_node = node.child_by_field_name("type");
         let path = type_node
             .map(|n| self.parse_path(stash, n, item_start))
-            .unwrap_or_else(|| stash.alloc(crate::cst::paths::Path::Relative));
+            .unwrap_or_else(|| self.parse_path(stash, node, item_start));
 
         let mut pats = Vec::new();
         let mut cursor = node.walk();

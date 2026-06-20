@@ -11,6 +11,7 @@
 use sage_stash::{Slice, Stash};
 
 use crate::Db;
+use crate::local_syms::mods::LocalModSym;
 use crate::resolve::SourceRoot;
 use crate::span::{MacroExpansion, ParseSource};
 use crate::symbol::ModSymbol;
@@ -22,29 +23,12 @@ use super::seed::seed_from_items;
 /// Maximum nesting depth for macro expansion (same as rustc's default).
 const MAX_EXPANSION_DEPTH: usize = 128;
 
-/// Resolve and expand all `MacroUse` entries in the stash, iterating
-/// until no new callees are discovered.
-pub(super) fn resolve_and_expand_macros<'db>(
-    db: &'db dyn Db,
-    module: ModSymbol<'db>,
-    source_root: SourceRoot,
-    stash: &mut Stash,
-    root: Slice<MemmapEntry<'db>>,
-) {
-    loop {
-        let changed = resolve_expand_pass(db, module, source_root, stash, root, root, 0);
-        if !changed {
-            break;
-        }
-    }
-}
-
 /// Single pass: walk all `MacroUse` entries (including nested ones inside
 /// expansions), resolve paths, expand new callees. Returns true if any
 /// new expansion was added.
-fn resolve_expand_pass<'db>(
+pub fn resolve_expand_pass<'db>(
     db: &'db dyn Db,
-    module: ModSymbol<'db>,
+    module: LocalModSym<'db>,
     source_root: SourceRoot,
     stash: &mut Stash,
     entries: Slice<MemmapEntry<'db>>,
@@ -60,7 +44,7 @@ fn resolve_expand_pass<'db>(
 
     for i in 0..len {
         let entry = stash[entries][i];
-        let MemmapEntry::MacroUse(mu) = entry else {
+        let MemmapEntry::MacroInvocation(mu) = entry else {
             continue;
         };
 
@@ -69,7 +53,8 @@ fn resolve_expand_pass<'db>(
         let existing_callees: Vec<MacroCallee<'db>> =
             stash[mu.expansions].iter().map(|e| e.callee).collect();
 
-        let callees = resolve_macro_path(db, module, source_root, stash, root_entries, &path);
+        let callees =
+            resolve_macro_path(db, module.into(), source_root, stash, root_entries, &path);
 
         let new_callees: Vec<MacroCallee<'db>> = callees
             .into_iter()
@@ -116,12 +101,12 @@ fn resolve_expand_pass<'db>(
         }
 
         // Update the MacroUse in place with new expansions handle.
-        let updated_mu = MacroUse {
+        let updated_mu = MacroInvocation {
             path: mu.path,
             input: mu.input,
             expansions: current_expansions,
         };
-        stash[entries][i] = MemmapEntry::MacroUse(updated_mu);
+        stash[entries][i] = MemmapEntry::MacroInvocation(updated_mu);
         changed = true;
     }
 

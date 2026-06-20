@@ -46,10 +46,7 @@ impl<'db> TypeCst<'db> {
         match self.kind {
             TypeCstKind::Path(path_ptr) => {
                 let path = src[path_ptr];
-                let type_args = path
-                    .final_segment()
-                    .map(|s| s.check_type_args(cx))
-                    .unwrap_or_else(|| cx.target_stash.alloc_slice(&[]));
+                let type_args = path.final_segment(cx).check_type_args(cx);
                 match path.resolve(cx, Namespace::Type) {
                     Resolution::Param(param) => Ty::Param(param),
                     Resolution::Sym(sym) => resolution_to_ty(sym, type_args),

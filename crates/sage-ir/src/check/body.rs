@@ -111,88 +111,54 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
         use crate::tytree::Res;
 
         match path {
-            Path::Relative => Res::Err,
-            Path::Anchor(_) => {
-                let names = self.path_to_names(path);
+            Path::Relative(first, rest_slice) => {
+                let rest = &self.src[rest_slice];
+                if rest.is_empty() {
+                    if let Some(entry) = self.resolver.ribs.lookup(first.name, ns) {
+                        return match entry {
+                            RibEntry::Local(id) => Res::Local(id),
+                            RibEntry::Param(_) | RibEntry::SelfTy(_) => Res::Err,
+                            RibEntry::Sym(sym) => Res::Def(sym),
+                        };
+                    }
+                }
+                let mut names = vec![first.name];
+                names.extend(rest.iter().map(|s| s.name));
                 match self.resolver.resolve_segments(&names, ns) {
                     Ok(sym) => Res::Def(sym),
                     Err(_) => Res::Err,
                 }
             }
-            Path::Segment(seg) => {
-                let prefix = self.src[seg.prefix];
-                match prefix {
-                    Path::Relative => {
-                        if let Some(entry) = self.resolver.ribs.lookup(seg.name, ns) {
-                            return match entry {
-                                RibEntry::Local(id) => Res::Local(id),
-                                RibEntry::Param(_) | RibEntry::SelfTy(_) => Res::Err,
-                                RibEntry::Sym(sym) => Res::Def(sym),
-                            };
-                        }
-                        let names = vec![seg.name];
-                        match self.resolver.resolve_segments(&names, ns) {
-                            Ok(sym) => Res::Def(sym),
-                            Err(_) => Res::Err,
-                        }
-                    }
-                    _ => {
-                        let names = self.path_to_names(path);
-                        match self.resolver.resolve_segments(&names, ns) {
-                            Ok(sym) => Res::Def(sym),
-                            Err(_) => Res::Err,
-                        }
-                    }
+            Path::Anchored(anchor, seg_slice) => {
+                let segs = &self.src[seg_slice];
+                let mut names = Vec::new();
+                self.collect_anchor_names(anchor, &mut names);
+                names.extend(segs.iter().map(|s| s.name));
+                match self.resolver.resolve_segments(&names, ns) {
+                    Ok(sym) => Res::Def(sym),
+                    Err(_) => Res::Err,
                 }
             }
         }
     }
 
     fn path_to_names(&self, path: crate::cst::paths::Path<'db>) -> Vec<crate::name::Name<'db>> {
-        use crate::cst::paths::{Path, PathAnchorKind};
-        use crate::name::Name;
+        use crate::cst::paths::Path;
 
         let mut names = Vec::new();
-        self.collect_path_names(path, &mut names);
-        names
-    }
-
-    fn collect_path_names(
-        &self,
-        path: crate::cst::paths::Path<'db>,
-        out: &mut Vec<crate::name::Name<'db>>,
-    ) {
-        use crate::cst::paths::{Path, PathAnchorKind};
-        use crate::name::Name;
-
         match path {
-            Path::Relative => {}
-            Path::Anchor(anchor) => match anchor.kind {
-                PathAnchorKind::ExternCrate(name) => {
-                    out.push(Name::new(self.db, String::new()));
-                    out.push(name);
-                }
-                PathAnchorKind::CurrentCrate => {
-                    out.push(Name::new(self.db, "crate".to_owned()));
-                }
-                PathAnchorKind::Self_ => {
-                    out.push(Name::new(self.db, "self".to_owned()));
-                }
-                PathAnchorKind::DollarCrate => {
-                    out.push(Name::new(self.db, "$crate".to_owned()));
-                }
-                PathAnchorKind::Super(inner_ptr) => {
-                    let inner = self.src[inner_ptr];
-                    self.collect_anchor_names(inner, out);
-                    out.push(Name::new(self.db, "super".to_owned()));
-                }
-            },
-            Path::Segment(seg) => {
-                let prefix = self.src[seg.prefix];
-                self.collect_path_names(prefix, out);
-                out.push(seg.name);
+            Path::Anchored(anchor, seg_slice) => {
+                self.collect_anchor_names(anchor, &mut names);
+                let segs = &self.src[seg_slice];
+                names.extend(segs.iter().map(|s| s.name));
+            }
+            Path::Relative(first, rest_slice) => {
+                names.push(first.name);
+                let rest = &self.src[rest_slice];
+                names.extend(rest.iter().map(|s| s.name));
             }
         }
+        names
     }
 
     fn collect_anchor_names(

@@ -25,11 +25,24 @@
 use sage_stash::{AllocStashData, Slice, Stash, StashDirect, Stashed};
 
 use crate::local_syms::LocalModItemSym;
+use crate::local_syms::consts::LocalConstSym;
+use crate::local_syms::enums::LocalEnumSym;
+use crate::local_syms::fns::LocalFnSym;
+use crate::local_syms::impls::LocalImplSym;
 use crate::local_syms::macro_defs::LocalMacroDefSym;
+use crate::local_syms::macro_invocations::LocalMacroInvocationSym;
+use crate::local_syms::mods::LocalModSym;
+use crate::local_syms::statics::LocalStaticSym;
 use crate::local_syms::structs::LocalStructSym;
+use crate::local_syms::traits::LocalTraitSym;
+use crate::local_syms::type_aliases::LocalTypeAliasSym;
+use crate::local_syms::uses::LocalUseSym;
 use crate::name::Name;
 use crate::span::AbsoluteSpan;
-use crate::symbol::{CrateNum, DefIndex};
+use crate::symbol::{CrateNum, DefIndex, SymExt};
+
+/// Type alias for the root MEM-map handle.
+pub type Memmap<'db> = Stashed<Slice<MemmapEntry<'db>>>;
 
 /// A macro invocation's input tokens, created during parsing/lowering.
 /// Has stable salsa identity from the parse site — never mutated.
@@ -46,61 +59,29 @@ impl StashDirect for BuiltinMacroKind {}
 /// A single entry in the MEM-map.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub enum MemmapEntry<'db> {
-    /// A declared item — struct, fn, impl, mod, macro_rules!, etc.
-    Item(LocalModItemSym<'db>),
-
-    /// Implicit constructor for a tuple struct or unit struct.
-    TupleStructCtor(LocalStructSym<'db>),
-
-    /// A `macro_rules!` definition.
-    MacroDef(LocalMacroDefSym<'db>),
-
-    /// A `use foo::bar [as baz]` import.
-    Redirect {
-        name: Name<'db>,
-        target: Slice<Name<'db>>,
-    },
-
-    /// A `use foo::*` glob import.
-    Glob { path: Slice<Name<'db>> },
-
-    /// A macro invocation with its resolution/expansion state.
-    MacroUse(MacroUse<'db>),
+    Function(Name<'db>, LocalFnSym<'db>),
+    Struct(Name<'db>, LocalStructSym<'db>),
+    Enum(Name<'db>, LocalEnumSym<'db>),
+    Trait(Name<'db>, LocalTraitSym<'db>),
+    Impl(Name<'db>, LocalImplSym<'db>),
+    TypeAlias(Name<'db>, LocalTypeAliasSym<'db>),
+    Const(Name<'db>, LocalConstSym<'db>),
+    Static(Name<'db>, LocalStaticSym<'db>),
+    Mod(Name<'db>, LocalModSym<'db>),
+    MacroDef(Name<'db>, LocalMacroDefSym<'db>),
+    Imports(LocalUseSym<'db>),
+    MacroInvocation(MacroInvocation<'db>),
 }
 
 /// A macro invocation at item position.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
-pub struct MacroUse<'db> {
-    /// The invocation's path segments (e.g. `[foo, bar, m]`).
-    pub path: Slice<Name<'db>>,
-
-    /// The tracked input tokens — stable salsa identity from the parse site.
-    pub input: MacroInput<'db>,
+pub struct MacroInvocation<'db> {
+    /// The invocation itself
+    pub invocation: LocalMacroInvocationSym<'db>,
 
     /// Expansions discovered so far. Starts empty; grows as the fixpoint
     /// loop resolves callees and expands them.
     pub expansions: Slice<Expansion<'db>>,
-}
-
-/// Resolution state for a `MacroUse` — used only by the validator to
-/// distinguish "never resolved" from "resolved but produced no entries".
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum MacroUseState<'db> {
-    Unresolved,
-    Resolved(Vec<MacroCallee<'db>>),
-    Expanded(Vec<Expansion<'db>>),
-}
-
-impl<'db> MacroUse<'db> {
-    /// Compute the state for validation purposes.
-    pub fn state(&self, stash: &Stash) -> MacroUseState<'db> {
-        let expansions = &stash[self.expansions];
-        if expansions.is_empty() {
-            MacroUseState::Unresolved
-        } else {
-            MacroUseState::Expanded(expansions.to_vec())
-        }
-    }
 }
 
 /// One branch of an expanded `MacroUse`.
@@ -118,6 +99,9 @@ pub struct Expansion<'db> {
 pub enum MacroCallee<'db> {
     /// Local `macro_rules!` definition.
     Rules(LocalMacroDefSym<'db>),
+
+    /// External `macro_rules!` definition.
+    ExtRules(SymExt<'db>),
 
     /// Builtin macro.
     Builtin(BuiltinMacroKind),
@@ -172,6 +156,3 @@ pub enum BuiltinMacroKind {
     CompileError,
     ThreadLocal,
 }
-
-/// Type alias for the root MEM-map handle.
-pub type Memmap<'db> = Stashed<Slice<MemmapEntry<'db>>>;

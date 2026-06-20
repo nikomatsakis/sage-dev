@@ -2,6 +2,7 @@ use sage_stash::{AllocStashData, StashDirect};
 
 use crate::source::SourceFile;
 use crate::span::{AbsoluteSpan, ParseSource};
+use crate::symbol::Symbol;
 
 /// Thin enum over all item kinds. `Copy` because salsa tracked struct
 /// handles are just IDs.
@@ -48,6 +49,26 @@ impl<'db> LocalModItemSym<'db> {
 
     pub fn source_file(&self, db: &'db dyn crate::Db) -> Option<SourceFile> {
         self.absolute_span(db).file()
+    }
+}
+
+impl<'db> From<LocalModItemSym<'db>> for Symbol<'db> {
+    fn from(item: LocalModItemSym<'db>) -> Self {
+        match item {
+            LocalModItemSym::Function(f) => f.into(),
+            LocalModItemSym::Struct(s) => s.into(),
+            LocalModItemSym::Enum(e) => e.into(),
+            LocalModItemSym::Trait(t) => t.into(),
+            LocalModItemSym::Impl(i) => i.into(),
+            LocalModItemSym::TypeAlias(t) => t.into(),
+            LocalModItemSym::Const(c) => c.into(),
+            LocalModItemSym::Static(s) => s.into(),
+            LocalModItemSym::Mod(m) => m.into(),
+            LocalModItemSym::Use(u) => u.into(),
+            LocalModItemSym::MacroDef(m) => m.into(),
+            LocalModItemSym::MacroInvocation(m) => m.into(),
+            LocalModItemSym::Error(span) => span.into(),
+        }
     }
 }
 

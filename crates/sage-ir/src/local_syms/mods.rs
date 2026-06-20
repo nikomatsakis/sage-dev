@@ -6,6 +6,7 @@ use crate::name::Name;
 use crate::scope::ScopeSymbol;
 use crate::source::SourceFile;
 use crate::span::{AbsoluteSpan, ParseSource};
+use crate::symbol::Symbol;
 
 /// A module written in (or synthesized for) the local workspace.
 #[salsa::tracked(debug)]
@@ -50,16 +51,13 @@ impl<'db> LocalModSym<'db> {
             .source_root(db)
     }
 
-    pub fn unexpanded_items(self, db: &'db dyn crate::Db) -> &'db [LocalModItemSym<'db>] {
+    pub fn unexpanded_items(self, db: &'db dyn crate::Db) -> &'db [Symbol<'db>] {
         unexpanded_items(db, self)
     }
 }
 
 #[salsa::tracked(specify, returns(ref))]
-pub fn unexpanded_items<'db>(
-    db: &'db dyn crate::Db,
-    module: LocalModSym<'db>,
-) -> Vec<LocalModItemSym<'db>> {
+pub fn unexpanded_items<'db>(db: &'db dyn crate::Db, module: LocalModSym<'db>) -> Vec<Symbol<'db>> {
     match module.body_source(db) {
         ModBodySource::File(f) => {
             let source = ParseSource::SourceFile(*f);
@@ -67,6 +65,9 @@ pub fn unexpanded_items<'db>(
                 .parent(db)
                 .unwrap_or_else(|| panic!("file-backed module has no parent scope"));
             crate::parse::parse_str_to_cst(db, source, f.text(db), scope)
+                .into_iter()
+                .map(|s| s.into())
+                .collect()
         }
         ModBodySource::Inline => {
             panic!("unexpanded_items should be specify'd for inline modules")

@@ -102,7 +102,7 @@ fn collect_all_names<'db>(
                 out.push((*name, Namespace::Type));
             }
             MemmapEntry::Glob { .. } => {}
-            MemmapEntry::MacroUse(mu) => {
+            MemmapEntry::MacroInvocation(mu) => {
                 for exp in &stash[mu.expansions] {
                     collect_all_names(db, stash, exp.entries, out);
                 }
@@ -117,7 +117,7 @@ fn collect_macro_errors<'db>(
     errors: &mut Vec<MemmapError<'db>>,
 ) {
     for entry in &stash[entries] {
-        if let MemmapEntry::MacroUse(mu) = entry {
+        if let MemmapEntry::MacroInvocation(mu) = entry {
             let expansions = &stash[mu.expansions];
             if expansions.is_empty() {
                 errors.push(MemmapError::UnresolvedMacro {
@@ -169,7 +169,7 @@ fn collect_unresolved_redirects_globs<'db>(
                     }
                 }
             }
-            MemmapEntry::MacroUse(mu) => {
+            MemmapEntry::MacroInvocation(mu) => {
                 for exp in &stash[mu.expansions] {
                     collect_unresolved_redirects_globs(
                         db,
@@ -207,7 +207,7 @@ fn collect_expanded_names<'db>(
     out: &mut Vec<(Name<'db>, Namespace)>,
 ) {
     for entry in &stash[entries] {
-        if let MemmapEntry::MacroUse(mu) = entry {
+        if let MemmapEntry::MacroInvocation(mu) = entry {
             for exp in &stash[mu.expansions] {
                 collect_all_names(db, stash, exp.entries, out);
             }

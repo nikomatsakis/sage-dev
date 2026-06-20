@@ -9,7 +9,7 @@ use crate::cst::statics::{StaticCst, StaticCstData};
 use crate::cst::structs::{FieldCst, StructCstData};
 use crate::cst::traits::{TraitCstData, TraitItemCst};
 use crate::cst::type_aliases::{TypeAliasCst, TypeAliasCstData};
-use crate::cst::uses::{UseImportAst, UseKind};
+use crate::cst::uses::{UseImportCst, UseKind};
 use crate::local_syms::LocalModItemSym;
 use crate::local_syms::consts::LocalConstSym;
 use crate::local_syms::enums::LocalEnumSym;
@@ -30,6 +30,31 @@ use crate::ts_helpers;
 
 use super::Parser;
 use super::util::{absolute_span, item_start, node_name};
+
+#[derive(Clone)]
+struct UsePrefix<'db> {
+    anchor: Option<PathAnchor<'db>>,
+    segments: Vec<PathSegment<'db>>,
+}
+
+impl<'db> UsePrefix<'db> {
+    fn alloc(&self, stash: &mut Stash) -> Ptr<Path<'db>> {
+        match self.anchor {
+            Some(a) => {
+                let seg_slice = stash.alloc_slice(&self.segments);
+                stash.alloc(Path::Anchored(a, seg_slice))
+            }
+            None => {
+                let (first, rest) = self
+                    .segments
+                    .split_first()
+                    .expect("relative use path with no segments");
+                let rest_slice = stash.alloc_slice(rest);
+                stash.alloc(Path::Relative(*first, rest_slice))
+            }
+        }
+    }
+}
 
 impl<'a, 'db> Parser<'a, 'db> {
     // -----------------------------------------------------------------------
@@ -774,9 +799,12 @@ impl<'a, 'db> Parser<'a, 'db> {
         let mut stash = Stash::new();
         let mut imports = Vec::new();
 
-        let base_path = stash.alloc(Path::Relative);
+        let prefix = UsePrefix {
+            anchor: None,
+            segments: Vec::new(),
+        };
         if let Some(arg) = node.child_by_field_name("argument") {
-            self.collect_use_tree(&mut stash, arg, start, base_path, &mut imports);
+            self.collect_use_tree(&mut stash, arg, start, &prefix, &mut imports);
         }
 
         let imports_slice = stash.alloc_slice(&imports);
@@ -790,8 +818,8 @@ impl<'a, 'db> Parser<'a, 'db> {
         stash: &mut Stash,
         node: tree_sitter::Node<'a>,
         item_start: u32,
-        prefix: Ptr<Path<'db>>,
-        out: &mut Vec<UseImportAst<'db>>,
+        prefix: &UsePrefix<'db>,
+        out: &mut Vec<UseImportCst<'db>>,
     ) {
         let span = RelativeSpan {
             start: node.start_byte() as u32 - item_start,
@@ -805,34 +833,38 @@ impl<'a, 'db> Parser<'a, 'db> {
                     start: node.start_byte() as u32 - item_start,
                     end: node.end_byte() as u32 - item_start,
                 };
-                let type_args = stash.alloc_slice(&[]);
-                let path = stash.alloc(Path::Segment(PathSegment {
+                let mut full = prefix.clone();
+                full.segments.push(PathSegment {
                     name,
-                    prefix,
-                    type_args,
+                    type_args: stash.alloc_slice(&[]),
                     span: seg_span,
-                }));
-                out.push(UseImportAst {
+                });
+                let path = full.alloc(stash);
+                out.push(UseImportCst {
                     path,
                     kind: UseKind::Named(name),
                     span,
                 });
             }
             "self" | "crate" | "super" => {
-                let path = self.build_use_anchor(stash, node, item_start, prefix);
+                let mut full = prefix.clone();
+                self.apply_use_anchor_node(stash, node, item_start, &mut full);
+                let path = full.alloc(stash);
                 let name = Name::new(self.db, self.text[node.byte_range()].to_owned());
-                out.push(UseImportAst {
+                out.push(UseImportCst {
                     path,
                     kind: UseKind::Named(name),
                     span,
                 });
             }
             "scoped_identifier" => {
-                let full_path = self.build_use_scoped_path(stash, node, item_start, prefix);
+                let mut full = prefix.clone();
+                self.collect_use_scoped_parts(stash, node, item_start, &mut full);
+                let path = full.alloc(stash);
                 if let Some(name_node) = node.child_by_field_name("name") {
                     let name = Name::new(self.db, self.text[name_node.byte_range()].to_owned());
-                    out.push(UseImportAst {
-                        path: full_path,
+                    out.push(UseImportCst {
+                        path,
                         kind: UseKind::Named(name),
                         span,
                     });
@@ -844,7 +876,9 @@ impl<'a, 'db> Parser<'a, 'db> {
                 if children.len() >= 3 {
                     let source = children[0];
                     let alias = children[children.len() - 1];
-                    let path = self.build_use_scoped_path(stash, source, item_start, prefix);
+                    let mut full = prefix.clone();
+                    self.collect_use_scoped_parts(stash, source, item_start, &mut full);
+                    let path = full.alloc(stash);
 
                     let alias_text = &self.text[alias.byte_range()];
                     let kind = if alias_text == "_" {
@@ -852,7 +886,7 @@ impl<'a, 'db> Parser<'a, 'db> {
                     } else {
                         UseKind::Named(Name::new(self.db, alias_text.to_owned()))
                     };
-                    out.push(UseImportAst { path, kind, span });
+                    out.push(UseImportCst { path, kind, span });
                 }
             }
             "use_list" => {
@@ -864,24 +898,21 @@ impl<'a, 'db> Parser<'a, 'db> {
                 }
             }
             "scoped_use_list" => {
-                let new_prefix = match node.child_by_field_name("path") {
-                    Some(path_node) => {
-                        self.build_use_scoped_path(stash, path_node, item_start, prefix)
-                    }
-                    None => prefix,
-                };
+                let mut new_prefix = prefix.clone();
+                if let Some(path_node) = node.child_by_field_name("path") {
+                    self.collect_use_scoped_parts(stash, path_node, item_start, &mut new_prefix);
+                }
                 if let Some(list) = node.child_by_field_name("list") {
-                    self.collect_use_tree(stash, list, item_start, new_prefix, out);
+                    self.collect_use_tree(stash, list, item_start, &new_prefix, out);
                 }
             }
             "use_wildcard" => {
-                let path = match node.child_by_field_name("path") {
-                    Some(path_node) => {
-                        self.build_use_scoped_path(stash, path_node, item_start, prefix)
-                    }
-                    None => prefix,
-                };
-                out.push(UseImportAst {
+                let mut full = prefix.clone();
+                if let Some(path_node) = node.child_by_field_name("path") {
+                    self.collect_use_scoped_parts(stash, path_node, item_start, &mut full);
+                }
+                let path = full.alloc(stash);
+                out.push(UseImportCst {
                     path,
                     kind: UseKind::Glob,
                     span,
@@ -891,14 +922,14 @@ impl<'a, 'db> Parser<'a, 'db> {
         }
     }
 
-    /// Build a Path from a use-tree node, prepending the given prefix.
-    fn build_use_scoped_path(
+    /// Recursively collect segments and anchor from a use-tree scoped path node.
+    fn collect_use_scoped_parts(
         &self,
         stash: &mut Stash,
         node: tree_sitter::Node<'a>,
         item_start: u32,
-        prefix: Ptr<Path<'db>>,
-    ) -> Ptr<Path<'db>> {
+        prefix: &mut UsePrefix<'db>,
+    ) {
         match node.kind() {
             "identifier" => {
                 let name = Name::new(self.db, self.text[node.byte_range()].to_owned());
@@ -906,43 +937,45 @@ impl<'a, 'db> Parser<'a, 'db> {
                     start: node.start_byte() as u32 - item_start,
                     end: node.end_byte() as u32 - item_start,
                 };
-                let type_args = stash.alloc_slice(&[]);
-                stash.alloc(Path::Segment(PathSegment {
+                prefix.segments.push(PathSegment {
                     name,
-                    prefix,
-                    type_args,
+                    type_args: stash.alloc_slice(&[]),
                     span,
-                }))
+                });
             }
-            "self" | "crate" | "super" => self.build_use_anchor(stash, node, item_start, prefix),
+            "self" | "crate" | "super" => {
+                self.apply_use_anchor_node(stash, node, item_start, prefix);
+            }
             "scoped_identifier" => {
-                let inner_prefix = match node.child_by_field_name("path") {
-                    Some(path_node) => {
-                        self.build_use_scoped_path(stash, path_node, item_start, prefix)
-                    }
-                    None => prefix,
-                };
-                match node.child_by_field_name("name") {
-                    Some(name_node) => {
-                        let text = &self.text[name_node.byte_range()];
-                        let span = RelativeSpan {
-                            start: name_node.start_byte() as u32 - item_start,
-                            end: name_node.end_byte() as u32 - item_start,
-                        };
-                        if text == "super" {
-                            self.build_use_super_on_prefix(stash, inner_prefix, span)
-                        } else {
-                            let name = Name::new(self.db, text.to_owned());
-                            let type_args = stash.alloc_slice(&[]);
-                            stash.alloc(Path::Segment(PathSegment {
-                                name,
-                                prefix: inner_prefix,
-                                type_args,
+                if let Some(path_node) = node.child_by_field_name("path") {
+                    self.collect_use_scoped_parts(stash, path_node, item_start, prefix);
+                }
+                if let Some(name_node) = node.child_by_field_name("name") {
+                    let text = &self.text[name_node.byte_range()];
+                    let span = RelativeSpan {
+                        start: name_node.start_byte() as u32 - item_start,
+                        end: name_node.end_byte() as u32 - item_start,
+                    };
+                    if text == "super" {
+                        let inner = match prefix.anchor.take() {
+                            Some(a) => stash.alloc(a),
+                            None => stash.alloc(PathAnchor {
+                                kind: PathAnchorKind::Self_,
                                 span,
-                            }))
-                        }
+                            }),
+                        };
+                        prefix.anchor = Some(PathAnchor {
+                            kind: PathAnchorKind::Super(inner),
+                            span,
+                        });
+                    } else {
+                        let name = Name::new(self.db, text.to_owned());
+                        prefix.segments.push(PathSegment {
+                            name,
+                            type_args: stash.alloc_slice(&[]),
+                            span,
+                        });
                     }
-                    None => inner_prefix,
                 }
             }
             _ => {
@@ -951,70 +984,55 @@ impl<'a, 'db> Parser<'a, 'db> {
                     start: node.start_byte() as u32 - item_start,
                     end: node.end_byte() as u32 - item_start,
                 };
-                let type_args = stash.alloc_slice(&[]);
-                stash.alloc(Path::Segment(PathSegment {
+                prefix.segments.push(PathSegment {
                     name,
-                    prefix,
-                    type_args,
+                    type_args: stash.alloc_slice(&[]),
                     span,
-                }))
+                });
             }
         }
     }
 
-    /// Build an anchor path for `self`, `crate`, or `super` in use position.
-    fn build_use_anchor(
+    /// Apply a `self`, `crate`, or `super` node as an anchor on the prefix.
+    fn apply_use_anchor_node(
         &self,
         stash: &mut Stash,
         node: tree_sitter::Node<'a>,
         item_start: u32,
-        _prefix: Ptr<Path<'db>>,
-    ) -> Ptr<Path<'db>> {
+        prefix: &mut UsePrefix<'db>,
+    ) {
         let span = RelativeSpan {
             start: node.start_byte() as u32 - item_start,
             end: node.end_byte() as u32 - item_start,
         };
         match node.kind() {
-            "self" => stash.alloc(Path::Anchor(PathAnchor {
-                kind: PathAnchorKind::Self_,
-                span,
-            })),
-            "crate" => stash.alloc(Path::Anchor(PathAnchor {
-                kind: PathAnchorKind::CurrentCrate,
-                span,
-            })),
-            "super" => {
-                let self_anchor = stash.alloc(PathAnchor {
+            "self" => {
+                prefix.anchor = Some(PathAnchor {
                     kind: PathAnchorKind::Self_,
                     span,
                 });
-                stash.alloc(Path::Anchor(PathAnchor {
-                    kind: PathAnchorKind::Super(self_anchor),
-                    span,
-                }))
             }
-            _ => stash.alloc(Path::Relative),
+            "crate" => {
+                prefix.anchor = Some(PathAnchor {
+                    kind: PathAnchorKind::CurrentCrate,
+                    span,
+                });
+            }
+            "super" => {
+                let inner = match prefix.anchor.take() {
+                    Some(a) => stash.alloc(a),
+                    None => stash.alloc(PathAnchor {
+                        kind: PathAnchorKind::Self_,
+                        span,
+                    }),
+                };
+                prefix.anchor = Some(PathAnchor {
+                    kind: PathAnchorKind::Super(inner),
+                    span,
+                });
+            }
+            _ => {}
         }
-    }
-
-    /// Wrap an existing path prefix into a `super` anchor.
-    fn build_use_super_on_prefix(
-        &self,
-        stash: &mut Stash,
-        prefix: Ptr<Path<'db>>,
-        span: RelativeSpan,
-    ) -> Ptr<Path<'db>> {
-        let inner_anchor = match stash[prefix] {
-            Path::Anchor(a) => stash.alloc(a),
-            _ => stash.alloc(PathAnchor {
-                kind: PathAnchorKind::Self_,
-                span,
-            }),
-        };
-        stash.alloc(Path::Anchor(PathAnchor {
-            kind: PathAnchorKind::Super(inner_anchor),
-            span,
-        }))
     }
 
     // -----------------------------------------------------------------------

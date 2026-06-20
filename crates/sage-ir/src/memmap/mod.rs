@@ -41,29 +41,11 @@ pub use data::*;
 pub use expand::expand_macro;
 pub use validate::{MemmapError, memmap_errors};
 
-use sage_stash::{Slice, Stash, Stashed};
+use sage_stash::Stash;
 
 use crate::Db;
 use crate::local_syms::mods::LocalModSym;
-use crate::resolve::SourceRoot;
-use crate::symbol::ModSymbol;
-
-/// The Minimally Expanded Member Map (MEM-map) for a single module.
-#[salsa::tracked(debug)]
-pub struct ExpandedModule<'db> {
-    #[returns(ref)]
-    pub memmap: Memmap<'db>,
-}
-
-impl<'db> ExpandedModule<'db> {
-    pub fn stash(self, db: &'db dyn Db) -> &'db Stash {
-        self.memmap(db).stash()
-    }
-
-    pub fn entries(self, db: &'db dyn Db) -> Slice<MemmapEntry<'db>> {
-        *self.memmap(db).root()
-    }
-}
+use crate::symbol::Symbol;
 
 /// Compute the MEM-map for a local module. Seeds from `parse_source_file`
 /// (for file-backed modules) or from the LocalModSym's inline `items` field
@@ -71,50 +53,29 @@ impl<'db> ExpandedModule<'db> {
 ///
 /// Keyed on `LocalModSym` — external modules don't have memmaps.
 #[salsa::tracked(returns(ref), cycle_initial = expanded_module_initial)]
-pub fn expanded_module<'db>(
+pub fn local_expanded_module_items<'db>(
     db: &'db dyn Db,
     module: LocalModSym<'db>,
-    source_root: SourceRoot,
-) -> ExpandedModule<'db> {
+) -> Vec<Symbol<'db>> {
     let items = module.unexpanded_items(db);
     let mut stash = Stash::new();
-    let root = seed::seed_from_items(db, items, &mut stash);
+    let entries = seed::seed_from_items(db, items, &mut stash);
 
-    expand::resolve_and_expand_macros(db, module.into(), source_root, &mut stash, root);
-
-    let memmap = Stashed::new(stash, root);
-    ExpandedModule::new(db, memmap)
-}
-
-/// Cycle recovery initial value: empty MEM-map.
-fn expanded_module_initial<'db>(
-    db: &'db dyn Db,
-    _id: salsa::Id,
-    _module: LocalModSym<'db>,
-    _source_root: SourceRoot,
-) -> ExpandedModule<'db> {
-    let mut stash = Stash::new();
-    let root: Slice<MemmapEntry<'db>> = stash.alloc_slice(&[]);
-    let memmap = Stashed::new(stash, root);
-    ExpandedModule::new(db, memmap)
-}
-
-/// Convenience wrapper: dispatch on `ModSymbol`. For external modules
-/// returns an empty placeholder (their contents are queried via
-/// `TcxDb` directly, not via the memmap).
-#[salsa::tracked]
-pub fn module_memmap<'db>(
-    db: &'db dyn Db,
-    module: ModSymbol<'db>,
-    source_root: SourceRoot,
-) -> ExpandedModule<'db> {
-    match module {
-        ModSymbol::Ast(ast) => *expanded_module(db, ast, source_root),
-        ModSymbol::Ext(_) => {
-            let mut stash = Stash::new();
-            let root = stash.alloc_slice(&[]);
-            let memmap = Stashed::new(stash, root);
-            ExpandedModule::new(db, memmap)
+    loop {
+        let changed = expand::resolve_expand_pass(db, module, &mut stash, entries, entries, 0);
+        if !changed {
+            break;
         }
     }
+
+    todo!("flatten out symbols from root")
+}
+
+/// Cycle recovery initial value.
+fn expanded_module_initial<'db>(
+    _db: &'db dyn Db,
+    _id: salsa::Id,
+    _module: LocalModSym<'db>,
+) -> Vec<Symbol<'db>> {
+    vec![]
 }

@@ -37,7 +37,7 @@ pub(super) fn seed_from_items<'db>(
                 let names = path_to_names(db, inv_stash, inv_stash[inv_cst.path]);
                 let path = stash.alloc_slice(&names);
                 let expansions = stash.alloc_slice(&[]);
-                entries.push(MemmapEntry::MacroUse(MacroUse {
+                entries.push(MemmapEntry::MacroInvocation(MacroInvocation {
                     path,
                     input,
                     expansions,
@@ -73,32 +73,26 @@ pub(super) fn seed_from_items<'db>(
     stash.alloc_slice(&entries)
 }
 
-/// Flatten a recursive `Path` into a Vec of Names for memmap resolution.
+/// Flatten a `Path` into a Vec of Names for memmap resolution.
 fn path_to_names<'db>(
     db: &'db dyn crate::Db,
     stash: &sage_stash::Stash,
     path: Path<'db>,
 ) -> Vec<Name<'db>> {
     let mut names = Vec::new();
-    collect_path_names(db, stash, path, &mut names);
-    names
-}
-
-fn collect_path_names<'db>(
-    db: &'db dyn crate::Db,
-    stash: &sage_stash::Stash,
-    path: Path<'db>,
-    out: &mut Vec<Name<'db>>,
-) {
     match path {
-        Path::Relative => {}
-        Path::Anchor(anchor) => collect_anchor_names(db, stash, anchor, out),
-        Path::Segment(seg) => {
-            let prefix = stash[seg.prefix];
-            collect_path_names(db, stash, prefix, out);
-            out.push(seg.name);
+        Path::Anchored(anchor, seg_slice) => {
+            collect_anchor_names(db, stash, anchor, &mut names);
+            let segs = &stash[seg_slice];
+            names.extend(segs.iter().map(|s| s.name));
+        }
+        Path::Relative(first, rest_slice) => {
+            names.push(first.name);
+            let rest = &stash[rest_slice];
+            names.extend(rest.iter().map(|s| s.name));
         }
     }
+    names
 }
 
 fn collect_anchor_names<'db>(
@@ -109,7 +103,6 @@ fn collect_anchor_names<'db>(
 ) {
     match anchor.kind {
         PathAnchorKind::ExternCrate(name) => {
-            // Represented as empty-string + crate-name (matching old convention).
             out.push(Name::new(db, String::new()));
             out.push(name);
         }

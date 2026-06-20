@@ -375,7 +375,7 @@ fn fmt_entry(
             let path_slice = &stash[*path];
             out.push_str(&format!("Glob path={}\n", fmt_name_path(db, path_slice)));
         }
-        MemmapEntry::MacroUse(mu) => {
+        MemmapEntry::MacroInvocation(mu) => {
             out.push_str(&pad);
             let path_slice = &stash[mu.path];
             out.push_str(&format!(

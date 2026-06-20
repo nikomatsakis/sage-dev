@@ -27,6 +27,9 @@ pub trait TcxDb: Send + Sync {
 
     fn module_children(&self, crate_num: CrateNum, def_index: DefIndex) -> Vec<RawChild>;
 
+    /// Return the name of the item with the given id or None if it is something anonymous (e.g., an impl).
+    fn item_name(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<String>;
+
     /// True iff the given external definition is a module (crate
     /// root, `mod foo`, etc.). Modules are the only DefIds on which
     /// `module_children` is valid to call — asking on a struct or
