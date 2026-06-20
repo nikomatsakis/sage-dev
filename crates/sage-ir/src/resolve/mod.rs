@@ -8,7 +8,9 @@ use sage_stash::Stash;
 use crate::Db;
 use crate::cst::paths::{Path, PathAnchorKind, PathSegment};
 use crate::cst::uses::UseKind;
+use crate::local_syms::intrinsic_types::IntrinsicTypeSym;
 use crate::name::Name;
+use crate::symbol::intrinsic::Intrinsic;
 use crate::symbol::{DefIndex, ModSymbol, SymExt, SymExtKind, Symbol, SymbolData, UseSymbol};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
@@ -59,7 +61,10 @@ pub(crate) fn resolve_path<'db>(
                     // Anchors are always modules, so other namespaces don't apply
                     return vec![];
                 }
-                return anchor_modules.into_iter().map(|m| m.into());
+                return anchor_modules
+                    .into_iter()
+                    .map(|m| mod_to_symbol(m))
+                    .collect();
             }
 
             // Otherwise, resolve the remaining segments against the anchor modules.
@@ -108,13 +113,18 @@ fn flexibly_resolve_name_from_module<'db>(
         return vec![sym];
     }
 
-    // Level 4: standard library prelude (`Option`, `Vec`, `Result`, etc.).
-    // TODO: look up `name` in the std/core prelude.
+    // Level 4: standard library prelude (`use ::std::prelude::rust_2021::*`).
+    let results = lookup_std_prelude(db, phase, name, namespace);
+    if !results.is_empty() {
+        return results;
+    }
 
     // Level 5: language prelude (primitive types like `i32`, `bool`).
-    // TODO: look up `name` in the language item / primitive set.
+    if let Some(sym) = lookup_lang_prelude(db, name, namespace) {
+        return vec![sym];
+    }
 
-    results
+    vec![]
 }
 
 fn resolve_remaining_segments<'db>(
@@ -281,12 +291,9 @@ fn lookup_in_module<'db>(
                                             stash[import.path],
                                             Namespace::Type,
                                         );
-                                        for module in glob_from.iter().filter_map(|s| s.module(db))
-                                        {
-                                            results.extend(resolve_name_from_module(
-                                                db, phase, module, name, namespace,
-                                            ));
-                                        }
+                                        results.extend(resolve_glob(
+                                            db, phase, &glob_from, name, namespace,
+                                        ));
                                     }
                                 }
                                 UseKind::Unnamed => {
@@ -319,6 +326,62 @@ fn lookup_extern_prelude<'db>(
     Some(SymExt::new(db, crate_num, DefIndex(0), SymExtKind::Mod).into())
 }
 
+/// Look up `name` in each of the modules that `glob_from` resolved to.
+fn resolve_glob<'db>(
+    db: &'db dyn Db,
+    phase: ResolvePhase,
+    glob_from: &[Symbol<'db>],
+    name: Name<'db>,
+    namespace: Namespace,
+) -> Vec<Symbol<'db>> {
+    glob_from
+        .iter()
+        .filter_map(|s| s.module(db))
+        .flat_map(|m| resolve_name_from_module(db, phase, m, name, namespace))
+        .collect()
+}
+
+/// Resolve `name` as if `use ::std::prelude::rust_2021::*` were in scope.
+fn lookup_std_prelude<'db>(
+    db: &'db dyn Db,
+    phase: ResolvePhase,
+    name: Name<'db>,
+    namespace: Namespace,
+) -> Vec<Symbol<'db>> {
+    let std_name = Name::new(db, "std".to_owned());
+    let Some(std_sym) = lookup_extern_prelude(db, std_name, Namespace::Type) else {
+        return vec![];
+    };
+    let Some(std_mod) = std_sym.module(db) else {
+        return vec![];
+    };
+
+    let prelude_name = Name::new(db, "prelude".to_owned());
+    let prelude_syms = resolve_name_from_module(db, phase, std_mod, prelude_name, Namespace::Type);
+
+    // TODO: derive this from the crate's actual edition
+    let edition_name = Name::new(db, "rust_2024".to_owned());
+    let edition_mods: Vec<Symbol<'db>> = prelude_syms
+        .iter()
+        .filter_map(|s| s.module(db))
+        .flat_map(|m| resolve_name_from_module(db, phase, m, edition_name, Namespace::Type))
+        .collect();
+
+    resolve_glob(db, phase, &edition_mods, name, namespace)
+}
+
+fn lookup_lang_prelude<'db>(
+    db: &'db dyn Db,
+    name: Name<'db>,
+    namespace: Namespace,
+) -> Option<Symbol<'db>> {
+    if namespace != Namespace::Type {
+        return None;
+    }
+    let intrinsic = Intrinsic::from_name(name.text(db))?;
+    Some(IntrinsicTypeSym::new(db, intrinsic).into())
+}
+
 fn resolve_anchor<'db>(
     db: &'db dyn Db,
     module: ModSymbol<'db>,
@@ -348,6 +411,13 @@ fn resolve_anchor<'db>(
             // For local macros, equivalent to `crate`.
             vec![crate_root_of(db, module)]
         }
+    }
+}
+
+fn mod_to_symbol<'db>(m: ModSymbol<'db>) -> Symbol<'db> {
+    match m {
+        ModSymbol::Local(local) => local.into(),
+        ModSymbol::Ext(ext) => ext.into(),
     }
 }
 

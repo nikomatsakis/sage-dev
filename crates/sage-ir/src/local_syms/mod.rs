@@ -76,6 +76,7 @@ pub mod consts;
 pub mod enums;
 pub mod fns;
 pub mod impls;
+pub mod intrinsic_types;
 pub mod macro_defs;
 pub mod macro_invocations;
 pub mod mods;

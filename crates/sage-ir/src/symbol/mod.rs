@@ -8,13 +8,8 @@
 use sage_stash::StashDirect;
 
 use crate::{
-    Db,
-    cst::uses::UseKind,
-    local_syms,
-    memmap::local_expanded_module_items,
-    name::Name,
+    Db, cst::uses::UseKind, local_syms, memmap::local_expanded_module_items, name::Name,
     resolve::Namespace,
-    ty::{FloatTy, IntTy, UintTy},
 };
 
 /// Opaque crate number (matches rustc's CrateNum).
@@ -29,46 +24,7 @@ pub struct DefIndex(pub u32);
 
 impl StashDirect for DefIndex {}
 
-// ---------------------------------------------------------------------------
-// Intrinsic — compiler-known built-in symbols
-// ---------------------------------------------------------------------------
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
-pub enum Intrinsic {
-    Bool,
-    Char,
-    Str,
-    Int(IntTy),
-    Uint(UintTy),
-    Float(FloatTy),
-}
-
-impl Intrinsic {
-    pub fn from_name(name: &str) -> Option<Self> {
-        match name {
-            "bool" => Some(Self::Bool),
-            "char" => Some(Self::Char),
-            "str" => Some(Self::Str),
-            "i8" => Some(Self::Int(IntTy::I8)),
-            "i16" => Some(Self::Int(IntTy::I16)),
-            "i32" => Some(Self::Int(IntTy::I32)),
-            "i64" => Some(Self::Int(IntTy::I64)),
-            "i128" => Some(Self::Int(IntTy::I128)),
-            "isize" => Some(Self::Int(IntTy::Isize)),
-            "u8" => Some(Self::Uint(UintTy::U8)),
-            "u16" => Some(Self::Uint(UintTy::U16)),
-            "u32" => Some(Self::Uint(UintTy::U32)),
-            "u64" => Some(Self::Uint(UintTy::U64)),
-            "u128" => Some(Self::Uint(UintTy::U128)),
-            "usize" => Some(Self::Uint(UintTy::Usize)),
-            "f32" => Some(Self::Float(FloatTy::F32)),
-            "f64" => Some(Self::Float(FloatTy::F64)),
-            _ => None,
-        }
-    }
-}
-
-impl StashDirect for Intrinsic {}
+pub mod intrinsic;
 
 /// The kind of an external symbol, mirroring rustc's `DefKind`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
@@ -145,9 +101,19 @@ macro_rules! define_kind_symbols {
         $SymVis:vis struct $SymName:ident<$SymLt:lifetime> { data: $SymPrivateData:ident<$SymPrivateDataLt:lifetime>}
         $SymDataVis:vis enum $SymData:ident<$SymDataLt:lifetime> { .. }
 
+        {}
+
         $(
             $(#[$meta:meta])*
             $vis:vis enum $Name:ident<$lt:lifetime> { Local($LocalTy:ty), Ext($ExtKind:path) }
+        )*
+
+        {}
+
+        // Local-only kinds: no external variant.
+        $(
+            $(#[$lo_meta:meta])*
+            $lo_vis:vis enum $LoName:ident<$lo_lt:lifetime> { Local($LoLocalTy:ty) }
         )*
     ) => {
         #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
@@ -160,6 +126,9 @@ macro_rules! define_kind_symbols {
             $(
                 $Name($LocalTy),
             )*
+            $(
+                $LoName($LoLocalTy),
+            )*
             Ext(SymExt<$SymLt>),
         }
 
@@ -167,6 +136,9 @@ macro_rules! define_kind_symbols {
         $SymDataVis enum $SymData<$SymLt> {
             $(
                 $Name($Name<$SymLt>),
+            )*
+            $(
+                $LoName($LoName<$SymLt>),
             )*
         }
 
@@ -185,7 +157,10 @@ macro_rules! define_kind_symbols {
             $SymVis fn data(self, db: &$SymLt dyn crate::Db) -> $SymData<$SymLt> {
                 match self.data {
                     $(
-                        $SymPrivateData::$Name(Local) => ast.into(),
+                        $SymPrivateData::$Name(ast) => ast.into(),
+                    )*
+                    $(
+                        $SymPrivateData::$LoName(ast) => $LoName(ast).into(),
                     )*
                     $SymPrivateData::Ext(ext) => match ext.kind(db) {
                         $(
@@ -197,6 +172,7 @@ macro_rules! define_kind_symbols {
             }
         }
 
+        // --- From impls for normal (Local + Ext) kinds ---
         $(
             impl<$SymLt> From<$LocalTy> for $SymName<$SymLt> {
                 fn from(ast: $LocalTy) -> Self {
@@ -228,7 +204,36 @@ macro_rules! define_kind_symbols {
             }
         )*
 
+        // --- From impls for local-only kinds ---
+        $(
+            impl<$SymLt> From<$LoLocalTy> for $SymName<$SymLt> {
+                fn from(ast: $LoLocalTy) -> Self {
+                    Self {
+                        data: $SymPrivateData::$LoName(ast)
+                    }
+                }
+            }
 
+            impl<$SymLt> From<$LoName<$SymLt>> for $SymName<$SymLt> {
+                fn from(sym: $LoName<$SymLt>) -> Self {
+                    sym.0.into()
+                }
+            }
+
+            impl<$SymLt> From<$LoLocalTy> for $SymData<$SymLt> {
+                fn from(ast: $LoLocalTy) -> Self {
+                    $SymData::$LoName($LoName(ast))
+                }
+            }
+
+            impl<$SymLt> From<$LoName<$SymLt>> for $SymData<$SymLt> {
+                fn from(sym: $LoName<$SymLt>) -> Self {
+                    $SymData::$LoName(sym)
+                }
+            }
+        )*
+
+        // --- Enum definitions for normal (Local + Ext) kinds ---
         $(
             $(#[$meta])*
             #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
@@ -251,12 +256,29 @@ macro_rules! define_kind_symbols {
 
             impl<$lt> StashDirect for $Name<$lt> {}
         )*
+
+        // --- Newtype wrappers for local-only kinds ---
+        $(
+            $(#[$lo_meta])*
+            #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+            $lo_vis struct $LoName<$lo_lt>(pub $LoLocalTy);
+
+            impl<$lo_lt> From<$LoLocalTy> for $LoName<$lo_lt> {
+                fn from(ast: $LoLocalTy) -> Self {
+                    Self(ast)
+                }
+            }
+
+            impl<$lo_lt> StashDirect for $LoName<$lo_lt> {}
+        )*
     };
 }
 
 define_kind_symbols! {
     pub struct Symbol<'db> { data: SymbolDataPriv<'db> }
     pub enum SymbolData<'db> { .. }
+
+    { /* Local + external */}
 
     pub enum FnSymbol<'db> { Local(crate::local_syms::fns::LocalFnSym<'db>), Ext(SymExtKind::Fn) }
     pub enum StructSymbol<'db> { Local(crate::local_syms::structs::LocalStructSym<'db>), Ext(SymExtKind::Struct) }
@@ -269,6 +291,10 @@ define_kind_symbols! {
     pub enum ModSymbol<'db> { Local(crate::local_syms::mods::LocalModSym<'db>), Ext(SymExtKind::Mod) }
     pub enum MacroDefSymbol<'db> { Local(crate::local_syms::macro_defs::LocalMacroDefSym<'db>), Ext(SymExtKind::MacroDef) }
     pub enum UseSymbol<'db> { Local(crate::local_syms::uses::LocalUseSym<'db>), Ext(SymExtKind::Mod) }
+
+    { /* Local only */ }
+
+    pub enum IntrinsicTypeSymbol<'db> { Local(crate::local_syms::intrinsic_types::IntrinsicTypeSym<'db>) }
 }
 
 impl<'db> Symbol<'db> {
@@ -290,6 +316,7 @@ impl<'db> Symbol<'db> {
             SymbolDataPriv::ImplSymbol(_) => None,
             SymbolDataPriv::ModSymbol(sym) => Some((sym.name(db), Namespace::Type)),
             SymbolDataPriv::MacroDefSymbol(sym) => Some((sym.name(db), Namespace::Macro)),
+            SymbolDataPriv::IntrinsicTypeSymbol(sym) => Some((sym.name(db), Namespace::Type)),
             SymbolDataPriv::Ext(sym_ext) => sym_ext.name(db),
             SymbolDataPriv::UseSymbol(_) => None,
         }
