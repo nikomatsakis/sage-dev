@@ -8,8 +8,13 @@
 use sage_stash::StashDirect;
 
 use crate::{
-    Db, cst::uses::UseKind, local_syms, memmap::local_expanded_module_items, name::Name,
+    Db,
+    cst::uses::UseKind,
+    local_syms::{self, macro_invocations::LocalMacroInvocationSym},
+    memmap::local_expanded_module_items,
+    name::Name,
     resolve::Namespace,
+    span::MacroExpansion,
 };
 
 /// Opaque crate number (matches rustc's CrateNum).
@@ -330,12 +335,24 @@ impl<'db> Symbol<'db> {
     }
 }
 
-#[salsa::tracked]
 impl<'db> ModSymbol<'db> {
     pub fn expanded_module_items(self, db: &'db dyn Db) -> &'db [Symbol<'db>] {
         match self {
             ModSymbol::Local(sym) => local_expanded_module_items(db, sym),
             ModSymbol::Ext(sym_ext) => sym_ext.expanded_module_items(db),
+        }
+    }
+}
+
+impl<'db> MacroDefSymbol<'db> {
+    pub fn apply_to(
+        self,
+        db: &'db dyn Db,
+        invocation: LocalMacroInvocationSym<'db>,
+    ) -> MacroExpansion<'db> {
+        match self {
+            MacroDefSymbol::Local(sym) => sym.apply_to(db, invocation),
+            MacroDefSymbol::Ext(sym_ext) => todo!(),
         }
     }
 }

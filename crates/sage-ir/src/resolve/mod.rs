@@ -253,7 +253,8 @@ fn lookup_in_module<'db>(
             | SymbolData::StaticSymbol(..)
             | SymbolData::ImplSymbol(..)
             | SymbolData::ModSymbol(..)
-            | SymbolData::MacroDefSymbol(..) => {
+            | SymbolData::MacroDefSymbol(..)
+            | SymbolData::IntrinsicTypeSymbol(..) => {
                 if filter.named
                     && let Some((n, nspace)) = item.name(db)
                     && n == name

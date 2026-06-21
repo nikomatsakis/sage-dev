@@ -9,6 +9,7 @@ use crate::span::AbsoluteSpan;
 pub struct LocalMacroInvocationSym<'db> {
     pub scope: ScopeSymbol<'db>,
 
+    #[returns(ref)]
     pub cst: MacroInvocationCst<'db>,
 
     #[tracked]

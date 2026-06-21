@@ -1,7 +1,8 @@
-use sage_stash::{AllocStashData, StashDirect};
+use sage_stash::StashDirect;
 
-use crate::memmap::MacroInput;
+use crate::local_syms::macro_invocations::LocalMacroInvocationSym;
 use crate::source::SourceFile;
+use crate::symbol::MacroDefSymbol;
 
 /// Output of a macro expansion, linked back to the invocation site.
 ///
@@ -9,7 +10,8 @@ use crate::source::SourceFile;
 /// of the same expansion result.
 #[salsa::tracked(debug)]
 pub struct MacroExpansion<'db> {
-    pub input: MacroInput<'db>,
+    pub macro_def: MacroDefSymbol<'db>,
+    pub macro_invocation: LocalMacroInvocationSym<'db>,
     #[returns(ref)]
     pub text: String,
 }

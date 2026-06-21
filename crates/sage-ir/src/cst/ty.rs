@@ -38,7 +38,8 @@ pub enum LifetimeCst<'db> {
 use crate::check::Check;
 use crate::cst::paths::Resolution;
 use crate::resolve::Namespace;
-use crate::symbol::{Intrinsic, Symbol, SymbolData};
+use crate::symbol::intrinsic::Intrinsic;
+use crate::symbol::{Symbol, SymbolData};
 
 impl<'db> TypeCst<'db> {
     pub(crate) fn check(self, cx: &mut Check<'_, 'db>) -> Ty<'db> {
@@ -49,7 +50,7 @@ impl<'db> TypeCst<'db> {
                 let type_args = path.final_segment(cx).check_type_args(cx);
                 match path.resolve(cx, Namespace::Type) {
                     Resolution::Param(param) => Ty::Param(param),
-                    Resolution::Sym(sym) => resolution_to_ty(sym, type_args),
+                    Resolution::Sym(sym) => resolution_to_ty(cx.db, sym, type_args),
                     Resolution::SelfTy(ty) => ty,
                     Resolution::Local(_) | Resolution::Error => Ty::Error,
                 }
@@ -98,9 +99,13 @@ impl<'db> TypeCst<'db> {
     }
 }
 
-fn resolution_to_ty<'db>(sym: Symbol<'db>, type_args: Slice<Ptr<Ty<'db>>>) -> Ty<'db> {
-    match sym {
-        SymbolData::Intrinsic(intrinsic) => intrinsic_to_ty(intrinsic),
+fn resolution_to_ty<'db>(
+    db: &'db dyn crate::Db,
+    sym: Symbol<'db>,
+    type_args: Slice<Ptr<Ty<'db>>>,
+) -> Ty<'db> {
+    match sym.data(db) {
+        SymbolData::IntrinsicTypeSymbol(s) => intrinsic_to_ty(s.0.intrinsic(db)),
         _ => Ty::Adt(sym, type_args),
     }
 }
