@@ -1,14 +1,15 @@
 use sage_stash::{Slice, StashDirect, Stashed};
+use tree_sitter::InputEdit;
 
-use crate::cst::attrs::AttrCst;
+use crate::cst::attrs::{self, AttrCst};
 use crate::local_syms::LocalModItemSym;
 use crate::local_syms::macro_invocations::LocalMacroInvocationSym;
 use crate::name::Name;
 use crate::resolve::{Namespace, ResolvePhase};
 use crate::scope::ScopeSymbol;
 use crate::source::SourceFile;
-use crate::span::{AbsoluteSpan, ParseSource};
-use crate::symbol::{Symbol, SymbolData};
+use crate::span::{AbsoluteSpan, ExpansionOrigin, MacroExpansion, ParseSource};
+use crate::symbol::{MacroDefSymbol, Symbol, SymbolData};
 use crate::{Db, resolve};
 
 /// A module written in (or synthesized for) the local workspace.
@@ -52,6 +53,11 @@ impl<'db> LocalModSym<'db> {
         self.parent(db)
             .expect("source_root called on crate root")
             .source_root(db)
+    }
+
+    pub fn get_attrs(self, db: &'db dyn Db) -> (&'db sage_stash::Stash, &'db [AttrCst<'db>]) {
+        let (stash, slice) = self.attrs(db).open();
+        (stash, &stash[slice])
     }
 
     pub fn unexpanded_items(self, db: &'db dyn Db) -> &'db [LocalModItemSym<'db>] {
@@ -118,9 +124,9 @@ fn expand_unexpanded_items<'db>(
                 expand_macro(db, module, sym, entries);
             }
 
-            LocalModItemSym::Function(..)
-            | LocalModItemSym::Struct(..)
+            LocalModItemSym::Struct(..)
             | LocalModItemSym::Enum(..)
+            | LocalModItemSym::Function(..)
             | LocalModItemSym::Trait(..)
             | LocalModItemSym::Impl(..)
             | LocalModItemSym::TypeAlias(..)
@@ -130,7 +136,7 @@ fn expand_unexpanded_items<'db>(
             | LocalModItemSym::Use(..)
             | LocalModItemSym::MacroDef(..)
             | LocalModItemSym::Error(..) => {
-                entries.push(item.into());
+                expand_attribute_macros_and_derives(db, module, item, entries);
             }
         }
     }
@@ -161,9 +167,8 @@ fn expand_macro<'db>(
         match sym.data(db) {
             SymbolData::MacroDefSymbol(macro_def_symbol) => {
                 let expansion = macro_def_symbol.apply_to(db, macro_invocation_sym);
-                crate::parse::parse_str_to_cst(db, expansion.into(), f.text(db), scope)
-                    .into_iter()
-                    .collect()
+                let expanded_items = expansion.parse(db);
+                expand_unexpanded_items(db, module, &expanded_items, entries);
             }
 
             SymbolData::FnSymbol(..)
@@ -181,4 +186,70 @@ fn expand_macro<'db>(
             }
         }
     }
+}
+
+const INERT_ATTRIBUTES: &[&str] = &["inline", "repr", "allow", "deny", "warn"];
+
+fn expand_attribute_macros_and_derives<'db>(
+    db: &'db dyn Db,
+    module: LocalModSym<'db>,
+    item: LocalModItemSym<'db>,
+    entries: &mut Vec<Symbol<'db>>,
+) {
+    let Some((attrs_stash, attrs)) = item.attrs(db) else {
+        entries.push(item.into());
+        return;
+    };
+
+    if attrs.is_empty() {
+        entries.push(item.into());
+        return;
+    }
+
+    for index in 0..attrs.len() {
+        let attr = &attrs[index];
+        let path = &attrs_stash[attr.path];
+
+        // Look for built-in attribute names
+        if path.len() == 1 {
+            let text = &path[0].text(db)[..];
+
+            if INERT_ATTRIBUTES.contains(&text) {
+                continue;
+            }
+
+            if text == "derive" {
+                expand_derives(db, module, index, attr.args(db),item, entries);
+            }
+        }
+
+        // Otherwise, resolve the path
+    }
+}
+
+/// Expand `#[derive(...)]` attributes on an item.
+///
+/// The item's source text is extracted from its span and passed to each
+/// derive proc-macro. The expanded output (typically impl blocks) is parsed
+/// and added to entries.
+fn expand_derives<'db>(
+    db: &'db dyn Db,
+    module: LocalModSym<'db>,
+    skip_attrs: usize,
+    args: Option<Name<'db>>,
+    item: LocalModItemSym<'db>,
+    entries: &mut Vec<Symbol<'db>>,
+) {
+    let input = attribute_macro_input(db, skip_attrs, item);
+
+    
+}
+
+/// Return the input string to an attribute macro invocation. It consists
+/// of the serialized `item`, skipping the first `skip_attrs` attributes.
+fn attribute_macro_input<'db>(
+    db: &'db dyn Db,
+    skip_attrs: usize,
+    item: LocalModItemSym<'db>,
+) -> String {
 }

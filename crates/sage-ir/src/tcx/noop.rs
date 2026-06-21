@@ -36,6 +36,25 @@ impl TcxDb for NoopTcxDb {
     ) -> Option<String> {
         None
     }
+
+    fn expand_proc_macro_bang(
+        &self,
+        _crate_num: CrateNum,
+        _def_index: DefIndex,
+        _input_tokens: &str,
+    ) -> Option<String> {
+        None
+    }
+
+    fn expand_proc_macro_attr(
+        &self,
+        _crate_num: CrateNum,
+        _def_index: DefIndex,
+        _attr_args: &str,
+        _item_source: &str,
+    ) -> Option<String> {
+        None
+    }
 }
 
 #[cfg(test)]

@@ -1,5 +1,6 @@
-use sage_stash::{AllocStashData, StashDirect};
+use sage_stash::{AllocStashData, Stash};
 
+use crate::cst::attrs::AttrCst;
 use crate::source::SourceFile;
 use crate::span::{AbsoluteSpan, ParseSource};
 use crate::symbol::Symbol;
@@ -25,8 +26,8 @@ pub enum LocalModItemSym<'db> {
 }
 
 impl<'db> LocalModItemSym<'db> {
-    pub fn absolute_span(&self, db: &'db dyn crate::Db) -> AbsoluteSpan<'db> {
-        match *self {
+    pub fn absolute_span(self, db: &'db dyn crate::Db) -> AbsoluteSpan<'db> {
+        match self {
             LocalModItemSym::Function(f) => f.span(db),
             LocalModItemSym::Struct(s) => s.span(db),
             LocalModItemSym::Enum(e) => e.span(db),
@@ -49,6 +50,24 @@ impl<'db> LocalModItemSym<'db> {
 
     pub fn source_file(&self, db: &'db dyn crate::Db) -> Option<SourceFile> {
         self.absolute_span(db).file()
+    }
+
+    pub fn attrs(self, db: &'db dyn crate::Db) -> Option<(&'db Stash, &'db [AttrCst<'db>])> {
+        match self {
+            LocalModItemSym::Function(s) => Some(s.attrs(db)),
+            LocalModItemSym::Struct(s) => Some(s.attrs(db)),
+            LocalModItemSym::Enum(s) => Some(s.attrs(db)),
+            LocalModItemSym::Trait(s) => Some(s.attrs(db)),
+            LocalModItemSym::Impl(s) => Some(s.attrs(db)),
+            LocalModItemSym::TypeAlias(s) => Some(s.attrs(db)),
+            LocalModItemSym::Const(s) => Some(s.attrs(db)),
+            LocalModItemSym::Static(s) => Some(s.attrs(db)),
+            LocalModItemSym::Mod(s) => Some(s.get_attrs(db)),
+            LocalModItemSym::Use(_)
+            | LocalModItemSym::MacroDef(_)
+            | LocalModItemSym::MacroInvocation(_)
+            | LocalModItemSym::Error(_) => None,
+        }
     }
 }
 

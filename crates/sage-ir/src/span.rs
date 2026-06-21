@@ -1,8 +1,24 @@
 use sage_stash::StashDirect;
 
+use crate::Db;
+use crate::local_syms::LocalModItemSym;
 use crate::local_syms::macro_invocations::LocalMacroInvocationSym;
+use crate::name::Name;
 use crate::source::SourceFile;
 use crate::symbol::MacroDefSymbol;
+
+/// What triggered a macro expansion.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub enum ExpansionOrigin<'db> {
+    /// A bang-macro invocation (`foo!(...)` at item level).
+    Invocation(LocalMacroInvocationSym<'db>),
+    /// A `#[derive(Foo)]` attribute on an item.
+    Derive(AbsoluteSpan<'db>, Name<'db>),
+    /// An attribute proc-macro (`#[attr]` on an item).
+    Attribute(AbsoluteSpan<'db>, Name<'db>),
+}
+
+impl StashDirect for ExpansionOrigin<'_> {}
 
 /// Output of a macro expansion, linked back to the invocation site.
 ///
@@ -11,9 +27,32 @@ use crate::symbol::MacroDefSymbol;
 #[salsa::tracked(debug)]
 pub struct MacroExpansion<'db> {
     pub macro_def: MacroDefSymbol<'db>,
-    pub macro_invocation: LocalMacroInvocationSym<'db>,
-    #[returns(ref)]
-    pub text: String,
+    pub origin: ExpansionOrigin<'db>,
+}
+
+#[salsa::tracked]
+impl<'db> MacroExpansion<'db> {
+    /// Parse a macro expansion's output text into module items.
+    #[salsa::tracked]
+    pub fn parse(self, db: &'db dyn Db) -> Vec<LocalModItemSym<'db>> {
+        match self.origin(db) {
+            ExpansionOrigin::Invocation(sym) => {
+                let scope = sym.scope(db);
+                let (stash, cst) = sym.cst(db).open_deref();
+                let tokens = &stash[cst.input_tokens];
+                let token_str = str::from_utf8(tokens).unwrap();
+                crate::parse::parse_str_to_cst(
+                    db,
+                    ParseSource::MacroExpansion(self),
+                    token_str,
+                    scope,
+                )
+            }
+            ExpansionOrigin::Derive(..) | ExpansionOrigin::Attribute(..) => {
+                panic!("need to think about how to represent these!")
+            }
+        }
+    }
 }
 
 /// The source of parseable text — either a real file or a macro expansion.
@@ -37,8 +76,6 @@ impl<'db> ParseSource<'db> {
             ParseSource::MacroExpansion(exp) => exp.text(db),
         }
     }
-
-    // TODO: re-add parse() once lower.rs is reimplemented
 }
 
 /// Byte offset range within a source (file or macro expansion), together

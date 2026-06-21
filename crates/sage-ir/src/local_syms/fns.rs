@@ -22,6 +22,13 @@ pub struct LocalFnSym<'db> {
 
 impl StashDirect for LocalFnSym<'_> {}
 
+impl<'db> LocalFnSym<'db> {
+    pub fn attrs(self, db: &'db dyn crate::Db) -> (&'db sage_stash::Stash, &'db [crate::cst::attrs::AttrCst<'db>]) {
+        let (stash, data) = self.cst(db).open_deref();
+        (stash, &stash[data.attrs])
+    }
+}
+
 #[salsa::tracked]
 impl<'db> LocalFnSym<'db> {
     /// Computes the signature: generics, parameter types, return type.

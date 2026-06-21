@@ -9,12 +9,11 @@ use sage_stash::StashDirect;
 
 use crate::{
     Db,
-    cst::uses::UseKind,
-    local_syms::{self, macro_invocations::LocalMacroInvocationSym},
-    memmap::local_expanded_module_items,
+    local_syms::macro_invocations::LocalMacroInvocationSym,
+    local_syms::mods::local_expanded_module_items,
     name::Name,
     resolve::Namespace,
-    span::MacroExpansion,
+    span::{ExpansionOrigin, MacroExpansion},
 };
 
 /// Opaque crate number (matches rustc's CrateNum).
@@ -350,9 +349,22 @@ impl<'db> MacroDefSymbol<'db> {
         db: &'db dyn Db,
         invocation: LocalMacroInvocationSym<'db>,
     ) -> MacroExpansion<'db> {
+        let origin = ExpansionOrigin::Invocation(invocation);
         match self {
             MacroDefSymbol::Local(sym) => sym.apply_to(db, invocation),
-            MacroDefSymbol::Ext(sym_ext) => todo!(),
+            MacroDefSymbol::Ext(sym_ext) => {
+                let (_stash, cst) = invocation.cst(db).open_deref();
+                let input_text = cst.input_tokens.text(db);
+                let expanded = db
+                    .tcx()
+                    .expand_proc_macro_bang(
+                        sym_ext.crate_num(db),
+                        sym_ext.def_index(db),
+                        input_text,
+                    )
+                    .unwrap_or_default();
+                MacroExpansion::new(db, self, origin, expanded)
+            }
         }
     }
 }

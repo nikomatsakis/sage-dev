@@ -52,4 +52,21 @@ pub trait TcxDb: Send + Sync {
         def_index: DefIndex,
         item_source: &str,
     ) -> Option<String>;
+
+    /// Expand a proc-macro bang macro (`foo!(tokens)`). Returns the expanded source text.
+    fn expand_proc_macro_bang(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        input_tokens: &str,
+    ) -> Option<String>;
+
+    /// Expand an attribute proc-macro (`#[attr] item`). Returns the transformed item source.
+    fn expand_proc_macro_attr(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        attr_args: &str,
+        item_source: &str,
+    ) -> Option<String>;
 }

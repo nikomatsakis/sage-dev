@@ -7,7 +7,6 @@ pub mod dump;
 pub mod generic_param;
 pub mod local_syms;
 pub mod lower;
-pub mod memmap;
 pub mod name;
 pub mod parse;
 pub mod resolve;

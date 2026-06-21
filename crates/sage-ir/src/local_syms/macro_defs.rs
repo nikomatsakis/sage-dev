@@ -4,7 +4,8 @@ use crate::Db;
 use crate::local_syms::macro_invocations::LocalMacroInvocationSym;
 use crate::name::Name;
 use crate::scope::ScopeSymbol;
-use crate::span::{AbsoluteSpan, MacroExpansion};
+use crate::span::{AbsoluteSpan, ExpansionOrigin, MacroExpansion};
+use crate::symbol::MacroDefSymbol;
 
 /// A `macro_rules!` definition at item level.
 #[salsa::tracked(debug)]
@@ -30,8 +31,8 @@ impl<'db> LocalMacroDefSym<'db> {
         db: &'db dyn Db,
         invocation: LocalMacroInvocationSym<'db>,
     ) -> MacroExpansion<'db> {
-        unimplemented!(
-            "we need to parse the body as macro rules, parse the input according to the arms, etc"
-        )
+        let origin = ExpansionOrigin::Invocation(invocation);
+        let macro_def = MacroDefSymbol::Local(self);
+        MacroExpansion::new(db, macro_def, origin)
     }
 }

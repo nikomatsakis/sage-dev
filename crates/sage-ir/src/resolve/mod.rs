@@ -29,6 +29,17 @@ pub(crate) enum ResolvePhase {
     Normal,
 }
 
+/// Resolve a single unqualified name in the given module.
+pub(crate) fn resolve_name<'db>(
+    db: &'db dyn Db,
+    phase: ResolvePhase,
+    module: ModSymbol<'db>,
+    name: Name<'db>,
+    namespace: Namespace,
+) -> Vec<Symbol<'db>> {
+    flexibly_resolve_name_from_module(db, phase, module, name, namespace)
+}
+
 pub(crate) fn resolve_path<'db>(
     db: &'db dyn Db,
     phase: ResolvePhase,

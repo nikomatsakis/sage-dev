@@ -42,6 +42,10 @@ pub unsafe trait StashData<'db>: Copy {
     type StaticSelf: 'static;
 }
 
+unsafe impl<T: 'static + StashDirect + Copy> StashData<'_> for T {
+    type StaticSelf = T;
+}
+
 /// Stash-storable type with hash-consing support. All allocations are
 /// content-addressed: equal values produce equal handles.
 pub trait AllocStashData<'db>: StashData<'db> + StashHash + PartialEq {}

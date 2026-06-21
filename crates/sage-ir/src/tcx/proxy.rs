@@ -38,6 +38,19 @@ pub enum TcxRequest {
         item_source: String,
         reply: mpsc::Sender<Option<String>>,
     },
+    ExpandBang {
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        input_tokens: String,
+        reply: mpsc::Sender<Option<String>>,
+    },
+    ExpandAttr {
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        attr_args: String,
+        item_source: String,
+        reply: mpsc::Sender<Option<String>>,
+    },
 }
 
 /// Channel-based `TcxDb` proxy. Sends requests to the thread that owns
@@ -141,6 +154,44 @@ impl TcxDb for ProxyTcxDb {
             .send(TcxRequest::ExpandDerive {
                 crate_num,
                 def_index,
+                item_source: item_source.to_owned(),
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn expand_proc_macro_bang(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        input_tokens: &str,
+    ) -> Option<String> {
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::ExpandBang {
+                crate_num,
+                def_index,
+                input_tokens: input_tokens.to_owned(),
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn expand_proc_macro_attr(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        attr_args: &str,
+        item_source: &str,
+    ) -> Option<String> {
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::ExpandAttr {
+                crate_num,
+                def_index,
+                attr_args: attr_args.to_owned(),
                 item_source: item_source.to_owned(),
                 reply,
             })

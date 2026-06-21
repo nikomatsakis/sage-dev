@@ -137,6 +137,32 @@ where
                                     &item_source,
                                 ));
                             }
+                            TcxRequest::ExpandBang {
+                                crate_num,
+                                def_index,
+                                input_tokens,
+                                reply,
+                            } => {
+                                let _ = reply.send(tcx_db.expand_proc_macro_bang(
+                                    crate_num,
+                                    def_index,
+                                    &input_tokens,
+                                ));
+                            }
+                            TcxRequest::ExpandAttr {
+                                crate_num,
+                                def_index,
+                                attr_args,
+                                item_source,
+                                reply,
+                            } => {
+                                let _ = reply.send(tcx_db.expand_proc_macro_attr(
+                                    crate_num,
+                                    def_index,
+                                    &attr_args,
+                                    &item_source,
+                                ));
+                            }
                         }
                     }
 

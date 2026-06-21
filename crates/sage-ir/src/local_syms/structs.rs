@@ -21,6 +21,13 @@ pub struct LocalStructSym<'db> {
 
 impl StashDirect for LocalStructSym<'_> {}
 
+impl<'db> LocalStructSym<'db> {
+    pub fn attrs(self, db: &'db dyn crate::Db) -> (&'db sage_stash::Stash, &'db [crate::cst::attrs::AttrCst<'db>]) {
+        let (stash, data) = self.cst(db).open_deref();
+        (stash, &stash[data.attrs])
+    }
+}
+
 #[salsa::tracked]
 impl<'db> LocalStructSym<'db> {
     /// Computes the "signature" of a struct: its generics and where-clauses.
