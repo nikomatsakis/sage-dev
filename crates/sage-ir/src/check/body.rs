@@ -33,6 +33,9 @@ pub enum DiagnosticKind<'db> {
     UnresolvedInferVar {
         var: InferVarIndex,
     },
+    AmbiguousName {
+        count: usize,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -104,6 +107,14 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
     pub fn resolve_path(&mut self, path: crate::cst::paths::Path<'db>, ns: Namespace) -> Res<'db> {
         let check = &mut self.check;
         let results = check.resolver.resolve_path(check.source_stash, path, ns);
+        if results.len() > 1 {
+            self.diagnostics.push(Diagnostic {
+                kind: DiagnosticKind::AmbiguousName {
+                    count: results.len(),
+                },
+            });
+            return Res::Err;
+        }
         match results.into_iter().next() {
             Some(Resolution::Sym(sym)) => Res::Def(sym),
             Some(Resolution::Local(id)) => Res::Local(id),

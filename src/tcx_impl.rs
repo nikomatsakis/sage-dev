@@ -18,9 +18,9 @@ use rustc_middle::ty::TyCtxt;
 use rustc_proc_macro::bridge::server::SAME_THREAD;
 use rustc_span::def_id::DefIndex as RustcDefIndex;
 
-use sage_ir::symbol::{CrateNum, DefIndex};
 use sage_ir::resolve::{MacroKind, Namespace};
 use sage_ir::symbol::SymExtKind;
+use sage_ir::symbol::{CrateNum, DefIndex};
 use sage_ir::tcx::RawChild;
 
 use crate::proc_macro_srv::SageServer;
