@@ -142,7 +142,7 @@ macro_rules! define_kind_symbols {
                 $Name($Name<$SymLt>),
             )*
             $(
-                $LoName($LoName<$SymLt>),
+                $LoName($LoLocalTy),
             )*
         }
 
@@ -164,7 +164,7 @@ macro_rules! define_kind_symbols {
                         $SymPrivateData::$Name(ast) => ast.into(),
                     )*
                     $(
-                        $SymPrivateData::$LoName(ast) => $LoName(ast).into(),
+                        $SymPrivateData::$LoName(ast) => ast.into(),
                     )*
                     $SymPrivateData::Ext(ext) => match ext.kind(db) {
                         $(
@@ -218,21 +218,9 @@ macro_rules! define_kind_symbols {
                 }
             }
 
-            impl<$SymLt> From<$LoName<$SymLt>> for $SymName<$SymLt> {
-                fn from(sym: $LoName<$SymLt>) -> Self {
-                    sym.0.into()
-                }
-            }
-
             impl<$SymLt> From<$LoLocalTy> for $SymData<$SymLt> {
                 fn from(ast: $LoLocalTy) -> Self {
-                    $SymData::$LoName($LoName(ast))
-                }
-            }
-
-            impl<$SymLt> From<$LoName<$SymLt>> for $SymData<$SymLt> {
-                fn from(sym: $LoName<$SymLt>) -> Self {
-                    $SymData::$LoName(sym)
+                    $SymData::$LoName(ast)
                 }
             }
         )*
@@ -259,21 +247,6 @@ macro_rules! define_kind_symbols {
             }
 
             impl<$lt> StashDirect for $Name<$lt> {}
-        )*
-
-        // --- Newtype wrappers for local-only kinds ---
-        $(
-            $(#[$lo_meta])*
-            #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
-            $lo_vis struct $LoName<$lo_lt>(pub $LoLocalTy);
-
-            impl<$lo_lt> From<$LoLocalTy> for $LoName<$lo_lt> {
-                fn from(ast: $LoLocalTy) -> Self {
-                    Self(ast)
-                }
-            }
-
-            impl<$lo_lt> StashDirect for $LoName<$lo_lt> {}
         )*
     };
 }

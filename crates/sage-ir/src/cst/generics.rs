@@ -5,8 +5,7 @@ use crate::cst::paths::Path;
 use crate::cst::ty::TypeCst;
 use crate::generic_param::{AstGenericParam, GenericParam, GenericParamKind};
 use crate::name::Name;
-use crate::resolve::Namespace;
-use crate::ribs::RibEntry;
+use crate::resolve::{Namespace, Resolution};
 use crate::span::RelativeSpan;
 use crate::symbol::Symbol;
 
@@ -54,7 +53,7 @@ impl<'db> CheckGenerics<'db> for Slice<GenericParamCst<'db>> {
         cx: &mut Check<'_, 'db>,
         parent: Symbol<'db>,
     ) -> Slice<GenericParam<'db>> {
-        let params = &cx.src[self];
+        let params = &cx.source_stash[self];
         let mut generic_params = Vec::new();
         for (i, param) in params.iter().enumerate() {
             let (name, span, kind) = match *param {
@@ -68,7 +67,7 @@ impl<'db> CheckGenerics<'db> for Slice<GenericParamCst<'db>> {
             let gp = GenericParam::Ast(ast_param);
             cx.resolver
                 .ribs
-                .add(name, Namespace::Type, RibEntry::Param(gp));
+                .add(name, Namespace::Type, Resolution::Param(gp));
             generic_params.push(gp);
         }
         cx.target_stash.alloc_slice(&generic_params)

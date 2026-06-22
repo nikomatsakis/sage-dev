@@ -211,8 +211,7 @@ impl<'tcx> RustcTcxDb<'tcx> {
 
         // Same unsafe pattern as derive — extract the Client from BangProcMacro.
         let client = unsafe {
-            let ptr = Arc::as_ref(arc)
-                as *const dyn rustc_expand::base::ProcMacro
+            let ptr = Arc::as_ref(arc) as *const dyn rustc_expand::base::ProcMacro
                 as *const rustc_expand::proc_macro::BangProcMacro;
             (*ptr).client
         };
@@ -253,8 +252,7 @@ impl<'tcx> RustcTcxDb<'tcx> {
 
         // Same unsafe pattern — extract the Client from AttrProcMacro.
         let client = unsafe {
-            let ptr = Arc::as_ref(arc)
-                as *const dyn rustc_expand::base::AttrProcMacro
+            let ptr = Arc::as_ref(arc) as *const dyn rustc_expand::base::AttrProcMacro
                 as *const rustc_expand::proc_macro::AttrProcMacro;
             (*ptr).client
         };

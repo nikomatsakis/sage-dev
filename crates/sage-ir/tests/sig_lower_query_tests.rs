@@ -1,11 +1,11 @@
 mod common;
 
+use sage_ir::Db;
 use sage_ir::db::Database;
 use sage_ir::generic_param::GenericParamKind;
 use sage_ir::item::*;
 use sage_ir::lower::parse_source_file;
 use sage_ir::module::ModSymbol;
-use sage_ir::resolve::SourceRoot;
 use sage_ir::scope::ScopeSymbol;
 use sage_ir::sig_lower::*;
 use sage_ir::source::SourceFile;
@@ -14,23 +14,25 @@ use sage_ir::ty::*;
 use sage_ir::types::Mutability;
 use salsa::Database as _;
 
-fn setup<'db>(
-    db: &'db Database,
-    src: &str,
-) -> (SourceRoot, ModSymbol<'db>, Vec<LocalModItemSym<'db>>) {
-    let file = SourceFile::new(db, "lib.rs".to_owned(), src.to_owned());
-    let source_root = SourceRoot::new(db, vec![file]);
+fn test_db(src: &str) -> Database {
+    let mut db = Database::default();
+    db.add_source_file("lib.rs".to_owned(), src.to_owned());
+    db
+}
+
+fn setup<'db>(db: &'db Database) -> (ModSymbol<'db>, Vec<LocalModItemSym<'db>>) {
+    let file = db.source_file("lib.rs").unwrap();
     let root = ModSymbol::ast(ModAst::crate_root(db, file));
     let items = parse_source_file(db, file).clone();
-    (source_root, root, items)
+    (root, items)
 }
 
 #[test]
 fn fn_identity_generic() {
-    let db = Database::default();
+    let db = test_db("fn identity<T>(x: T) -> T {}");
     db.attach(|db| {
-        let (source_root, module, items) = setup(db, "fn identity<T>(x: T) -> T {}");
-        let scope = ScopeSymbol::Module(module, source_root);
+        let (module, items) = setup(db);
+        let scope = ScopeSymbol::Module(module);
         let fn_ast = match items[0] {
             LocalModItemSym::Function(f) => f,
             _ => panic!("expected function"),
@@ -62,10 +64,10 @@ fn fn_identity_generic() {
 
 #[test]
 fn fn_add_primitives() {
-    let db = Database::default();
+    let db = test_db("fn add(a: i32, b: i32) -> i32 {}");
     db.attach(|db| {
-        let (source_root, module, items) = setup(db, "fn add(a: i32, b: i32) -> i32 {}");
-        let scope = ScopeSymbol::Module(module, source_root);
+        let (module, items) = setup(db);
+        let scope = ScopeSymbol::Module(module);
         let fn_ast = match items[0] {
             LocalModItemSym::Function(f) => f,
             _ => panic!("expected function"),
@@ -90,10 +92,10 @@ fn fn_add_primitives() {
 
 #[test]
 fn struct_pair_generic() {
-    let db = Database::default();
+    let db = test_db("struct Pair<A, B> { first: A, second: B }");
     db.attach(|db| {
-        let (source_root, module, items) = setup(db, "struct Pair<A, B> { first: A, second: B }");
-        let scope = ScopeSymbol::Module(module, source_root);
+        let (module, items) = setup(db);
+        let scope = ScopeSymbol::Module(module);
         let struct_ast = match items[0] {
             LocalModItemSym::Struct(s) => s,
             _ => panic!("expected struct"),
@@ -123,10 +125,10 @@ fn struct_pair_generic() {
 
 #[test]
 fn fn_takes_ref() {
-    let db = Database::default();
+    let db = test_db("fn takes_ref(x: &str) -> &[u8] {}");
     db.attach(|db| {
-        let (source_root, module, items) = setup(db, "fn takes_ref(x: &str) -> &[u8] {}");
-        let scope = ScopeSymbol::Module(module, source_root);
+        let (module, items) = setup(db);
+        let scope = ScopeSymbol::Module(module);
         let fn_ast = match items[0] {
             LocalModItemSym::Function(f) => f,
             _ => panic!("expected function"),
@@ -148,7 +150,6 @@ fn fn_takes_ref() {
         let ret = &stash[fn_sig.ret];
         match ret.data {
             Ty::Ref(inner, sage_ir::types::Mutability::Shared, Lifetime::Erased) => {
-                // tree-sitter-rust 0.24 parses [u8] as array_type in this context
                 match stash[inner].data {
                     Ty::Slice(elem) | Ty::Array(elem, _) => {
                         assert!(matches!(stash[elem].data, Ty::Uint(UintTy::U8)));
@@ -163,10 +164,10 @@ fn fn_takes_ref() {
 
 #[test]
 fn enum_with_fields() {
-    let db = Database::default();
+    let db = test_db("enum Option<T> { None, Some { value: T } }");
     db.attach(|db| {
-        let (source_root, module, items) = setup(db, "enum Option<T> { None, Some { value: T } }");
-        let scope = ScopeSymbol::Module(module, source_root);
+        let (module, items) = setup(db);
+        let scope = ScopeSymbol::Module(module);
         let enum_ast = match items[0] {
             LocalModItemSym::Enum(e) => e,
             _ => panic!("expected enum"),
@@ -196,10 +197,10 @@ fn enum_with_fields() {
 
 #[test]
 fn fn_no_return_type_is_unit() {
-    let db = Database::default();
+    let db = test_db("fn noop() {}");
     db.attach(|db| {
-        let (source_root, module, items) = setup(db, "fn noop() {}");
-        let scope = ScopeSymbol::Module(module, source_root);
+        let (module, items) = setup(db);
+        let scope = ScopeSymbol::Module(module);
         let fn_ast = match items[0] {
             LocalModItemSym::Function(f) => f,
             _ => panic!("expected function"),
@@ -242,15 +243,13 @@ fn find_impl_method<'db>(
 
 #[test]
 fn impl_method_self_return_resolves() {
-    let db = Database::default();
+    let db = test_db("struct Foo {} impl Foo { fn make() -> Self {} }");
     db.attach(|db| {
-        let (source_root, module, items) =
-            setup(db, "struct Foo {} impl Foo { fn make() -> Self {} }");
-        let scope = ScopeSymbol::Module(module, source_root);
+        let (module, items) = setup(db);
+        let scope = ScopeSymbol::Module(module);
 
         let method = find_impl_method(db, &items, "make");
 
-        // Build the self type: Adt(Foo, [])
         let foo_struct = match items[0] {
             LocalModItemSym::Struct(s) => s,
             _ => panic!("expected struct"),
@@ -266,7 +265,6 @@ fn impl_method_self_return_resolves() {
         let sig_stash = sig.stash();
         let fn_sig = &sig.root().value;
 
-        // Return type should be Adt(Foo, [])
         let ret = &sig_stash[fn_sig.ret];
         match ret.data {
             Ty::Adt(sym, args) => {
@@ -280,11 +278,10 @@ fn impl_method_self_return_resolves() {
 
 #[test]
 fn impl_method_ref_self_param() {
-    let db = Database::default();
+    let db = test_db("struct Foo {} impl Foo { fn bar(&self) -> Self {} }");
     db.attach(|db| {
-        let (source_root, module, items) =
-            setup(db, "struct Foo {} impl Foo { fn bar(&self) -> Self {} }");
-        let scope = ScopeSymbol::Module(module, source_root);
+        let (module, items) = setup(db);
+        let scope = ScopeSymbol::Module(module);
 
         let method = find_impl_method(db, &items, "bar");
 
@@ -303,7 +300,6 @@ fn impl_method_ref_self_param() {
         let sig_stash = sig.stash();
         let fn_sig = &sig.root().value;
 
-        // First param should be &Foo (i.e., Ref(Adt(Foo, []), Shared, Erased))
         let params = &sig_stash[fn_sig.params];
         assert_eq!(params.len(), 1);
         match sig_stash[params[0]].data {
@@ -317,7 +313,6 @@ fn impl_method_ref_self_param() {
             other => panic!("expected &Foo for &self param, got {other:?}"),
         }
 
-        // Return type should be Adt(Foo, [])
         let ret = &sig_stash[fn_sig.ret];
         match ret.data {
             Ty::Adt(sym, _) => assert_eq!(sym, foo_sym),
@@ -328,13 +323,12 @@ fn impl_method_ref_self_param() {
 
 #[test]
 fn generic_impl_self_resolves_with_params() {
-    let db = Database::default();
+    let db = test_db(
+        "struct Wrapper<T> { val: T } impl<T> Wrapper<T> { fn into_self(&self) -> Self {} }",
+    );
     db.attach(|db| {
-        let (source_root, module, items) = setup(
-            db,
-            "struct Wrapper<T> { val: T } impl<T> Wrapper<T> { fn into_self(&self) -> Self {} }",
-        );
-        let scope = ScopeSymbol::Module(module, source_root);
+        let (module, items) = setup(db);
+        let scope = ScopeSymbol::Module(module);
 
         let method = find_impl_method(db, &items, "into_self");
 
@@ -345,8 +339,6 @@ fn generic_impl_self_resolves_with_params() {
         let wrapper_sym =
             sage_ir::symbol::Symbol::local(LocalModItemSym::Struct(wrapper_struct), scope);
 
-        // Lower the struct signature to get its generics (this creates AstGenericParams
-        // inside a tracked function context)
         let struct_sig = struct_signature(db, StructSymbol::local(wrapper_struct, scope), scope);
         let struct_stash = struct_sig.stash();
         let struct_binder = struct_sig.root();
@@ -354,7 +346,6 @@ fn generic_impl_self_resolves_with_params() {
         assert_eq!(struct_generics.len(), 1);
         let gp = struct_generics[0];
 
-        // Build self type: Adt(Wrapper, [Param(T)]) using the struct's own generic param
         let mut stash = sage_stash::Stash::new();
         let param_ty = Ty {
             data: Ty::Param(gp),
@@ -369,7 +360,6 @@ fn generic_impl_self_resolves_with_params() {
         let sig_stash = sig.stash();
         let fn_sig = &sig.root().value;
 
-        // &self param should be &Wrapper<Param(T)>
         let params = &sig_stash[fn_sig.params];
         assert_eq!(params.len(), 1);
         match sig_stash[params[0]].data {
@@ -390,7 +380,6 @@ fn generic_impl_self_resolves_with_params() {
             other => panic!("expected &Wrapper<T>, got {other:?}"),
         }
 
-        // Return type Self should be Adt(Wrapper, [Param(T)])
         let ret = &sig_stash[fn_sig.ret];
         match ret.data {
             Ty::Adt(sym, args) => {

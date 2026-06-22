@@ -36,14 +36,14 @@ pub enum LifetimeCst<'db> {
 // ---------------------------------------------------------------------------
 
 use crate::check::Check;
-use crate::cst::paths::Resolution;
 use crate::resolve::Namespace;
+use crate::resolve::Resolution;
 use crate::symbol::intrinsic::Intrinsic;
 use crate::symbol::{Symbol, SymbolData};
 
 impl<'db> TypeCst<'db> {
     pub(crate) fn check(self, cx: &mut Check<'_, 'db>) -> Ty<'db> {
-        let src = cx.src;
+        let src = cx.source_stash;
         match self.kind {
             TypeCstKind::Path(path_ptr) => {
                 let path = src[path_ptr];

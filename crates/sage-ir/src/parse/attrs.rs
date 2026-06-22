@@ -1,7 +1,7 @@
 use sage_stash::{Slice, Stash};
 
 use crate::cst::attrs::{AttrCst, AttrCstKind};
-use crate::name::Name;
+use crate::cst::paths::Path;
 use crate::span::RelativeSpan;
 
 use super::Parser;
@@ -34,30 +34,44 @@ impl<'a, 'db> Parser<'a, 'db> {
             end: node.end_byte() as u32 - item_start,
         };
 
-        let mut path_segments: Vec<Name<'db>> = Vec::new();
-        let mut args = None;
+        let mut path_node = None;
+        let mut args_node = None;
         let mut cursor = node.walk();
 
         for child in node.children(&mut cursor) {
             match child.kind() {
                 "identifier" | "scoped_identifier" => {
-                    self.collect_attr_path(child, &mut path_segments);
+                    path_node = Some(child);
                 }
                 "token_tree" => {
-                    let raw = &self.text[child.byte_range()];
-                    let inner = raw
-                        .strip_prefix('(')
-                        .and_then(|s| s.strip_suffix(')'))
-                        .or_else(|| raw.strip_prefix('[').and_then(|s| s.strip_suffix(']')))
-                        .or_else(|| raw.strip_prefix('{').and_then(|s| s.strip_suffix('}')))
-                        .unwrap_or(raw);
-                    args = Some(Name::new(self.db, inner.trim().to_owned()));
+                    args_node = Some(child);
                 }
                 _ => {}
             }
         }
 
-        let path = stash.alloc_slice(&path_segments);
+        let path = match path_node {
+            Some(n) => self.parse_path(stash, n, item_start),
+            None => {
+                let name = crate::name::Name::new(self.db, String::new());
+                let type_args = stash.alloc_slice(&[]);
+                let rest = stash.alloc_slice(&[]);
+                let seg = crate::cst::paths::PathSegment {
+                    name,
+                    type_args,
+                    span,
+                };
+                stash.alloc(Path::Relative(seg, rest))
+            }
+        };
+
+        let args = match args_node {
+            Some(n) => {
+                let bytes = self.text[n.byte_range()].as_bytes();
+                stash.alloc_slice(bytes)
+            }
+            None => stash.alloc_slice(&[]),
+        };
 
         AttrCst {
             kind: AttrCstKind::Normal,
@@ -65,25 +79,6 @@ impl<'a, 'db> Parser<'a, 'db> {
             args,
             is_inner: false,
             span,
-        }
-    }
-
-    fn collect_attr_path(&self, node: tree_sitter::Node<'a>, out: &mut Vec<Name<'db>>) {
-        match node.kind() {
-            "identifier" => {
-                out.push(Name::new(self.db, self.text[node.byte_range()].to_owned()));
-            }
-            "scoped_identifier" => {
-                if let Some(path) = node.child_by_field_name("path") {
-                    self.collect_attr_path(path, out);
-                }
-                if let Some(name) = node.child_by_field_name("name") {
-                    out.push(Name::new(self.db, self.text[name.byte_range()].to_owned()));
-                }
-            }
-            _ => {
-                out.push(Name::new(self.db, self.text[node.byte_range()].to_owned()));
-            }
         }
     }
 }

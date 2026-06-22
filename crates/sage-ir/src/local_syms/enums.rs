@@ -20,7 +20,13 @@ pub struct LocalEnumSym<'db> {
 impl StashDirect for LocalEnumSym<'_> {}
 
 impl<'db> LocalEnumSym<'db> {
-    pub fn attrs(self, db: &'db dyn crate::Db) -> (&'db sage_stash::Stash, &'db [crate::cst::attrs::AttrCst<'db>]) {
+    pub fn attrs(
+        self,
+        db: &'db dyn crate::Db,
+    ) -> (
+        &'db sage_stash::Stash,
+        &'db [crate::cst::attrs::AttrCst<'db>],
+    ) {
         let (stash, data) = self.cst(db).open_deref();
         (stash, &stash[data.attrs])
     }

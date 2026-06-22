@@ -18,7 +18,13 @@ pub struct LocalImplSym<'db> {
 impl StashDirect for LocalImplSym<'_> {}
 
 impl<'db> LocalImplSym<'db> {
-    pub fn attrs(self, db: &'db dyn crate::Db) -> (&'db sage_stash::Stash, &'db [crate::cst::attrs::AttrCst<'db>]) {
+    pub fn attrs(
+        self,
+        db: &'db dyn crate::Db,
+    ) -> (
+        &'db sage_stash::Stash,
+        &'db [crate::cst::attrs::AttrCst<'db>],
+    ) {
         let (stash, data) = self.cst(db).open_deref();
         (stash, &stash[data.attrs])
     }

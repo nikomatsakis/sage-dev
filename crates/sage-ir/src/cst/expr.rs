@@ -190,18 +190,21 @@ impl<'db> ExprCst<'db> {
                 (TyExprData::Literal(*lit), ty)
             }
             ExprCstKind::Path(path_ptr) => {
-                let path = check.src[*path_ptr];
-                let res = check.resolve_path_new(path, Namespace::Value);
+                let path = check.source_stash[*path_ptr];
+                let res = check.resolve_path(path, Namespace::Value);
                 let ty = res_to_ty(check, res);
                 (TyExprData::Path(res), ty)
             }
             ExprCstKind::Block(stmts, tail) => {
                 check.resolver.ribs.push_scope();
-                let rstmts: Vec<_> = check.src[*stmts].iter().map(|s| s.check(check)).collect();
+                let rstmts: Vec<_> = check.source_stash[*stmts]
+                    .iter()
+                    .map(|s| s.check(check))
+                    .collect();
                 let stmts_slice = check.stash_mut().alloc_slice(&rstmts);
                 let (tail_ptr, ty) = match tail {
                     Some(t) => {
-                        let te = check.src[*t].check(check);
+                        let te = check.source_stash[*t].check(check);
                         let ty = check.stash()[te].ty;
                         (Some(te), ty)
                     }
@@ -211,8 +214,8 @@ impl<'db> ExprCst<'db> {
                 (TyExprData::Block(stmts_slice, tail_ptr), ty)
             }
             ExprCstKind::Call(func, args) => {
-                let rf = check.src[*func].check(check);
-                let rargs: Vec<_> = check.src[*args]
+                let rf = check.source_stash[*func].check(check);
+                let rargs: Vec<_> = check.source_stash[*args]
                     .iter()
                     .map(|a| a.check_val(check))
                     .collect();
@@ -221,8 +224,8 @@ impl<'db> ExprCst<'db> {
                 (TyExprData::Call(rf, args_slice), ty)
             }
             ExprCstKind::MethodCall(obj, name, args) => {
-                let ro = check.src[*obj].check(check);
-                let rargs: Vec<_> = check.src[*args]
+                let ro = check.source_stash[*obj].check(check);
+                let rargs: Vec<_> = check.source_stash[*args]
                     .iter()
                     .map(|a| a.check_val(check))
                     .collect();
@@ -231,43 +234,43 @@ impl<'db> ExprCst<'db> {
                 (TyExprData::MethodCall(ro, *name, args_slice), ty)
             }
             ExprCstKind::Field(obj, name) => {
-                let ro = check.src[*obj].check(check);
+                let ro = check.source_stash[*obj].check(check);
                 let ty = check.fresh_ty_var(); // TODO: field type lookup
                 (TyExprData::Field(ro, *name), ty)
             }
             ExprCstKind::Binary(lhs, op, rhs) => {
-                let rl = check.src[*lhs].check(check);
-                let rr = check.src[*rhs].check(check);
+                let rl = check.source_stash[*lhs].check(check);
+                let rr = check.source_stash[*rhs].check(check);
                 let lhs_ty = check.stash()[rl].ty;
                 let rhs_ty = check.stash()[rr].ty;
                 let ty = check_binary_op_ty(check, *op, lhs_ty, rhs_ty);
                 (TyExprData::Binary(rl, *op, rr), ty)
             }
             ExprCstKind::Unary(op, operand) => {
-                let ro = check.src[*operand].check(check);
+                let ro = check.source_stash[*operand].check(check);
                 let ty = check.stash()[ro].ty;
                 (TyExprData::Unary(*op, ro), ty)
             }
             ExprCstKind::Ref(inner, m) => {
-                let ri = check.src[*inner].check(check);
+                let ri = check.source_stash[*inner].check(check);
                 let inner_ty = check.stash()[ri].ty;
                 let ty = check.alloc_ty(Ty::Ref(inner_ty, *m, crate::ty::Lifetime::Erased));
                 (TyExprData::Ref(ri, *m), ty)
             }
             ExprCstKind::If(cond, then, else_) => {
-                let rc = check.src[*cond].check(check);
+                let rc = check.source_stash[*cond].check(check);
                 let cond_ty = check.stash()[rc].ty;
                 let bool_ty = check.alloc_ty(Ty::Bool);
                 check.require_eq(cond_ty, bool_ty);
 
                 let result_ty = check.fresh_ty_var();
-                let rt = check.src[*then].check(check);
+                let rt = check.source_stash[*then].check(check);
                 let then_ty = check.stash()[rt].ty;
                 check.require_coerce(then_ty, result_ty);
 
                 let re = match else_ {
                     Some(e) => {
-                        let re = check.src[*e].check(check);
+                        let re = check.source_stash[*e].check(check);
                         let else_ty = check.stash()[re].ty;
                         check.require_coerce(else_ty, result_ty);
                         Some(re)
@@ -281,10 +284,10 @@ impl<'db> ExprCst<'db> {
                 (TyExprData::If(rc, rt, re), result_ty)
             }
             ExprCstKind::IfLet(pat, scrutinee, then, else_) => {
-                let rs = check.src[*scrutinee].check(check);
+                let rs = check.source_stash[*scrutinee].check(check);
                 check.resolver.ribs.push_scope();
-                let rp = check.src[*pat].check(check);
-                let rt = check.src[*then].check(check);
+                let rp = check.source_stash[*pat].check(check);
+                let rt = check.source_stash[*then].check(check);
                 check.resolver.ribs.pop_scope();
 
                 let result_ty = check.fresh_ty_var();
@@ -293,7 +296,7 @@ impl<'db> ExprCst<'db> {
 
                 let re = match else_ {
                     Some(e) => {
-                        let re = check.src[*e].check(check);
+                        let re = check.source_stash[*e].check(check);
                         let else_ty = check.stash()[re].ty;
                         check.require_coerce(else_ty, result_ty);
                         Some(re)
@@ -307,9 +310,9 @@ impl<'db> ExprCst<'db> {
                 (TyExprData::IfLet(rp, rs, rt, re), result_ty)
             }
             ExprCstKind::Match(scrutinee, arms) => {
-                let rs = check.src[*scrutinee].check(check);
+                let rs = check.source_stash[*scrutinee].check(check);
                 let result_ty = check.fresh_ty_var();
-                let rarms: Vec<_> = check.src[*arms]
+                let rarms: Vec<_> = check.source_stash[*arms]
                     .iter()
                     .map(|arm| arm.check(check, result_ty))
                     .collect();
@@ -317,39 +320,39 @@ impl<'db> ExprCst<'db> {
                 (TyExprData::Match(rs, arms_slice), result_ty)
             }
             ExprCstKind::Loop(body) => {
-                let rb = check.src[*body].check(check);
+                let rb = check.source_stash[*body].check(check);
                 let ty = check.alloc_ty(Ty::Never);
                 (TyExprData::Loop(rb), ty)
             }
             ExprCstKind::While(cond, body) => {
-                let rc = check.src[*cond].check(check);
+                let rc = check.source_stash[*cond].check(check);
                 let cond_ty = check.stash()[rc].ty;
                 let bool_ty = check.alloc_ty(Ty::Bool);
                 check.require_eq(cond_ty, bool_ty);
-                let rb = check.src[*body].check(check);
+                let rb = check.source_stash[*body].check(check);
                 let ty = check.unit_ty();
                 (TyExprData::While(rc, rb), ty)
             }
             ExprCstKind::WhileLet(pat, scrutinee, body) => {
-                let rs = check.src[*scrutinee].check(check);
+                let rs = check.source_stash[*scrutinee].check(check);
                 check.resolver.ribs.push_scope();
-                let rp = check.src[*pat].check(check);
-                let rb = check.src[*body].check(check);
+                let rp = check.source_stash[*pat].check(check);
+                let rb = check.source_stash[*body].check(check);
                 check.resolver.ribs.pop_scope();
                 let ty = check.unit_ty();
                 (TyExprData::WhileLet(rp, rs, rb), ty)
             }
             ExprCstKind::For(pat, iter, body) => {
-                let ri = check.src[*iter].check(check);
+                let ri = check.source_stash[*iter].check(check);
                 check.resolver.ribs.push_scope();
-                let rp = check.src[*pat].check(check);
-                let rb = check.src[*body].check(check);
+                let rp = check.source_stash[*pat].check(check);
+                let rb = check.source_stash[*body].check(check);
                 check.resolver.ribs.pop_scope();
                 let ty = check.unit_ty();
                 (TyExprData::For(rp, ri, rb), ty)
             }
             ExprCstKind::Break(val) => {
-                let rv = val.map(|v| check.src[v].check(check));
+                let rv = val.map(|v| check.source_stash[v].check(check));
                 let ty = check.alloc_ty(Ty::Never);
                 (TyExprData::Break(rv), ty)
             }
@@ -358,14 +361,14 @@ impl<'db> ExprCst<'db> {
                 (TyExprData::Continue, ty)
             }
             ExprCstKind::Return(val) => {
-                let rv = val.map(|v| check.src[v].check(check));
+                let rv = val.map(|v| check.source_stash[v].check(check));
                 // TODO: require_coerce to function return type
                 let ty = check.alloc_ty(Ty::Never);
                 (TyExprData::Return(rv), ty)
             }
             ExprCstKind::Assign(lhs, rhs) => {
-                let rl = check.src[*lhs].check(check);
-                let rr = check.src[*rhs].check(check);
+                let rl = check.source_stash[*lhs].check(check);
+                let rr = check.source_stash[*rhs].check(check);
                 let lhs_ty = check.stash()[rl].ty;
                 let rhs_ty = check.stash()[rr].ty;
                 check.require_coerce(rhs_ty, lhs_ty);
@@ -373,21 +376,21 @@ impl<'db> ExprCst<'db> {
                 (TyExprData::Assign(rl, rr), ty)
             }
             ExprCstKind::Await(inner) => {
-                let ri = check.src[*inner].check(check);
+                let ri = check.source_stash[*inner].check(check);
                 let ty = check.fresh_ty_var(); // TODO: extract Output type
                 (TyExprData::Await(ri), ty)
             }
             ExprCstKind::Try(inner) => {
-                let ri = check.src[*inner].check(check);
+                let ri = check.source_stash[*inner].check(check);
                 let ty = check.fresh_ty_var(); // TODO: extract Ok type
                 (TyExprData::Try(ri), ty)
             }
             ExprCstKind::Closure(params, body) => {
                 check.resolver.ribs.push_scope();
-                let rparams: Vec<_> = check.src[*params]
+                let rparams: Vec<_> = check.source_stash[*params]
                     .iter()
                     .map(|p| {
-                        let rp = check.src[p.pat].check(check);
+                        let rp = check.source_stash[p.pat].check(check);
                         let param_ty = check.stash()[rp].ty;
                         TyClosureParam {
                             pat: rp,
@@ -396,14 +399,14 @@ impl<'db> ExprCst<'db> {
                         }
                     })
                     .collect();
-                let rb = check.src[*body].check(check);
+                let rb = check.source_stash[*body].check(check);
                 check.resolver.ribs.pop_scope();
                 let params_slice = check.stash_mut().alloc_slice(&rparams);
                 let ty = check.fresh_ty_var(); // TODO: construct fn type
                 (TyExprData::Closure(params_slice, rb), ty)
             }
             ExprCstKind::Tuple(elems) => {
-                let relems: Vec<_> = check.src[*elems]
+                let relems: Vec<_> = check.source_stash[*elems]
                     .iter()
                     .map(|e| e.check_val(check))
                     .collect();
@@ -416,7 +419,7 @@ impl<'db> ExprCst<'db> {
             }
             ExprCstKind::Array(elems) => {
                 let result_ty = check.fresh_ty_var();
-                let relems: Vec<_> = check.src[*elems]
+                let relems: Vec<_> = check.source_stash[*elems]
                     .iter()
                     .map(|e| {
                         let re = e.check_val(check);
@@ -430,25 +433,25 @@ impl<'db> ExprCst<'db> {
                 (TyExprData::Array(elems_slice), ty)
             }
             ExprCstKind::Index(obj, idx) => {
-                let ro = check.src[*obj].check(check);
-                let ri = check.src[*idx].check(check);
+                let ro = check.source_stash[*obj].check(check);
+                let ri = check.source_stash[*idx].check(check);
                 let ty = check.fresh_ty_var(); // TODO: Index trait resolution
                 (TyExprData::Index(ro, ri), ty)
             }
             ExprCstKind::Cast(expr, ty_cst) => {
-                let re = check.src[*expr].check(check);
-                let target_ty = check.src[*ty_cst].check(check);
+                let re = check.source_stash[*expr].check(check);
+                let target_ty = check.source_stash[*ty_cst].check(check);
                 let target = check.stash_mut().alloc(target_ty);
                 (TyExprData::Cast(re, target), target)
             }
             ExprCstKind::StructLit(path_ptr, fields) => {
-                let path = check.src[*path_ptr];
+                let path = check.source_stash[*path_ptr];
                 let res = check.resolve_path_new(path, Namespace::Type);
-                let rfields: Vec<_> = check.src[*fields]
+                let rfields: Vec<_> = check.source_stash[*fields]
                     .iter()
                     .map(|fi| TyFieldInit {
                         name: fi.name,
-                        value: check.src[fi.value].check(check),
+                        value: check.source_stash[fi.value].check(check),
                         span: fi.span,
                     })
                     .collect();
@@ -457,8 +460,8 @@ impl<'db> ExprCst<'db> {
                 (TyExprData::StructLit(res, fields_slice), ty)
             }
             ExprCstKind::Range(lo, hi) => {
-                let rl = lo.map(|l| check.src[l].check(check));
-                let rh = hi.map(|h| check.src[h].check(check));
+                let rl = lo.map(|l| check.source_stash[l].check(check));
+                let rh = hi.map(|h| check.source_stash[h].check(check));
                 let ty = check.fresh_ty_var(); // TODO: Range type
                 (TyExprData::Range(rl, rh), ty)
             }
@@ -480,8 +483,8 @@ impl<'db> StmtCst<'db> {
         let span = self.span;
         let kind = match &self.kind {
             StmtCstKind::Let(pat, ty_ann, init) => {
-                let rinit = init.map(|e| cx.src[e].check(cx));
-                let rpat = cx.src[*pat].check(cx);
+                let rinit = init.map(|e| cx.source_stash[e].check(cx));
+                let rpat = cx.source_stash[*pat].check(cx);
                 let pat_ty = cx.stash()[rpat].ty;
 
                 if let Some(init_ptr) = rinit {
@@ -490,14 +493,14 @@ impl<'db> StmtCst<'db> {
                 }
 
                 let ty_ann_ptr = ty_ann.map(|t| {
-                    let resolved = cx.src[t].check(cx);
+                    let resolved = cx.source_stash[t].check(cx);
                     let ptr = cx.stash_mut().alloc(resolved);
                     ptr
                 });
 
                 TyStmtKind::Let(rpat, ty_ann_ptr, rinit)
             }
-            StmtCstKind::Expr(e) => TyStmtKind::Expr(cx.src[*e].check(cx)),
+            StmtCstKind::Expr(e) => TyStmtKind::Expr(cx.source_stash[*e].check(cx)),
         };
         TyStmt { kind, span }
     }
@@ -514,23 +517,23 @@ impl<'db> PatCst<'db> {
                 TyPatKind::Bind(id, *mutability)
             }
             PatCstKind::Path(path_ptr) => {
-                let path = cx.src[*path_ptr];
+                let path = cx.source_stash[*path_ptr];
                 let res = cx.resolve_path_new(path, Namespace::Value);
                 TyPatKind::Path(res)
             }
             PatCstKind::Tuple(pats) => {
-                let rpats: Vec<_> = cx.src[*pats].iter().map(|p| p.check(cx)).collect();
+                let rpats: Vec<_> = cx.source_stash[*pats].iter().map(|p| p.check(cx)).collect();
                 let pats_slice = cx.stash_mut().alloc_slice(&rpats);
                 TyPatKind::Tuple(pats_slice)
             }
             PatCstKind::Struct(path_ptr, fields) => {
-                let path = cx.src[*path_ptr];
+                let path = cx.source_stash[*path_ptr];
                 let res = cx.resolve_path_new(path, Namespace::Type);
-                let rfields: Vec<_> = cx.src[*fields]
+                let rfields: Vec<_> = cx.source_stash[*fields]
                     .iter()
                     .map(|fp| TyFieldPat {
                         name: fp.name,
-                        pat: cx.src[fp.pat].check(cx),
+                        pat: cx.source_stash[fp.pat].check(cx),
                         span: fp.span,
                     })
                     .collect();
@@ -538,19 +541,19 @@ impl<'db> PatCst<'db> {
                 TyPatKind::Struct(res, fields_slice)
             }
             PatCstKind::TupleStruct(path_ptr, pats) => {
-                let path = cx.src[*path_ptr];
+                let path = cx.source_stash[*path_ptr];
                 let res = cx.resolve_path_new(path, Namespace::Value);
-                let rpats: Vec<_> = cx.src[*pats].iter().map(|p| p.check(cx)).collect();
+                let rpats: Vec<_> = cx.source_stash[*pats].iter().map(|p| p.check(cx)).collect();
                 let pats_slice = cx.stash_mut().alloc_slice(&rpats);
                 TyPatKind::TupleStruct(res, pats_slice)
             }
             PatCstKind::Ref(inner, m) => {
-                let ri = cx.src[*inner].check(cx);
+                let ri = cx.source_stash[*inner].check(cx);
                 TyPatKind::Ref(ri, *m)
             }
             PatCstKind::Literal(lit) => TyPatKind::Literal(*lit),
             PatCstKind::Or(pats) => {
-                let rpats: Vec<_> = cx.src[*pats].iter().map(|p| p.check(cx)).collect();
+                let rpats: Vec<_> = cx.source_stash[*pats].iter().map(|p| p.check(cx)).collect();
                 let pats_slice = cx.stash_mut().alloc_slice(&rpats);
                 TyPatKind::Or(pats_slice)
             }
@@ -568,9 +571,9 @@ impl<'db> MatchArmCst<'db> {
         result_ty: Ptr<Ty<'db>>,
     ) -> TyMatchArm<'db> {
         cx.resolver.ribs.push_scope();
-        let rp = cx.src[self.pat].check(cx);
-        let rg = self.guard.map(|g| cx.src[g].check(cx));
-        let rb = cx.src[self.body].check(cx);
+        let rp = cx.source_stash[self.pat].check(cx);
+        let rg = self.guard.map(|g| cx.source_stash[g].check(cx));
+        let rb = cx.source_stash[self.body].check(cx);
         let body_ty = cx.stash()[rb].ty;
         cx.require_coerce(body_ty, result_ty);
         cx.resolver.ribs.pop_scope();

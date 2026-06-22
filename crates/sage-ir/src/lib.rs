@@ -10,7 +10,6 @@ pub mod lower;
 pub mod name;
 pub mod parse;
 pub mod resolve;
-pub mod ribs;
 pub mod scope;
 pub mod source;
 pub mod span;
@@ -27,4 +26,5 @@ pub mod tytree;
 pub trait Db: salsa::Database {
     fn tcx(&self) -> &dyn tcx::TcxDb;
     fn log_query(&self, entry: String);
+    fn source_file(&self, path: &str) -> Option<source::SourceFile>;
 }

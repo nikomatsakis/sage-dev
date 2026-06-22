@@ -3,10 +3,8 @@ use sage_stash::{AllocStashData, Ptr, Slice};
 use crate::check::Check;
 use crate::cst::ty::TypeCst;
 use crate::name::Name;
-use crate::resolve::Namespace;
-use crate::ribs::RibEntry;
+use crate::resolve::{Namespace, Resolution};
 use crate::span::RelativeSpan;
-use crate::symbol::Symbol;
 use crate::ty::Ty;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
@@ -45,21 +43,6 @@ pub enum PathAnchorKind<'db> {
     Super(Ptr<PathAnchor<'db>>),
 }
 
-/// The result of resolving a path in scope.
-#[derive(Copy, Clone, Debug)]
-pub enum Resolution<'db> {
-    /// A generic parameter.
-    Param(crate::generic_param::GenericParam<'db>),
-    /// A module-level symbol (struct, fn, enum, etc).
-    Sym(Symbol<'db>),
-    /// The `Self` type in an impl/trait context.
-    SelfTy(Ty<'db>),
-    /// A local variable binding.
-    Local(crate::tytree::LocalId),
-    /// Resolution failed.
-    Error,
-}
-
 impl<'db> Path<'db> {
     pub fn anchor(self) -> Option<PathAnchor<'db>> {
         match self {
@@ -70,37 +53,8 @@ impl<'db> Path<'db> {
 
     /// Resolve this path to a `Resolution` — checks ribs first, then module scope.
     pub(crate) fn resolve(self, cx: &mut Check<'_, 'db>, ns: Namespace) -> Resolution<'db> {
-        match self {
-            Path::Relative(first, rest_slice) => {
-                let rest = &cx.src[rest_slice];
-                if rest.is_empty() {
-                    if let Some(entry) = cx.resolver.ribs.lookup(first.name, ns) {
-                        return match entry {
-                            RibEntry::Param(param) => Resolution::Param(param),
-                            RibEntry::Sym(sym) => Resolution::Sym(sym),
-                            RibEntry::SelfTy(ty) => Resolution::SelfTy(ty),
-                            RibEntry::Local(id) => Resolution::Local(id),
-                        };
-                    }
-                }
-                let mut names = vec![first.name];
-                names.extend(rest.iter().map(|s| s.name));
-                match cx.resolver.resolve_segments(&names, ns) {
-                    Ok(sym) => Resolution::Sym(sym),
-                    Err(_) => Resolution::Error,
-                }
-            }
-            Path::Anchored(anchor, seg_slice) => {
-                let segs = &cx.src[seg_slice];
-                let mut names = Vec::new();
-                anchor.collect_names_into(cx, &mut names);
-                names.extend(segs.iter().map(|s| s.name));
-                match cx.resolver.resolve_segments(&names, ns) {
-                    Ok(sym) => Resolution::Sym(sym),
-                    Err(_) => Resolution::Error,
-                }
-            }
-        }
+        let results = cx.resolver.resolve_path(cx.source_stash, self, ns);
+        results.into_iter().next().unwrap_or(Resolution::Error)
     }
 
     /// Collect all segment names in order (for module-level resolution).
@@ -109,12 +63,12 @@ impl<'db> Path<'db> {
         match self {
             Path::Anchored(anchor, seg_slice) => {
                 anchor.collect_names_into(cx, &mut names);
-                let segs = &cx.src[seg_slice];
+                let segs = &cx.source_stash[seg_slice];
                 names.extend(segs.iter().map(|s| s.name));
             }
             Path::Relative(first, rest_slice) => {
                 names.push(first.name);
-                let rest = &cx.src[rest_slice];
+                let rest = &cx.source_stash[rest_slice];
                 names.extend(rest.iter().map(|s| s.name));
             }
         }
@@ -124,10 +78,10 @@ impl<'db> Path<'db> {
     /// Get the final segment (for type arg checking).
     pub(crate) fn final_segment(self, cx: &Check<'_, 'db>) -> PathSegment<'db> {
         match self {
-            Path::Relative(first, rest) => cx.src[rest].last().copied().unwrap_or(first),
-            Path::Anchored(_, rest) => {
-                *cx.src[rest].last().expect("anchored path with no segments")
-            }
+            Path::Relative(first, rest) => cx.source_stash[rest].last().copied().unwrap_or(first),
+            Path::Anchored(_, rest) => *cx.source_stash[rest]
+                .last()
+                .expect("anchored path with no segments"),
         }
     }
 }
@@ -148,7 +102,7 @@ impl<'db> PathAnchor<'db> {
                 out.push(Name::new(cx.db, "$crate".to_owned()));
             }
             PathAnchorKind::Super(inner) => {
-                let inner_anchor = cx.src[inner];
+                let inner_anchor = cx.source_stash[inner];
                 inner_anchor.collect_names_into(cx, out);
                 out.push(Name::new(cx.db, "super".to_owned()));
             }
@@ -158,7 +112,7 @@ impl<'db> PathAnchor<'db> {
 
 impl<'db> PathSegment<'db> {
     pub(crate) fn check_type_args(&self, cx: &mut Check<'_, 'db>) -> Slice<Ptr<Ty<'db>>> {
-        let src_args = &cx.src[self.type_args];
+        let src_args = &cx.source_stash[self.type_args];
         if src_args.is_empty() {
             return cx.target_stash.alloc_slice(&[]);
         }

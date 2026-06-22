@@ -42,10 +42,6 @@ pub unsafe trait StashData<'db>: Copy {
     type StaticSelf: 'static;
 }
 
-unsafe impl<T: 'static + StashDirect + Copy> StashData<'_> for T {
-    type StaticSelf = T;
-}
-
 /// Stash-storable type with hash-consing support. All allocations are
 /// content-addressed: equal values produce equal handles.
 pub trait AllocStashData<'db>: StashData<'db> + StashHash + PartialEq {}
@@ -293,6 +289,48 @@ impl StashDirect for i32 {}
 impl StashDirect for i64 {}
 impl<T> StashDirect for PhantomData<T> {}
 impl StashDirect for () {}
+
+unsafe impl StashData<'_> for bool {
+    type StaticSelf = Self;
+}
+unsafe impl StashData<'_> for u8 {
+    type StaticSelf = Self;
+}
+unsafe impl StashData<'_> for u16 {
+    type StaticSelf = Self;
+}
+unsafe impl StashData<'_> for u32 {
+    type StaticSelf = Self;
+}
+unsafe impl StashData<'_> for u64 {
+    type StaticSelf = Self;
+}
+unsafe impl StashData<'_> for i8 {
+    type StaticSelf = Self;
+}
+unsafe impl StashData<'_> for i16 {
+    type StaticSelf = Self;
+}
+unsafe impl StashData<'_> for i32 {
+    type StaticSelf = Self;
+}
+unsafe impl StashData<'_> for i64 {
+    type StaticSelf = Self;
+}
+unsafe impl StashData<'_> for () {
+    type StaticSelf = Self;
+}
+
+impl AllocStashData<'_> for bool {}
+impl AllocStashData<'_> for u8 {}
+impl AllocStashData<'_> for u16 {}
+impl AllocStashData<'_> for u32 {}
+impl AllocStashData<'_> for u64 {}
+impl AllocStashData<'_> for i8 {}
+impl AllocStashData<'_> for i16 {}
+impl AllocStashData<'_> for i32 {}
+impl AllocStashData<'_> for i64 {}
+impl AllocStashData<'_> for () {}
 
 // ---------------------------------------------------------------------------
 // StashCopy — deep-copy values between stashes

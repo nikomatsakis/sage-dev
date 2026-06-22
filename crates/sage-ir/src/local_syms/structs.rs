@@ -22,7 +22,13 @@ pub struct LocalStructSym<'db> {
 impl StashDirect for LocalStructSym<'_> {}
 
 impl<'db> LocalStructSym<'db> {
-    pub fn attrs(self, db: &'db dyn crate::Db) -> (&'db sage_stash::Stash, &'db [crate::cst::attrs::AttrCst<'db>]) {
+    pub fn attrs(
+        self,
+        db: &'db dyn crate::Db,
+    ) -> (
+        &'db sage_stash::Stash,
+        &'db [crate::cst::attrs::AttrCst<'db>],
+    ) {
         let (stash, data) = self.cst(db).open_deref();
         (stash, &stash[data.attrs])
     }
@@ -76,7 +82,7 @@ impl<'db> LocalStructSym<'db> {
         let field_sigs: Vec<_> = src[cst.fields]
             .iter()
             .map(|f| {
-                let ty_val = cx.src[f.ty].check(&mut cx);
+                let ty_val = cx.source_stash[f.ty].check(&mut cx);
                 let ty = cx.target_stash.alloc(ty_val);
                 FieldSig { name: f.name, ty }
             })

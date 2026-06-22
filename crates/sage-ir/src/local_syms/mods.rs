@@ -1,16 +1,15 @@
 use sage_stash::{Slice, StashDirect, Stashed};
-use tree_sitter::InputEdit;
 
-use crate::cst::attrs::{self, AttrCst};
+use crate::Db;
+use crate::cst::attrs::AttrCst;
 use crate::local_syms::LocalModItemSym;
 use crate::local_syms::macro_invocations::LocalMacroInvocationSym;
 use crate::name::Name;
-use crate::resolve::{Namespace, ResolvePhase};
+use crate::resolve::{Namespace, Resolver};
 use crate::scope::ScopeSymbol;
 use crate::source::SourceFile;
-use crate::span::{AbsoluteSpan, ExpansionOrigin, MacroExpansion, ParseSource};
-use crate::symbol::{MacroDefSymbol, Symbol, SymbolData};
-use crate::{Db, resolve};
+use crate::span::{AbsoluteSpan, ParseSource};
+use crate::symbol::{Symbol, SymbolData};
 
 /// A module written in (or synthesized for) the local workspace.
 #[salsa::tracked(debug)]
@@ -47,12 +46,6 @@ impl<'db> LocalModSym<'db> {
             ModBodySource::File(f) => Some(*f),
             ModBodySource::Inline => None,
         }
-    }
-
-    pub fn source_root(self, db: &'db dyn Db) -> crate::resolve::SourceRoot {
-        self.parent(db)
-            .expect("source_root called on crate root")
-            .source_root(db)
     }
 
     pub fn get_attrs(self, db: &'db dyn Db) -> (&'db sage_stash::Stash, &'db [AttrCst<'db>]) {
@@ -154,16 +147,10 @@ fn expand_macro<'db>(
     let (macro_stash, macro_cst) = macro_invocation_sym.cst(db).open_deref();
     let macro_path = macro_stash[macro_cst.path];
 
-    let macro_syms = resolve::resolve_path(
-        db,
-        ResolvePhase::MacroExpansion,
-        module.into(),
-        macro_stash,
-        macro_path,
-        Namespace::Macro,
-    );
+    let mut resolver = Resolver::new_for_macro_expansion(db, module);
+    let macro_resolutions = resolver.resolve_path(macro_stash, macro_path, Namespace::Macro);
 
-    for sym in macro_syms {
+    for sym in macro_resolutions.into_iter().filter_map(|r| r.sym()) {
         match sym.data(db) {
             SymbolData::MacroDefSymbol(macro_def_symbol) => {
                 let expansion = macro_def_symbol.apply_to(db, macro_invocation_sym);
@@ -208,18 +195,21 @@ fn expand_attribute_macros_and_derives<'db>(
 
     for index in 0..attrs.len() {
         let attr = &attrs[index];
-        let path = &attrs_stash[attr.path];
+        let path = attrs_stash[attr.path];
 
-        // Look for built-in attribute names
-        if path.len() == 1 {
-            let text = &path[0].text(db)[..];
+        // Look for built-in attribute names (single-segment relative paths)
+        if let crate::cst::paths::Path::Relative(first, rest) = path {
+            if attrs_stash[rest].is_empty() {
+                let text: &str = first.name.text(db);
 
-            if INERT_ATTRIBUTES.contains(&text) {
-                continue;
-            }
+                if INERT_ATTRIBUTES.contains(&text) {
+                    continue;
+                }
 
-            if text == "derive" {
-                expand_derives(db, module, index, attr.args(db),item, entries);
+                if text == "derive" {
+                    let args = &attrs_stash[attr.args];
+                    expand_derives(db, module, index, args, item, entries);
+                }
             }
         }
 
@@ -236,13 +226,11 @@ fn expand_derives<'db>(
     db: &'db dyn Db,
     module: LocalModSym<'db>,
     skip_attrs: usize,
-    args: Option<Name<'db>>,
+    args: &[u8],
     item: LocalModItemSym<'db>,
     entries: &mut Vec<Symbol<'db>>,
 ) {
     let input = attribute_macro_input(db, skip_attrs, item);
-
-    
 }
 
 /// Return the input string to an attribute macro invocation. It consists

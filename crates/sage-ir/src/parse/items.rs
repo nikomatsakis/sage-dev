@@ -598,7 +598,7 @@ impl<'a, 'db> Parser<'a, 'db> {
                 abs_span,
             );
 
-            let child_scope = ScopeSymbol::Module(mod_sym, self.scope.source_root(self.db));
+            let child_scope = ScopeSymbol::Module(mod_sym);
             let child_parser = Parser {
                 db: self.db,
                 source: self.source,
@@ -612,8 +612,7 @@ impl<'a, 'db> Parser<'a, 'db> {
         } else {
             // File-backed mod — file resolution deferred to `unexpanded_items`.
             // We need the SourceFile. Look it up from the source root.
-            let source_root = self.scope.source_root(self.db);
-            let file = self.resolve_mod_file(name, source_root);
+            let file = self.resolve_mod_file(name);
             let body_source = match file {
                 Some(f) => ModBodySource::File(f),
                 None => ModBodySource::Inline, // fallback, will produce empty items
@@ -631,11 +630,7 @@ impl<'a, 'db> Parser<'a, 'db> {
         }
     }
 
-    fn resolve_mod_file(
-        &self,
-        name: Name<'db>,
-        source_root: crate::resolve::SourceRoot,
-    ) -> Option<crate::source::SourceFile> {
+    fn resolve_mod_file(&self, name: Name<'db>) -> Option<crate::source::SourceFile> {
         // Determine parent dir from current source file
         let parent_file = match self.source {
             crate::span::ParseSource::SourceFile(f) => f,
@@ -651,10 +646,8 @@ impl<'a, 'db> Parser<'a, 'db> {
         ];
 
         for candidate in &candidates {
-            for file in source_root.files(self.db) {
-                if file.path(self.db) == candidate.as_str() {
-                    return Some(*file);
-                }
+            if let Some(file) = self.db.source_file(candidate) {
+                return Some(file);
             }
         }
         None

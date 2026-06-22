@@ -432,7 +432,9 @@ fn expanded_items_are_valid_ir() {
                     assert!(
                         matches!(
                             item,
-                            LocalModItemSym::Impl(_) | LocalModItemSym::Function(_) | LocalModItemSym::Const(_)
+                            LocalModItemSym::Impl(_)
+                                | LocalModItemSym::Function(_)
+                                | LocalModItemSym::Const(_)
                         ),
                         "unexpected expanded item kind: {item:?}",
                     );

@@ -1,15 +1,15 @@
-use sage_stash::{AllocStashData, Slice};
+use sage_stash::{AllocStashData, Ptr, Slice};
 
-use crate::name::Name;
+use crate::cst::paths::Path;
 use crate::span::RelativeSpan;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct AttrCst<'db> {
     pub kind: AttrCstKind,
-    pub path: Slice<Name<'db>>,
-    /// For normal attrs: arguments inside parens as interned text.
-    /// For doc comments: the comment text.
-    pub args: Option<Name<'db>>,
+    pub path: Ptr<Path<'db>>,
+    /// Raw token tree bytes (including delimiters) for normal attrs,
+    /// or comment text bytes for doc comments. Empty if no arguments.
+    pub args: Slice<u8>,
     pub is_inner: bool,
     pub span: RelativeSpan,
 }

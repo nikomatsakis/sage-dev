@@ -23,7 +23,13 @@ pub struct LocalFnSym<'db> {
 impl StashDirect for LocalFnSym<'_> {}
 
 impl<'db> LocalFnSym<'db> {
-    pub fn attrs(self, db: &'db dyn crate::Db) -> (&'db sage_stash::Stash, &'db [crate::cst::attrs::AttrCst<'db>]) {
+    pub fn attrs(
+        self,
+        db: &'db dyn crate::Db,
+    ) -> (
+        &'db sage_stash::Stash,
+        &'db [crate::cst::attrs::AttrCst<'db>],
+    ) {
         let (stash, data) = self.cst(db).open_deref();
         (stash, &stash[data.attrs])
     }
@@ -45,17 +51,17 @@ impl<'db> LocalFnSym<'db> {
         let parent: Symbol<'db> = self.into();
         let generics = cst.generics.check(db, &mut cx, parent);
 
-        let param_tys: Vec<_> = cx.src[cst.params]
+        let param_tys: Vec<_> = cx.source_stash[cst.params]
             .iter()
             .map(|p| {
-                let ty = cx.src[p.ty].check(&mut cx);
+                let ty = cx.source_stash[p.ty].check(&mut cx);
                 cx.target_stash.alloc(ty)
             })
             .collect();
         let params = cx.target_stash.alloc_slice(&param_tys);
 
         let ret_ty = match cst.ret {
-            Some(ret_ptr) => cx.src[ret_ptr].check(&mut cx),
+            Some(ret_ptr) => cx.source_stash[ret_ptr].check(&mut cx),
             None => {
                 let unit = cx.target_stash.alloc_slice(&[]);
                 crate::ty::Ty::Tuple(unit)
@@ -87,8 +93,7 @@ impl<'db> LocalFnSym<'db> {
         let imported = bx.import_fn_sig(&sig);
 
         // Bind function parameters as locals with their declared types.
-        let params_cst = &src[cst.params];
-        bx.bind_params(&imported.params, params_cst);
+        bx.bind_params(imported.params, cst.params);
 
         // Walk the body CST: resolve names + infer types → TyExpr.
         let body_expr = match cst.body {

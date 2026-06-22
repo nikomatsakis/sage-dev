@@ -842,11 +842,22 @@ version = "0.1.0"
 dependencies = [
  "expect-test",
  "rustc-hash",
+ "sage-macros-from-impls",
  "sage-stash",
  "salsa",
  "smallvec",
  "tree-sitter",
  "tree-sitter-rust",
+]
+
+[[package]]
+name = "sage-macros-from-impls"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+ "synstructure",
 ]
 
 [[package]]

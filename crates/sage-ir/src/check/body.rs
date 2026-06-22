@@ -1,11 +1,10 @@
 use std::ops::{Deref, DerefMut};
 
-use sage_stash::{Ptr, Stash, StashCopy, Stashed};
+use sage_stash::{Ptr, Slice, Stash, StashCopy, Stashed};
 
 use crate::check::Check;
 use crate::name::Name;
-use crate::resolve::{Namespace, Resolver};
-use crate::ribs::RibEntry;
+use crate::resolve::{Namespace, Resolution, Resolver};
 use crate::span::RelativeSpan;
 use crate::ty::{Binder, FnSig, InferVarIndex, Ty};
 use crate::tytree::*;
@@ -102,46 +101,6 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
     // Path resolution
     // ------------------------------------------------------------------
 
-    pub fn resolve_path_new(
-        &mut self,
-        path: crate::cst::paths::Path<'db>,
-        ns: Namespace,
-    ) -> crate::tytree::Res<'db> {
-        use crate::cst::paths::Path;
-        use crate::tytree::Res;
-
-        match path {
-            Path::Relative(first, rest_slice) => {
-                let rest = &self.src[rest_slice];
-                if rest.is_empty() {
-                    if let Some(entry) = self.resolver.ribs.lookup(first.name, ns) {
-                        return match entry {
-                            RibEntry::Local(id) => Res::Local(id),
-                            RibEntry::Param(_) | RibEntry::SelfTy(_) => Res::Err,
-                            RibEntry::Sym(sym) => Res::Def(sym),
-                        };
-                    }
-                }
-                let mut names = vec![first.name];
-                names.extend(rest.iter().map(|s| s.name));
-                match self.resolver.resolve_segments(&names, ns) {
-                    Ok(sym) => Res::Def(sym),
-                    Err(_) => Res::Err,
-                }
-            }
-            Path::Anchored(anchor, seg_slice) => {
-                let segs = &self.src[seg_slice];
-                let mut names = Vec::new();
-                self.collect_anchor_names(anchor, &mut names);
-                names.extend(segs.iter().map(|s| s.name));
-                match self.resolver.resolve_segments(&names, ns) {
-                    Ok(sym) => Res::Def(sym),
-                    Err(_) => Res::Err,
-                }
-            }
-        }
-    }
-
     fn path_to_names(&self, path: crate::cst::paths::Path<'db>) -> Vec<crate::name::Name<'db>> {
         use crate::cst::paths::Path;
 
@@ -149,12 +108,12 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
         match path {
             Path::Anchored(anchor, seg_slice) => {
                 self.collect_anchor_names(anchor, &mut names);
-                let segs = &self.src[seg_slice];
+                let segs = &self.source_stash[seg_slice];
                 names.extend(segs.iter().map(|s| s.name));
             }
             Path::Relative(first, rest_slice) => {
                 names.push(first.name);
-                let rest = &self.src[rest_slice];
+                let rest = &self.source_stash[rest_slice];
                 names.extend(rest.iter().map(|s| s.name));
             }
         }
@@ -184,7 +143,7 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
                 out.push(Name::new(self.db, "$crate".to_owned()));
             }
             PathAnchorKind::Super(inner_ptr) => {
-                let inner = self.src[inner_ptr];
+                let inner = self.source_stash[inner_ptr];
                 self.collect_anchor_names(inner, out);
                 out.push(Name::new(self.db, "super".to_owned()));
             }
@@ -202,7 +161,7 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
         self.locals.push(var);
         self.resolver
             .ribs
-            .add(name, Namespace::Value, RibEntry::Local(id));
+            .add(name, Namespace::Value, Resolution::Local(id));
         id
     }
 
@@ -467,20 +426,23 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
     /// Bind function parameters as locals with their sig-declared types.
     pub fn bind_params(
         &mut self,
-        param_tys: &[Ptr<Ty<'db>>],
-        params_cst: &[crate::cst::fns::ParamCst<'db>],
+        param_tys: Slice<Ptr<Ty<'db>>>,
+        params_cst: Slice<crate::cst::fns::ParamCst<'db>>,
     ) {
-        for (param_cst, &ty) in params_cst.iter().zip(param_tys) {
+        for index in 0..self.source_stash[params_cst].len() {
+            let param_cst = self.source_stash[params_cst][index];
+            let param_ty = self.target_stash[param_tys][index];
+
             if let Some(name) = param_cst.name {
                 let id = LocalId(self.local_vars.len() as u32);
                 self.local_vars.push(LocalVar {
                     name,
                     span: param_cst.span,
                 });
-                self.locals.push(ty);
+                self.locals.push(param_ty);
                 self.resolver
                     .ribs
-                    .add(name, Namespace::Value, RibEntry::Local(id));
+                    .add(name, Namespace::Value, Resolution::Local(id));
             }
         }
     }
