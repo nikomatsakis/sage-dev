@@ -10,6 +10,7 @@
   - [Stash](./design/stash.md)
   - [Spans](./design/spans.md)
   - [Research](./design/research/README.md)
+    - [tree-sitter-rust Grammar Reference](./design/research/tree-sitter-rust-grammar.md)
     - [rustc Subtyping and Coercions](./design/research/rustc-subtyping-and-coercions.md)
     - [rustc Macro Expansion Ordering](./design/research/rustc-macro-expansion-ordering.md)
     - [rustc macro_rules](./design/research/rustc-macro-rules.md)

@@ -34,6 +34,54 @@ pub enum TypeBoundCst<'db> {
 }
 
 // ---------------------------------------------------------------------------
+// ToTokens
+// ---------------------------------------------------------------------------
+
+use crate::tokens::{Punct, ToTokens, TokenCtx, TokenSink};
+
+impl<'db> ToTokens<'db> for GenericParamCst<'db> {
+    fn to_tokens(&self, ctx: &TokenCtx<'_, 'db>, sink: &mut dyn TokenSink) {
+        match *self {
+            GenericParamCst::Type { name, bounds, .. } => {
+                sink.ident(name.text(ctx.db));
+                let bounds_slice = &ctx.stash[bounds];
+                if !bounds_slice.is_empty() {
+                    sink.punct(Punct::Colon);
+                    for (i, bound) in bounds_slice.iter().enumerate() {
+                        if i > 0 {
+                            sink.punct(Punct::Plus);
+                        }
+                        bound.to_tokens(ctx, sink);
+                    }
+                }
+            }
+            GenericParamCst::Lifetime { name, .. } => {
+                sink.ident(name.text(ctx.db));
+            }
+            GenericParamCst::Const { name, ty, .. } => {
+                sink.ident("const");
+                sink.ident(name.text(ctx.db));
+                sink.punct(Punct::Colon);
+                ctx.stash[ty].to_tokens(ctx, sink);
+            }
+        }
+    }
+}
+
+impl<'db> ToTokens<'db> for TypeBoundCst<'db> {
+    fn to_tokens(&self, ctx: &TokenCtx<'_, 'db>, sink: &mut dyn TokenSink) {
+        match *self {
+            TypeBoundCst::Trait(path_ptr) => {
+                ctx.stash[path_ptr].to_tokens(ctx, sink);
+            }
+            TypeBoundCst::Lifetime(name) => {
+                sink.ident(name.text(ctx.db));
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Checking generic params: mint GenericParam symbols and bind in ribs
 // ---------------------------------------------------------------------------
 

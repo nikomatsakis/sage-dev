@@ -68,14 +68,30 @@ pub(crate) fn extract_macro_invocation_tokens(node: tree_sitter::Node<'_>, text:
 }
 /// Extract the body tokens from a `macro_definition` tree-sitter node.
 ///
-/// Finds the first `macro_rule`'s `right` field (a `token_tree`), strips the
-/// outer `{}` braces, and trims whitespace. Returns the empty string if the
-/// structure doesn't match.
+/// Only handles the trivial `() => { ... }` form: the first rule must have
+/// an empty LHS pattern (no named children in the `token_tree_pattern`).
+/// Returns the RHS with outer braces stripped and trimmed. Returns the empty
+/// string if the structure doesn't match or the LHS is non-empty.
 pub(crate) fn extract_macro_body_tokens(node: tree_sitter::Node<'_>, text: &str) -> String {
     let mut cursor = node.walk();
-    node.children(&mut cursor)
+    let rule = match node
+        .children(&mut cursor)
         .find(|c| c.kind() == "macro_rule")
-        .and_then(|rule| rule.child_by_field_name("right"))
+    {
+        Some(r) => r,
+        None => return String::new(),
+    };
+
+    let lhs = match rule.child_by_field_name("left") {
+        Some(l) => l,
+        None => return String::new(),
+    };
+
+    if lhs.named_child_count() != 0 {
+        return String::new();
+    }
+
+    rule.child_by_field_name("right")
         .map(|tt| {
             let raw = &text[tt.byte_range()];
             raw.strip_prefix('{')

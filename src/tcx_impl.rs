@@ -18,7 +18,7 @@ use rustc_middle::ty::TyCtxt;
 use rustc_proc_macro::bridge::server::SAME_THREAD;
 use rustc_span::def_id::DefIndex as RustcDefIndex;
 
-use sage_ir::module::{CrateNum, DefIndex};
+use sage_ir::symbol::{CrateNum, DefIndex};
 use sage_ir::resolve::{MacroKind, Namespace};
 use sage_ir::symbol::SymExtKind;
 use sage_ir::tcx::RawChild;
@@ -124,6 +124,14 @@ impl<'tcx> RustcTcxDb<'tcx> {
         matches!(self.tcx.def_kind(def_id), DefKind::Mod)
     }
 
+    pub fn item_name(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<String> {
+        let def_id = DefId {
+            krate: RustcCrateNum::from_u32(crate_num.0),
+            index: rustc_hir::def_id::DefIndex::from_u32(def_index.0),
+        };
+        Some(self.tcx.item_name(def_id).to_ident_string())
+    }
+
     pub fn def_path(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<String> {
         let def_id = DefId {
             krate: RustcCrateNum::from_u32(crate_num.0),
@@ -211,7 +219,7 @@ impl<'tcx> RustcTcxDb<'tcx> {
 
         // Same unsafe pattern as derive — extract the Client from BangProcMacro.
         let client = unsafe {
-            let ptr = Arc::as_ref(arc) as *const dyn rustc_expand::base::ProcMacro
+            let ptr = Arc::as_ref(arc) as *const dyn rustc_expand::base::BangProcMacro
                 as *const rustc_expand::proc_macro::BangProcMacro;
             (*ptr).client
         };

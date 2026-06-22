@@ -1,11 +1,8 @@
 use sage_stash::StashDirect;
 
-use crate::Db;
-use crate::local_syms::macro_invocations::LocalMacroInvocationSym;
 use crate::name::Name;
 use crate::scope::ScopeSymbol;
-use crate::span::{AbsoluteSpan, ExpansionOrigin, MacroExpansion};
-use crate::symbol::MacroDefSymbol;
+use crate::span::AbsoluteSpan;
 
 /// A `macro_rules!` definition at item level.
 #[salsa::tracked(debug)]
@@ -13,6 +10,9 @@ pub struct LocalMacroDefSym<'db> {
     pub name: Name<'db>,
     pub scope: ScopeSymbol<'db>,
 
+    /// The RHS of the first (and only supported) rule, with outer braces
+    /// stripped. Only the `() => { ... }` form is handled; empty if the
+    /// LHS pattern is non-trivial.
     #[tracked]
     #[returns(ref)]
     pub body_tokens: String,
@@ -22,17 +22,3 @@ pub struct LocalMacroDefSym<'db> {
 }
 
 impl StashDirect for LocalMacroDefSym<'_> {}
-
-#[salsa::tracked]
-impl<'db> LocalMacroDefSym<'db> {
-    #[salsa::tracked]
-    pub fn apply_to(
-        self,
-        db: &'db dyn Db,
-        invocation: LocalMacroInvocationSym<'db>,
-    ) -> MacroExpansion<'db> {
-        let origin = ExpansionOrigin::Invocation(invocation);
-        let macro_def = MacroDefSymbol::Local(self);
-        MacroExpansion::new(db, macro_def, origin)
-    }
-}

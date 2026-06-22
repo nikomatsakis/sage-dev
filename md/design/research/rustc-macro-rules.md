@@ -389,6 +389,157 @@ This ensures that when a macro from crate A is expanded in crate B, the hygiene 
 
 ---
 
+## 8. Parsing Expanded Output (Call-Site Driven Dispatch)
+
+### Core Design
+
+The call site **determines the grammar production before expansion happens**. There is no "try multiple parses" — the expansion kind is fixed at the call site and the expanded tokens must parse as that kind or it's a hard error.
+
+### `AstFragmentKind`
+
+Defined in `compiler/rustc_expand/src/expand.rs:77` via the `ast_fragments!` macro. Key variants:
+
+| Variant | Parse function called | Meaning |
+|---------|----------------------|---------|
+| `Items` | `parse_item` in a loop | Top-level or module items |
+| `Stmts` | `parse_full_stmt` in a loop | Statements in a block |
+| `Expr` | `parse_expr` | Exactly one expression |
+| `OptExpr` | `parse_expr` (or None if empty) | Optional expression |
+| `Ty` | `parse_ty` | A type |
+| `Pat` | `parse_pat_allow_top_guard` | A pattern |
+| `TraitItems` | `parse_trait_item` in a loop | Trait member items |
+| `ImplItems` | `parse_impl_item` in a loop | Impl member items |
+| `ForeignItems` | `parse_foreign_item` in a loop | extern block items |
+| `Crate` | `parse_crate_mod` | Entire crate |
+
+### Step 1: Parser Classifies the Call by Position
+
+When the parser encounters a macro invocation, the AST node wrapping it already encodes the syntactic position:
+
+- Expression position → `ExprKind::MacCall`
+- Statement position → `StmtKind::MacCall`
+- Item position → `ItemKind::MacCall`
+- Type position → `TyKind::MacCall`
+
+**The `{}` delimiter heuristic** (`compiler/rustc_parse/src/parser/stmt.rs:241–269`): When parsing a macro call in statement position, if the macro uses `{}` delimiters and the next token doesn't continue an expression (no `.`, `?`, binary op, etc.), it produces `StmtKind::MacCall`. Otherwise it produces `StmtKind::Expr(ExprKind::MacCall(...))` — an expression macro used as a statement.
+
+### Step 2: `InvocationCollectorNode` Tags Each Invocation
+
+`compiler/rustc_expand/src/expand.rs:1258`:
+
+```rust
+trait InvocationCollectorNode: HasAttrs + HasNodeId + Sized {
+    const KIND: AstFragmentKind;
+    ...
+}
+```
+
+Each AST node type that can host a macro call implements this trait with a compile-time constant:
+
+- `Box<ast::Item>` → `KIND = AstFragmentKind::Items` (~line 1320)
+- `ast::Stmt` → `KIND = AstFragmentKind::Stmts` (~line 1781)
+- `ast::Expr` → `KIND = AstFragmentKind::Expr` (~line 1950)
+
+When `InvocationCollector` (a `MutVisitor`) encounters a macro call node, it calls `collect_bang(mac, Node::KIND)` (~line 2175), which builds:
+
+```rust
+Invocation {
+    kind: InvocationKind::Bang { mac, span },
+    fragment_kind: kind,   // Node::KIND
+    expansion_data: ...,
+}
+```
+
+A placeholder node is inserted in the AST and the invocation is queued.
+
+**Statement unification** (~line 1791): `is_mac_call` for `ast::Stmt` returns true for `StmtKind::MacCall`, `StmtKind::Item(ItemKind::MacCall)`, and `StmtKind::Semi(ExprKind::MacCall)`. All three forms collapse to `KIND = AstFragmentKind::Stmts`.
+
+### Step 3: After Transcription, `parse_ast_fragment` Dispatches
+
+`compiler/rustc_expand/src/expand.rs:726–769`, `expand_invoc`:
+- Reads `invoc.fragment_kind`
+- For `macro_rules!`: transcription produces a `TokenStream` wrapped in `ParserAnyMacro`, then `fragment_kind.make_from(result)` is called
+- For proc-macros: calls `parse_ast_fragment(toks, fragment_kind)` directly
+
+`parse_ast_fragment` (`compiler/rustc_expand/src/expand.rs:1103–1178`):
+
+```rust
+fn parse_ast_fragment(parser, kind) -> AstFragment {
+    match kind {
+        AstFragmentKind::Items => loop { parse_item(...) until EOF },
+        AstFragmentKind::Stmts => loop { parse_full_stmt(...) until EOF/'}' },
+        AstFragmentKind::Expr  => parse_expr(),
+        AstFragmentKind::Ty    => parse_ty(),
+        AstFragmentKind::Pat   => parse_pat_allow_top_guard(...),
+        // ...
+    }
+}
+```
+
+### How This Answers "Expression vs. Items in a fn Body"
+
+In a fn body, the **statement case** (`AstFragmentKind::Stmts`) handles standalone macro calls. The `parse_full_stmt` loop internally handles:
+- Item definitions (`fn`, `struct`, etc.) → `StmtKind::Item`
+- Let bindings → `StmtKind::Let`
+- Expressions → `StmtKind::Expr` / `StmtKind::Semi`
+
+So a macro in **statement position** can expand to a mix of items and expressions — `parse_full_stmt` subsumes both. There is no separate "items vs expression" decision; the statement parser handles it all.
+
+If the macro appears in **expression position** (e.g., `let x = my_macro!();` or `f(my_macro!())`), then only `parse_expr()` is called — it must produce exactly one expression.
+
+### `ParserAnyMacro` (macro_rules! path)
+
+`compiler/rustc_expand/src/mbe/macro_rules.rs:375–428`, `expand_macro`:
+1. Calls `transcribe(cx, &arm.body, &bindings, ...)` → `TokenStream`
+2. Wraps in `Box<ParserAnyMacro>`
+3. Returns the `MacResult` box
+
+The `make_stmts()` / `make_expr()` / etc. methods (generated by `ast_fragments!`) each call `self.make(AstFragmentKind::X)` which feeds the token stream to `parse_ast_fragment`.
+
+### `PlaceholderExpander` Slots Results Back
+
+`compiler/rustc_expand/src/placeholders.rs`:
+- `flat_map_stmt` (~line 374): placeholder `StmtKind::MacCall` → replaced with resulting statements
+- `visit_expr`: placeholder `ExprKind::MacCall` → replaced with expression
+- `flat_map_item`: placeholder `ItemKind::MacCall` → replaced with items
+
+### Complete Flow Diagram
+
+```
+Source text
+  → Parser encounters macro call
+  → Wraps in StmtKind::MacCall / ExprKind::MacCall / ItemKind::MacCall / ...
+
+InvocationCollector (MutVisitor) walks AST
+  → flat_map_node<Node> reads Node::KIND (compile-time AstFragmentKind)
+  → collect_bang → Invocation { fragment_kind: Node::KIND }
+  → placeholder node inserted
+
+MacroExpander::fully_expand_fragment loops over pending invocations
+  → expand_invoc(invoc)
+  → reads invoc.fragment_kind
+
+For macro_rules!:
+  transcribe() → TokenStream → ParserAnyMacro
+  fragment_kind.make_from(result) → parse_ast_fragment(parser, fragment_kind)
+
+For proc-macros:
+  expander.expand() → TokenStream
+  parse_ast_fragment(toks, fragment_kind) directly
+
+parse_ast_fragment dispatches by kind:
+  Stmts  → loop parse_full_stmt (can yield items, lets, exprs)
+  Expr   → parse_expr (exactly one expression)
+  Items  → loop parse_item
+  Ty     → parse_ty
+  Pat    → parse_pat_allow_top_guard
+  ...
+
+PlaceholderExpander replaces placeholder nodes with AstFragment results
+```
+
+---
+
 ## Summary of Key Files
 
 | File | Role |
@@ -397,6 +548,8 @@ This ensures that when a macro from crate A is expanded in crate B, the hygiene 
 | `compiler/rustc_expand/src/mbe/quoted.rs` | Parses raw token streams into `mbe::TokenTree` (LHS patterns and RHS bodies) |
 | `compiler/rustc_expand/src/mbe/macro_rules.rs` | Compiles macro definitions; follow-set checking; orchestrates matching |
 | `compiler/rustc_expand/src/mbe/macro_parser.rs` | NFA-based matcher; `MatcherLoc`, `TtParser`, `NamedMatch` |
+| `compiler/rustc_expand/src/expand.rs` | `AstFragmentKind`, `InvocationCollectorNode`, `parse_ast_fragment`, `expand_invoc` |
+| `compiler/rustc_expand/src/placeholders.rs` | `PlaceholderExpander` — slots expansion results back into AST |
 | `compiler/rustc_expand/src/mbe/transcribe.rs` | Expands matched results into output token stream |
 | `compiler/rustc_expand/src/mbe/metavar_expr.rs` | Parses `${count()}`, `${index()}`, etc. |
 | `compiler/rustc_expand/src/mbe/macro_check.rs` | Static validation of metavar usage consistency |

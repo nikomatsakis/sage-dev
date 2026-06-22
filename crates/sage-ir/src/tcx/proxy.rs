@@ -17,6 +17,11 @@ pub enum TcxRequest {
         def_index: DefIndex,
         reply: mpsc::Sender<Vec<RawChild>>,
     },
+    ItemName {
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        reply: mpsc::Sender<Option<String>>,
+    },
     IsModule {
         crate_num: CrateNum,
         def_index: DefIndex,
@@ -91,6 +96,22 @@ impl TcxDb for ProxyTcxDb {
         let (reply, rx) = mpsc::channel();
         self.tx
             .send(TcxRequest::ModuleChildren {
+                crate_num,
+                def_index,
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn item_name(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<String> {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("tcx::item_name({}, {})", crate_num.0, def_index.0));
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::ItemName {
                 crate_num,
                 def_index,
                 reply,

@@ -86,7 +86,7 @@ impl<'db> From<LocalModItemSym<'db>> for Symbol<'db> {
             LocalModItemSym::Use(u) => u.into(),
             LocalModItemSym::MacroDef(m) => m.into(),
             LocalModItemSym::MacroInvocation(m) => m.into(),
-            LocalModItemSym::Error(span) => span.into(),
+            LocalModItemSym::Error(_) => panic!("Error items have no symbol representation"),
         }
     }
 }

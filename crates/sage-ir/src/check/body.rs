@@ -43,7 +43,7 @@ pub enum DiagnosticKind<'db> {
 /// single CST walk, producing `TyExpr` nodes directly into the egraph's
 /// stash.
 pub struct BodyCheck<'a, 'db> {
-    check: Check<'a, 'db>,
+    pub(crate) check: Check<'a, 'db>,
 
     // Inference engine
     pub db: &'db dyn crate::Db,
@@ -101,51 +101,14 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
     // Path resolution
     // ------------------------------------------------------------------
 
-    fn path_to_names(&self, path: crate::cst::paths::Path<'db>) -> Vec<crate::name::Name<'db>> {
-        use crate::cst::paths::Path;
-
-        let mut names = Vec::new();
-        match path {
-            Path::Anchored(anchor, seg_slice) => {
-                self.collect_anchor_names(anchor, &mut names);
-                let segs = &self.source_stash[seg_slice];
-                names.extend(segs.iter().map(|s| s.name));
-            }
-            Path::Relative(first, rest_slice) => {
-                names.push(first.name);
-                let rest = &self.source_stash[rest_slice];
-                names.extend(rest.iter().map(|s| s.name));
-            }
-        }
-        names
-    }
-
-    fn collect_anchor_names(
-        &self,
-        anchor: crate::cst::paths::PathAnchor<'db>,
-        out: &mut Vec<crate::name::Name<'db>>,
-    ) {
-        use crate::cst::paths::PathAnchorKind;
-        use crate::name::Name;
-
-        match anchor.kind {
-            PathAnchorKind::ExternCrate(name) => {
-                out.push(Name::new(self.db, String::new()));
-                out.push(name);
-            }
-            PathAnchorKind::CurrentCrate => {
-                out.push(Name::new(self.db, "crate".to_owned()));
-            }
-            PathAnchorKind::Self_ => {
-                out.push(Name::new(self.db, "self".to_owned()));
-            }
-            PathAnchorKind::DollarCrate => {
-                out.push(Name::new(self.db, "$crate".to_owned()));
-            }
-            PathAnchorKind::Super(inner_ptr) => {
-                let inner = self.source_stash[inner_ptr];
-                self.collect_anchor_names(inner, out);
-                out.push(Name::new(self.db, "super".to_owned()));
+    pub fn resolve_path(&mut self, path: crate::cst::paths::Path<'db>, ns: Namespace) -> Res<'db> {
+        let check = &mut self.check;
+        let results = check.resolver.resolve_path(check.source_stash, path, ns);
+        match results.into_iter().next() {
+            Some(Resolution::Sym(sym)) => Res::Def(sym),
+            Some(Resolution::Local(id)) => Res::Local(id),
+            Some(Resolution::Param(_) | Resolution::SelfTy(_) | Resolution::Error) | None => {
+                Res::Err
             }
         }
     }

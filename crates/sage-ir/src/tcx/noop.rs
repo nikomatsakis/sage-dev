@@ -14,6 +14,10 @@ impl TcxDb for NoopTcxDb {
         Vec::new()
     }
 
+    fn item_name(&self, _crate_num: CrateNum, _def_index: DefIndex) -> Option<String> {
+        None
+    }
+
     fn is_module(&self, _crate_num: CrateNum, _def_index: DefIndex) -> bool {
         // Noop has no crates, so nothing is a module. In tests that
         // do care, use a mock TcxDb.

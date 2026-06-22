@@ -5,7 +5,7 @@ use crate::cst::attrs::AttrCst;
 use crate::local_syms::LocalModItemSym;
 use crate::local_syms::macro_invocations::LocalMacroInvocationSym;
 use crate::name::Name;
-use crate::resolve::{Namespace, Resolver};
+use crate::resolve::{MacroKind, Namespace, Resolver};
 use crate::scope::ScopeSymbol;
 use crate::source::SourceFile;
 use crate::span::{AbsoluteSpan, ParseSource};
@@ -148,14 +148,14 @@ fn expand_macro<'db>(
     let macro_path = macro_stash[macro_cst.path];
 
     let mut resolver = Resolver::new_for_macro_expansion(db, module);
-    let macro_resolutions = resolver.resolve_path(macro_stash, macro_path, Namespace::Macro);
+    let macro_resolutions =
+        resolver.resolve_path(macro_stash, macro_path, Namespace::Macro(MacroKind::Bang));
 
     for sym in macro_resolutions.into_iter().filter_map(|r| r.sym()) {
         match sym.data(db) {
             SymbolData::MacroDefSymbol(macro_def_symbol) => {
-                let expansion = macro_def_symbol.apply_to(db, macro_invocation_sym);
-                let expanded_items = expansion.parse(db);
-                expand_unexpanded_items(db, module, &expanded_items, entries);
+                let unexpanded_items = macro_invocation_sym.parse_output(db, macro_def_symbol);
+                expand_unexpanded_items(db, module, &unexpanded_items, entries);
             }
 
             SymbolData::FnSymbol(..)
@@ -168,7 +168,8 @@ fn expand_macro<'db>(
             | SymbolData::ImplSymbol(..)
             | SymbolData::ModSymbol(..)
             | SymbolData::UseSymbol(..)
-            | SymbolData::IntrinsicTypeSymbol(..) => {
+            | SymbolData::IntrinsicTypeSymbol(..)
+            | SymbolData::MacroInvocationSymbol(..) => {
                 panic!("expected only symbols with macro namespace");
             }
         }
@@ -236,8 +237,9 @@ fn expand_derives<'db>(
 /// Return the input string to an attribute macro invocation. It consists
 /// of the serialized `item`, skipping the first `skip_attrs` attributes.
 fn attribute_macro_input<'db>(
-    db: &'db dyn Db,
-    skip_attrs: usize,
-    item: LocalModItemSym<'db>,
+    _db: &'db dyn Db,
+    _skip_attrs: usize,
+    _item: LocalModItemSym<'db>,
 ) -> String {
+    todo!("attribute macro input serialization")
 }

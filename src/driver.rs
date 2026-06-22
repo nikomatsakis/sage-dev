@@ -13,12 +13,15 @@ use rustc_interface::interface;
 use rustc_middle::ty::TyCtxt;
 
 use sage_ir::db::Database;
-use sage_ir::item::ModAst;
-use sage_ir::module::ModSymbol;
-use sage_ir::resolve::SourceRoot;
-use sage_ir::scope::{LocalCrateSymbol, local_crate};
+use sage_ir::local_syms::mods::{LocalModSym, ModBodySource};
+use sage_ir::name::Name;
+use sage_ir::parse::parse_str_to_cst;
+use sage_ir::scope::{LocalCrateSymbol, ScopeSymbol, local_crate};
 use sage_ir::source::SourceFile;
+use sage_ir::span::{AbsoluteSpan, ParseSource};
+use sage_ir::symbol::ModSymbol;
 use sage_ir::tcx::TcxRequest;
+use sage_stash::{Stash, Stashed};
 use salsa::Database as _;
 
 use crate::metadata::{self, WorkspaceInfo};
@@ -31,11 +34,7 @@ pub struct SageContext<'db> {
     pub root: ModSymbol<'db>,
 }
 
-impl<'db> SageContext<'db> {
-    pub fn source_root(&self) -> SourceRoot {
-        self.krate.source_root(self.db)
-    }
-}
+impl<'db> SageContext<'db> {}
 
 /// Set up the full sage pipeline for a project and call `f` with a live
 /// `SageContext`. Handles: load_workspace, build rustc args, run_compiler,
@@ -111,6 +110,13 @@ where
                             } => {
                                 let _ = reply.send(tcx_db.is_builtin_derive(crate_num, def_index));
                             }
+                            TcxRequest::ItemName {
+                                crate_num,
+                                def_index,
+                                reply,
+                            } => {
+                                let _ = reply.send(tcx_db.item_name(crate_num, def_index));
+                            }
                             TcxRequest::IsModule {
                                 crate_num,
                                 def_index,
@@ -179,18 +185,39 @@ where
                 files.push(SourceFile::new(db, rel_path.clone(), text.clone()));
             }
 
-            let source_root = SourceRoot::new(db, files.clone());
-
             let lib_file = files
                 .iter()
                 .find(|f| f.path(db) == "lib.rs")
                 .or_else(|| files.iter().find(|f| f.path(db) == "main.rs"))
+                .copied()
                 .expect("no lib.rs or main.rs found");
 
-            let root_mod = ModAst::crate_root(db, *lib_file);
-            let root = ModSymbol::ast(root_mod);
-            let krate = local_crate(db, root_mod, source_root);
+            let mut empty_stash = Stash::new();
+            let empty_slice = empty_stash.alloc_slice::<sage_ir::cst::attrs::AttrCst>(&[]);
+            let empty_attrs = Stashed::new(empty_stash, empty_slice);
+            let abs_span = AbsoluteSpan {
+                source: ParseSource::SourceFile(lib_file),
+                start: 0,
+                end: lib_file.text(db).len() as u32,
+            };
 
+            let root_mod = LocalModSym::new(
+                db,
+                Name::new(db, String::new()),
+                None,
+                ModBodySource::File(lib_file),
+                empty_attrs,
+                abs_span,
+            );
+
+            let krate = local_crate(db, root_mod);
+            let scope = ScopeSymbol::Crate(krate);
+
+            let source = ParseSource::SourceFile(lib_file);
+            let items = parse_str_to_cst(db, source, lib_file.text(db), scope);
+            sage_ir::local_syms::mods::unexpanded_items::specify(db, root_mod, items);
+
+            let root = ModSymbol::Local(root_mod);
             let ctx = SageContext { db, krate, root };
 
             f(&ctx)

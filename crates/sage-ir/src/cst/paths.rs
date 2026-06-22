@@ -86,6 +86,71 @@ impl<'db> Path<'db> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// ToTokens
+// ---------------------------------------------------------------------------
+
+use crate::tokens::{Delimiter, Punct, ToTokens, TokenCtx, TokenSink, emit_comma_sep};
+
+impl<'db> ToTokens<'db> for Path<'db> {
+    fn to_tokens(&self, ctx: &TokenCtx<'_, 'db>, sink: &mut dyn TokenSink) {
+        match *self {
+            Path::Anchored(anchor, segments) => {
+                anchor.kind.to_tokens(ctx, sink);
+                for seg in &ctx.stash[segments] {
+                    sink.punct(Punct::ColonColon);
+                    seg.to_tokens(ctx, sink);
+                }
+            }
+            Path::Relative(first, rest) => {
+                first.to_tokens(ctx, sink);
+                for seg in &ctx.stash[rest] {
+                    sink.punct(Punct::ColonColon);
+                    seg.to_tokens(ctx, sink);
+                }
+            }
+        }
+    }
+}
+
+impl<'db> ToTokens<'db> for PathAnchorKind<'db> {
+    fn to_tokens(&self, ctx: &TokenCtx<'_, 'db>, sink: &mut dyn TokenSink) {
+        match *self {
+            PathAnchorKind::Self_ => sink.ident("self"),
+            PathAnchorKind::CurrentCrate => sink.ident("crate"),
+            PathAnchorKind::DollarCrate => sink.ident("$crate"),
+            PathAnchorKind::ExternCrate(name) => {
+                sink.punct(Punct::ColonColon);
+                sink.ident(name.text(ctx.db));
+            }
+            PathAnchorKind::Super(inner_ptr) => {
+                let inner = ctx.stash[inner_ptr];
+                match inner.kind {
+                    PathAnchorKind::Self_ => {}
+                    _ => {
+                        inner.kind.to_tokens(ctx, sink);
+                        sink.punct(Punct::ColonColon);
+                    }
+                }
+                sink.ident("super");
+            }
+        }
+    }
+}
+
+impl<'db> ToTokens<'db> for PathSegment<'db> {
+    fn to_tokens(&self, ctx: &TokenCtx<'_, 'db>, sink: &mut dyn TokenSink) {
+        sink.ident(self.name.text(ctx.db));
+        let type_args = &ctx.stash[self.type_args];
+        if !type_args.is_empty() {
+            sink.punct(Punct::ColonColon);
+            sink.group(Delimiter::Angle, &mut |s| {
+                emit_comma_sep(ctx, s, type_args);
+            });
+        }
+    }
+}
+
 impl<'db> PathAnchor<'db> {
     fn collect_names_into(self, cx: &Check<'_, 'db>, out: &mut Vec<Name<'db>>) {
         match self.kind {

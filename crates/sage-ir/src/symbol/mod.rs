@@ -9,11 +9,9 @@ use sage_stash::StashDirect;
 
 use crate::{
     Db,
-    local_syms::macro_invocations::LocalMacroInvocationSym,
     local_syms::mods::local_expanded_module_items,
     name::Name,
-    resolve::Namespace,
-    span::{ExpansionOrigin, MacroExpansion},
+    resolve::{MacroKind, Namespace},
 };
 
 /// Opaque crate number (matches rustc's CrateNum).
@@ -75,7 +73,7 @@ impl<'db> SymExt<'db> {
             SymExtKind::TypeAlias => Namespace::Type,
             SymExtKind::Const => Namespace::Value,
             SymExtKind::Static => Namespace::Value,
-            SymExtKind::MacroDef => Namespace::Macro,
+            SymExtKind::MacroDef => Namespace::Macro(MacroKind::Bang),
             SymExtKind::Use => Namespace::Type,
             SymExtKind::Other => return None,
         };
@@ -272,6 +270,7 @@ define_kind_symbols! {
     { /* Local only */ }
 
     pub enum IntrinsicTypeSymbol<'db> { Local(crate::local_syms::intrinsic_types::IntrinsicTypeSym<'db>) }
+    pub enum MacroInvocationSymbol<'db> { Local(crate::local_syms::macro_invocations::LocalMacroInvocationSym<'db>) }
 }
 
 impl<'db> Symbol<'db> {
@@ -292,8 +291,11 @@ impl<'db> Symbol<'db> {
             SymbolDataPriv::StaticSymbol(sym) => Some((sym.name(db), Namespace::Value)),
             SymbolDataPriv::ImplSymbol(_) => None,
             SymbolDataPriv::ModSymbol(sym) => Some((sym.name(db), Namespace::Type)),
-            SymbolDataPriv::MacroDefSymbol(sym) => Some((sym.name(db), Namespace::Macro)),
+            SymbolDataPriv::MacroDefSymbol(sym) => {
+                Some((sym.name(db), Namespace::Macro(MacroKind::Bang)))
+            }
             SymbolDataPriv::IntrinsicTypeSymbol(sym) => Some((sym.name(db), Namespace::Type)),
+            SymbolDataPriv::MacroInvocationSymbol(_) => None,
             SymbolDataPriv::Ext(sym_ext) => sym_ext.name(db),
             SymbolDataPriv::UseSymbol(_) => None,
         }
@@ -316,28 +318,25 @@ impl<'db> ModSymbol<'db> {
     }
 }
 
+pub struct MacroExpandError;
+
 impl<'db> MacroDefSymbol<'db> {
-    pub fn apply_to(
-        self,
-        db: &'db dyn Db,
-        invocation: LocalMacroInvocationSym<'db>,
-    ) -> MacroExpansion<'db> {
-        let origin = ExpansionOrigin::Invocation(invocation);
+    pub fn expand(self, db: &'db dyn Db, input: &str) -> Result<String, MacroExpandError> {
         match self {
-            MacroDefSymbol::Local(sym) => sym.apply_to(db, invocation),
-            MacroDefSymbol::Ext(sym_ext) => {
-                let (_stash, cst) = invocation.cst(db).open_deref();
-                let input_text = cst.input_tokens.text(db);
-                let expanded = db
-                    .tcx()
-                    .expand_proc_macro_bang(
-                        sym_ext.crate_num(db),
-                        sym_ext.def_index(db),
-                        input_text,
-                    )
-                    .unwrap_or_default();
-                MacroExpansion::new(db, self, origin, expanded)
+            MacroDefSymbol::Local(sym) => {
+                if !input.trim().is_empty() {
+                    return Err(MacroExpandError);
+                }
+                let body = sym.body_tokens(db);
+                if body.is_empty() {
+                    return Err(MacroExpandError);
+                }
+                Ok(body.clone())
             }
+            MacroDefSymbol::Ext(sym_ext) => db
+                .tcx()
+                .expand_proc_macro_bang(sym_ext.crate_num(db), sym_ext.def_index(db), input)
+                .ok_or(MacroExpandError),
         }
     }
 }

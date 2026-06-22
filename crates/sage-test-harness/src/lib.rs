@@ -2,12 +2,14 @@ use expect_test::Expect;
 pub use expect_test::expect;
 use sage_ir::Db;
 use sage_ir::db::Database;
-use sage_ir::item::{FnAst, LocalModItemSym};
-use sage_ir::module::ModSymbol;
-use sage_ir::resolve::SourceRoot;
-use sage_ir::scope::ScopeSymbol;
+use sage_ir::local_syms::mods::{LocalModSym, ModBodySource};
+use sage_ir::name::Name;
+use sage_ir::parse::parse_str_to_cst;
+use sage_ir::scope::{LocalCrateSymbol, ScopeSymbol, local_crate};
 use sage_ir::source::SourceFile;
-use sage_ir::symbol::FnSymbol;
+use sage_ir::span::{AbsoluteSpan, ParseSource};
+use sage_ir::symbol::{FnSymbol, ModSymbol};
+use sage_stash::{Stash, Stashed};
 use salsa::Database as _;
 
 pub struct TestCrate {
@@ -42,14 +44,16 @@ impl TestCrate {
     fn collect_errors(&self) -> Vec<String> {
         let db = Database::default();
         db.attach(|db| {
-            let (source_root, root) = self.setup(db);
+            let (krate, root) = self.setup(db);
             let mut all_errors = Vec::new();
 
-            let items = sage_ir::resolve::module_items(db, root);
-            for item in &items {
-                if let LocalModItemSym::Function(fn_ast) = item {
-                    let errors = self.check_function(db, *fn_ast, root, source_root);
-                    all_errors.extend(errors);
+            let items = root.expanded_module_items(db);
+            for item in items {
+                if let sage_ir::symbol::SymbolData::FnSymbol(FnSymbol::Local(local_fn)) =
+                    item.data(db)
+                {
+                    let typed = local_fn.body(db);
+                    all_errors.extend(typed.errors.clone());
                 }
             }
 
@@ -57,26 +61,12 @@ impl TestCrate {
         })
     }
 
-    fn check_function<'db>(
-        &self,
-        db: &'db dyn Db,
-        fn_ast: FnAst<'db>,
-        module: ModSymbol<'db>,
-        source_root: SourceRoot,
-    ) -> Vec<String> {
-        let scope = ScopeSymbol::Module(module, source_root);
-        let fn_sym = FnSymbol::local(fn_ast, scope);
-        let typed = fn_sym.body(db);
-        typed.errors.clone()
-    }
-
-    fn setup<'db>(&self, db: &'db Database) -> (SourceRoot, ModSymbol<'db>) {
+    fn setup<'db>(&self, db: &'db Database) -> (LocalCrateSymbol<'db>, ModSymbol<'db>) {
         let source_files: Vec<SourceFile> = self
             .files
             .iter()
             .map(|(path, text)| SourceFile::new(db, path.clone(), text.clone()))
             .collect();
-        let source_root = SourceRoot::new(db, source_files.clone());
 
         let lib_file = source_files
             .iter()
@@ -87,8 +77,32 @@ impl TestCrate {
             .copied()
             .expect("fixture has no lib.rs or main.rs");
 
-        let root_mod = sage_ir::item::ModAst::crate_root(db, lib_file);
-        let root = ModSymbol::ast(root_mod);
-        (source_root, root)
+        let mut empty_stash = Stash::new();
+        let empty_slice = empty_stash.alloc_slice::<sage_ir::cst::attrs::AttrCst>(&[]);
+        let empty_attrs = Stashed::new(empty_stash, empty_slice);
+        let abs_span = AbsoluteSpan {
+            source: ParseSource::SourceFile(lib_file),
+            start: 0,
+            end: lib_file.text(db).len() as u32,
+        };
+
+        let root_mod = LocalModSym::new(
+            db,
+            Name::new(db, String::new()),
+            None,
+            ModBodySource::File(lib_file),
+            empty_attrs,
+            abs_span,
+        );
+
+        let krate = local_crate(db, root_mod);
+        let scope = ScopeSymbol::Crate(krate);
+
+        let source = ParseSource::SourceFile(lib_file);
+        let items = parse_str_to_cst(db, source, lib_file.text(db), scope);
+        sage_ir::local_syms::mods::unexpanded_items::specify(db, root_mod, items);
+
+        let root = ModSymbol::Local(root_mod);
+        (krate, root)
     }
 }

@@ -446,7 +446,7 @@ impl<'db> ExprCst<'db> {
             }
             ExprCstKind::StructLit(path_ptr, fields) => {
                 let path = check.source_stash[*path_ptr];
-                let res = check.resolve_path_new(path, Namespace::Type);
+                let res = check.resolve_path(path, Namespace::Type);
                 let rfields: Vec<_> = check.source_stash[*fields]
                     .iter()
                     .map(|fi| TyFieldInit {
@@ -518,7 +518,7 @@ impl<'db> PatCst<'db> {
             }
             PatCstKind::Path(path_ptr) => {
                 let path = cx.source_stash[*path_ptr];
-                let res = cx.resolve_path_new(path, Namespace::Value);
+                let res = cx.resolve_path(path, Namespace::Value);
                 TyPatKind::Path(res)
             }
             PatCstKind::Tuple(pats) => {
@@ -528,7 +528,7 @@ impl<'db> PatCst<'db> {
             }
             PatCstKind::Struct(path_ptr, fields) => {
                 let path = cx.source_stash[*path_ptr];
-                let res = cx.resolve_path_new(path, Namespace::Type);
+                let res = cx.resolve_path(path, Namespace::Type);
                 let rfields: Vec<_> = cx.source_stash[*fields]
                     .iter()
                     .map(|fp| TyFieldPat {
@@ -542,7 +542,7 @@ impl<'db> PatCst<'db> {
             }
             PatCstKind::TupleStruct(path_ptr, pats) => {
                 let path = cx.source_stash[*path_ptr];
-                let res = cx.resolve_path_new(path, Namespace::Value);
+                let res = cx.resolve_path(path, Namespace::Value);
                 let rpats: Vec<_> = cx.source_stash[*pats].iter().map(|p| p.check(cx)).collect();
                 let pats_slice = cx.stash_mut().alloc_slice(&rpats);
                 TyPatKind::TupleStruct(res, pats_slice)

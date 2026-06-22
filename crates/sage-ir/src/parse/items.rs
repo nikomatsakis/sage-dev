@@ -1079,6 +1079,7 @@ impl<'a, 'db> Parser<'a, 'db> {
         let macro_name_node = node.child_by_field_name("macro").unwrap_or(node);
         let path = self.parse_path(&mut stash, macro_name_node, start);
         let input_text = ts_helpers::extract_macro_invocation_tokens(node, self.text);
+
         let input_tokens = crate::cst::macro_invocations::InputTokens::new(self.db, input_text);
 
         let span = RelativeSpan {

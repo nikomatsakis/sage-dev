@@ -32,6 +32,58 @@ pub enum LifetimeCst<'db> {
 }
 
 // ---------------------------------------------------------------------------
+// ToTokens
+// ---------------------------------------------------------------------------
+
+use crate::tokens::{Delimiter, Punct, ToTokens, TokenCtx, TokenSink, emit_comma_sep};
+
+impl<'db> ToTokens<'db> for TypeCst<'db> {
+    fn to_tokens(&self, ctx: &TokenCtx<'_, 'db>, sink: &mut dyn TokenSink) {
+        match self.kind {
+            TypeCstKind::Path(path_ptr) => {
+                ctx.stash[path_ptr].to_tokens(ctx, sink);
+            }
+            TypeCstKind::Reference(inner_ptr, mutability) => {
+                sink.punct(Punct::Amp);
+                if mutability == Mutability::Mut {
+                    sink.ident("mut");
+                }
+                ctx.stash[inner_ptr].to_tokens(ctx, sink);
+            }
+            TypeCstKind::Slice(inner_ptr) => {
+                sink.group(Delimiter::Bracket, &mut |s| {
+                    ctx.stash[inner_ptr].to_tokens(ctx, s);
+                });
+            }
+            TypeCstKind::Array(inner_ptr) => {
+                sink.group(Delimiter::Bracket, &mut |s| {
+                    ctx.stash[inner_ptr].to_tokens(ctx, s);
+                    s.punct(Punct::SemiUnderscore);
+                });
+            }
+            TypeCstKind::Tuple(elems) => {
+                sink.group(Delimiter::Paren, &mut |s| {
+                    emit_comma_sep(ctx, s, &ctx.stash[elems]);
+                });
+            }
+            TypeCstKind::Fn(params, ret) => {
+                sink.ident("fn");
+                sink.group(Delimiter::Paren, &mut |s| {
+                    emit_comma_sep(ctx, s, &ctx.stash[params]);
+                });
+                if let Some(ret_ptr) = ret {
+                    sink.punct(Punct::Arrow);
+                    ctx.stash[ret_ptr].to_tokens(ctx, sink);
+                }
+            }
+            TypeCstKind::Never => sink.punct(Punct::Bang),
+            TypeCstKind::Infer => sink.punct(Punct::Underscore),
+            TypeCstKind::Error => sink.punct(Punct::Underscore),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Type checking: TypeCst → Ty
 // ---------------------------------------------------------------------------
 
@@ -105,7 +157,7 @@ fn resolution_to_ty<'db>(
     type_args: Slice<Ptr<Ty<'db>>>,
 ) -> Ty<'db> {
     match sym.data(db) {
-        SymbolData::IntrinsicTypeSymbol(s) => intrinsic_to_ty(s.0.intrinsic(db)),
+        SymbolData::IntrinsicTypeSymbol(s) => intrinsic_to_ty(s.intrinsic(db)),
         _ => Ty::Adt(sym, type_args),
     }
 }

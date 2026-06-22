@@ -25,3 +25,52 @@ pub struct FieldCst<'db> {
     pub ty: Ptr<TypeCst<'db>>,
     pub span: RelativeSpan,
 }
+
+// ---------------------------------------------------------------------------
+// ToTokens
+// ---------------------------------------------------------------------------
+
+use crate::tokens::{
+    Delimiter, Punct, ToTokens, TokenCtx, TokenSink, emit_attrs_filtered, emit_generics,
+    emit_where_clauses,
+};
+
+impl<'db> StructCstData<'db> {
+    pub fn to_tokens_skip_attrs(
+        &self,
+        ctx: &TokenCtx<'_, 'db>,
+        sink: &mut dyn TokenSink,
+        skip: &dyn Fn(usize) -> bool,
+    ) {
+        emit_attrs_filtered(ctx, sink, self.attrs, skip);
+        sink.ident("struct");
+        sink.ident(self.name.text(ctx.db));
+        emit_generics(ctx, sink, self.generics);
+        emit_where_clauses(ctx, sink, self.where_clauses);
+        let fields = &ctx.stash[self.fields];
+        if fields.is_empty() {
+            sink.punct(Punct::Semi);
+        } else {
+            sink.group(Delimiter::Brace, &mut |s| {
+                for field in fields {
+                    field.to_tokens(ctx, s);
+                    s.punct(Punct::Comma);
+                }
+            });
+        }
+    }
+}
+
+impl<'db> ToTokens<'db> for StructCstData<'db> {
+    fn to_tokens(&self, ctx: &TokenCtx<'_, 'db>, sink: &mut dyn TokenSink) {
+        self.to_tokens_skip_attrs(ctx, sink, &|_| false);
+    }
+}
+
+impl<'db> ToTokens<'db> for FieldCst<'db> {
+    fn to_tokens(&self, ctx: &TokenCtx<'_, 'db>, sink: &mut dyn TokenSink) {
+        sink.ident(self.name.text(ctx.db));
+        sink.punct(Punct::Colon);
+        ctx.stash[self.ty].to_tokens(ctx, sink);
+    }
+}

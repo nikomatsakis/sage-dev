@@ -24,13 +24,30 @@ use crate::symbol::intrinsic::Intrinsic;
 use crate::symbol::{DefIndex, ModSymbol, SymExt, SymExtKind, Symbol, SymbolData, UseSymbol};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub enum MacroKind {
+    /// `foo!()`
+    Bang,
+    /// `#[foo]`
+    Attr,
+    /// `#[derive(Foo)]`
+    Derive,
+}
+
+/// The namespace a name lives in. Each module maps names independently per namespace,
+/// so the same identifier can resolve to different items in different namespaces.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub enum Namespace {
     /// Types, traits, modules, type aliases, enum variants (as types).
     Type,
     /// Functions, constants, statics, enum variant constructors, local bindings.
     Value,
-    /// `macro_rules!` and proc-macro bang macros.
-    Macro,
+    /// Macros, subdivided by kind. Rustc uses a single `MacroNS` and applies a
+    /// sub-namespace filter at lookup time (see `sub_namespace_match` in
+    /// `rustc_resolve`). We instead model these as distinct namespace variants:
+    /// the observable behavior is equivalent — a bang macro and a derive of the
+    /// same name coexist without ambiguity — but separate variants let each name
+    /// occupy exactly one slot per namespace with no post-hoc filtering at lookup.
+    Macro(MacroKind),
 }
 
 #[derive(Copy, Clone)]
@@ -328,7 +345,8 @@ impl<'db> Resolver<'db> {
                 | SymbolData::ImplSymbol(..)
                 | SymbolData::ModSymbol(..)
                 | SymbolData::MacroDefSymbol(..)
-                | SymbolData::IntrinsicTypeSymbol(..) => {
+                | SymbolData::IntrinsicTypeSymbol(..)
+                | SymbolData::MacroInvocationSymbol(..) => {
                     if filter.named
                         && let Some((n, nspace)) = item.name(self.db)
                         && n == name
