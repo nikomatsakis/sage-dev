@@ -5,6 +5,7 @@
 - [Design](./design/README.md)
   - [Tenets](./design/tenets.md)
   - [Architecture](./design/architecture.md)
+  - [Oracle Test Harness](./design/oracle-test-harness.md)
   - [Examples](./design/examples.md)
   - [Checking](./design/checking.md)
   - [Stash](./design/stash.md)
