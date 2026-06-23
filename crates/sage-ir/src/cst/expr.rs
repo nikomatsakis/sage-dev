@@ -235,7 +235,7 @@ impl<'db> ExprCst<'db> {
             }
             ExprCstKind::Field(obj, name) => {
                 let ro = check.source_stash[*obj].check(check);
-                let ty = check.fresh_ty_var(); // TODO: field type lookup
+                let ty = lookup_field_ty(check, ro, *name);
                 (TyExprData::Field(ro, *name), ty)
             }
             ExprCstKind::Binary(lhs, op, rhs) => {
@@ -456,7 +456,7 @@ impl<'db> ExprCst<'db> {
                     })
                     .collect();
                 let fields_slice = check.stash_mut().alloc_slice(&rfields);
-                let ty = check.fresh_ty_var(); // TODO: struct type from resolution
+                let ty = struct_lit_ty(check, res);
                 (TyExprData::StructLit(res, fields_slice), ty)
             }
             ExprCstKind::Range(lo, hi) => {
@@ -644,5 +644,64 @@ fn check_binary_op_ty<'db>(
         | BinaryOp::BitXor
         | BinaryOp::Shl
         | BinaryOp::Shr => lhs_ty,
+    }
+}
+
+fn struct_lit_ty<'db>(cx: &mut BodyCheck<'_, 'db>, res: Res<'db>) -> Ptr<Ty<'db>> {
+    use crate::symbol::SymbolData;
+    use crate::ty::BinderExt;
+
+    let sym = match res {
+        Res::Def(sym) => sym,
+        Res::Err => return cx.alloc_ty(Ty::Error),
+        Res::Local(_) => return cx.alloc_ty(Ty::Error),
+    };
+
+    match sym.data(cx.db) {
+        SymbolData::StructSymbol(crate::symbol::StructSymbol::Local(local)) => {
+            let sig = local.sig(cx.db);
+            let type_args: Vec<_> = sig.iter_symbols().map(|_| cx.fresh_ty_var()).collect();
+            let type_args_slice = cx.stash_mut().alloc_slice(&type_args);
+            cx.alloc_ty(Ty::Adt(sym, type_args_slice))
+        }
+        SymbolData::StructSymbol(crate::symbol::StructSymbol::Ext(_)) => {
+            let type_args_slice = cx.stash_mut().alloc_slice(&[]);
+            cx.alloc_ty(Ty::Adt(sym, type_args_slice))
+        }
+        _ => cx.alloc_ty(Ty::Error),
+    }
+}
+
+fn lookup_field_ty<'db>(
+    cx: &mut BodyCheck<'_, 'db>,
+    obj: Ptr<TyExpr<'db>>,
+    field_name: Name<'db>,
+) -> Ptr<Ty<'db>> {
+    use crate::symbol::SymbolData;
+    use sage_stash::StashCopy;
+
+    let obj_ty_ptr = cx.stash()[obj].ty;
+    let obj_ty_ptr = cx.find_mut(obj_ty_ptr);
+    let obj_ty = cx.stash()[obj_ty_ptr];
+
+    let (sym, _type_args) = match obj_ty {
+        Ty::Adt(sym, type_args) => (sym, type_args),
+        _ => return cx.fresh_ty_var(),
+    };
+
+    match sym.data(cx.db) {
+        SymbolData::StructSymbol(crate::symbol::StructSymbol::Local(local)) => {
+            let fields_stashed = local.fields(cx.db);
+            let fields_stash = fields_stashed.stash();
+            let struct_fields = fields_stashed.root();
+            let field_sigs = &fields_stash[struct_fields.fields];
+            for field_sig in field_sigs {
+                if field_sig.name == field_name {
+                    return field_sig.ty.stash_copy(fields_stash, cx.stash_mut());
+                }
+            }
+            cx.fresh_ty_var()
+        }
+        _ => cx.fresh_ty_var(),
     }
 }

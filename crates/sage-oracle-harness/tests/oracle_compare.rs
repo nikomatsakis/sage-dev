@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use libtest_mimic::{Arguments, Failed, Trial};
-use sage_oracle_harness::{Fixture, assert_crates_eq, discover_fixtures, fixtures_dir};
+use sage_oracle_harness::{
+    Fixture, assert_crates_eq, check_annotations, discover_fixtures, fixtures_dir,
+};
 
 fn output_dir() -> PathBuf {
     let base = std::env::temp_dir().join("sage-oracle-output");
@@ -74,9 +76,24 @@ fn repro_commands(fixture: &Fixture) -> String {
 }
 
 fn run_fixture(fixture: &Fixture, out_dir: &Path) -> Result<(), Failed> {
+    let source = fixture.source_text();
+    let parsed = sage_oracle_harness::annotations::parse_annotations(&source);
+
+    if !parsed.annotations.is_empty() || parsed.directives.rustc_ok || parsed.directives.rustc_error
+    {
+        // Annotation-based test: check diagnostics and oracle agreement.
+        if let Err(msg) = check_annotations(fixture, &parsed) {
+            return Err(format!("{msg}\n\nReproduce:\n{}", repro_commands(fixture)).into());
+        }
+        return Ok(());
+    }
+
+    // Standard comparison test: both sides must produce identical output.
     let (oracle_path, sage_path) = output_paths(fixture, out_dir);
 
-    let oracle = fixture.oracle_output();
+    let oracle = fixture
+        .oracle_output()
+        .unwrap_or_else(|e| panic!("oracle failed on {}: {}", fixture.name(), e));
     let sage = fixture.sage_output();
 
     fs::write(&oracle_path, serde_json::to_string_pretty(&oracle).unwrap()).unwrap();

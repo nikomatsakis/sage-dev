@@ -924,6 +924,7 @@ version = "0.1.0"
 dependencies = [
  "assert-json-diff",
  "libtest-mimic",
+ "regex",
  "rust-ref",
  "sage-emit",
  "sage-oracle",

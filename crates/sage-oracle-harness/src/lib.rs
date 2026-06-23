@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 
 use rust_ref::{Crate, NormalizedDef};
 
+pub mod annotations;
+
 pub fn fixtures_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test-fixtures/oracle")
 }
@@ -32,13 +34,19 @@ impl Fixture {
         }
     }
 
-    pub fn oracle_output(&self) -> Crate<NormalizedDef> {
+    pub fn source_text(&self) -> String {
+        match self {
+            Fixture::SingleFile(path) => std::fs::read_to_string(path).unwrap(),
+            Fixture::Directory { entry, .. } => std::fs::read_to_string(entry).unwrap(),
+        }
+    }
+
+    pub fn oracle_output(&self) -> Result<Crate<NormalizedDef>, String> {
         let entry = match self {
             Fixture::SingleFile(path) => path.clone(),
             Fixture::Directory { entry, .. } => entry.clone(),
         };
-        sage_oracle::analyze_file(&entry)
-            .unwrap_or_else(|e| panic!("oracle failed on {}: {}", entry.display(), e))
+        sage_oracle::analyze_file(&entry).map_err(|e| format!("{}", e))
     }
 
     pub fn sage_output(&self) -> Crate<NormalizedDef> {
@@ -72,6 +80,11 @@ impl Fixture {
                 })
             }
         }
+    }
+
+    pub fn has_annotations(&self) -> bool {
+        let source = self.source_text();
+        source.contains("//#")
     }
 }
 
@@ -157,5 +170,75 @@ pub fn assert_crates_eq(
             "fixture '{}' diverges between oracle and sage:\n{}",
             fixture_name, msg
         )),
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Annotation-based checking
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Detect whether sage's output contains error markers (`"?..."` strings).
+pub fn sage_output_has_errors(sage: &Crate<NormalizedDef>) -> bool {
+    let json = serde_json::to_string(sage).unwrap();
+    json.contains("\"?")
+}
+
+/// Run annotation-based checks for a fixture with `//#` annotations.
+pub fn check_annotations(
+    fixture: &Fixture,
+    parsed: &annotations::ParsedAnnotations,
+) -> Result<(), String> {
+    let sage = fixture.sage_output();
+    let sage_has_errors = sage_output_has_errors(&sage);
+
+    let mut errors = Vec::new();
+
+    // If annotations expect errors, sage should have produced errors.
+    let expects_errors = parsed
+        .annotations
+        .iter()
+        .any(|a| a.severity == annotations::ExpectedSeverity::Error);
+
+    if expects_errors && !sage_has_errors {
+        errors.push("annotations expect ERROR but sage produced no errors".to_string());
+    }
+
+    if !expects_errors && sage_has_errors {
+        errors.push(format!(
+            "sage produced errors but no ERROR annotations are present"
+        ));
+    }
+
+    // Check oracle agreement.
+    let oracle_result = fixture.oracle_output();
+    let oracle_errored = oracle_result.is_err();
+
+    if expects_errors && !parsed.directives.rustc_ok && !oracle_errored {
+        errors.push(
+            "sage expected errors but rustc succeeded (add `//# RUSTC OK` if intentional)"
+                .to_string(),
+        );
+    }
+
+    if !expects_errors && !oracle_errored {
+        // Both should succeed — compare output normally.
+        if let Ok(oracle) = &oracle_result {
+            if let Err(msg) = assert_crates_eq(&fixture.name(), oracle, &sage) {
+                errors.push(msg);
+            }
+        }
+    }
+
+    if oracle_errored && !expects_errors && !parsed.directives.rustc_error {
+        errors.push(format!(
+            "rustc errored but no ERROR annotations present: {}",
+            oracle_result.unwrap_err()
+        ));
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("\n"))
     }
 }

@@ -48,7 +48,9 @@ pub fn analyze_crate(
     let mut callbacks = OracleCallbacks {
         result: result_clone,
     };
-    rustc_driver::run_compiler(&args, &mut callbacks);
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        rustc_driver::run_compiler(&args, &mut callbacks);
+    }));
 
     let lock = result.lock().unwrap();
     lock.clone().unwrap_or(Err(OracleError::NoOutput))

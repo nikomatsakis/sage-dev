@@ -2,6 +2,7 @@ pub mod check;
 pub mod cst;
 pub mod db;
 pub mod derive;
+pub mod diagnostics;
 pub mod display;
 pub mod dump;
 pub mod generic_param;
