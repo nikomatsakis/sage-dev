@@ -11,16 +11,18 @@ use sage_oracle_harness::{
 
 fn output_dir() -> PathBuf {
     let base = std::env::temp_dir().join("sage-oracle-output");
+    fs::create_dir_all(&base).unwrap();
     let mut n = 0u32;
-    let dir = loop {
+    loop {
         let candidate = base.join(format!("run-{n}"));
-        if !candidate.exists() {
-            break candidate;
+        match fs::create_dir(&candidate) {
+            Ok(()) => return candidate,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                n += 1;
+            }
+            Err(e) => panic!("failed to create {}: {e}", candidate.display()),
         }
-        n += 1;
-    };
-    fs::create_dir_all(&dir).unwrap();
-    dir
+    }
 }
 
 fn output_paths(fixture: &Fixture, out_dir: &Path) -> (PathBuf, PathBuf) {
