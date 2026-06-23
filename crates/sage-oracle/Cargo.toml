@@ -8,4 +8,9 @@ rust-ref = { version = "0.1.0", path = "../rust-ref" }
 serde_json = "1.0"
 
 [dev-dependencies]
+assert-json-diff = "2.0.2"
 expect-test = "1.5.1"
+sage-emit = { path = "../sage-emit" }
+sage-test-harness = { path = "../sage-test-harness" }
+salsa = "0.26.1"
+serde_json = "1.0"

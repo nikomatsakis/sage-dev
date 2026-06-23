@@ -31,6 +31,32 @@ struct Emitter<'tcx> {
     local_def_map: Vec<(DefId, u32)>,
 }
 
+struct LocalMap {
+    entries: Vec<hir::HirId>,
+}
+
+impl LocalMap {
+    fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
+    fn register(&mut self, hir_id: hir::HirId) -> u32 {
+        let index = self.entries.len() as u32;
+        self.entries.push(hir_id);
+        index
+    }
+
+    fn lookup(&self, hir_id: hir::HirId) -> u32 {
+        self.entries
+            .iter()
+            .position(|&id| id == hir_id)
+            .map(|i| i as u32)
+            .unwrap_or(0)
+    }
+}
+
 impl<'tcx> Emitter<'tcx> {
     fn new(tcx: TyCtxt<'tcx>) -> Self {
         Self {
@@ -145,13 +171,18 @@ impl<'tcx> Emitter<'tcx> {
         let body = self.tcx.hir_body(body_id);
         let typeck = self.tcx.typeck(def_id);
 
+        let mut locals = LocalMap::new();
+
         let params: Vec<Param<NormalizedDef>> = body
             .params
             .iter()
             .zip(sig.decl.inputs.iter())
             .map(|(param, _ty_hir)| {
                 let param_name = match param.pat.kind {
-                    hir::PatKind::Binding(_, _, ident, _) => ident.name.to_string(),
+                    hir::PatKind::Binding(_, hir_id, ident, _) => {
+                        locals.register(hir_id);
+                        ident.name.to_string()
+                    }
                     _ => "_".to_string(),
                 };
                 let param_ty = typeck.node_type(param.hir_id);
@@ -174,7 +205,7 @@ impl<'tcx> Emitter<'tcx> {
             }
         };
 
-        let body_expr = self.emit_expr(body.value, typeck);
+        let body_expr = self.emit_expr_with_locals(body.value, typeck, &mut locals);
 
         FnItem {
             def: NormalizedDef::Local(local_id),
@@ -242,10 +273,11 @@ impl<'tcx> Emitter<'tcx> {
         }
     }
 
-    fn emit_expr(
+    fn emit_expr_with_locals(
         &self,
         expr: &'tcx hir::Expr<'tcx>,
         typeck: &'tcx ty::TypeckResults<'tcx>,
+        locals: &mut LocalMap,
     ) -> Expr<NormalizedDef> {
         let expr_ty = typeck.expr_ty(expr);
 
@@ -253,7 +285,7 @@ impl<'tcx> Emitter<'tcx> {
             hir::ExprKind::Path(qpath) => {
                 let res = typeck.qpath_res(qpath, expr.hir_id);
                 match res {
-                    Res::Local(_hir_id) => {
+                    Res::Local(hir_id) => {
                         let name = match qpath {
                             hir::QPath::Resolved(_, path) => path
                                 .segments
@@ -261,7 +293,7 @@ impl<'tcx> Emitter<'tcx> {
                                 .map_or("_".to_string(), |s| s.ident.name.to_string()),
                             _ => "_".to_string(),
                         };
-                        let index = self.local_var_index(expr, typeck);
+                        let index = locals.lookup(hir_id);
                         Expr::Local { name, index }
                     }
                     Res::Def(HirDefKind::Fn | HirDefKind::AssocFn, def_id) => Expr::Call {
@@ -283,8 +315,8 @@ impl<'tcx> Emitter<'tcx> {
                 let bin_op = self.emit_bin_op(op.node);
                 Expr::BinaryOp {
                     op: bin_op,
-                    lhs: Box::new(self.emit_expr(lhs, typeck)),
-                    rhs: Box::new(self.emit_expr(rhs, typeck)),
+                    lhs: Box::new(self.emit_expr_with_locals(lhs, typeck, locals)),
+                    rhs: Box::new(self.emit_expr_with_locals(rhs, typeck, locals)),
                     ty: self.emit_type(expr_ty),
                 }
             }
@@ -296,8 +328,10 @@ impl<'tcx> Emitter<'tcx> {
                             HirDefKind::Ctor(..) => self.tcx.parent(def_id),
                             _ => def_id,
                         };
-                        let emitted_args: Vec<_> =
-                            args.iter().map(|a| self.emit_expr(a, typeck)).collect();
+                        let emitted_args: Vec<_> = args
+                            .iter()
+                            .map(|a| self.emit_expr_with_locals(a, typeck, locals))
+                            .collect();
                         return Expr::Call {
                             target: self.normalize_def(target_def_id),
                             args: emitted_args,
@@ -305,7 +339,10 @@ impl<'tcx> Emitter<'tcx> {
                         };
                     }
                 }
-                let emitted_args: Vec<_> = args.iter().map(|a| self.emit_expr(a, typeck)).collect();
+                let emitted_args: Vec<_> = args
+                    .iter()
+                    .map(|a| self.emit_expr_with_locals(a, typeck, locals))
+                    .collect();
                 Expr::Call {
                     target: NormalizedDef::External(DefPath {
                         krate: "?".to_string(),
@@ -334,7 +371,7 @@ impl<'tcx> Emitter<'tcx> {
                     .iter()
                     .map(|f| FieldExpr {
                         name: f.ident.name.to_string(),
-                        value: self.emit_expr(f.expr, typeck),
+                        value: self.emit_expr_with_locals(f.expr, typeck, locals),
                     })
                     .collect();
                 Expr::StructLit {
@@ -344,7 +381,7 @@ impl<'tcx> Emitter<'tcx> {
                 }
             }
             hir::ExprKind::Field(base, field) => Expr::Field {
-                expr: Box::new(self.emit_expr(base, typeck)),
+                expr: Box::new(self.emit_expr_with_locals(base, typeck, locals)),
                 field_name: field.name.to_string(),
                 ty: self.emit_type(expr_ty),
             },
@@ -352,9 +389,11 @@ impl<'tcx> Emitter<'tcx> {
                 let stmts: Vec<_> = block
                     .stmts
                     .iter()
-                    .filter_map(|s| self.emit_stmt(s, typeck))
+                    .filter_map(|s| self.emit_stmt_with_locals(s, typeck, locals))
                     .collect();
-                let tail = block.expr.map(|e| Box::new(self.emit_expr(e, typeck)));
+                let tail = block
+                    .expr
+                    .map(|e| Box::new(self.emit_expr_with_locals(e, typeck, locals)));
                 Expr::Block {
                     stmts,
                     tail,
@@ -362,15 +401,15 @@ impl<'tcx> Emitter<'tcx> {
                 }
             }
             hir::ExprKind::Unary(hir::UnOp::Deref, inner) => Expr::Deref {
-                expr: Box::new(self.emit_expr(inner, typeck)),
+                expr: Box::new(self.emit_expr_with_locals(inner, typeck, locals)),
                 ty: self.emit_type(expr_ty),
             },
             hir::ExprKind::AddrOf(_, mutability, inner) => Expr::Ref {
                 mutable: mutability.is_mut(),
-                expr: Box::new(self.emit_expr(inner, typeck)),
+                expr: Box::new(self.emit_expr_with_locals(inner, typeck, locals)),
                 ty: self.emit_type(expr_ty),
             },
-            hir::ExprKind::DropTemps(inner) => self.emit_expr(inner, typeck),
+            hir::ExprKind::DropTemps(inner) => self.emit_expr_with_locals(inner, typeck, locals),
             _ => Expr::Literal {
                 kind: LiteralKind::Str,
                 value: "?unsupported".to_string(),
@@ -378,51 +417,37 @@ impl<'tcx> Emitter<'tcx> {
         }
     }
 
-    fn emit_stmt(
+    fn emit_stmt_with_locals(
         &self,
         stmt: &'tcx hir::Stmt<'tcx>,
         typeck: &'tcx ty::TypeckResults<'tcx>,
+        locals: &mut LocalMap,
     ) -> Option<Stmt<NormalizedDef>> {
         match &stmt.kind {
             hir::StmtKind::Let(local) => {
-                let name = match local.pat.kind {
-                    hir::PatKind::Binding(_, _, ident, _) => ident.name.to_string(),
-                    _ => "_".to_string(),
+                let (name, index) = match local.pat.kind {
+                    hir::PatKind::Binding(_, hir_id, ident, _) => {
+                        let idx = locals.register(hir_id);
+                        (ident.name.to_string(), idx)
+                    }
+                    _ => ("_".to_string(), 0),
                 };
                 let ty = self.emit_type(typeck.node_type(local.pat.hir_id));
-                let init = local.init.map(|e| self.emit_expr(e, typeck));
+                let init = local
+                    .init
+                    .map(|e| self.emit_expr_with_locals(e, typeck, locals));
                 Some(Stmt::Let {
                     name,
-                    index: 0,
+                    index,
                     ty,
                     init,
                 })
             }
             hir::StmtKind::Expr(e) | hir::StmtKind::Semi(e) => {
-                Some(Stmt::Expr(self.emit_expr(e, typeck)))
+                Some(Stmt::Expr(self.emit_expr_with_locals(e, typeck, locals)))
             }
             hir::StmtKind::Item(_) => None,
         }
-    }
-
-    fn local_var_index(
-        &self,
-        expr: &'tcx hir::Expr<'tcx>,
-        typeck: &'tcx ty::TypeckResults<'tcx>,
-    ) -> u32 {
-        if let hir::ExprKind::Path(qpath) = &expr.kind {
-            let res = typeck.qpath_res(qpath, expr.hir_id);
-            if let Res::Local(hir_id) = res {
-                let body_owner = self.tcx.hir_enclosing_body_owner(hir_id);
-                let body = self.tcx.hir_body_owned_by(body_owner);
-                for (index, param) in body.params.iter().enumerate() {
-                    if param.pat.hir_id == hir_id {
-                        return index as u32;
-                    }
-                }
-            }
-        }
-        0
     }
 
     fn emit_literal(&self, lit: &AstLitKind) -> (LiteralKind, String) {

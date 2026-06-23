@@ -77,9 +77,27 @@ pub fn with_test_crate<R>(
     source: &str,
     f: impl for<'db> FnOnce(&'db dyn Db, ModSymbol<'db>) -> R,
 ) -> R {
-    let db = Database::default();
+    with_test_crate_files(&[("lib.rs", source)], f)
+}
+
+/// Execute a callback with a multi-file sage crate.
+/// Files are given as `(path, content)` pairs. One must be `lib.rs` or `main.rs`.
+pub fn with_test_crate_files<R>(
+    files: &[(&str, &str)],
+    f: impl for<'db> FnOnce(&'db dyn Db, ModSymbol<'db>) -> R,
+) -> R {
+    let mut db = Database::default();
+    let lib_file = {
+        let mut lib = None;
+        for (path, content) in files {
+            let sf = db.add_source_file(path.to_string(), content.to_string());
+            if *path == "lib.rs" || *path == "main.rs" {
+                lib = Some(sf);
+            }
+        }
+        lib.expect("fixture must include lib.rs or main.rs")
+    };
     db.attach(|db| {
-        let lib_file = SourceFile::new(db, "lib.rs".to_owned(), source.to_owned());
         let (_krate, root) = setup_root_module(db, lib_file);
         f(db, root)
     })

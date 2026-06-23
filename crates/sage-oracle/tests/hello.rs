@@ -284,6 +284,105 @@ fn unit_return_and_empty_body() {
 }
 
 #[test]
+fn cross_module_fixture() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../test-fixtures/oracle/cross-module/src/lib.rs");
+
+    let krate = analyze_file(&fixture).expect("oracle analysis failed");
+    let items = &krate.root.items;
+
+    // Should see: mod types { struct Wrapper }, fn wrap, fn unwrap
+    assert_eq!(items.len(), 3, "expected 3 items, got {:?}", items.len());
+
+    let Item::Mod(types_mod) = &items[0] else {
+        panic!("expected Mod, got {:?}", items[0]);
+    };
+    assert_eq!(types_mod.name, "types");
+    assert_eq!(types_mod.items.len(), 1);
+
+    let Item::Struct(wrapper) = &types_mod.items[0] else {
+        panic!("expected Struct in types mod, got {:?}", types_mod.items[0]);
+    };
+    assert_eq!(wrapper.name, "Wrapper");
+    assert_eq!(wrapper.fields.len(), 1);
+    assert_eq!(wrapper.fields[0].name, "value");
+
+    let Item::Fn(wrap_fn) = &items[1] else {
+        panic!("expected fn wrap, got {:?}", items[1]);
+    };
+    assert_eq!(wrap_fn.name, "wrap");
+    assert_eq!(wrap_fn.params.len(), 1);
+    assert_eq!(wrap_fn.params[0].name, "x");
+
+    let Item::Fn(unwrap_fn) = &items[2] else {
+        panic!("expected fn unwrap, got {:?}", items[2]);
+    };
+    assert_eq!(unwrap_fn.name, "unwrap");
+    assert_eq!(unwrap_fn.params.len(), 1);
+    assert_eq!(unwrap_fn.params[0].name, "w");
+
+    // Verify wrap body: Block { tail: StructLit { target: Wrapper, fields: [value: Local("x")] } }
+    match wrap_fn.body.as_ref().unwrap() {
+        Expr::Block {
+            tail: Some(tail), ..
+        } => match tail.as_ref() {
+            Expr::StructLit {
+                target, fields, ty, ..
+            } => {
+                assert_eq!(*target, wrapper.def);
+                assert_eq!(fields.len(), 1);
+                assert_eq!(fields[0].name, "value");
+                match &fields[0].value {
+                    Expr::Local { name, index } => {
+                        assert_eq!(name, "x");
+                        assert_eq!(*index, 0);
+                    }
+                    other => panic!("expected Local in field value, got {:?}", other),
+                }
+                match ty {
+                    Type::Def { target: ty_t, .. } => assert_eq!(ty_t, &wrapper.def),
+                    other => panic!("expected Def type for struct lit, got {:?}", other),
+                }
+            }
+            other => panic!("expected StructLit in wrap body, got {:?}", other),
+        },
+        other => panic!("expected Block for wrap body, got {:?}", other),
+    }
+
+    // Verify unwrap body: Block { tail: Field { expr: Local("w"), field_name: "value" } }
+    match unwrap_fn.body.as_ref().unwrap() {
+        Expr::Block {
+            tail: Some(tail), ..
+        } => match tail.as_ref() {
+            Expr::Field {
+                expr,
+                field_name,
+                ty,
+            } => {
+                assert_eq!(field_name, "value");
+                assert_eq!(*ty, Type::Primitive("u32".to_string()));
+                match expr.as_ref() {
+                    Expr::Local { name, index } => {
+                        assert_eq!(name, "w");
+                        assert_eq!(*index, 0);
+                    }
+                    other => panic!("expected Local in field expr, got {:?}", other),
+                }
+            }
+            other => panic!("expected Field in unwrap body, got {:?}", other),
+        },
+        other => panic!("expected Block for unwrap body, got {:?}", other),
+    }
+}
+
+#[test]
+fn oracle_error_on_nonexistent_file() {
+    let path = Path::new("/nonexistent/path/to/file.rs");
+    let result = analyze_file(path);
+    assert!(result.is_err());
+}
+
+#[test]
 fn macro_rules_fixture() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../test-fixtures/oracle/basics/macro_rules.rs");
