@@ -132,6 +132,7 @@ fn main() {
     let fixtures: Vec<Arc<Fixture>> = discover_fixtures().into_iter().map(Arc::new).collect();
 
     eprintln!("oracle output dir: {}", out_dir.display());
+    eprintln!();
 
     let tests: Vec<_> = fixtures
         .iter()
@@ -142,5 +143,15 @@ fn main() {
         })
         .collect();
 
-    libtest_mimic::run(&args, tests).exit();
+    let conclusion = libtest_mimic::run(&args, tests);
+
+    eprintln!();
+    eprintln!(
+        "{} passed, {} failed | output: {}",
+        conclusion.num_passed,
+        conclusion.num_failed,
+        out_dir.display(),
+    );
+
+    conclusion.exit_if_failed();
 }
