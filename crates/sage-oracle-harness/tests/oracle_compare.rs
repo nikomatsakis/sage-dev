@@ -10,15 +10,30 @@ use sage_oracle_harness::{
 };
 
 fn output_dir() -> PathBuf {
-    let dir = std::env::temp_dir().join("sage-oracle-output");
+    let base = std::env::temp_dir().join("sage-oracle-output");
+    let mut n = 0u32;
+    let dir = loop {
+        let candidate = base.join(format!("run-{n}"));
+        if !candidate.exists() {
+            break candidate;
+        }
+        n += 1;
+    };
     fs::create_dir_all(&dir).unwrap();
     dir
 }
 
 fn output_paths(fixture: &Fixture, out_dir: &Path) -> (PathBuf, PathBuf) {
-    let name = fixture.name().replace('/', "__");
-    let oracle_path = out_dir.join(format!("{name}.oracle.json"));
-    let sage_path = out_dir.join(format!("{name}.sage.json"));
+    let name = fixture.name();
+    let dir = out_dir.join(Path::new(&name).parent().unwrap_or(Path::new("")));
+    fs::create_dir_all(&dir).unwrap();
+
+    let stem = Path::new(&name)
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy();
+    let oracle_path = dir.join(format!("{stem}.oracle.json"));
+    let sage_path = dir.join(format!("{stem}.sage.json"));
     (oracle_path, sage_path)
 }
 
