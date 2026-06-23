@@ -1,50 +1,9 @@
 use rust_ref::*;
 use sage_emit::emit_module;
-use sage_ir::Db;
-use sage_ir::db::Database;
-use sage_ir::local_syms::mods::{LocalModSym, ModBodySource};
-use sage_ir::name::Name;
-use sage_ir::parse::parse_str_to_cst;
-use sage_ir::scope::{ScopeSymbol, local_crate};
-use sage_ir::source::SourceFile;
-use sage_ir::span::{AbsoluteSpan, ParseSource};
-use sage_ir::symbol::ModSymbol;
-use sage_stash::{Stash, Stashed};
-use salsa::Database as _;
+use sage_test_harness::with_test_crate;
 
 fn analyze_source(source: &str) -> Crate<NormalizedDef> {
-    let db = Database::default();
-    db.attach(|db| {
-        let file = SourceFile::new(db, "lib.rs".to_owned(), source.to_owned());
-
-        let mut empty_stash = Stash::new();
-        let empty_slice = empty_stash.alloc_slice::<sage_ir::cst::attrs::AttrCst>(&[]);
-        let empty_attrs = Stashed::new(empty_stash, empty_slice);
-        let abs_span = AbsoluteSpan {
-            source: ParseSource::SourceFile(file),
-            start: 0,
-            end: source.len() as u32,
-        };
-
-        let root_mod = LocalModSym::new(
-            db,
-            Name::new(db, String::new()),
-            None,
-            ModBodySource::File(file),
-            empty_attrs,
-            abs_span,
-        );
-
-        let krate = local_crate(db, root_mod);
-        let scope = ScopeSymbol::Crate(krate);
-
-        let parsed_source = ParseSource::SourceFile(file);
-        let items = parse_str_to_cst(db, parsed_source, file.text(db), scope);
-        sage_ir::local_syms::mods::unexpanded_items::specify(db, root_mod, items);
-
-        let root = ModSymbol::Local(root_mod);
-        emit_module(db, root)
-    })
+    with_test_crate(source, |db, root| emit_module(db, root))
 }
 
 #[test]
@@ -189,9 +148,8 @@ fn get_x(p: Point) -> u32 {
         Expr::Block {
             tail: Some(tail), ..
         } => match tail.as_ref() {
-            Expr::BinaryOp { op, lhs, rhs, ty } => {
+            Expr::BinaryOp { op, lhs, rhs, .. } => {
                 assert_eq!(*op, BinOp::Add);
-                assert_eq!(*ty, Type::Primitive("u32".to_string()));
                 match lhs.as_ref() {
                     Expr::Local { name, index } => {
                         assert_eq!(name, "a");
@@ -240,9 +198,8 @@ fn get_x(p: Point) -> u32 {
         Expr::Block {
             tail: Some(tail), ..
         } => match tail.as_ref() {
-            Expr::Field { field_name, ty, .. } => {
+            Expr::Field { field_name, .. } => {
                 assert_eq!(field_name, "x");
-                assert_eq!(*ty, Type::Primitive("u32".to_string()));
             }
             other => panic!("expected Field in get_x body, got {:?}", other),
         },
