@@ -161,15 +161,56 @@ Exercises: `macro_rules!` definition, invocation with no arguments, name resolut
 
 A two-file crate: `src/lib.rs` declares `mod types;` and uses `types::Wrapper`. Exercises: module resolution, `use` imports, cross-module path resolution, struct field access on a type defined elsewhere.
 
-### Phased rollout
+### Implementation plan
 
-**Phase 1: Oracle driver only.** Build `sage-oracle` and get it printing clean `rust-ref` JSON for the three initial tests. No sage comparison yet — just establish the format on real code.
+The guiding principle is: **get the full end-to-end loop working on a thin slice first, then widen it.** Each step adds to the model, extends both the oracle and sage, and compares. Tight loop.
 
-**Phase 2: Sage comparison.** Wire up sage to produce `rust-ref` values for the same inputs. Get the outputs matching for the initial corpus.
+#### Step 1: `rust-ref` crate — signatures only
 
-**Phase 3: Expand corpus.** Add generics, trait impls, closures, enums, pattern matching. Each new language feature gets a test file.
+Create `crates/rust-ref` with the core data structures, but **only what's needed for signatures**: `Crate<Def>`, `Module<Def>`, `Item` (Fn/Struct/Mod), `FnItem` (name + params + return_ty, **no body yet**), `StructItem`, `FieldDef`, `Param`, `Type`, `NormalizedDef`, `DefPath`, and the generic `map` operation. Serde derives on everything.
 
-**Phase 4: Scale to rust test suite.** Point the harness at `tests/ui/` from rustc. Track pass-rate as a metric. Accept that many files will fail (unsupported features) — the goal is a ratchet, not 100% from day one.
+**Verify:** unit test that constructs a `Crate<String>`, round-trips through JSON, and tests `.map()`.
+
+#### Step 2: Oracle — signatures for `hello.rs`
+
+Create `crates/sage-oracle` — a rustc custom driver that compiles a single `.rs` file through type checking, walks the HIR, and emits `Crate<NormalizedDef>` with fn/struct signatures (no bodies). Handle sysroot detection and single-file compilation args.
+
+**Verify:** integration test on `test-fixtures/oracle/basics/hello.rs` asserting correct item names, param counts, and types.
+
+#### Step 3: Sage emitter — signatures for `hello.rs`
+
+Walk sage's existing symbol tree (`ModSymbol` → `expanded_module_items` → `FnSymbol`, `StructSymbol`) and emit the same `Crate<NormalizedDef>` structure. Signatures only — map sage's `Ty` to `rust_ref::Type`.
+
+**Verify:** `assert_json_eq!(oracle_output, sage_output)` passes for `hello.rs`. This is the first end-to-end comparison.
+
+#### Step 4: Wire up the test harness
+
+File discovery (walk `test-fixtures/oracle/`, classify single-file vs directory crates) + run both oracle and sage + compare with `assert-json-diff`. At this point we have a working pipeline for at least one test.
+
+**Verify:** `cargo test` discovers `hello.rs`, runs both sides, passes.
+
+#### Step 5: Expand — bodies
+
+Add `Expr`, `Stmt`, `FieldExpr`, `LiteralKind`, `BinOp` to `rust-ref`. Extend the oracle to walk `TypeckResults` + HIR bodies. Extend the sage emitter to walk sage's typed body IR. Get `hello.rs` bodies matching.
+
+**Verify:** full `Crate<NormalizedDef>` (including bodies) matches for `hello.rs`.
+
+#### Step 6: Expand — macros
+
+Get `basics/macro_rules.rs` passing. Both sides see the post-expansion tree so this likely just works once bodies are wired up. If not, fix the divergence.
+
+**Verify:** `macro_rules.rs` comparison passes.
+
+#### Step 7: Expand — multi-file crates
+
+Support directory-based inputs in both oracle and sage. Walk `ItemKind::Mod` / sage's `ModSymbol` children to produce nested `Item::Mod` entries. Get `cross-module/` passing.
+
+**Verify:** all 3 fixtures pass end-to-end.
+
+#### Future steps
+
+- Add generics, trait impls, closures, enums, pattern matching — each gets a new fixture file.
+- Scale to `rust-lang/rust` test suite (`tests/ui/`). Track pass-rate as a ratchet metric.
 
 ### Expected outputs for initial tests
 
