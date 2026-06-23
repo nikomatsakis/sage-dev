@@ -146,12 +146,20 @@ fn main() {
     let conclusion = libtest_mimic::run(&args, tests);
 
     eprintln!();
-    eprintln!(
-        "{} passed, {} failed | output: {}",
-        conclusion.num_passed,
-        conclusion.num_failed,
-        out_dir.display(),
-    );
+    eprintln!("════════════════════════════════════════════════════════════");
+    if conclusion.num_failed > 0 {
+        eprintln!(
+            "  \x1b[1;31m{} passed, {} failed\x1b[0m",
+            conclusion.num_passed, conclusion.num_failed,
+        );
+    } else {
+        eprintln!(
+            "  \x1b[1;32m{} passed, {} failed\x1b[0m",
+            conclusion.num_passed, conclusion.num_failed,
+        );
+    }
+    eprintln!("  output: \x1b[1m{}\x1b[0m", out_dir.display());
+    eprintln!("════════════════════════════════════════════════════════════");
 
     conclusion.exit_if_failed();
 }
