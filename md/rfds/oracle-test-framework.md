@@ -614,3 +614,16 @@ This is enough to represent all three initial tests. The model grows by adding v
 4. **Multi-file crates?** Start with single-file inputs. Multi-file support (mod declarations) can come later by pointing at a directory rather than a single file.
 
 5. **Generics and monomorphization?** The `rust-ref` model should represent generic signatures as-written (with type parameters), not monomorphized. Call sites show the generic args used at that call.
+
+### Implementation deviations (Steps 1-3)
+
+Documented after initial implementation:
+
+- **`FnItem.body` is `Option<Expr<Def>>`** (RFD specified non-optional `body: Expr<Def>`). Accommodates trait items / extern fn declarations.
+- **Bodies implemented early** (Steps 2-3 include bodies, not just signatures). The full `Expr`/`Stmt` model was needed to validate the oracle end-to-end.
+- **Oracle wraps bodies in `Expr::Block`** — rustc's HIR always wraps fn bodies in a block node. The RFD's expected JSON shows flat body expressions.
+- **Sage's `Literal` enum has no value** — only stores the kind (Int/Float/etc), not the textual value. The sage emitter emits placeholder values for literals. Fixing requires extending sage-ir to track literal values.
+- **`Stmt::Let` index** in the oracle is currently hardcoded to 0. Will need a per-body local counter to match sage's `LocalId` scheme.
+- **Salsa 0.26 test infrastructure** — tracked struct creation requires being inside a tracked function, which breaks the `TestCrate` pattern and all sage tests. The sage-emit tests compile but cannot run.
+
+5. **Generics and monomorphization?** The `rust-ref` model should represent generic signatures as-written (with type parameters), not monomorphized. Call sites show the generic args used at that call.

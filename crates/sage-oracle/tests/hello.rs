@@ -186,3 +186,153 @@ fn hello_rs_bodies() {
         other => panic!("expected Block expr for get_x body, got {:?}", other),
     }
 }
+
+#[test]
+fn local_def_id_consistency() {
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test-fixtures/oracle/basics/hello.rs");
+
+    let krate = analyze_file(&fixture).expect("oracle analysis failed");
+    let items = &krate.root.items;
+
+    // Point struct's def ID should match the target in origin's return type
+    let Item::Struct(point) = &items[2] else {
+        panic!("expected struct");
+    };
+    let point_def = &point.def;
+
+    let Item::Fn(origin) = &items[3] else {
+        panic!("expected fn");
+    };
+    match &origin.return_ty {
+        Type::Def { target, .. } => {
+            assert_eq!(
+                target, point_def,
+                "origin's return type should reference Point's def"
+            );
+        }
+        other => panic!("expected Def type, got {:?}", other),
+    }
+
+    // get_x's param type should also reference Point
+    let Item::Fn(get_x) = &items[4] else {
+        panic!("expected fn");
+    };
+    match &get_x.params[0].ty {
+        Type::Def { target, .. } => {
+            assert_eq!(
+                target, point_def,
+                "get_x's param type should reference Point's def"
+            );
+        }
+        other => panic!("expected Def type, got {:?}", other),
+    }
+
+    // StructLit target in origin body should also reference Point
+    let body = origin.body.as_ref().unwrap();
+    match body {
+        Expr::Block {
+            tail: Some(tail), ..
+        } => match tail.as_ref() {
+            Expr::StructLit { target, ty, .. } => {
+                assert_eq!(
+                    target, point_def,
+                    "struct lit target should reference Point's def"
+                );
+                match ty {
+                    Type::Def {
+                        target: ty_target, ..
+                    } => {
+                        assert_eq!(
+                            ty_target, point_def,
+                            "struct lit type should reference Point's def"
+                        );
+                    }
+                    _ => panic!("expected Def type for struct lit"),
+                }
+            }
+            other => panic!("expected StructLit, got {:?}", other),
+        },
+        other => panic!("expected Block, got {:?}", other),
+    }
+}
+
+#[test]
+fn unit_return_and_empty_body() {
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test-fixtures/oracle/basics/hello.rs");
+
+    // We test that the oracle handles implicit unit return correctly
+    // by checking origin() which has explicit return type
+    let krate = analyze_file(&fixture).expect("oracle analysis failed");
+    let items = &krate.root.items;
+
+    // identity has explicit u32 return
+    let Item::Fn(identity) = &items[0] else {
+        panic!("expected fn");
+    };
+    assert_eq!(identity.return_ty, Type::Primitive("u32".to_string()));
+
+    // Body should be a Block (rustc wraps all fn bodies in a block)
+    match identity.body.as_ref().unwrap() {
+        Expr::Block { stmts, tail, .. } => {
+            assert!(stmts.is_empty());
+            assert!(tail.is_some());
+        }
+        other => panic!("expected Block, got {:?}", other),
+    }
+}
+
+#[test]
+fn macro_rules_fixture() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../test-fixtures/oracle/basics/macro_rules.rs");
+
+    let krate = analyze_file(&fixture).expect("oracle analysis failed");
+    let items = &krate.root.items;
+
+    // After expansion we should see get_value and use_getter
+    assert_eq!(items.len(), 2, "expected 2 items, got {}", items.len());
+
+    let Item::Fn(get_value) = &items[0] else {
+        panic!("expected fn, got {:?}", items[0]);
+    };
+    assert_eq!(get_value.name, "get_value");
+    assert_eq!(get_value.params.len(), 0);
+    assert_eq!(get_value.return_ty, Type::Primitive("u32".to_string()));
+
+    // get_value body should contain literal 42
+    match get_value.body.as_ref().unwrap() {
+        Expr::Block {
+            tail: Some(tail), ..
+        } => match tail.as_ref() {
+            Expr::Literal { kind, value } => {
+                assert_eq!(*kind, LiteralKind::Int);
+                assert_eq!(value, "42");
+            }
+            other => panic!("expected Literal in get_value body, got {:?}", other),
+        },
+        other => panic!("expected Block, got {:?}", other),
+    }
+
+    let Item::Fn(use_getter) = &items[1] else {
+        panic!("expected fn, got {:?}", items[1]);
+    };
+    assert_eq!(use_getter.name, "use_getter");
+    assert_eq!(use_getter.return_ty, Type::Primitive("u32".to_string()));
+
+    // use_getter body calls get_value
+    match use_getter.body.as_ref().unwrap() {
+        Expr::Block {
+            tail: Some(tail), ..
+        } => match tail.as_ref() {
+            Expr::Call { target, args, ty } => {
+                assert_eq!(*target, get_value.def);
+                assert!(args.is_empty());
+                assert_eq!(*ty, Type::Primitive("u32".to_string()));
+            }
+            other => panic!("expected Call in use_getter body, got {:?}", other),
+        },
+        other => panic!("expected Block, got {:?}", other),
+    }
+}

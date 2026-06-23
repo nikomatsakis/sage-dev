@@ -486,4 +486,202 @@ mod tests {
             _ => panic!("expected Fn item"),
         }
     }
+
+    #[test]
+    fn map_visits_struct_fields() {
+        let krate: Crate<u32> = Crate {
+            root: Module {
+                def: 0,
+                name: "".to_string(),
+                items: vec![Item::Struct(StructItem {
+                    def: 1,
+                    name: "S".to_string(),
+                    fields: vec![FieldDef {
+                        name: "f".to_string(),
+                        ty: Type::Def {
+                            target: 2,
+                            type_args: vec![Type::Def {
+                                target: 3,
+                                type_args: vec![],
+                            }],
+                        },
+                    }],
+                })],
+            },
+        };
+
+        let mut seen = Vec::new();
+        let _ = krate.map(|d| {
+            seen.push(d);
+            d
+        });
+        assert_eq!(seen, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn map_visits_block_stmts_and_tail() {
+        let krate: Crate<u32> = Crate {
+            root: Module {
+                def: 0,
+                name: "".to_string(),
+                items: vec![Item::Fn(FnItem {
+                    def: 1,
+                    name: "f".to_string(),
+                    params: vec![],
+                    return_ty: Type::Unit,
+                    body: Some(Expr::Block {
+                        stmts: vec![
+                            Stmt::Let {
+                                name: "x".to_string(),
+                                index: 0,
+                                ty: Type::Def {
+                                    target: 2,
+                                    type_args: vec![],
+                                },
+                                init: Some(Expr::Call {
+                                    target: 3,
+                                    args: vec![],
+                                    ty: Type::Unit,
+                                }),
+                            },
+                            Stmt::Expr(Expr::Call {
+                                target: 4,
+                                args: vec![],
+                                ty: Type::Unit,
+                            }),
+                        ],
+                        tail: Some(Box::new(Expr::StructLit {
+                            target: 5,
+                            fields: vec![FieldExpr {
+                                name: "a".to_string(),
+                                value: Expr::Call {
+                                    target: 6,
+                                    args: vec![],
+                                    ty: Type::Unit,
+                                },
+                            }],
+                            ty: Type::Def {
+                                target: 7,
+                                type_args: vec![],
+                            },
+                        })),
+                        ty: Type::Def {
+                            target: 8,
+                            type_args: vec![],
+                        },
+                    }),
+                })],
+            },
+        };
+
+        let mut seen = Vec::new();
+        let _ = krate.map(|d| {
+            seen.push(d);
+            d
+        });
+        assert_eq!(seen, vec![0, 1, 2, 3, 4, 5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn map_visits_ref_deref_and_tuple() {
+        let krate: Crate<u32> = Crate {
+            root: Module {
+                def: 0,
+                name: "".to_string(),
+                items: vec![Item::Fn(FnItem {
+                    def: 1,
+                    name: "f".to_string(),
+                    params: vec![Param {
+                        name: "x".to_string(),
+                        ty: Type::Ref {
+                            mutable: false,
+                            ty: Box::new(Type::Def {
+                                target: 2,
+                                type_args: vec![],
+                            }),
+                        },
+                    }],
+                    return_ty: Type::Tuple(vec![
+                        Type::Def {
+                            target: 3,
+                            type_args: vec![],
+                        },
+                        Type::Primitive("u32".to_string()),
+                    ]),
+                    body: Some(Expr::Ref {
+                        mutable: true,
+                        expr: Box::new(Expr::Deref {
+                            expr: Box::new(Expr::Local {
+                                name: "x".to_string(),
+                                index: 0,
+                            }),
+                            ty: Type::Def {
+                                target: 4,
+                                type_args: vec![],
+                            },
+                        }),
+                        ty: Type::Ref {
+                            mutable: true,
+                            ty: Box::new(Type::Def {
+                                target: 5,
+                                type_args: vec![],
+                            }),
+                        },
+                    }),
+                })],
+            },
+        };
+
+        let mut seen = Vec::new();
+        let _ = krate.map(|d| {
+            seen.push(d);
+            d
+        });
+        assert_eq!(seen, vec![0, 1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn round_trip_json_with_body() {
+        let krate: Crate<String> = Crate {
+            root: Module {
+                def: "root".to_string(),
+                name: "".to_string(),
+                items: vec![Item::Fn(FnItem {
+                    def: "add".to_string(),
+                    name: "add".to_string(),
+                    params: vec![
+                        Param {
+                            name: "a".to_string(),
+                            ty: Type::Primitive("u32".to_string()),
+                        },
+                        Param {
+                            name: "b".to_string(),
+                            ty: Type::Primitive("u32".to_string()),
+                        },
+                    ],
+                    return_ty: Type::Primitive("u32".to_string()),
+                    body: Some(Expr::Block {
+                        stmts: vec![],
+                        tail: Some(Box::new(Expr::BinaryOp {
+                            op: BinOp::Add,
+                            lhs: Box::new(Expr::Local {
+                                name: "a".to_string(),
+                                index: 0,
+                            }),
+                            rhs: Box::new(Expr::Local {
+                                name: "b".to_string(),
+                                index: 1,
+                            }),
+                            ty: Type::Primitive("u32".to_string()),
+                        })),
+                        ty: Type::Primitive("u32".to_string()),
+                    }),
+                })],
+            },
+        };
+
+        let json = serde_json::to_string_pretty(&krate).unwrap();
+        let deserialized: Crate<String> = serde_json::from_str(&json).unwrap();
+        assert_eq!(krate, deserialized);
+    }
 }
