@@ -3,6 +3,10 @@ name = "sage-oracle"
 version = "0.1.0"
 edition.workspace = true
 
+[[bin]]
+name = "sage-oracle"
+path = "src/main.rs"
+
 [dependencies]
 rust-ref = { version = "0.1.0", path = "../rust-ref" }
 serde_json = "1.0"
