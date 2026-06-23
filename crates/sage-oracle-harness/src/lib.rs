@@ -1,41 +1,140 @@
 #![feature(rustc_private)]
 
-//! End-to-end comparison tests: oracle vs sage.
-//!
-//! Two modes:
-//! - `compare_signatures_*`: strip bodies, compare item structure only.
-//!   These should always pass — divergences indicate a regression.
-//! - `compare_full_*`: compare everything including bodies.
-//!   Normalized to handle known sage limitations (literal values, InferVar).
-
 use std::path::{Path, PathBuf};
 
-use rust_ref::{Crate, Expr, FnItem, Item, Module, NormalizedDef, Stmt, Type};
-use sage_emit::emit_module;
-use sage_oracle::analyze_file;
-use sage_test_harness::{with_test_crate, with_test_crate_files};
+use rust_ref::{Crate, Expr, FieldExpr, FnItem, Item, Module, NormalizedDef, Stmt, Type};
 
-fn fixtures_dir() -> PathBuf {
+pub fn fixtures_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test-fixtures/oracle")
 }
 
-fn oracle_analyze(path: &Path) -> Crate<NormalizedDef> {
-    analyze_file(path).unwrap_or_else(|e| panic!("oracle failed on {}: {}", path.display(), e))
+#[derive(Debug)]
+pub enum Fixture {
+    SingleFile(PathBuf),
+    Directory { entry: PathBuf, files: Vec<PathBuf> },
 }
 
-fn sage_analyze(source: &str) -> Crate<NormalizedDef> {
-    with_test_crate(source, |db, root| emit_module(db, root))
+impl Fixture {
+    pub fn name(&self) -> String {
+        let base = fixtures_dir();
+        match self {
+            Fixture::SingleFile(path) => path
+                .strip_prefix(&base)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .to_string(),
+            Fixture::Directory { entry, .. } => entry
+                .parent()
+                .and_then(|p| p.parent())
+                .and_then(|p| p.strip_prefix(&base).ok())
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| entry.to_string_lossy().to_string()),
+        }
+    }
+
+    pub fn oracle_output(&self) -> Crate<NormalizedDef> {
+        let entry = match self {
+            Fixture::SingleFile(path) => path.clone(),
+            Fixture::Directory { entry, .. } => entry.clone(),
+        };
+        sage_oracle::analyze_file(&entry)
+            .unwrap_or_else(|e| panic!("oracle failed on {}: {}", entry.display(), e))
+    }
+
+    pub fn sage_output(&self) -> Crate<NormalizedDef> {
+        match self {
+            Fixture::SingleFile(path) => {
+                let source = std::fs::read_to_string(path).unwrap();
+                sage_test_harness::with_test_crate(&source, |db, root| {
+                    sage_emit::emit_module(db, root)
+                })
+            }
+            Fixture::Directory { entry, files } => {
+                let src_dir = entry.parent().unwrap();
+                let pairs: Vec<(String, String)> = files
+                    .iter()
+                    .map(|f| {
+                        let rel = f
+                            .strip_prefix(src_dir)
+                            .unwrap()
+                            .to_string_lossy()
+                            .to_string();
+                        let content = std::fs::read_to_string(f).unwrap();
+                        (rel, content)
+                    })
+                    .collect();
+                let refs: Vec<(&str, &str)> = pairs
+                    .iter()
+                    .map(|(p, c)| (p.as_str(), c.as_str()))
+                    .collect();
+                sage_test_harness::with_test_crate_files(&refs, |db, root| {
+                    sage_emit::emit_module(db, root)
+                })
+            }
+        }
+    }
 }
 
-fn sage_analyze_multi(files: &[(&str, &str)]) -> Crate<NormalizedDef> {
-    with_test_crate_files(files, |db, root| emit_module(db, root))
+pub fn discover_fixtures() -> Vec<Fixture> {
+    let dir = fixtures_dir();
+    let mut fixtures = Vec::new();
+    discover_recursive(&dir, &mut fixtures);
+    fixtures.sort_by(|a, b| a.name().cmp(&b.name()));
+    fixtures
+}
+
+fn discover_recursive(dir: &Path, fixtures: &mut Vec<Fixture>) {
+    let mut entries: Vec<_> = std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("cannot read {}: {}", dir.display(), e))
+        .filter_map(|e| e.ok())
+        .collect();
+    entries.sort_by_key(|e| e.path());
+
+    for entry in &entries {
+        let path = entry.path();
+        if path.is_file() && path.extension().is_some_and(|ext| ext == "rs") {
+            fixtures.push(Fixture::SingleFile(path));
+        } else if path.is_dir() {
+            let src_dir = path.join("src");
+            let lib = src_dir.join("lib.rs");
+            let main = src_dir.join("main.rs");
+            if lib.exists() || main.exists() {
+                let entry_file = if lib.exists() { lib } else { main };
+                let files = collect_rs_files(&src_dir);
+                fixtures.push(Fixture::Directory {
+                    entry: entry_file,
+                    files,
+                });
+            } else {
+                discover_recursive(&path, fixtures);
+            }
+        }
+    }
+}
+
+fn collect_rs_files(dir: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    collect_rs_recursive(dir, &mut files);
+    files.sort();
+    files
+}
+
+fn collect_rs_recursive(dir: &Path, files: &mut Vec<PathBuf>) {
+    for entry in std::fs::read_dir(dir).unwrap().filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if path.is_file() && path.extension().is_some_and(|ext| ext == "rs") {
+            files.push(path);
+        } else if path.is_dir() {
+            collect_rs_recursive(&path, files);
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Normalization: erase known-divergent details so comparison is meaningful.
+// Normalization
 // ═══════════════════════════════════════════════════════════════════════════
 
-fn strip_bodies(krate: &Crate<NormalizedDef>) -> Crate<NormalizedDef> {
+pub fn strip_bodies(krate: &Crate<NormalizedDef>) -> Crate<NormalizedDef> {
     Crate {
         root: strip_bodies_module(&krate.root),
     }
@@ -63,14 +162,7 @@ fn strip_bodies_item(item: &Item<NormalizedDef>) -> Item<NormalizedDef> {
     }
 }
 
-/// Normalize a crate pair for comparison. The oracle is ground truth.
-/// We erase known sage limitations:
-/// - Literal values (sage doesn't store them)
-/// - InferVar types (sage leaves some expression types unresolved)
-///
-/// This works by normalizing both sides together — where sage has InferVar,
-/// we replace the oracle's type with the same placeholder.
-fn normalize_pair(
+pub fn normalize_pair(
     oracle: &Crate<NormalizedDef>,
     sage: &Crate<NormalizedDef>,
 ) -> (Crate<NormalizedDef>, Crate<NormalizedDef>) {
@@ -114,8 +206,8 @@ fn normalize_item_pair(
         (Item::Fn(o), Item::Fn(s)) => {
             let (o_body, s_body) = match (o.body.as_ref(), s.body.as_ref()) {
                 (Some(ob), Some(sb)) => {
-                    let (o, s) = normalize_expr_pair(ob, sb);
-                    (Some(o), Some(s))
+                    let (o2, s2) = normalize_expr_pair(ob, sb);
+                    (Some(o2), Some(s2))
                 }
                 _ => (o.body.clone(), s.body.clone()),
             };
@@ -149,7 +241,6 @@ fn is_infer_var(ty: &Type<NormalizedDef>) -> bool {
     matches!(ty, Type::Primitive(s) if s.starts_with("?InferVar"))
 }
 
-/// Normalize a type pair: if sage has InferVar, replace oracle with "_" and sage with "_".
 fn normalize_type_pair(
     oracle_ty: &Type<NormalizedDef>,
     sage_ty: &Type<NormalizedDef>,
@@ -167,17 +258,16 @@ fn normalize_expr_pair(
     sage: &Expr<NormalizedDef>,
 ) -> (Expr<NormalizedDef>, Expr<NormalizedDef>) {
     match (oracle, sage) {
-        (Expr::Literal { kind: ok, .. }, Expr::Literal { kind: sk, .. }) => {
-            let o = Expr::Literal {
+        (Expr::Literal { kind: ok, .. }, Expr::Literal { kind: sk, .. }) => (
+            Expr::Literal {
                 kind: ok.clone(),
                 value: String::new(),
-            };
-            let s = Expr::Literal {
+            },
+            Expr::Literal {
                 kind: sk.clone(),
                 value: String::new(),
-            };
-            (o, s)
-        }
+            },
+        ),
         (
             Expr::BinaryOp {
                 op: oo,
@@ -266,11 +356,11 @@ fn normalize_expr_pair(
                 .map(|(o, s)| {
                     let (ov, sv) = normalize_expr_pair(&o.value, &s.value);
                     (
-                        rust_ref::FieldExpr {
+                        FieldExpr {
                             name: o.name.clone(),
                             value: ov,
                         },
-                        rust_ref::FieldExpr {
+                        FieldExpr {
                             name: s.name.clone(),
                             value: sv,
                         },
@@ -457,136 +547,28 @@ fn normalize_stmt_pair(
     }
 }
 
-fn assert_crates_eq(fixture_name: &str, lhs: &Crate<NormalizedDef>, rhs: &Crate<NormalizedDef>) {
+pub fn assert_crates_eq(
+    fixture_name: &str,
+    lhs: &Crate<NormalizedDef>,
+    rhs: &Crate<NormalizedDef>,
+) -> Result<(), String> {
     let lhs_json = serde_json::to_value(lhs).unwrap();
     let rhs_json = serde_json::to_value(rhs).unwrap();
 
-    if lhs_json != rhs_json {
-        let diff = assert_json_diff::assert_json_matches_no_panic(
-            &lhs_json,
-            &rhs_json,
-            assert_json_diff::Config::new(assert_json_diff::CompareMode::Strict),
-        );
-        if let Err(msg) = diff {
-            panic!(
-                "fixture '{}' diverges between oracle and sage:\n{}",
-                fixture_name, msg
-            );
-        }
+    if lhs_json == rhs_json {
+        return Ok(());
     }
-}
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Signature-only comparison tests (always pass)
-// ═══════════════════════════════════════════════════════════════════════════
-
-#[test]
-fn compare_signatures_hello_rs() {
-    let path = fixtures_dir().join("basics/hello.rs");
-    let source = std::fs::read_to_string(&path).unwrap();
-
-    let oracle = strip_bodies(&oracle_analyze(&path));
-    let sage = strip_bodies(&sage_analyze(&source));
-
-    assert_crates_eq("basics/hello.rs [signatures]", &oracle, &sage);
-}
-
-#[test]
-fn compare_signatures_macro_rules_rs() {
-    let path = fixtures_dir().join("basics/macro_rules.rs");
-    let source = std::fs::read_to_string(&path).unwrap();
-
-    let oracle = strip_bodies(&oracle_analyze(&path));
-    let sage = strip_bodies(&sage_analyze(&source));
-
-    assert_crates_eq("basics/macro_rules.rs [signatures]", &oracle, &sage);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Full comparison tests (normalized for known sage limitations)
-// ═══════════════════════════════════════════════════════════════════════════
-
-#[test]
-fn compare_full_hello_rs() {
-    let path = fixtures_dir().join("basics/hello.rs");
-    let source = std::fs::read_to_string(&path).unwrap();
-
-    let oracle_raw = oracle_analyze(&path);
-    let sage_raw = sage_analyze(&source);
-    let (oracle, sage) = normalize_pair(&oracle_raw, &sage_raw);
-
-    assert_crates_eq("basics/hello.rs [full]", &oracle, &sage);
-}
-
-#[test]
-fn compare_full_macro_rules_rs() {
-    let path = fixtures_dir().join("basics/macro_rules.rs");
-    let source = std::fs::read_to_string(&path).unwrap();
-
-    let oracle_raw = oracle_analyze(&path);
-    let sage_raw = sage_analyze(&source);
-    let (oracle, sage) = normalize_pair(&oracle_raw, &sage_raw);
-
-    assert_crates_eq("basics/macro_rules.rs [full]", &oracle, &sage);
-}
-
-#[test]
-fn compare_signatures_let_binding_rs() {
-    let path = fixtures_dir().join("basics/let_binding.rs");
-    let source = std::fs::read_to_string(&path).unwrap();
-
-    let oracle = strip_bodies(&oracle_analyze(&path));
-    let sage = strip_bodies(&sage_analyze(&source));
-
-    assert_crates_eq("basics/let_binding.rs [signatures]", &oracle, &sage);
-}
-
-#[test]
-fn compare_full_let_binding_rs() {
-    let path = fixtures_dir().join("basics/let_binding.rs");
-    let source = std::fs::read_to_string(&path).unwrap();
-
-    let oracle_raw = oracle_analyze(&path);
-    let sage_raw = sage_analyze(&source);
-    let (oracle, sage) = normalize_pair(&oracle_raw, &sage_raw);
-
-    assert_crates_eq("basics/let_binding.rs [full]", &oracle, &sage);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Cross-module tests (multi-file crate)
-// ═══════════════════════════════════════════════════════════════════════════
-
-#[test]
-fn compare_signatures_cross_module() {
-    let dir = fixtures_dir().join("cross-module/src");
-    let lib_path = dir.join("lib.rs");
-    let types_path = dir.join("types.rs");
-
-    let lib_src = std::fs::read_to_string(&lib_path).unwrap();
-    let types_src = std::fs::read_to_string(&types_path).unwrap();
-
-    let oracle = strip_bodies(&oracle_analyze(&lib_path));
-    let sage = strip_bodies(&sage_analyze_multi(&[
-        ("lib.rs", &lib_src),
-        ("types.rs", &types_src),
-    ]));
-
-    assert_crates_eq("cross-module [signatures]", &oracle, &sage);
-}
-
-#[test]
-fn compare_full_cross_module() {
-    let dir = fixtures_dir().join("cross-module/src");
-    let lib_path = dir.join("lib.rs");
-    let types_path = dir.join("types.rs");
-
-    let lib_src = std::fs::read_to_string(&lib_path).unwrap();
-    let types_src = std::fs::read_to_string(&types_path).unwrap();
-
-    let oracle_raw = oracle_analyze(&lib_path);
-    let sage_raw = sage_analyze_multi(&[("lib.rs", &lib_src), ("types.rs", &types_src)]);
-    let (oracle, sage) = normalize_pair(&oracle_raw, &sage_raw);
-
-    assert_crates_eq("cross-module [full]", &oracle, &sage);
+    let diff = assert_json_diff::assert_json_matches_no_panic(
+        &lhs_json,
+        &rhs_json,
+        assert_json_diff::Config::new(assert_json_diff::CompareMode::Strict),
+    );
+    match diff {
+        Ok(()) => Ok(()),
+        Err(msg) => Err(format!(
+            "fixture '{}' diverges between oracle and sage:\n{}",
+            fixture_name, msg
+        )),
+    }
 }

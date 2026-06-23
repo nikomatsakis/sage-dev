@@ -353,6 +353,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
+name = "escape8259"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5692dd7b5a1978a5aeb0ce83b7655c58ca8efdcb79d21036ea249da95afec2c6"
+
+[[package]]
 name = "expect-test"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -566,6 +572,18 @@ checksum = "f12a681b7dd8ce12bff52488013ba614b869148d54dd79836ab85aafdd53f08d"
 dependencies = [
  "arbitrary",
  "cc",
+]
+
+[[package]]
+name = "libtest-mimic"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14e6ba06f0ade6e504aff834d7c34298e5155c6baca353cc6a4aaff2f9fd7f33"
+dependencies = [
+ "anstream",
+ "anstyle",
+ "clap",
+ "escape8259",
 ]
 
 [[package]]
@@ -895,12 +913,21 @@ dependencies = [
 name = "sage-oracle"
 version = "0.1.0"
 dependencies = [
- "assert-json-diff",
  "expect-test",
  "rust-ref",
+ "serde_json",
+]
+
+[[package]]
+name = "sage-oracle-harness"
+version = "0.1.0"
+dependencies = [
+ "assert-json-diff",
+ "libtest-mimic",
+ "rust-ref",
  "sage-emit",
+ "sage-oracle",
  "sage-test-harness",
- "salsa",
  "serde_json",
 ]
 

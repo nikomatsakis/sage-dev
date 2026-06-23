@@ -1,0 +1,18 @@
+[package]
+name = "sage-oracle-harness"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+
+[[test]]
+name = "oracle_compare"
+harness = false
+
+[dependencies]
+libtest-mimic = "0.8"
+rust-ref = { path = "../rust-ref" }
+sage-emit = { path = "../sage-emit" }
+sage-oracle = { path = "../sage-oracle" }
+sage-test-harness = { path = "../sage-test-harness" }
+serde_json = "1.0"
+assert-json-diff = "2.0"
