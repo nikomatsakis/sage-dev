@@ -165,23 +165,29 @@ A two-file crate: `src/lib.rs` declares `mod types;` and uses `types::Wrapper`. 
 
 The guiding principle is: **get the full end-to-end loop working on a thin slice first, then widen it.** Each step adds to the model, extends both the oracle and sage, and compares. Tight loop.
 
-#### Step 1: `rust-ref` crate — signatures only
+#### Step 1: `rust-ref` crate — signatures only ✓
 
 Create `crates/rust-ref` with the core data structures, but **only what's needed for signatures**: `Crate<Def>`, `Module<Def>`, `Item` (Fn/Struct/Mod), `FnItem` (name + params + return_ty, **no body yet**), `StructItem`, `FieldDef`, `Param`, `Type`, `NormalizedDef`, `DefPath`, and the generic `map` operation. Serde derives on everything.
 
 **Verify:** unit test that constructs a `Crate<String>`, round-trips through JSON, and tests `.map()`.
 
-#### Step 2: Oracle — signatures for `hello.rs`
+**Status:** Complete. Also included body types (`Expr`, `Stmt`, `FieldExpr`, `LiteralKind`, `BinOp`) ahead of schedule since the oracle needed them. Both `round_trip_json` and `map_replaces_all_defs` tests pass.
+
+#### Step 2: Oracle — signatures for `hello.rs` ✓
 
 Create `crates/sage-oracle` — a rustc custom driver that compiles a single `.rs` file through type checking, walks the HIR, and emits `Crate<NormalizedDef>` with fn/struct signatures (no bodies). Handle sysroot detection and single-file compilation args.
 
 **Verify:** integration test on `test-fixtures/oracle/basics/hello.rs` asserting correct item names, param counts, and types.
 
-#### Step 3: Sage emitter — signatures for `hello.rs`
+**Status:** Complete (includes bodies too). Oracle uses `rustc_driver::run_compiler` + `Callbacks::after_analysis`. Two integration tests pass: `hello_rs_signatures` and `hello_rs_bodies`.
+
+#### Step 3: Sage emitter — signatures for `hello.rs` ✓
 
 Walk sage's existing symbol tree (`ModSymbol` → `expanded_module_items` → `FnSymbol`, `StructSymbol`) and emit the same `Crate<NormalizedDef>` structure. Signatures only — map sage's `Ty` to `rust_ref::Type`.
 
 **Verify:** `assert_json_eq!(oracle_output, sage_output)` passes for `hello.rs`. This is the first end-to-end comparison.
+
+**Status:** Complete. `crates/sage-emit` implements the full emitter (signatures + bodies). Tests exist but cannot run due to a pre-existing salsa 0.26 tracked-struct-disambiguator issue that affects ALL sage tests (including the existing `type_check_tests`). The code compiles cleanly and follows the same `TestCrate` pattern.
 
 #### Step 4: Wire up the test harness
 
