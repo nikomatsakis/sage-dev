@@ -81,7 +81,18 @@ impl<'db> Emitter<'db> {
                 Some(Item::Struct(self.emit_struct(sym, local_struct)))
             }
             SymbolData::ModSymbol(mod_sym) => Some(Item::Mod(self.emit_mod(mod_sym))),
-            _ => None,
+            SymbolData::FnSymbol(FnSymbol::Ext(_))
+            | SymbolData::StructSymbol(StructSymbol::Ext(_))
+            | SymbolData::EnumSymbol(_)
+            | SymbolData::TraitSymbol(_)
+            | SymbolData::TypeAliasSymbol(_)
+            | SymbolData::ConstSymbol(_)
+            | SymbolData::StaticSymbol(_)
+            | SymbolData::ImplSymbol(_)
+            | SymbolData::MacroDefSymbol(_)
+            | SymbolData::UseSymbol(_)
+            | SymbolData::IntrinsicTypeSymbol(_)
+            | SymbolData::MacroInvocationSymbol(_) => None,
         }
     }
 

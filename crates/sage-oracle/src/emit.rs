@@ -50,8 +50,6 @@ impl<'tcx> Emitter<'tcx> {
     fn normalize_def(&self, def_id: DefId) -> NormalizedDef {
         if let Some(&(_, id)) = self.local_def_map.iter().find(|(d, _)| *d == def_id) {
             NormalizedDef::Local(id)
-        } else if def_id.is_local() {
-            NormalizedDef::External(self.def_path_for(def_id))
         } else {
             NormalizedDef::External(self.def_path_for(def_id))
         }
@@ -375,7 +373,7 @@ impl<'tcx> Emitter<'tcx> {
             hir::ExprKind::DropTemps(inner) => self.emit_expr(inner, typeck),
             _ => Expr::Literal {
                 kind: LiteralKind::Str,
-                value: format!("?unsupported"),
+                value: "?unsupported".to_string(),
             },
         }
     }
