@@ -749,38 +749,30 @@ fn ty_display_fn_pointer() {
 
 ### Phase 4: Rich rendering with `annotate_snippets`
 
-**Snapshot test:** Same tests as Phases 1-3, but now the harness switches to `annotate_snippets` rendering. Run `UPDATE_EXPECT=1` and *every* snapshot updates from the simple format to full source snippets:
+**Status: DONE**
 
-```rust
-#[test]
-fn rendered_with_source_snippet() {
-    TestCrate::in_memory("fn bad(x: u32) -> bool { x }")
-        .check_errors(expect![[""]]);
-}
-```
-
-After `UPDATE_EXPECT=1`:
+After `UPDATE_EXPECT=1`, all snapshots now show full rustc-style source snippets:
 ```rust
         .check_errors(expect![[r#"
-            error: type mismatch
-              --> lib.rs:1:26
-               |
-             1 | fn bad(x: u32) -> bool { x }
-               |                    ----   ^ found `u32`
-               |                    |
-               |                    expected `bool` because of return type
-        "#]]);
+            error: type mismatch: expected `bool`, found `u32`
+             --> lib.rs:1:24
+              |
+            1 | fn bad(x: u32) -> bool { x }
+              |                   ---- ^^^^^ found `u32`
+              |                   |
+              |                   expected `bool` because of return type"#]]);
 ```
 
-The bulk diff of all snapshots switching from `"error at X..Y:"` to full snippets is the evidence that it works. Each snapshot is individually reviewable.
+**Work done:**
+- Added `annotate_snippets` v0.12 dependency to `sage-ir`
+- Added `Diagnostic::render()` method that resolves spans → source text → `annotate_snippets::Snippet` with annotations
+- Test harness now uses `render()` (rich) instead of `render_short()` (simple)
+- All 30 test snapshots updated to show source snippets with underlines and labels
+- Removed old `SageDiagnostic` scaffold (`diagnostics.rs` deleted)
 
-**Work:**
-- Add `annotate_snippets` dependency
-- Write `sage-ir/src/diagnostic/render.rs` that resolves `Span::resolve(db)` → source text + line/col → `annotate_snippets::Message`
-- Handle `notes` (sub-diagnostics) recursively
-- Switch test harness to use the new renderer
-- `UPDATE_EXPECT=1` to update all existing snapshots
-- Remove old `SageDiagnostic` scaffold from `diagnostics.rs`
+**Deviations from design:**
+- Rendering lives as a method on `Diagnostic` in `diagnostic.rs` rather than a separate `diagnostic/render.rs` module — simpler for the current scope.
+- `notes` (sub-diagnostics) are not yet rendered via annotate_snippets (no need yet since no test exercises them).
 
 ### Phase 5: Sub-diagnostics / wrap
 

@@ -55,7 +55,7 @@ impl TestCrate {
                 {
                     let checked = local_fn.body(db);
                     for diag in &checked.diagnostics {
-                        all_errors.push(diag.render_short(db));
+                        all_errors.push(diag.render(db));
                     }
                 }
             }
