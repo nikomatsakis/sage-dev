@@ -178,7 +178,11 @@ impl<'db> Diagnostic<'db> {
     /// ```
     pub fn render_short(&self, db: &'db dyn crate::Db) -> String {
         let abs = self.span.resolve(db);
-        let mut out = format!("error at {}..{}: {}", abs.start, abs.end, self.message);
+        let prefix = match self.severity {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+        };
+        let mut out = format!("{prefix} at {}..{}: {}", abs.start, abs.end, self.message);
         for label in &self.labels {
             let label_abs = label.span.resolve(db);
             out.push_str(&format!(
