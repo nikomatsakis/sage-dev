@@ -30,9 +30,9 @@ enum MemmapEntry<'db> {
     /// Implicit constructor for a tuple struct or unit struct.
     /// Lives in the value namespace. The `StructAst` provides the
     /// field types from which a `FnSig` is derived.
-    TupleStructCtor(StructAst<'db>),
+    TupleStructCtor(LocalStructSym<'db>),
 
-    MacroDef(MacroDefAst<'db>),
+    MacroDef(LocalMacroDefSym<'db>),
     Redirect { name: Name<'db>, target: Path<'db> },
     Glob { path: Path<'db> },
     MacroUse(MacroUse<'db>),
@@ -56,7 +56,7 @@ Detecting tuple vs braced: a `StructKind` enum (`Tuple`, `Unit`, `Braced`) is st
 ```rust
 pub enum SymbolData<'db> {
     Ast(ItemAst<'db>),
-    TupleStructCtor(StructAst<'db>),  // new
+    TupleStructCtor(LocalStructSym<'db>),  // new
     Ext(SymExt),
 }
 ```
@@ -101,7 +101,7 @@ Every step follows **test-first**: write the tests, verify they fail (compile er
 2. `struct Bar;` → same: both `Item` and `TupleStructCtor`.
 3. `struct Baz { x: i32 }` → only `Item(Struct("Baz"))`, no `TupleStructCtor`.
 
-**Implementation.** Added `TupleStructCtor(StructAst<'db>)` to `MemmapEntry`. In `seed_from_items`, after emitting `MemmapEntry::Item` for a struct, the seeder checks `s.kind(db)` and emits an additional `TupleStructCtor(s)` for `Tuple` or `Unit` kinds. Updated `item_in_namespace` so `ItemAst::Struct` is `Namespace::Type` only (no longer claims `Value`). The `TupleStructCtor` entry handles `Namespace::Value` instead. Updated `collect_all_names` in `validate.rs` to include the constructor in the value namespace. No separate `entry_in_namespace` function was needed — the match arm in `resolve_member`'s walk handles it directly.
+**Implementation.** Added `TupleStructCtor(LocalStructSym<'db>)` to `MemmapEntry`. In `seed_from_items`, after emitting `MemmapEntry::Item` for a struct, the seeder checks `s.kind(db)` and emits an additional `TupleStructCtor(s)` for `Tuple` or `Unit` kinds. Updated `item_in_namespace` so `ItemAst::Struct` is `Namespace::Type` only (no longer claims `Value`). The `TupleStructCtor` entry handles `Namespace::Value` instead. Updated `collect_all_names` in `validate.rs` to include the constructor in the value namespace. No separate `entry_in_namespace` function was needed — the match arm in `resolve_member`'s walk handles it directly.
 
 **Verify.** Tests pass: `tuple_struct_emits_ctor_entry`, `unit_struct_emits_ctor_entry`, `braced_struct_no_ctor_entry`. Existing snapshot tests updated (unit structs now show `TupleStructCtor` entries).
 
@@ -113,7 +113,7 @@ Every step follows **test-first**: write the tests, verify they fail (compile er
 3. `struct Bar { x: i32 }` — resolve `Bar` in `Namespace::Value` → fails (no value-namespace entry for braced structs).
 4. `struct Bar { x: i32 }` — resolve `Bar` in `Namespace::Type` → succeeds.
 
-**Implementation.** Added `TupleStructCtor(StructAst<'db>)` variant to `SymbolData` and a `Symbol::tuple_struct_ctor(s)` constructor. In `resolve_member`'s `walk` function, added a match arm for `MemmapEntry::TupleStructCtor(s)` that checks `s.name(db) == name && matches!(ns, Namespace::Value)` and pushes a `Symbol::tuple_struct_ctor(*s)`. Per-kind symbol wrappers (like `StructSymbol`) are not yet implemented — the variant wraps `StructAst` directly, matching the current flat `SymbolData` design. Updated display/formatting in `display.rs` and test helpers in `common/mod.rs` to handle the new variant.
+**Implementation.** Added `TupleStructCtor(LocalStructSym<'db>)` variant to `SymbolData` and a `Symbol::tuple_struct_ctor(s)` constructor. In `resolve_member`'s `walk` function, added a match arm for `MemmapEntry::TupleStructCtor(s)` that checks `s.name(db) == name && matches!(ns, Namespace::Value)` and pushes a `Symbol::tuple_struct_ctor(*s)`. Per-kind symbol wrappers (like `StructSymbol`) are not yet implemented — the variant wraps `StructAst` directly, matching the current flat `SymbolData` design. Updated display/formatting in `display.rs` and test helpers in `common/mod.rs` to handle the new variant.
 
 **Verify.** Tests pass: `tuple_struct_resolves_in_value_ns`, `tuple_struct_resolves_in_type_ns`, `braced_struct_not_in_value_ns`, `braced_struct_resolves_in_type_ns`. All existing resolution tests still pass.
 

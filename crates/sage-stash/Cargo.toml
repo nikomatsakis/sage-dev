@@ -7,6 +7,7 @@ edition.workspace = true
 rustc-hash = "2.1.2"
 sage-stash-macros = { path = "../sage-stash-macros" }
 salsa = { version = "0.26.1", optional = true }
+smallvec = "1.15.2"
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 
 [features]

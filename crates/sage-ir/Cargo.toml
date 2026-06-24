@@ -5,8 +5,10 @@ edition.workspace = true
 
 [dependencies]
 rustc-hash = "2.1.2"
+sage-macros-from-impls = { version = "0.1.0", path = "../sage-macros-from-impls" }
 sage-stash = { path = "../sage-stash", features = ["salsa"] }
 salsa = "0.26.1"
+smallvec = "1.15.2"
 tree-sitter = "0.25"
 tree-sitter-rust = "0.24"
 

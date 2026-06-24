@@ -1,0 +1,19 @@
+[package]
+name = "sage-emit"
+version = "0.1.0"
+edition.workspace = true
+
+[[bin]]
+name = "sage-emit"
+path = "src/main.rs"
+
+[dependencies]
+rust-ref = { version = "0.1.0", path = "../rust-ref" }
+sage-ir = { version = "0.1.0", path = "../sage-ir" }
+sage-stash = { version = "0.1.0", path = "../sage-stash" }
+sage-test-harness = { path = "../sage-test-harness" }
+serde_json = "1.0"
+
+[dev-dependencies]
+expect-test = "1.5.1"
+salsa = "0.26.1"

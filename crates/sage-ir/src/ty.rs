@@ -3,24 +3,21 @@
 //! All types are stash-allocated (`Copy`, `AllocStashData`). They live in the
 //! same stash as the signature or body they belong to. No global interning.
 
-use sage_stash::{AllocStashData, Ptr, Slice};
+use std::marker::PhantomData;
 
+use sage_stash::{AllocStashData, Ptr, Slice, StashHash, Stashed};
+
+use crate::cst::Mutability;
 use crate::generic_param::GenericParam;
 use crate::name::Name;
 use crate::symbol::Symbol;
-use crate::types::Mutability;
 
 // ---------------------------------------------------------------------------
 // Ty
 // ---------------------------------------------------------------------------
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
-pub struct Ty<'db> {
-    pub data: TyData<'db>,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
-pub enum TyData<'db> {
+pub enum Ty<'db> {
     // --- primitives ---
     Bool,
     Char,
@@ -152,6 +149,21 @@ impl<'db, T> Binder<'db, T> {
     }
 }
 
+pub trait BinderExt<'db> {
+    fn iter_symbols(&self) -> impl Iterator<Item = GenericParam<'db>>;
+}
+
+impl<'db, T> BinderExt<'db> for Stashed<Binder<'db, T>>
+where
+    T: StashHash + Copy,
+{
+    fn iter_symbols(&self) -> impl Iterator<Item = GenericParam<'db>> {
+        let stash = self.stash();
+        let generics = self.root().generics;
+        stash[generics].iter().copied()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Signature types
 // ---------------------------------------------------------------------------
@@ -164,6 +176,11 @@ pub struct FnSig<'db> {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct StructSig<'db> {
+    pub dummy: PhantomData<&'db ()>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub struct StructFields<'db> {
     pub fields: Slice<FieldSig<'db>>,
 }
 

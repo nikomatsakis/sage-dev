@@ -1,7 +1,7 @@
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
-use crate::module::{CrateNum, DefIndex};
+use crate::symbol::{CrateNum, DefIndex};
 
 use super::{RawChild, TcxDb};
 
@@ -16,6 +16,11 @@ pub enum TcxRequest {
         crate_num: CrateNum,
         def_index: DefIndex,
         reply: mpsc::Sender<Vec<RawChild>>,
+    },
+    ItemName {
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        reply: mpsc::Sender<Option<String>>,
     },
     IsModule {
         crate_num: CrateNum,
@@ -35,6 +40,19 @@ pub enum TcxRequest {
     ExpandDerive {
         crate_num: CrateNum,
         def_index: DefIndex,
+        item_source: String,
+        reply: mpsc::Sender<Option<String>>,
+    },
+    ExpandBang {
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        input_tokens: String,
+        reply: mpsc::Sender<Option<String>>,
+    },
+    ExpandAttr {
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        attr_args: String,
         item_source: String,
         reply: mpsc::Sender<Option<String>>,
     },
@@ -78,6 +96,22 @@ impl TcxDb for ProxyTcxDb {
         let (reply, rx) = mpsc::channel();
         self.tx
             .send(TcxRequest::ModuleChildren {
+                crate_num,
+                def_index,
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn item_name(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<String> {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("tcx::item_name({}, {})", crate_num.0, def_index.0));
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::ItemName {
                 crate_num,
                 def_index,
                 reply,
@@ -141,6 +175,44 @@ impl TcxDb for ProxyTcxDb {
             .send(TcxRequest::ExpandDerive {
                 crate_num,
                 def_index,
+                item_source: item_source.to_owned(),
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn expand_proc_macro_bang(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        input_tokens: &str,
+    ) -> Option<String> {
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::ExpandBang {
+                crate_num,
+                def_index,
+                input_tokens: input_tokens.to_owned(),
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn expand_proc_macro_attr(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        attr_args: &str,
+        item_source: &str,
+    ) -> Option<String> {
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::ExpandAttr {
+                crate_num,
+                def_index,
+                attr_args: attr_args.to_owned(),
                 item_source: item_source.to_owned(),
                 reply,
             })

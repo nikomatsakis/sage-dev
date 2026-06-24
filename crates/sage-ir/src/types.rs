@@ -1,15 +1,7 @@
-use sage_stash::{AllocStashData, Slice, StashDirect, Stashed};
+use sage_stash::StashDirect;
 
 use crate::name::Name;
 use crate::span::RelativeSpan;
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
-pub enum Mutability {
-    Shared,
-    Mut,
-}
-
-impl StashDirect for Mutability {}
 
 /// The syntactic form of an attribute.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
@@ -18,29 +10,6 @@ pub enum AttrKind {
     Normal,
     /// `/// text` or `/** text */`
     DocComment,
-}
-
-/// A single flattened use import (stash-allocated).
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
-pub struct UseImportAst<'db> {
-    /// The full path as written, e.g. [foo, bar].
-    pub path: Slice<Name<'db>>,
-    pub kind: UseKind<'db>,
-    pub span: RelativeSpan,
-}
-
-/// The stashed collection of use imports for a `use` declaration.
-pub type UseImports<'db> = Stashed<Slice<UseImportAst<'db>>>;
-
-/// What a use import brings into scope.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update, AllocStashData)]
-pub enum UseKind<'db> {
-    /// `use foo::bar` or `use foo::bar as baz` — imports under the given name.
-    Named(Name<'db>),
-    /// `use foo::bar::*` — glob import.
-    Glob,
-    /// `use foo::Bar as _` — unnamed import.
-    Unnamed,
 }
 
 /// An attribute: `#[foo]`, `#[derive(Debug)]`, `/// doc comment`, etc.

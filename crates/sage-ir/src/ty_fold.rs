@@ -23,40 +23,47 @@ pub trait TyFolder<'db> {
 }
 
 pub fn default_fold_ty<'db>(folder: &mut impl TyFolder<'db>, ty: Ty<'db>) -> Ty<'db> {
-    let data = match ty.data {
-        TyData::Adt(sym, args) => {
+    match ty {
+        Ty::Adt(sym, args) => {
             let args = fold_ptr_slice(folder, args);
-            TyData::Adt(sym, args)
+            Ty::Adt(sym, args)
         }
-        TyData::Ref(inner, m, lt) => {
+        Ty::Ref(inner, m, lt) => {
             let inner_ty = folder.fold_ty(folder.source()[inner]);
             let inner = folder.target().alloc(inner_ty);
-            TyData::Ref(inner, m, lt)
+            Ty::Ref(inner, m, lt)
         }
-        TyData::Tuple(elems) => {
+        Ty::Tuple(elems) => {
             let elems = fold_ptr_slice(folder, elems);
-            TyData::Tuple(elems)
+            Ty::Tuple(elems)
         }
-        TyData::Slice(inner) => {
+        Ty::Slice(inner) => {
             let inner_ty = folder.fold_ty(folder.source()[inner]);
             let inner = folder.target().alloc(inner_ty);
-            TyData::Slice(inner)
+            Ty::Slice(inner)
         }
-        TyData::Array(inner, c) => {
+        Ty::Array(inner, c) => {
             let inner_ty = folder.fold_ty(folder.source()[inner]);
             let inner = folder.target().alloc(inner_ty);
-            TyData::Array(inner, c)
+            Ty::Array(inner, c)
         }
-        TyData::FnPtr(params, ret) => {
+        Ty::FnPtr(params, ret) => {
             let params = fold_ptr_slice(folder, params);
             let ret_ty = folder.fold_ty(folder.source()[ret]);
             let ret = folder.target().alloc(ret_ty);
-            TyData::FnPtr(params, ret)
+            Ty::FnPtr(params, ret)
         }
-        TyData::InferVar(_) => ty.data,
-        leaf => leaf,
-    };
-    Ty { data }
+        Ty::Bool => Ty::Bool,
+        Ty::Char => Ty::Char,
+        Ty::Int(int_ty) => Ty::Int(int_ty),
+        Ty::Uint(uint_ty) => Ty::Uint(uint_ty),
+        Ty::Float(float_ty) => Ty::Float(float_ty),
+        Ty::Str => Ty::Str,
+        Ty::Param(generic_param) => Ty::Param(generic_param),
+        Ty::InferVar(infer_var_index) => Ty::InferVar(infer_var_index),
+        Ty::Never => Ty::Never,
+        Ty::Error => Ty::Error,
+    }
 }
 
 pub fn fold_ptr_slice<'db>(
@@ -86,21 +93,11 @@ pub fn fold_fn_sig<'db>(folder: &mut impl TyFolder<'db>, sig: FnSig<'db>) -> FnS
 }
 
 pub fn fold_struct_sig<'db>(
-    folder: &mut impl TyFolder<'db>,
+    _folder: &mut impl TyFolder<'db>,
     sig: StructSig<'db>,
 ) -> StructSig<'db> {
-    let src_fields: Vec<_> = folder.source()[sig.fields].to_vec();
-    let field_sigs: Vec<_> = src_fields
-        .iter()
-        .map(|f| {
-            let src_ty = folder.source()[f.ty];
-            let ty_val = folder.fold_ty(src_ty);
-            let ty = folder.target().alloc(ty_val);
-            FieldSig { name: f.name, ty }
-        })
-        .collect();
-    let fields = folder.target().alloc_slice(&field_sigs);
-    StructSig { fields }
+    let StructSig { dummy } = sig;
+    StructSig { dummy }
 }
 
 // ---------------------------------------------------------------------------
@@ -148,12 +145,12 @@ impl<'db> TyFolder<'db> for Substitute<'_, 'db> {
     }
 
     fn fold_ty(&mut self, ty: Ty<'db>) -> Ty<'db> {
-        match ty.data {
-            TyData::Param(param) => match self.subst.get(&param) {
-                Some(SubstTarget::Ty(t)) => *t,
-                _ => ty,
-            },
-            _ => default_fold_ty(self, ty),
+        if let Ty::Param(param) = ty
+            && let Some(SubstTarget::Ty(t)) = self.subst.get(&param)
+        {
+            *t
+        } else {
+            default_fold_ty(self, ty)
         }
     }
 }

@@ -98,6 +98,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "assert-json-diff"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47e4f2b81832e72834d7518d8487a0396a28cc408186a2e8854c0f98011faf12"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -343,6 +353,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
+name = "escape8259"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5692dd7b5a1978a5aeb0ce83b7655c58ca8efdcb79d21036ea249da95afec2c6"
+
+[[package]]
 name = "expect-test"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -556,6 +572,18 @@ checksum = "f12a681b7dd8ce12bff52488013ba614b869148d54dd79836ab85aafdd53f08d"
 dependencies = [
  "arbitrary",
  "cc",
+]
+
+[[package]]
+name = "libtest-mimic"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14e6ba06f0ade6e504aff834d7c34298e5155c6baca353cc6a4aaff2f9fd7f33"
+dependencies = [
+ "anstream",
+ "anstyle",
+ "clap",
+ "escape8259",
 ]
 
 [[package]]
@@ -804,6 +832,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
+name = "rust-ref"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "rustc-hash"
 version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -837,15 +873,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "sage-infer"
+name = "sage-emit"
 version = "0.1.0"
 dependencies = [
  "expect-test",
- "rustc-hash",
+ "rust-ref",
  "sage-ir",
  "sage-stash",
+ "sage-test-harness",
  "salsa",
- "smallvec",
+ "serde_json",
 ]
 
 [[package]]
@@ -854,10 +891,45 @@ version = "0.1.0"
 dependencies = [
  "expect-test",
  "rustc-hash",
+ "sage-macros-from-impls",
  "sage-stash",
  "salsa",
+ "smallvec",
  "tree-sitter",
  "tree-sitter-rust",
+]
+
+[[package]]
+name = "sage-macros-from-impls"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+ "synstructure",
+]
+
+[[package]]
+name = "sage-oracle"
+version = "0.1.0"
+dependencies = [
+ "expect-test",
+ "rust-ref",
+ "serde_json",
+]
+
+[[package]]
+name = "sage-oracle-harness"
+version = "0.1.0"
+dependencies = [
+ "assert-json-diff",
+ "libtest-mimic",
+ "regex",
+ "rust-ref",
+ "sage-emit",
+ "sage-oracle",
+ "sage-test-harness",
+ "serde_json",
 ]
 
 [[package]]
@@ -867,6 +939,7 @@ dependencies = [
  "rustc-hash",
  "sage-stash-macros",
  "salsa",
+ "smallvec",
  "xxhash-rust",
 ]
 
@@ -884,7 +957,6 @@ name = "sage-test-harness"
 version = "0.1.0"
 dependencies = [
  "expect-test",
- "sage-infer",
  "sage-ir",
  "sage-stash",
  "salsa",
@@ -986,9 +1058,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.149"
+version = "1.0.150"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83fc039473c5595ace860d8c4fafa220ff474b3fc6bfdb4293327f1a37e94d86"
+checksum = "e8014e44b4736ed0538adeecded0fce2a272f22dc9578a7eb6b2d9993c74cfb9"
 dependencies = [
  "indexmap",
  "itoa",
@@ -1012,9 +1084,9 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "smallvec"
-version = "1.15.1"
+version = "1.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
+checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 
 [[package]]
 name = "streaming-iterator"

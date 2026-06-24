@@ -4,9 +4,8 @@ mod proxy;
 pub use noop::NoopTcxDb;
 pub use proxy::{ProxyTcxDb, TcxRequest};
 
-use crate::module::{CrateNum, DefIndex};
 use crate::resolve::Namespace;
-use crate::symbol::SymExtKind;
+use crate::symbol::{CrateNum, DefIndex, SymExtKind};
 
 /// A single child of an external module — raw owned data, no salsa interning.
 #[derive(Clone, Debug)]
@@ -28,6 +27,9 @@ pub trait TcxDb: Send + Sync {
 
     fn module_children(&self, crate_num: CrateNum, def_index: DefIndex) -> Vec<RawChild>;
 
+    /// Return the name of the item with the given id or None if it is something anonymous (e.g., an impl).
+    fn item_name(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<String>;
+
     /// True iff the given external definition is a module (crate
     /// root, `mod foo`, etc.). Modules are the only DefIds on which
     /// `module_children` is valid to call — asking on a struct or
@@ -48,6 +50,23 @@ pub trait TcxDb: Send + Sync {
         &self,
         crate_num: CrateNum,
         def_index: DefIndex,
+        item_source: &str,
+    ) -> Option<String>;
+
+    /// Expand a proc-macro bang macro (`foo!(tokens)`). Returns the expanded source text.
+    fn expand_proc_macro_bang(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        input_tokens: &str,
+    ) -> Option<String>;
+
+    /// Expand an attribute proc-macro (`#[attr] item`). Returns the transformed item source.
+    fn expand_proc_macro_attr(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        attr_args: &str,
         item_source: &str,
     ) -> Option<String>;
 }

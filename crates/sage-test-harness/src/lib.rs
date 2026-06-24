@@ -1,14 +1,15 @@
 use expect_test::Expect;
 pub use expect_test::expect;
-use sage_infer::check::type_check_body;
 use sage_ir::Db;
-use sage_ir::body_resolve::resolve_body;
 use sage_ir::db::Database;
-use sage_ir::item::{FnAst, ItemAst};
-use sage_ir::module::ModSymbol;
-use sage_ir::resolve::SourceRoot;
-use sage_ir::sig_lower::fn_signature;
+use sage_ir::local_syms::mods::{LocalModSym, ModBodySource};
+use sage_ir::name::Name;
+use sage_ir::parse::parse_str_to_cst;
+use sage_ir::scope::{LocalCrateSymbol, ScopeSymbol, local_crate};
 use sage_ir::source::SourceFile;
+use sage_ir::span::{AbsoluteSpan, ParseSource};
+use sage_ir::symbol::{FnSymbol, ModSymbol};
+use sage_stash::{Stash, Stashed};
 use salsa::Database as _;
 
 pub struct TestCrate {
@@ -43,14 +44,16 @@ impl TestCrate {
     fn collect_errors(&self) -> Vec<String> {
         let db = Database::default();
         db.attach(|db| {
-            let (source_root, root) = self.setup(db);
+            let (_krate, root) = self.setup(db);
             let mut all_errors = Vec::new();
 
-            let items = sage_ir::resolve::module_items(db, root);
-            for item in &items {
-                if let ItemAst::Function(fn_ast) = item {
-                    let errors = self.check_function(db, *fn_ast, root, source_root);
-                    all_errors.extend(errors);
+            let items = root.expanded_module_items(db);
+            for item in items {
+                if let sage_ir::symbol::SymbolData::FnSymbol(FnSymbol::Local(local_fn)) =
+                    item.data(db)
+                {
+                    let checked = local_fn.body(db);
+                    all_errors.extend(checked.diagnostics.iter().cloned());
                 }
             }
 
@@ -58,38 +61,83 @@ impl TestCrate {
         })
     }
 
-    fn check_function<'db>(
-        &self,
-        db: &'db dyn Db,
-        fn_ast: FnAst<'db>,
-        module: ModSymbol<'db>,
-        source_root: SourceRoot,
-    ) -> Vec<String> {
-        let resolved = resolve_body(db, fn_ast, module, source_root);
-        let sig = fn_signature(db, fn_ast, module, source_root);
-        let result = type_check_body(db, &resolved, sig, module, source_root);
-        result.render_errors(db)
-    }
-
-    fn setup<'db>(&self, db: &'db Database) -> (SourceRoot, ModSymbol<'db>) {
-        let source_files: Vec<SourceFile> = self
+    fn setup<'db>(&self, db: &'db dyn Db) -> (LocalCrateSymbol<'db>, ModSymbol<'db>) {
+        let lib_file = self
             .files
             .iter()
+            .find(|(path, _)| path == "lib.rs" || path == "main.rs")
             .map(|(path, text)| SourceFile::new(db, path.clone(), text.clone()))
-            .collect();
-        let source_root = SourceRoot::new(db, source_files.clone());
-
-        let lib_file = source_files
-            .iter()
-            .find(|f| {
-                let p = f.path(db);
-                p == "lib.rs" || p == "main.rs"
-            })
-            .copied()
             .expect("fixture has no lib.rs or main.rs");
 
-        let root_mod = sage_ir::item::ModAst::crate_root(db, lib_file);
-        let root = ModSymbol::ast(root_mod);
-        (source_root, root)
+        setup_root_module(db, lib_file)
     }
+}
+
+/// Execute a callback with a fully set-up sage crate from in-memory source.
+/// This handles the salsa tracked-function requirement for creating tracked structs.
+pub fn with_test_crate<R>(
+    source: &str,
+    f: impl for<'db> FnOnce(&'db dyn Db, ModSymbol<'db>) -> R,
+) -> R {
+    with_test_crate_files(&[("lib.rs", source)], f)
+}
+
+/// Execute a callback with a multi-file sage crate.
+/// Files are given as `(path, content)` pairs. One must be `lib.rs` or `main.rs`.
+pub fn with_test_crate_files<R>(
+    files: &[(&str, &str)],
+    f: impl for<'db> FnOnce(&'db dyn Db, ModSymbol<'db>) -> R,
+) -> R {
+    let mut db = Database::default();
+    let lib_file = {
+        let mut lib = None;
+        for (path, content) in files {
+            let sf = db.add_source_file(path.to_string(), content.to_string());
+            if *path == "lib.rs" || *path == "main.rs" {
+                lib = Some(sf);
+            }
+        }
+        lib.expect("fixture must include lib.rs or main.rs")
+    };
+    db.attach(|db| {
+        let (_krate, root) = setup_root_module(db, lib_file);
+        f(db, root)
+    })
+}
+
+/// Tracked function that creates the root module and crate.
+/// Being a tracked function provides the query-stack context that
+/// `LocalModSym::new` (a tracked struct) requires.
+#[salsa::tracked]
+pub fn setup_root_module<'db>(
+    db: &'db dyn Db,
+    lib_file: SourceFile,
+) -> (LocalCrateSymbol<'db>, ModSymbol<'db>) {
+    let mut empty_stash = Stash::new();
+    let empty_slice = empty_stash.alloc_slice::<sage_ir::cst::attrs::AttrCst>(&[]);
+    let empty_attrs = Stashed::new(empty_stash, empty_slice);
+    let abs_span = AbsoluteSpan {
+        source: ParseSource::SourceFile(lib_file),
+        start: 0,
+        end: lib_file.text(db).len() as u32,
+    };
+
+    let root_mod = LocalModSym::new(
+        db,
+        Name::new(db, String::new()),
+        None,
+        ModBodySource::File(lib_file),
+        empty_attrs,
+        abs_span,
+    );
+
+    let krate = local_crate(db, root_mod);
+    let scope = ScopeSymbol::Crate(krate);
+
+    let source = ParseSource::SourceFile(lib_file);
+    let items = parse_str_to_cst(db, source, lib_file.text(db), scope);
+    sage_ir::local_syms::mods::unexpanded_items::specify(db, root_mod, items);
+
+    let root = ModSymbol::Local(root_mod);
+    (krate, root)
 }

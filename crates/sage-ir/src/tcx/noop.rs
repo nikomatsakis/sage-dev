@@ -1,4 +1,4 @@
-use crate::module::{CrateNum, DefIndex};
+use crate::symbol::{CrateNum, DefIndex};
 
 use super::{RawChild, TcxDb};
 
@@ -12,6 +12,10 @@ impl TcxDb for NoopTcxDb {
 
     fn module_children(&self, _crate_num: CrateNum, _def_index: DefIndex) -> Vec<RawChild> {
         Vec::new()
+    }
+
+    fn item_name(&self, _crate_num: CrateNum, _def_index: DefIndex) -> Option<String> {
+        None
     }
 
     fn is_module(&self, _crate_num: CrateNum, _def_index: DefIndex) -> bool {
@@ -32,6 +36,25 @@ impl TcxDb for NoopTcxDb {
         &self,
         _crate_num: CrateNum,
         _def_index: DefIndex,
+        _item_source: &str,
+    ) -> Option<String> {
+        None
+    }
+
+    fn expand_proc_macro_bang(
+        &self,
+        _crate_num: CrateNum,
+        _def_index: DefIndex,
+        _input_tokens: &str,
+    ) -> Option<String> {
+        None
+    }
+
+    fn expand_proc_macro_attr(
+        &self,
+        _crate_num: CrateNum,
+        _def_index: DefIndex,
+        _attr_args: &str,
         _item_source: &str,
     ) -> Option<String> {
         None

@@ -18,9 +18,9 @@ use rustc_middle::ty::TyCtxt;
 use rustc_proc_macro::bridge::server::SAME_THREAD;
 use rustc_span::def_id::DefIndex as RustcDefIndex;
 
-use sage_ir::module::{CrateNum, DefIndex};
 use sage_ir::resolve::{MacroKind, Namespace};
 use sage_ir::symbol::SymExtKind;
+use sage_ir::symbol::{CrateNum, DefIndex};
 use sage_ir::tcx::RawChild;
 
 use crate::proc_macro_srv::SageServer;
@@ -124,6 +124,14 @@ impl<'tcx> RustcTcxDb<'tcx> {
         matches!(self.tcx.def_kind(def_id), DefKind::Mod)
     }
 
+    pub fn item_name(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<String> {
+        let def_id = DefId {
+            krate: RustcCrateNum::from_u32(crate_num.0),
+            index: rustc_hir::def_id::DefIndex::from_u32(def_index.0),
+        };
+        Some(self.tcx.item_name(def_id).to_ident_string())
+    }
+
     pub fn def_path(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<String> {
         let def_id = DefId {
             krate: RustcCrateNum::from_u32(crate_num.0),
@@ -178,6 +186,88 @@ impl<'tcx> RustcTcxDb<'tcx> {
 
         let input: proc_macro2::TokenStream = item_source.parse().ok()?;
         match client.run(&SAME_THREAD, SageServer::new(), input, false) {
+            Ok(output) => Some(output.to_string()),
+            Err(_) => None,
+        }
+    }
+
+    pub fn expand_proc_macro_bang(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        input_tokens: &str,
+    ) -> Option<String> {
+        let def_id = DefId {
+            krate: RustcCrateNum::from_u32(crate_num.0),
+            index: RustcDefIndex::from_u32(def_index.0),
+        };
+
+        let cstore = CStore::from_tcx(self.tcx);
+        let loaded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            cstore.load_macro_untracked(self.tcx, def_id)
+        }))
+        .ok()?;
+
+        use rustc_expand::base::SyntaxExtensionKind;
+        use rustc_metadata::creader::LoadedMacro;
+        let LoadedMacro::ProcMacro(ext) = loaded else {
+            return None;
+        };
+        let SyntaxExtensionKind::Bang(ref arc) = ext.kind else {
+            return None;
+        };
+
+        // Same unsafe pattern as derive — extract the Client from BangProcMacro.
+        let client = unsafe {
+            let ptr = Arc::as_ref(arc) as *const dyn rustc_expand::base::BangProcMacro
+                as *const rustc_expand::proc_macro::BangProcMacro;
+            (*ptr).client
+        };
+
+        let input: proc_macro2::TokenStream = input_tokens.parse().ok()?;
+        match client.run(&SAME_THREAD, SageServer::new(), input, false) {
+            Ok(output) => Some(output.to_string()),
+            Err(_) => None,
+        }
+    }
+
+    pub fn expand_proc_macro_attr(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        attr_args: &str,
+        item_source: &str,
+    ) -> Option<String> {
+        let def_id = DefId {
+            krate: RustcCrateNum::from_u32(crate_num.0),
+            index: RustcDefIndex::from_u32(def_index.0),
+        };
+
+        let cstore = CStore::from_tcx(self.tcx);
+        let loaded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            cstore.load_macro_untracked(self.tcx, def_id)
+        }))
+        .ok()?;
+
+        use rustc_expand::base::SyntaxExtensionKind;
+        use rustc_metadata::creader::LoadedMacro;
+        let LoadedMacro::ProcMacro(ext) = loaded else {
+            return None;
+        };
+        let SyntaxExtensionKind::Attr(ref arc) = ext.kind else {
+            return None;
+        };
+
+        // Same unsafe pattern — extract the Client from AttrProcMacro.
+        let client = unsafe {
+            let ptr = Arc::as_ref(arc) as *const dyn rustc_expand::base::AttrProcMacro
+                as *const rustc_expand::proc_macro::AttrProcMacro;
+            (*ptr).client
+        };
+
+        let args: proc_macro2::TokenStream = attr_args.parse().ok()?;
+        let input: proc_macro2::TokenStream = item_source.parse().ok()?;
+        match client.run(&SAME_THREAD, SageServer::new(), args, input, false) {
             Ok(output) => Some(output.to_string()),
             Err(_) => None,
         }

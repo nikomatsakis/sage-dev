@@ -1,5 +1,4 @@
 use std::any::TypeId;
-use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::num::NonZeroU32;
@@ -7,8 +6,10 @@ use std::ops::{Index, IndexMut};
 #[cfg(debug_assertions)]
 use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
+use rustc_hash::FxHashMap;
 pub use rustc_hash::FxHasher;
 pub use sage_stash_macros::AllocStashData;
+use smallvec::SmallVec;
 
 // ---------------------------------------------------------------------------
 // Debug-mode stash identity
@@ -286,6 +287,50 @@ impl StashDirect for i8 {}
 impl StashDirect for i16 {}
 impl StashDirect for i32 {}
 impl StashDirect for i64 {}
+impl<T> StashDirect for PhantomData<T> {}
+impl StashDirect for () {}
+
+unsafe impl StashData<'_> for bool {
+    type StaticSelf = Self;
+}
+unsafe impl StashData<'_> for u8 {
+    type StaticSelf = Self;
+}
+unsafe impl StashData<'_> for u16 {
+    type StaticSelf = Self;
+}
+unsafe impl StashData<'_> for u32 {
+    type StaticSelf = Self;
+}
+unsafe impl StashData<'_> for u64 {
+    type StaticSelf = Self;
+}
+unsafe impl StashData<'_> for i8 {
+    type StaticSelf = Self;
+}
+unsafe impl StashData<'_> for i16 {
+    type StaticSelf = Self;
+}
+unsafe impl StashData<'_> for i32 {
+    type StaticSelf = Self;
+}
+unsafe impl StashData<'_> for i64 {
+    type StaticSelf = Self;
+}
+unsafe impl StashData<'_> for () {
+    type StaticSelf = Self;
+}
+
+impl AllocStashData<'_> for bool {}
+impl AllocStashData<'_> for u8 {}
+impl AllocStashData<'_> for u16 {}
+impl AllocStashData<'_> for u32 {}
+impl AllocStashData<'_> for u64 {}
+impl AllocStashData<'_> for i8 {}
+impl AllocStashData<'_> for i16 {}
+impl AllocStashData<'_> for i32 {}
+impl AllocStashData<'_> for i64 {}
+impl AllocStashData<'_> for () {}
 
 // ---------------------------------------------------------------------------
 // StashCopy — deep-copy values between stashes
@@ -479,13 +524,14 @@ impl StashHasher for FingerprintHasher {
 // Stashed<T> — pairs a Stash with a root value
 // ---------------------------------------------------------------------------
 
+#[derive(Clone)]
 pub struct Stashed<T> {
     stash: Stash,
     root: T,
     fingerprint: Fingerprint,
 }
 
-impl<T: StashHash> Stashed<T> {
+impl<T: StashHash + Copy> Stashed<T> {
     pub fn new(stash: Stash, root: T) -> Self {
         let mut hasher = FingerprintHasher::new();
         root.stash_hash(&stash, &mut hasher);
@@ -496,15 +542,17 @@ impl<T: StashHash> Stashed<T> {
             fingerprint,
         }
     }
-}
 
-impl<T> Stashed<T> {
-    pub fn root(&self) -> &T {
-        &self.root
+    pub fn root(&self) -> T {
+        self.root
     }
 
     pub fn stash(&self) -> &Stash {
         &self.stash
+    }
+
+    pub fn open(&self) -> (&Stash, T) {
+        (&self.stash, self.root)
     }
 
     pub fn copy_into(&self, target: &mut Stash) -> T
@@ -512,6 +560,16 @@ impl<T> Stashed<T> {
         T: StashCopy,
     {
         self.root.stash_copy(&self.stash, target)
+    }
+}
+
+impl<'db, T: StashData<'db> + Copy> Stashed<Ptr<T>> {
+    pub fn root_deref(&self) -> T {
+        self.stash[self.root]
+    }
+
+    pub fn open_deref(&self) -> (&Stash, T) {
+        (&self.stash, self.root_deref())
     }
 }
 
@@ -552,6 +610,7 @@ impl<T> Ord for Stashed<T> {
 // ---------------------------------------------------------------------------
 
 /// Entry metadata: type id, byte offset into `buf`, element count, FxHash.
+#[derive(Clone)]
 struct Entry {
     type_id: TypeId,
     offset: u32,
@@ -568,10 +627,11 @@ struct InternKey {
 }
 
 /// Type-erased heterogeneous storage for `Copy`-only data with thin handles.
+#[derive(Clone)]
 pub struct Stash {
     buf: Vec<u8>,
     entries: Vec<Entry>,
-    intern_map: HashMap<InternKey, EntryIndex>,
+    intern_map: FxHashMap<InternKey, EntryIndex>,
     #[cfg(debug_assertions)]
     id: u32,
 }
@@ -581,7 +641,7 @@ impl Stash {
         Self {
             buf: Vec::new(),
             entries: Vec::new(),
-            intern_map: HashMap::new(),
+            intern_map: FxHashMap::default(),
             #[cfg(debug_assertions)]
             id: next_stash_id(),
         }
@@ -635,6 +695,15 @@ impl Stash {
             }
         }
         unreachable!()
+    }
+
+    /// Hash-cons a contiguous slice. Equal content always produces equal `Slice`s.
+    pub fn alloc_slice_from_iter<'db, T: AllocStashData<'db>>(
+        &mut self,
+        values: impl IntoIterator<Item = T>,
+    ) -> Slice<T> {
+        let v: SmallVec<[T; 16]> = values.into_iter().collect();
+        self.alloc_slice(&v)
     }
 
     /// Hash-cons a contiguous slice. Equal content always produces equal `Slice`s.
