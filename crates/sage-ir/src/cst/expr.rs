@@ -220,7 +220,7 @@ impl<'db> ExprCst<'db> {
                     .map(|a| a.check_val(check))
                     .collect();
                 let args_slice = check.stash_mut().alloc_slice(&rargs);
-                let ty = check.fresh_ty_var(); // TODO: look up fn return type
+                let ty = check_call_ty(check, rf, args_slice);
                 (TyExprData::Call(rf, args_slice), ty)
             }
             ExprCstKind::MethodCall(obj, name, args) => {
@@ -612,8 +612,27 @@ fn check_literal_ty<'db>(cx: &mut BodyCheck<'_, 'db>, lit: Literal) -> Ptr<Ty<'d
 fn res_to_ty<'db>(cx: &mut BodyCheck<'_, 'db>, res: Res<'db>) -> Ptr<Ty<'db>> {
     match res {
         Res::Local(LocalId(id)) => cx.local_type(id),
-        Res::Def(_) => cx.fresh_ty_var(), // TODO: look up symbol's type
+        Res::Def(sym) => def_to_ty(cx, sym),
         Res::Err => cx.alloc_ty(Ty::Error),
+    }
+}
+
+fn def_to_ty<'db>(cx: &mut BodyCheck<'_, 'db>, sym: crate::symbol::Symbol<'db>) -> Ptr<Ty<'db>> {
+    use crate::symbol::SymbolData;
+    use crate::ty::BinderExt;
+
+    match sym.data(cx.db) {
+        SymbolData::FnSymbol(crate::symbol::FnSymbol::Local(local)) => {
+            let sig = local.sig(cx.db);
+            let sig_stash = sig.stash();
+            let binder = sig.root();
+
+            let type_args: Vec<_> = sig.iter_symbols().map(|_| cx.fresh_ty_var_data()).collect();
+            let instantiated =
+                crate::ty_fold::instantiate_fn_sig(sig_stash, cx.stash_mut(), &binder, type_args);
+            cx.alloc_ty(Ty::FnPtr(instantiated.params, instantiated.ret))
+        }
+        _ => cx.fresh_ty_var(),
     }
 }
 
@@ -701,6 +720,29 @@ fn lookup_field_ty<'db>(
                 }
             }
             cx.fresh_ty_var()
+        }
+        _ => cx.fresh_ty_var(),
+    }
+}
+
+fn check_call_ty<'db>(
+    cx: &mut BodyCheck<'_, 'db>,
+    callee: Ptr<TyExpr<'db>>,
+    arg_exprs: Slice<Ptr<TyExpr<'db>>>,
+) -> Ptr<Ty<'db>> {
+    let callee_ty_ptr = cx.stash()[callee].ty;
+    let callee_ty_ptr = cx.find_mut(callee_ty_ptr);
+    let callee_ty = cx.stash()[callee_ty_ptr];
+
+    match callee_ty {
+        Ty::FnPtr(params, ret) => {
+            let param_tys: Vec<_> = cx.stash()[params].to_vec();
+            let arg_ptrs: Vec<_> = cx.stash()[arg_exprs].to_vec();
+            for (param_ty, arg_expr) in param_tys.iter().zip(arg_ptrs.iter()) {
+                let arg_ty = cx.stash()[*arg_expr].ty;
+                cx.require_eq(arg_ty, *param_ty);
+            }
+            ret
         }
         _ => cx.fresh_ty_var(),
     }
