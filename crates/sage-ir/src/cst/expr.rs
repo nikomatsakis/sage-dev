@@ -699,13 +699,15 @@ fn lookup_field_ty<'db>(
     field_name: Name<'db>,
 ) -> Ptr<Ty<'db>> {
     use crate::symbol::SymbolData;
-    use sage_stash::StashCopy;
+    use crate::ty::BinderExt;
+    use crate::ty_fold::{SubstTarget, Substitute, TyFolder};
+    use rustc_hash::FxHashMap;
 
     let obj_ty_ptr = cx.stash()[obj].ty;
     let obj_ty_ptr = cx.find_mut(obj_ty_ptr);
     let obj_ty = cx.stash()[obj_ty_ptr];
 
-    let (sym, _type_args) = match obj_ty {
+    let (sym, type_args) = match obj_ty {
         Ty::Adt(sym, type_args) => (sym, type_args),
         _ => return cx.fresh_ty_var(),
     };
@@ -716,9 +718,20 @@ fn lookup_field_ty<'db>(
             let fields_stash = fields_stashed.stash();
             let struct_fields = fields_stashed.root();
             let field_sigs = &fields_stash[struct_fields.fields];
+
+            let type_args_vec: Vec<_> = cx.stash()[type_args].to_vec();
+            let sig = local.sig(cx.db);
+            let generic_params: Vec<_> = sig.iter_symbols().collect();
+
             for field_sig in field_sigs {
                 if field_sig.name == field_name {
-                    return field_sig.ty.stash_copy(fields_stash, cx.stash_mut());
+                    let mut subst = FxHashMap::default();
+                    for (param, arg_ptr) in generic_params.iter().zip(type_args_vec.iter()) {
+                        subst.insert(*param, SubstTarget::Ty(cx.stash()[*arg_ptr]));
+                    }
+                    let mut folder = Substitute::new(fields_stash, cx.stash_mut(), subst);
+                    let field_ty_data = folder.fold_ty(fields_stash[field_sig.ty]);
+                    return cx.stash_mut().alloc(field_ty_data);
                 }
             }
             cx.fresh_ty_var()
