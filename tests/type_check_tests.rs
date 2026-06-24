@@ -28,7 +28,6 @@ fn if_else_same_type() {
 }
 
 #[test]
-#[ignore = "egraph finalize resolves infer vars to Error before require_coerce can detect mismatch"]
 fn if_else_branch_mismatch() {
     TestCrate::in_memory("fn bad(b: bool) -> u32 { if b { 1 } else { true } }")
         .check_errors(expect![[r#"type mismatch: expected `u32`, found `bool`"#]]);
@@ -126,7 +125,6 @@ fn generic_struct_field_access() {
 }
 
 #[test]
-#[ignore = "egraph finalize resolves infer vars to Error before require_coerce can detect mismatch"]
 fn generic_struct_field_mismatch() {
     TestCrate::in_memory(
         "struct Wrapper<T> { value: T }
@@ -136,7 +134,6 @@ fn generic_struct_field_mismatch() {
 }
 
 #[test]
-#[ignore = "generic struct literal inference not resolving — egraph finalize bug"]
 fn generic_struct_infer_from_field() {
     // The type arg of Wrapper is inferred from the field value
     TestCrate::in_memory(
@@ -168,7 +165,6 @@ fn generic_pair_field_propagation() {
 }
 
 #[test]
-#[ignore = "egraph finalize resolves infer vars to Error before require_coerce can detect mismatch"]
 fn generic_pair_wrong_field() {
     // Accessing .second on Pair<u32, bool> yields bool, not u32
     TestCrate::in_memory(
@@ -189,7 +185,6 @@ fn nested_generic_struct() {
 }
 
 #[test]
-#[ignore = "egraph finalize resolves infer vars to Error before require_coerce can detect mismatch"]
 fn nested_generic_mismatch() {
     TestCrate::in_memory(
         "struct Wrapper<T> { value: T }

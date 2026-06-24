@@ -25,6 +25,9 @@ impl<'a, 'db> Parser<'a, 'db> {
 
         for child in tp_node.children(&mut cursor) {
             match child.kind() {
+                "type_parameter" => {
+                    params.push(self.parse_type_param(stash, child, item_start));
+                }
                 "type_identifier" | "identifier" => {
                     let name = Name::new(self.db, self.text[child.byte_range()].to_owned());
                     let span = RelativeSpan {
@@ -57,6 +60,34 @@ impl<'a, 'db> Parser<'a, 'db> {
         }
 
         stash.alloc_slice(&params)
+    }
+
+    fn parse_type_param(
+        &self,
+        stash: &mut Stash,
+        node: tree_sitter::Node<'a>,
+        item_start: u32,
+    ) -> GenericParamCst<'db> {
+        let span = RelativeSpan {
+            start: node.start_byte() as u32 - item_start,
+            end: node.end_byte() as u32 - item_start,
+        };
+
+        let name = node
+            .child_by_field_name("name")
+            .map(|n| Name::new(self.db, self.text[n.byte_range()].to_owned()))
+            .unwrap_or_else(|| Name::new(self.db, "_".to_owned()));
+
+        let mut bounds = Vec::new();
+        if let Some(bound_node) = node.child_by_field_name("bounds") {
+            self.collect_type_bounds(stash, bound_node, item_start, &mut bounds);
+        }
+
+        GenericParamCst::Type {
+            name,
+            bounds: stash.alloc_slice(&bounds),
+            span,
+        }
     }
 
     fn parse_constrained_type_param(

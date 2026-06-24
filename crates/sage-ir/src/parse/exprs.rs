@@ -457,9 +457,13 @@ impl<'a, 'db> Parser<'a, 'db> {
                     span,
                 })
             });
-        let else_ = node
-            .child_by_field_name("alternative")
-            .map(|n| self.parse_expr(stash, n, item_start));
+        let else_ = node.child_by_field_name("alternative").and_then(|n| {
+            // The alternative is an `else_clause` node; unwrap to its body.
+            let mut cursor = n.walk();
+            n.children(&mut cursor)
+                .find(|c| c.is_named())
+                .map(|inner| self.parse_expr(stash, inner, item_start))
+        });
 
         ExprCstKind::If(cond, then, else_)
     }
