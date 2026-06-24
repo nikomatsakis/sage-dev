@@ -76,6 +76,62 @@ impl TestCrate {
     }
 }
 
+/// A diagnostic with resolved file position information.
+#[derive(Clone, Debug)]
+pub struct ResolvedDiagnostic {
+    pub line: usize,
+    pub message: String,
+}
+
+/// Collect diagnostics from a source file, resolved to line numbers.
+pub fn collect_diagnostics(source: &str) -> Vec<ResolvedDiagnostic> {
+    collect_diagnostics_files(&[("lib.rs", source)])
+}
+
+/// Collect diagnostics from multiple files, resolved to line numbers.
+pub fn collect_diagnostics_files(files: &[(&str, &str)]) -> Vec<ResolvedDiagnostic> {
+    let mut db = Database::default();
+    let mut lib_file = None;
+    for (path, content) in files {
+        let sf = db.add_source_file(path.to_string(), content.to_string());
+        if *path == "lib.rs" || *path == "main.rs" {
+            lib_file = Some(sf);
+        }
+    }
+    let lib_file = lib_file.expect("fixture must include lib.rs or main.rs");
+
+    db.attach(|db| {
+        let (_krate, root) = setup_root_module(db, lib_file);
+        let mut diagnostics = Vec::new();
+
+        let items = root.expanded_module_items(db);
+        for item in items {
+            if let sage_ir::symbol::SymbolData::FnSymbol(FnSymbol::Local(local_fn)) = item.data(db)
+            {
+                let checked = local_fn.body(db);
+                for diag in &checked.diagnostics {
+                    let abs = diag.span.resolve(db);
+                    let source_text = match abs.source {
+                        sage_ir::span::ParseSource::SourceFile(sf) => sf.text(db),
+                        _ => continue,
+                    };
+                    let line = source_text[..abs.start as usize]
+                        .chars()
+                        .filter(|&c| c == '\n')
+                        .count()
+                        + 1;
+                    diagnostics.push(ResolvedDiagnostic {
+                        line,
+                        message: diag.message.clone(),
+                    });
+                }
+            }
+        }
+
+        diagnostics
+    })
+}
+
 /// Execute a callback with a fully set-up sage crate from in-memory source.
 /// This handles the salsa tracked-function requirement for creating tracked structs.
 pub fn with_test_crate<R>(

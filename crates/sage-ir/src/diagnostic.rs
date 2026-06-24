@@ -127,7 +127,6 @@ impl ErrorReported {
 // Rendering
 // ---------------------------------------------------------------------------
 
-use crate::source::SourceFile;
 use crate::span::ParseSource;
 
 impl<'db> Diagnostic<'db> {

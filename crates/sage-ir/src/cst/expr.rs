@@ -485,7 +485,7 @@ impl<'db> ExprCst<'db> {
                 let fields_slice = check.stash_mut().alloc_slice(&rfields);
                 let result = struct_lit_ty(check, res);
                 if let Some(local) = result.local {
-                    check_struct_lit_fields(check, local, result.type_args, fields_slice, span);
+                    check_struct_lit_fields(check, local, result.type_args, fields_slice);
                 }
                 (TyExprData::StructLit(res, fields_slice), result.ty)
             }
@@ -764,7 +764,6 @@ fn check_struct_lit_fields<'db>(
     local: crate::local_syms::structs::LocalStructSym<'db>,
     type_args: Slice<Ptr<Ty<'db>>>,
     fields: Slice<TyFieldInit<'db>>,
-    span: RelativeSpan,
 ) {
     use crate::ty::BinderExt;
     use crate::ty_fold::{SubstTarget, Substitute, TyFolder};
