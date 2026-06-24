@@ -78,13 +78,15 @@ impl<'db> LocalFnSym<'db> {
     #[salsa::tracked(returns(ref))]
     pub fn body(self, db: &'db dyn crate::Db) -> CheckedBody<'db> {
         use crate::check::BodyCheck;
+        use crate::local_syms::LocalModItemSym;
         use crate::resolve::Resolver;
         use crate::ty::BinderExt;
 
         let sig = self.sig(db);
         let (src, cst) = self.cst(db).open_deref();
 
-        let mut bx = BodyCheck::new(db, src, Resolver::new(db, self.scope(db)));
+        let current_sym = LocalModItemSym::Function(self);
+        let mut bx = BodyCheck::new(db, src, Resolver::new(db, self.scope(db)), current_sym);
 
         // Bring generics into scope.
         bx.resolver.ribs.add_generic_params(db, sig.iter_symbols());
@@ -106,7 +108,10 @@ impl<'db> LocalFnSym<'db> {
 
         // Constrain body type against declared return type.
         let body_ty = bx.stash()[body_expr].ty;
-        bx.require_coerce(body_ty, imported.ret);
+        let body_span = bx.stash()[body_expr].span;
+        if let Err(e) = bx.require_coerce(body_ty, imported.ret, body_span) {
+            bx.catch(e);
+        }
 
         // Resolve remaining inference variables.
         bx.finalize();

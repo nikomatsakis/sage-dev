@@ -646,6 +646,8 @@ Subsequent phases refine the rendering. Existing snapshots from earlier phases g
 
 ### Phase 1: Structured diagnostics with spans
 
+**Status: DONE**
+
 **Snapshot test:**
 ```rust
 #[test]
@@ -658,45 +660,27 @@ fn error_has_span() {
 After implementing, `UPDATE_EXPECT=1` fills in:
 ```rust
         .check_errors(expect![[r#"
-            error at 25..26: type mismatch: expected `bool`, found `u32`
+            error at 23..28: type mismatch: expected `bool`, found `u32`
         "#]]);
 ```
 
 Today this same test would produce `"type mismatch: expected `bool`, found `u32`"` with no location. The existing `return_type_mismatch` test's snapshot also updates — it gains a span prefix. The diff shows the improvement.
 
-**Work:**
-- Define new `Diagnostic<'db>`, `Span<'db>` enum, `Label<'db>`, `Severity`, `ErrorReported` in `sage-ir/src/diagnostic.rs`
-- Define `TypeError<'db>` error type with `to_diagnostic(&self, cx: &BodyCheck) -> Diagnostic<'db>`
-- Add `LocalModItemSym::absolute_span(db)` method (used as the anchor type in `Span`)
-- Store `current_sym: LocalModItemSym<'db>` on `BodyCheck`; add `report()` and `catch()` methods
-- Change `Ty::Error` → `Ty::Error(ErrorReported)`, `Res::Error` → `Res::Error(ErrorReported)`
-- Convert `require_eq`/`require_sub`/`require_coerce` to return `Result<(), TypeError<'db>>`; add span parameter
-- Migrate all ~16 constraint call sites in `cst/expr.rs` to catch and report
-- Migrate all `Ty::Error`/`Res::Error` construction sites (see table below)
-- Change `CheckedBody.diagnostics` from `Vec<String>` to `Vec<Diagnostic<'db>>`
-- Update test harness `collect_errors()` to render diagnostics with spans (simple format: `"error at {start}..{end}: {message}"`)
-- Existing tests get updated expectations (same message, now prefixed with span)
+**Work done:**
+- Defined new `Diagnostic<'db>`, `Span<'db>` enum, `Label<'db>`, `Severity`, `ErrorReported` in `sage-ir/src/diagnostic.rs`
+- Defined `TypeError<'db>` error type with `to_diagnostic(&self, cx: &BodyCheck) -> Diagnostic<'db>` (lives in `check/body.rs` for now)
+- `LocalModItemSym::absolute_span(db)` already existed — used as the anchor type in `Span`
+- Stored `current_sym: LocalModItemSym<'db>` on `BodyCheck`; added `report()`, `catch()`, and `span()` methods
+- Converted `require_eq`/`require_sub`/`require_coerce` to return `Result<(), TypeError<'db>>` with a `span: RelativeSpan` parameter
+- Migrated all constraint call sites in `cst/expr.rs` (if, while, binary, assign, call, match arm, let, array, struct fields) to catch and report
+- Changed `CheckedBody.diagnostics` from `Vec<String>` to `Vec<Diagnostic<'db>>`
+- Updated test harness `collect_errors()` to render diagnostics with spans (simple format: `"error at {start}..{end}: {message}"`)
+- All 10 existing error tests updated with span prefixes
 
-**Migration of `Ty::Error` / `Res::Error` construction sites:**
-
-| Site | File | Strategy |
-|------|------|----------|
-| `ExprCstKind::Missing` | `cst/expr.rs` | Report "syntax error" at the node's span |
-| `res_to_ty` matching `Res::Error` | `cst/expr.rs` | Extract `ErrorReported` from `Res::Error(e)` |
-| Struct lit resolution fail | `cst/expr.rs` | Extract from `Res::Error(e)` |
-| Struct lit non-struct sym | `cst/expr.rs` | Report "expected struct type" |
-| Type path `Resolution::Error` | `cst/ty.rs` | Propagate from resolver or report here |
-| `TypeCstKind::Error` | `cst/ty.rs` | Report "syntax error" (parser-originated) |
-| Missing fn body | `local_syms/fns.rs` | Not an error (abstract fn) — refactor to avoid `Ty::Error` or use a special constant |
-| Unresolved infer var | `check/body.rs` | Already emits diagnostic — wire `report()` |
-| Ambiguous name → `Res::Error` | `check/body.rs` | Already emits diagnostic — wire `report()` |
-| Resolution fallback → `Res::Error` | `check/body.rs` | Report "unresolved name" |
-
-**Propagation sites** — mechanical update to pattern-match `Ty::Error(e)`:
-- `require_eq` match arm in `check/body.rs`
-- `ty_fold.rs`
-- `check/infer/skeleton.rs` (decompose + recompose)
-- `fmt_ty` / `TyDisplay`
+**Deviations from design:**
+- `Ty::Error` and `Res::Err` remain bare variants (not `Ty::Error(ErrorReported)` / `Res::Error(ErrorReported)`). The `ErrorReported` witness is used at catch points but not threaded through the type system yet. This avoids a large multi-file refactor that would touch `skeleton.rs`, `ty_fold.rs`, and all pattern-match sites. Deferred to a future iteration.
+- `resolve_path` catches errors internally and returns `Res::Err` (fire-and-forget style) rather than returning `Result<Res, TypeError>`. This is simpler for the many call sites in pattern checking that just need the resolution value.
+- The span on the `return_type_mismatch` test is `23..28` (the body block expression) rather than just the inner `x` expression (`25..26`). This is because `require_coerce` gets the body expression's span. Phase 2 will add secondary labels pointing at the return type annotation.
 
 ### Phase 2: Secondary labels / context
 

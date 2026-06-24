@@ -191,7 +191,7 @@ impl<'db> ExprCst<'db> {
             }
             ExprCstKind::Path(path_ptr) => {
                 let path = check.source_stash[*path_ptr];
-                let res = check.resolve_path(path, Namespace::Value);
+                let res = check.resolve_path(path, Namespace::Value, span);
                 let ty = res_to_ty(check, res);
                 (TyExprData::Path(res), ty)
             }
@@ -220,7 +220,7 @@ impl<'db> ExprCst<'db> {
                     .map(|a| a.check_val(check))
                     .collect();
                 let args_slice = check.stash_mut().alloc_slice(&rargs);
-                let ty = check_call_ty(check, rf, args_slice);
+                let ty = check_call_ty(check, rf, args_slice, span);
                 (TyExprData::Call(rf, args_slice), ty)
             }
             ExprCstKind::MethodCall(obj, name, args) => {
@@ -243,7 +243,7 @@ impl<'db> ExprCst<'db> {
                 let rr = check.source_stash[*rhs].check(check);
                 let lhs_ty = check.stash()[rl].ty;
                 let rhs_ty = check.stash()[rr].ty;
-                let ty = check_binary_op_ty(check, *op, lhs_ty, rhs_ty);
+                let ty = check_binary_op_ty(check, *op, lhs_ty, rhs_ty, span);
                 (TyExprData::Binary(rl, *op, rr), ty)
             }
             ExprCstKind::Unary(op, operand) => {
@@ -261,23 +261,34 @@ impl<'db> ExprCst<'db> {
                 let rc = check.source_stash[*cond].check(check);
                 let cond_ty = check.stash()[rc].ty;
                 let bool_ty = check.alloc_ty(Ty::Bool);
-                check.require_eq(cond_ty, bool_ty);
+                let cond_span = check.source_stash[*cond].span;
+                if let Err(e) = check.require_eq(cond_ty, bool_ty, cond_span) {
+                    check.catch(e);
+                }
 
                 let result_ty = check.fresh_ty_var();
                 let rt = check.source_stash[*then].check(check);
                 let then_ty = check.stash()[rt].ty;
-                check.require_coerce(then_ty, result_ty);
+                let then_span = check.source_stash[*then].span;
+                if let Err(e) = check.require_coerce(then_ty, result_ty, then_span) {
+                    check.catch(e);
+                }
 
                 let re = match else_ {
                     Some(e) => {
                         let re = check.source_stash[*e].check(check);
                         let else_ty = check.stash()[re].ty;
-                        check.require_coerce(else_ty, result_ty);
+                        let else_span = check.source_stash[*e].span;
+                        if let Err(err) = check.require_coerce(else_ty, result_ty, else_span) {
+                            check.catch(err);
+                        }
                         Some(re)
                     }
                     None => {
                         let unit = check.unit_ty();
-                        check.require_eq(result_ty, unit);
+                        if let Err(e) = check.require_eq(result_ty, unit, span) {
+                            check.catch(e);
+                        }
                         None
                     }
                 };
@@ -292,18 +303,26 @@ impl<'db> ExprCst<'db> {
 
                 let result_ty = check.fresh_ty_var();
                 let then_ty = check.stash()[rt].ty;
-                check.require_coerce(then_ty, result_ty);
+                let then_span = check.source_stash[*then].span;
+                if let Err(e) = check.require_coerce(then_ty, result_ty, then_span) {
+                    check.catch(e);
+                }
 
                 let re = match else_ {
                     Some(e) => {
                         let re = check.source_stash[*e].check(check);
                         let else_ty = check.stash()[re].ty;
-                        check.require_coerce(else_ty, result_ty);
+                        let else_span = check.source_stash[*e].span;
+                        if let Err(err) = check.require_coerce(else_ty, result_ty, else_span) {
+                            check.catch(err);
+                        }
                         Some(re)
                     }
                     None => {
                         let unit = check.unit_ty();
-                        check.require_eq(result_ty, unit);
+                        if let Err(e) = check.require_eq(result_ty, unit, span) {
+                            check.catch(e);
+                        }
                         None
                     }
                 };
@@ -328,7 +347,10 @@ impl<'db> ExprCst<'db> {
                 let rc = check.source_stash[*cond].check(check);
                 let cond_ty = check.stash()[rc].ty;
                 let bool_ty = check.alloc_ty(Ty::Bool);
-                check.require_eq(cond_ty, bool_ty);
+                let cond_span = check.source_stash[*cond].span;
+                if let Err(e) = check.require_eq(cond_ty, bool_ty, cond_span) {
+                    check.catch(e);
+                }
                 let rb = check.source_stash[*body].check(check);
                 let ty = check.unit_ty();
                 (TyExprData::While(rc, rb), ty)
@@ -371,7 +393,10 @@ impl<'db> ExprCst<'db> {
                 let rr = check.source_stash[*rhs].check(check);
                 let lhs_ty = check.stash()[rl].ty;
                 let rhs_ty = check.stash()[rr].ty;
-                check.require_coerce(rhs_ty, lhs_ty);
+                let rhs_span = check.source_stash[*rhs].span;
+                if let Err(e) = check.require_coerce(rhs_ty, lhs_ty, rhs_span) {
+                    check.catch(e);
+                }
                 let ty = check.unit_ty();
                 (TyExprData::Assign(rl, rr), ty)
             }
@@ -424,7 +449,9 @@ impl<'db> ExprCst<'db> {
                     .map(|e| {
                         let re = e.check_val(check);
                         let elem_ty = check.stash()[re].ty;
-                        check.require_coerce(elem_ty, result_ty);
+                        if let Err(err) = check.require_coerce(elem_ty, result_ty, e.span) {
+                            check.catch(err);
+                        }
                         re
                     })
                     .collect();
@@ -446,7 +473,7 @@ impl<'db> ExprCst<'db> {
             }
             ExprCstKind::StructLit(path_ptr, fields) => {
                 let path = check.source_stash[*path_ptr];
-                let res = check.resolve_path(path, Namespace::Type);
+                let res = check.resolve_path(path, Namespace::Type, span);
                 let rfields: Vec<_> = check.source_stash[*fields]
                     .iter()
                     .map(|fi| TyFieldInit {
@@ -458,7 +485,7 @@ impl<'db> ExprCst<'db> {
                 let fields_slice = check.stash_mut().alloc_slice(&rfields);
                 let result = struct_lit_ty(check, res);
                 if let Some(local) = result.local {
-                    check_struct_lit_fields(check, local, result.type_args, fields_slice);
+                    check_struct_lit_fields(check, local, result.type_args, fields_slice, span);
                 }
                 (TyExprData::StructLit(res, fields_slice), result.ty)
             }
@@ -492,13 +519,15 @@ impl<'db> StmtCst<'db> {
 
                 if let Some(init_ptr) = rinit {
                     let init_ty = cx.stash()[init_ptr].ty;
-                    cx.require_coerce(init_ty, pat_ty);
+                    let init_span = cx.stash()[init_ptr].span;
+                    if let Err(e) = cx.require_coerce(init_ty, pat_ty, init_span) {
+                        cx.catch(e);
+                    }
                 }
 
                 let ty_ann_ptr = ty_ann.map(|t| {
                     let resolved = cx.source_stash[t].check(cx);
-                    let ptr = cx.stash_mut().alloc(resolved);
-                    ptr
+                    cx.stash_mut().alloc(resolved)
                 });
 
                 TyStmtKind::Let(rpat, ty_ann_ptr, rinit)
@@ -523,7 +552,7 @@ impl<'db> PatCst<'db> {
             }
             PatCstKind::Path(path_ptr) => {
                 let path = cx.source_stash[*path_ptr];
-                let res = cx.resolve_path(path, Namespace::Value);
+                let res = cx.resolve_path(path, Namespace::Value, span);
                 TyPatKind::Path(res)
             }
             PatCstKind::Tuple(pats) => {
@@ -533,7 +562,7 @@ impl<'db> PatCst<'db> {
             }
             PatCstKind::Struct(path_ptr, fields) => {
                 let path = cx.source_stash[*path_ptr];
-                let res = cx.resolve_path(path, Namespace::Type);
+                let res = cx.resolve_path(path, Namespace::Type, span);
                 let rfields: Vec<_> = cx.source_stash[*fields]
                     .iter()
                     .map(|fp| TyFieldPat {
@@ -547,7 +576,7 @@ impl<'db> PatCst<'db> {
             }
             PatCstKind::TupleStruct(path_ptr, pats) => {
                 let path = cx.source_stash[*path_ptr];
-                let res = cx.resolve_path(path, Namespace::Value);
+                let res = cx.resolve_path(path, Namespace::Value, span);
                 let rpats: Vec<_> = cx.source_stash[*pats].iter().map(|p| p.check(cx)).collect();
                 let pats_slice = cx.stash_mut().alloc_slice(&rpats);
                 TyPatKind::TupleStruct(res, pats_slice)
@@ -580,7 +609,10 @@ impl<'db> MatchArmCst<'db> {
         let rg = self.guard.map(|g| cx.source_stash[g].check(cx));
         let rb = cx.source_stash[self.body].check(cx);
         let body_ty = cx.stash()[rb].ty;
-        cx.require_coerce(body_ty, result_ty);
+        let body_span = cx.source_stash[self.body].span;
+        if let Err(e) = cx.require_coerce(body_ty, result_ty, body_span) {
+            cx.catch(e);
+        }
         cx.resolver.ribs.pop_scope();
         TyMatchArm {
             pat: rp,
@@ -647,8 +679,11 @@ fn check_binary_op_ty<'db>(
     op: BinaryOp,
     lhs_ty: Ptr<Ty<'db>>,
     rhs_ty: Ptr<Ty<'db>>,
+    span: RelativeSpan,
 ) -> Ptr<Ty<'db>> {
-    cx.require_eq(rhs_ty, lhs_ty);
+    if let Err(e) = cx.require_eq(rhs_ty, lhs_ty, span) {
+        cx.catch(e);
+    }
     match op {
         BinaryOp::Eq
         | BinaryOp::Ne
@@ -729,6 +764,7 @@ fn check_struct_lit_fields<'db>(
     local: crate::local_syms::structs::LocalStructSym<'db>,
     type_args: Slice<Ptr<Ty<'db>>>,
     fields: Slice<TyFieldInit<'db>>,
+    span: RelativeSpan,
 ) {
     use crate::ty::BinderExt;
     use crate::ty_fold::{SubstTarget, Substitute, TyFolder};
@@ -761,7 +797,9 @@ fn check_struct_lit_fields<'db>(
                     cx.stash_mut().alloc(ty_data)
                 };
                 let init_ty = cx.stash()[field_init.value].ty;
-                cx.require_coerce(init_ty, declared_ty);
+                if let Err(e) = cx.require_coerce(init_ty, declared_ty, span) {
+                    cx.catch(e);
+                }
                 break;
             }
         }
@@ -819,6 +857,7 @@ fn check_call_ty<'db>(
     cx: &mut BodyCheck<'_, 'db>,
     callee: Ptr<TyExpr<'db>>,
     arg_exprs: Slice<Ptr<TyExpr<'db>>>,
+    call_span: RelativeSpan,
 ) -> Ptr<Ty<'db>> {
     let callee_ty_ptr = cx.stash()[callee].ty;
     let callee_ty_ptr = cx.find_mut(callee_ty_ptr);
@@ -830,10 +869,16 @@ fn check_call_ty<'db>(
             let arg_ptrs: Vec<_> = cx.stash()[arg_exprs].to_vec();
             for (param_ty, arg_expr) in param_tys.iter().zip(arg_ptrs.iter()) {
                 let arg_ty = cx.stash()[*arg_expr].ty;
-                cx.require_eq(arg_ty, *param_ty);
+                let arg_span = cx.stash()[*arg_expr].span;
+                if let Err(e) = cx.require_eq(arg_ty, *param_ty, arg_span) {
+                    cx.catch(e);
+                }
             }
             ret
         }
-        _ => cx.fresh_ty_var(),
+        _ => {
+            let _ = call_span;
+            cx.fresh_ty_var()
+        }
     }
 }

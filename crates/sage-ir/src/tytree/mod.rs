@@ -2,6 +2,7 @@ use sage_stash::{AllocStashData, Ptr, Slice, Stashed};
 
 use crate::cst::Mutability;
 use crate::cst::expr::{BinaryOp, Literal, UnaryOp};
+use crate::diagnostic::Diagnostic;
 use crate::name::Name;
 use crate::span::RelativeSpan;
 use crate::symbol::Symbol;
@@ -43,7 +44,7 @@ pub type TyBody<'db> = Stashed<Ptr<TyBodyData<'db>>>;
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CheckedBody<'db> {
     pub body: TyBody<'db>,
-    pub diagnostics: Vec<String>,
+    pub diagnostics: Vec<Diagnostic<'db>>,
 }
 
 unsafe impl salsa::Update for CheckedBody<'_> {
