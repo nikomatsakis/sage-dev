@@ -456,8 +456,11 @@ impl<'db> ExprCst<'db> {
                     })
                     .collect();
                 let fields_slice = check.stash_mut().alloc_slice(&rfields);
-                let ty = struct_lit_ty(check, res);
-                (TyExprData::StructLit(res, fields_slice), ty)
+                let result = struct_lit_ty(check, res);
+                if let Some(local) = result.local {
+                    check_struct_lit_fields(check, local, result.type_args, fields_slice);
+                }
+                (TyExprData::StructLit(res, fields_slice), result.ty)
             }
             ExprCstKind::Range(lo, hi) => {
                 let rl = lo.map(|l| check.source_stash[l].check(check));
@@ -629,7 +632,8 @@ fn def_to_ty<'db>(cx: &mut BodyCheck<'_, 'db>, sym: crate::symbol::Symbol<'db>) 
             let sig_stash = sig.stash();
             let binder = sig.root();
 
-            let type_args: Vec<_> = sig.iter_symbols().map(|_| cx.fresh_ty_var_data()).collect();
+            let type_arg_ptrs: Vec<_> = sig.iter_symbols().map(|_| cx.fresh_ty_var()).collect();
+            let type_args: Vec<_> = type_arg_ptrs.iter().map(|&ptr| cx.stash()[ptr]).collect();
             let instantiated =
                 crate::ty_fold::instantiate_fn_sig(sig_stash, cx.stash_mut(), &binder, type_args);
             cx.alloc_ty(Ty::FnPtr(instantiated.params, instantiated.ret))
@@ -668,14 +672,26 @@ fn check_binary_op_ty<'db>(
     }
 }
 
-fn struct_lit_ty<'db>(cx: &mut BodyCheck<'_, 'db>, res: Res<'db>) -> Ptr<Ty<'db>> {
+struct StructLitResult<'db> {
+    ty: Ptr<Ty<'db>>,
+    local: Option<crate::local_syms::structs::LocalStructSym<'db>>,
+    type_args: Slice<Ptr<Ty<'db>>>,
+}
+
+fn struct_lit_ty<'db>(cx: &mut BodyCheck<'_, 'db>, res: Res<'db>) -> StructLitResult<'db> {
     use crate::symbol::SymbolData;
     use crate::ty::BinderExt;
 
     let sym = match res {
         Res::Def(sym) => sym,
-        Res::Err => return cx.alloc_ty(Ty::Error),
-        Res::Local(_) => return cx.alloc_ty(Ty::Error),
+        Res::Err | Res::Local(_) => {
+            let empty = cx.stash_mut().alloc_slice(&[]);
+            return StructLitResult {
+                ty: cx.alloc_ty(Ty::Error),
+                local: None,
+                type_args: empty,
+            };
+        }
     };
 
     match sym.data(cx.db) {
@@ -683,13 +699,72 @@ fn struct_lit_ty<'db>(cx: &mut BodyCheck<'_, 'db>, res: Res<'db>) -> Ptr<Ty<'db>
             let sig = local.sig(cx.db);
             let type_args: Vec<_> = sig.iter_symbols().map(|_| cx.fresh_ty_var()).collect();
             let type_args_slice = cx.stash_mut().alloc_slice(&type_args);
-            cx.alloc_ty(Ty::Adt(sym, type_args_slice))
+            StructLitResult {
+                ty: cx.alloc_ty(Ty::Adt(sym, type_args_slice)),
+                local: Some(local),
+                type_args: type_args_slice,
+            }
         }
         SymbolData::StructSymbol(crate::symbol::StructSymbol::Ext(_)) => {
             let type_args_slice = cx.stash_mut().alloc_slice(&[]);
-            cx.alloc_ty(Ty::Adt(sym, type_args_slice))
+            StructLitResult {
+                ty: cx.alloc_ty(Ty::Adt(sym, type_args_slice)),
+                local: None,
+                type_args: type_args_slice,
+            }
         }
-        _ => cx.alloc_ty(Ty::Error),
+        _ => {
+            let empty = cx.stash_mut().alloc_slice(&[]);
+            StructLitResult {
+                ty: cx.alloc_ty(Ty::Error),
+                local: None,
+                type_args: empty,
+            }
+        }
+    }
+}
+
+fn check_struct_lit_fields<'db>(
+    cx: &mut BodyCheck<'_, 'db>,
+    local: crate::local_syms::structs::LocalStructSym<'db>,
+    type_args: Slice<Ptr<Ty<'db>>>,
+    fields: Slice<TyFieldInit<'db>>,
+) {
+    use crate::ty::BinderExt;
+    use crate::ty_fold::{SubstTarget, Substitute, TyFolder};
+    use rustc_hash::FxHashMap;
+
+    let sig = local.sig(cx.db);
+    let generic_params: Vec<_> = sig.iter_symbols().collect();
+    let type_arg_ptrs: Vec<_> = cx.stash()[type_args].to_vec();
+
+    let mut subst = FxHashMap::default();
+    for (param, &arg_ptr) in generic_params.iter().zip(type_arg_ptrs.iter()) {
+        subst.insert(*param, SubstTarget::Ty(cx.stash()[arg_ptr]));
+    }
+
+    let fields_stashed = local.fields(cx.db);
+    let fields_stash = fields_stashed.stash();
+    let struct_fields = fields_stashed.root();
+    let field_sigs = &fields_stash[struct_fields.fields];
+
+    let init_fields: Vec<_> = cx.stash()[fields].to_vec();
+    for field_init in &init_fields {
+        for field_sig in field_sigs {
+            if field_sig.name == field_init.name {
+                let declared_ty = if subst.is_empty() {
+                    use sage_stash::StashCopy;
+                    field_sig.ty.stash_copy(fields_stash, cx.stash_mut())
+                } else {
+                    let mut folder = Substitute::new(fields_stash, cx.stash_mut(), subst.clone());
+                    let ty_data = folder.fold_ty(fields_stash[field_sig.ty]);
+                    cx.stash_mut().alloc(ty_data)
+                };
+                let init_ty = cx.stash()[field_init.value].ty;
+                cx.require_coerce(init_ty, declared_ty);
+                break;
+            }
+        }
     }
 }
 
@@ -714,20 +789,20 @@ fn lookup_field_ty<'db>(
 
     match sym.data(cx.db) {
         SymbolData::StructSymbol(crate::symbol::StructSymbol::Local(local)) => {
+            let sig = local.sig(cx.db);
+            let generic_params: Vec<_> = sig.iter_symbols().collect();
+            let type_arg_ptrs: Vec<_> = cx.stash()[type_args].to_vec();
+
             let fields_stashed = local.fields(cx.db);
             let fields_stash = fields_stashed.stash();
             let struct_fields = fields_stashed.root();
             let field_sigs = &fields_stash[struct_fields.fields];
 
-            let type_args_vec: Vec<_> = cx.stash()[type_args].to_vec();
-            let sig = local.sig(cx.db);
-            let generic_params: Vec<_> = sig.iter_symbols().collect();
-
             for field_sig in field_sigs {
                 if field_sig.name == field_name {
                     let mut subst = FxHashMap::default();
-                    for (param, arg_ptr) in generic_params.iter().zip(type_args_vec.iter()) {
-                        subst.insert(*param, SubstTarget::Ty(cx.stash()[*arg_ptr]));
+                    for (param, &arg_ptr) in generic_params.iter().zip(type_arg_ptrs.iter()) {
+                        subst.insert(*param, SubstTarget::Ty(cx.stash()[arg_ptr]));
                     }
                     let mut folder = Substitute::new(fields_stash, cx.stash_mut(), subst);
                     let field_ty_data = folder.fold_ty(fields_stash[field_sig.ty]);
