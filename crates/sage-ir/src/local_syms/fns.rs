@@ -110,6 +110,7 @@ impl<'db> LocalFnSym<'db> {
 
         // Resolve remaining inference variables.
         bx.finalize();
+        bx.resolve_types();
 
         bx.finish(body_expr, cst.span)
     }

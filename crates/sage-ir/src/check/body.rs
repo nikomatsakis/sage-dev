@@ -422,6 +422,28 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
     }
 
     // ------------------------------------------------------------------
+    // Type resolution (post-finalize)
+    // ------------------------------------------------------------------
+
+    /// Rewrite all InferVar entries in the stash with their resolved types.
+    /// Must be called after `finalize()` so that the egraph has resolved all vars.
+    pub fn resolve_types(&mut self) {
+        let version = self.egraph.current_version();
+        let var_count = self.egraph.version_tree().variable_count_at(version);
+
+        let dst = &mut self.check.target_stash;
+        for i in 0..var_count.0 {
+            let idx = InferVarIndex(i);
+            let ty_ptr = dst.alloc(Ty::InferVar(idx));
+            let resolved = self.egraph.find_mut(ty_ptr);
+            if resolved != ty_ptr {
+                let resolved_ty = dst[resolved];
+                dst[ty_ptr] = resolved_ty;
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
     // Finish
     // ------------------------------------------------------------------
 
