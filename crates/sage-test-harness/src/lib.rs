@@ -42,9 +42,10 @@ impl TestCrate {
     }
 
     fn collect_errors(&self) -> Vec<String> {
-        let db = Database::default();
+        let mut db = Database::default();
+        let lib_file = self.register_files(&mut db);
         db.attach(|db| {
-            let (_krate, root) = self.setup(db);
+            let (_krate, root) = setup_root_module(db, lib_file);
             let mut all_errors = Vec::new();
 
             let items = root.expanded_module_items(db);
@@ -61,15 +62,15 @@ impl TestCrate {
         })
     }
 
-    fn setup<'db>(&self, db: &'db dyn Db) -> (LocalCrateSymbol<'db>, ModSymbol<'db>) {
-        let lib_file = self
-            .files
-            .iter()
-            .find(|(path, _)| path == "lib.rs" || path == "main.rs")
-            .map(|(path, text)| SourceFile::new(db, path.clone(), text.clone()))
-            .expect("fixture has no lib.rs or main.rs");
-
-        setup_root_module(db, lib_file)
+    fn register_files(&self, db: &mut Database) -> SourceFile {
+        let mut lib_file = None;
+        for (path, content) in &self.files {
+            let sf = db.add_source_file(path.clone(), content.clone());
+            if path == "lib.rs" || path == "main.rs" {
+                lib_file = Some(sf);
+            }
+        }
+        lib_file.expect("fixture has no lib.rs or main.rs")
     }
 }
 
