@@ -141,7 +141,7 @@ Both sides emit the same types. Key structures:
 
 - **`Crate<Def>`** — root, contains a `Module<Def>`
 - **`Module<Def>`** — `def`, `name`, `items: Vec<Item<Def>>`
-- **`Item<Def>`** — `Fn(FnItem)` | `Struct(StructItem)` | `Mod(Module)`
+- **`Item<Def>`** — `Fn(FnItem)` | `Struct(StructAst)` | `Mod(Module)`
 - **`FnItem<Def>`** — `name`, `params`, `return_ty`, `body: Option<Expr<Def>>`
 - **`Expr<Def>`** — `Local` | `Literal` | `BinaryOp` | `Call` | `StructLit` | `Field` | `Block` | `Deref` | `Ref`
 - **`Type<Def>`** — `Primitive(String)` | `Def { target, type_args }` | `Ref` | `Unit` | `Tuple`

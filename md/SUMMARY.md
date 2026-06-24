@@ -31,6 +31,7 @@
     - [Trait System](./rfds/trait-system.md)
     - [IR Reshape](./rfds/ir-reshape.md)
     - [Parsing](./rfds/parse.md)
+    - [Oracle Test Framework](./rfds/oracle-test-framework.md)
   - [Completed](./rfds/completed.md)
     - [Initial Setup](./rfds/initial-setup.md)
     - [Relative Span Model](./rfds/relative-span-model.md)
