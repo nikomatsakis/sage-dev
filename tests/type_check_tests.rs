@@ -64,7 +64,6 @@ fn bool_literal() {
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "struct literal inference not resolving — egraph finalize bug"]
 fn struct_lit_basic() {
     TestCrate::in_memory(
         "struct Wrapper { value: u32 }
@@ -92,7 +91,6 @@ fn struct_field_type_mismatch() {
 }
 
 #[test]
-#[ignore = "struct literal inference not resolving — egraph finalize bug"]
 fn struct_lit_field_mismatch() {
     TestCrate::in_memory(
         "struct Wrapper { value: u32 }
@@ -106,7 +104,6 @@ fn struct_lit_field_mismatch() {
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "generic struct literal inference not resolving — egraph finalize bug"]
 fn generic_struct_lit() {
     TestCrate::in_memory(
         "struct Pair<A, B> { first: A, second: B }
@@ -144,7 +141,6 @@ fn generic_struct_infer_from_field() {
 }
 
 #[test]
-#[ignore = "generic struct literal inference not resolving — egraph finalize bug"]
 fn generic_struct_infer_mismatch() {
     // T inferred as u32 from field, but return expects Wrapper<bool>
     TestCrate::in_memory(
@@ -196,7 +192,6 @@ fn nested_generic_mismatch() {
 }
 
 #[test]
-#[ignore = "struct literal inference not resolving — egraph finalize bug"]
 fn struct_construct_then_access() {
     // Build a struct, bind it, access a field
     TestCrate::in_memory(
@@ -207,7 +202,6 @@ fn struct_construct_then_access() {
 }
 
 #[test]
-#[ignore = "struct literal inference not resolving — egraph finalize bug"]
 fn generic_construct_then_access() {
     TestCrate::in_memory(
         "struct Wrapper<T> { value: T }
