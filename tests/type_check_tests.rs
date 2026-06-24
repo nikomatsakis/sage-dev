@@ -129,10 +129,13 @@ fn struct_lit_field_mismatch() {
     )
     .check_errors(expect![[r#"
         error: type mismatch: expected `u32`, found `bool`
-         --> lib.rs:2:30
+         --> lib.rs:2:40
           |
         2 |          fn f() -> Wrapper { Wrapper { value: true } }
-          |                              ^^^^^^^^^^^^^^^^^^^^^^^ found `bool`"#]]);
+          |                                        ^^^^^^^^^^^
+          |                                        |
+          |                                        found `bool`
+          |                                        expected `u32` for this field"#]]);
 }
 
 // ---------------------------------------------------------------------------

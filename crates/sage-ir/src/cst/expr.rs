@@ -797,7 +797,10 @@ fn check_struct_lit_fields<'db>(
                     cx.stash_mut().alloc(ty_data)
                 };
                 let init_ty = cx.stash()[field_init.value].ty;
-                if let Err(e) = cx.require_coerce(init_ty, declared_ty, span) {
+                if let Err(e) = cx.require_coerce(init_ty, declared_ty, field_init.span) {
+                    let e = e.with_context(crate::check::body::ErrorContext::FieldInit {
+                        field_span: field_init.span,
+                    });
                     cx.catch(e);
                 }
                 break;

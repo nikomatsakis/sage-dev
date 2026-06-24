@@ -776,31 +776,28 @@ After `UPDATE_EXPECT=1`, all snapshots now show full rustc-style source snippets
 
 ### Phase 5: Sub-diagnostics / wrap
 
-**Snapshot test:**
-```rust
-#[test]
-fn wrapped_error_shows_note() {
-    TestCrate::in_memory(
-        "struct Point { x: u32 }
-         fn f() -> Point { Point { x: true } }"
-    )
-    .check_errors(expect![[""]]);
-}
+**Status: DONE**
+
+The struct field init error now points at the individual field initializer (not the whole struct literal) and includes an `ErrorContext::FieldInit` label:
+
+```
+error: type mismatch: expected `u32`, found `bool`
+ --> lib.rs:2:40
+  |
+2 |          fn f() -> Wrapper { Wrapper { value: true } }
+  |                                        ^^^^^^^^^^^
+  |                                        |
+  |                                        found `bool`
+  |                                        expected `u32` for this field
 ```
 
-After Phase 4, this test's snapshot shows the raw `"type mismatch"`. After Phase 5, running `UPDATE_EXPECT=1` changes it to show the wrapped form with a note. The snapshot diff is the proof:
+**Work done:**
+- At struct-lit field checking, errors are caught with `ErrorContext::FieldInit { field_span }` using the field initializer's own span (not the whole struct literal)
+- The diagnostic now correctly points at the offending field initializer expression
 
-```diff
-- error: type mismatch
-+ error: invalid struct field initializer
-    ...
-+   = note: type mismatch: expected `u32`, found `bool`
-```
-
-**Work:**
-- At struct-lit checking code, use `.wrap("invalid struct field initializer")` so the low-level subtyping error becomes a note
-- Ensure `annotate_snippets` rendering handles `notes` field
-- Apply similar wrapping patterns to other catch points where context is valuable
+**Deviations from design:**
+- Did not implement a `.wrap()` / sub-diagnostic note pattern — instead used the same `ErrorContext` mechanism from Phase 2, which produces the same user-visible effect (context labels on the diagnostic) without a separate concept. This is simpler and consistent with the rest of the system.
+- The headline message remains "type mismatch" rather than changing to "invalid struct field initializer" — the field context label makes the meaning clear.
 
 ### Phase 6: Oracle harness integration
 
