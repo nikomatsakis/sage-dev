@@ -110,6 +110,12 @@ impl<'db> LocalFnSym<'db> {
         let body_ty = bx.stash()[body_expr].ty;
         let body_span = bx.stash()[body_expr].span;
         if let Err(e) = bx.require_coerce(body_ty, imported.ret, body_span) {
+            let e = if let Some(ret_ptr) = cst.ret {
+                let ret_span = src[ret_ptr].span;
+                e.with_context(crate::check::body::ErrorContext::ReturnType { ret_span })
+            } else {
+                e
+            };
             bx.catch(e);
         }
 

@@ -7,9 +7,10 @@ fn identity_no_errors() {
 
 #[test]
 fn return_type_mismatch() {
-    TestCrate::in_memory("fn bad(x: u32) -> bool { x }").check_errors(expect![
-        "error at 23..28: type mismatch: expected `bool`, found `u32`"
-    ]);
+    TestCrate::in_memory("fn bad(x: u32) -> bool { x }").check_errors(expect![[r#"
+        error at 23..28: type mismatch: expected `bool`, found `u32`
+          at 23..28: found `u32`
+          at 18..22: expected `bool` because of return type"#]]);
 }
 
 #[test]
@@ -19,9 +20,9 @@ fn binary_add_same_type() {
 
 #[test]
 fn binary_add_type_mismatch() {
-    TestCrate::in_memory("fn bad(x: u32, y: bool) -> u32 { x + y }").check_errors(expect![
-        "error at 33..38: type mismatch: expected `u32`, found `bool`"
-    ]);
+    TestCrate::in_memory("fn bad(x: u32, y: bool) -> u32 { x + y }").check_errors(expect![[r#"
+        error at 33..38: type mismatch: expected `u32`, found `bool`
+          at 33..38: found `bool`"#]]);
 }
 
 #[test]
@@ -32,7 +33,10 @@ fn if_else_same_type() {
 #[test]
 fn if_else_branch_mismatch() {
     TestCrate::in_memory("fn bad(b: bool) -> u32 { if b { 1 } else { true } }").check_errors(
-        expect!["error at 23..51: type mismatch: expected `u32`, found `bool`"],
+        expect![[r#"
+            error at 23..51: type mismatch: expected `u32`, found `bool`
+              at 23..51: found `bool`
+              at 19..22: expected `u32` because of return type"#]],
     );
 }
 
@@ -43,9 +47,10 @@ fn let_binding_inferred() {
 
 #[test]
 fn let_binding_mismatch_return() {
-    TestCrate::in_memory("fn f(x: u32) -> bool { let y = x; y }").check_errors(expect![
-        "error at 21..37: type mismatch: expected `bool`, found `u32`"
-    ]);
+    TestCrate::in_memory("fn f(x: u32) -> bool { let y = x; y }").check_errors(expect![[r#"
+        error at 21..37: type mismatch: expected `bool`, found `u32`
+          at 21..37: found `u32`
+          at 16..20: expected `bool` because of return type"#]]);
 }
 
 #[test]
@@ -91,9 +96,10 @@ fn struct_field_type_mismatch() {
         "struct Wrapper { value: u32 }
          fn f(w: Wrapper) -> bool { w.value }",
     )
-    .check_errors(expect![
-        "error at 64..75: type mismatch: expected `bool`, found `u32`"
-    ]);
+    .check_errors(expect![[r#"
+        error at 64..75: type mismatch: expected `bool`, found `u32`
+          at 64..75: found `u32`
+          at 59..63: expected `bool` because of return type"#]]);
 }
 
 #[test]
@@ -102,9 +108,9 @@ fn struct_lit_field_mismatch() {
         "struct Wrapper { value: u32 }
          fn f() -> Wrapper { Wrapper { value: true } }",
     )
-    .check_errors(expect![
-        "error at 59..82: type mismatch: expected `u32`, found `bool`"
-    ]);
+    .check_errors(expect![[r#"
+        error at 59..82: type mismatch: expected `u32`, found `bool`
+          at 59..82: found `bool`"#]]);
 }
 
 // ---------------------------------------------------------------------------
@@ -135,9 +141,10 @@ fn generic_struct_field_mismatch() {
         "struct Wrapper<T> { value: T }
          fn f(w: Wrapper<u32>) -> bool { w.value }",
     )
-    .check_errors(expect![
-        "error at 70..81: type mismatch: expected `bool`, found `u32`"
-    ]);
+    .check_errors(expect![[r#"
+        error at 70..81: type mismatch: expected `bool`, found `u32`
+          at 70..81: found `u32`
+          at 65..69: expected `bool` because of return type"#]]);
 }
 
 #[test]
@@ -157,9 +164,10 @@ fn generic_struct_infer_mismatch() {
         "struct Wrapper<T> { value: T }
          fn f(x: u32) -> Wrapper<bool> { Wrapper { value: x } }",
     )
-    .check_errors(expect![
-        "error at 70..94: type mismatch: expected `bool`, found `u32`"
-    ]);
+    .check_errors(expect![[r#"
+        error at 70..94: type mismatch: expected `bool`, found `u32`
+          at 70..94: found `u32`
+          at 56..69: expected `bool` because of return type"#]]);
 }
 
 #[test]
@@ -179,9 +187,10 @@ fn generic_pair_wrong_field() {
         "struct Pair<A, B> { first: A, second: B }
          fn f(p: Pair<u32, bool>) -> u32 { p.second }",
     )
-    .check_errors(expect![
-        "error at 83..95: type mismatch: expected `u32`, found `bool`"
-    ]);
+    .check_errors(expect![[r#"
+        error at 83..95: type mismatch: expected `u32`, found `bool`
+          at 83..95: found `bool`
+          at 79..82: expected `u32` because of return type"#]]);
 }
 
 #[test]
@@ -200,9 +209,10 @@ fn nested_generic_mismatch() {
         "struct Wrapper<T> { value: T }
          fn f(w: Wrapper<Wrapper<u32>>) -> u32 { w.value }",
     )
-    .check_errors(expect![
-        "error at 78..89: type mismatch: expected `u32`, found `Wrapper<u32>`"
-    ]);
+    .check_errors(expect![[r#"
+        error at 78..89: type mismatch: expected `u32`, found `Wrapper<u32>`
+          at 78..89: found `Wrapper<u32>`
+          at 74..77: expected `u32` because of return type"#]]);
 }
 
 #[test]

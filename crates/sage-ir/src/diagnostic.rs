@@ -128,9 +128,21 @@ impl ErrorReported {
 // ---------------------------------------------------------------------------
 
 impl<'db> Diagnostic<'db> {
-    /// Simple one-line rendering: `"error at {start}..{end}: {message}"`
+    /// Multi-line rendering with labels:
+    /// ```text
+    /// error at {start}..{end}: {message}
+    ///   at {start}..{end}: {label_message}
+    /// ```
     pub fn render_short(&self, db: &'db dyn crate::Db) -> String {
         let abs = self.span.resolve(db);
-        format!("error at {}..{}: {}", abs.start, abs.end, self.message)
+        let mut out = format!("error at {}..{}: {}", abs.start, abs.end, self.message);
+        for label in &self.labels {
+            let label_abs = label.span.resolve(db);
+            out.push_str(&format!(
+                "\n  at {}..{}: {}",
+                label_abs.start, label_abs.end, label.message
+            ));
+        }
+        out
     }
 }

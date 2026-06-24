@@ -693,23 +693,27 @@ fn error_labels_expected_and_found() {
 }
 ```
 
-After implementing, `UPDATE_EXPECT=1` fills in something like:
+**Status: DONE**
+
+After implementing, `UPDATE_EXPECT=1` fills in:
 ```rust
         .check_errors(expect![[r#"
-            error at 25..26: type mismatch
-              at 25..26: found `u32`
-              at 18..22: expected `bool` because of return type
-        "#]]);
+            error at 23..28: type mismatch: expected `bool`, found `u32`
+              at 23..28: found `u32`
+              at 18..22: expected `bool` because of return type"#]]);
 ```
 
-The Phase 1 snapshot for this same input also updates — it now shows labels where before it only showed the primary span. The diff is the evidence.
+**Work done:**
+- Added `ErrorContext` enum (`ReturnType`, `Argument`, `FieldInit`) and `context: Option<ErrorContext>` field on `TypeError`
+- Added `.with_context()` method on `TypeError`
+- At return-type checking in `fns.rs`, errors are wrapped with `ErrorContext::ReturnType { ret_span }`
+- Enriched `to_diagnostic()` to render context as secondary labels (primary label shows "found `X`", secondary shows "expected `Y` because of return type")
+- `render_short()` now emits labels as indented sub-lines
 
-**Work:**
-- Add `ErrorContext` variants and `.with_context()` method on `TypeError`
-- At call sites in `cst/expr.rs`, use `.map_err(|e| e.with_context(...))` to annotate errors
-- Add `with_context` block helper for groups of operations
-- Enrich `to_diagnostic()` to render context as secondary labels
-- Convert `resolve_path()` to return `Result<Res<'db>, TypeError<'db>>`
+**Deviations from design:**
+- Did not convert `resolve_path()` to return `Result` — it remains fire-and-forget with internal `catch()`. This matches the Phase 1 deviation.
+- Did not add a `with_context` block helper — simple `.with_context(...)` on the error value at catch sites is sufficient for now.
+- The diagnostic message still includes both types in the headline (`"type mismatch: expected \`bool\`, found \`u32\`"`) rather than splitting them purely into labels. This avoids losing information when rendered without labels.
 
 ### Phase 3: `TyDisplay` — reusable type formatting
 

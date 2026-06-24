@@ -25,6 +25,7 @@ use super::infer::version::{Universe, VarInfo, Version};
 pub struct TypeError<'db> {
     pub kind: TypeErrorKind<'db>,
     pub span: RelativeSpan,
+    pub context: Option<ErrorContext>,
 }
 
 #[derive(Clone, Debug)]
@@ -41,17 +42,64 @@ pub enum TypeErrorKind<'db> {
     },
 }
 
+/// Contextual information about *why* a type constraint was required.
+#[derive(Clone, Debug)]
+pub enum ErrorContext {
+    ReturnType {
+        ret_span: RelativeSpan,
+    },
+    Argument {
+        index: usize,
+        call_span: RelativeSpan,
+    },
+    FieldInit {
+        field_span: RelativeSpan,
+    },
+}
+
 impl<'db> TypeError<'db> {
+    pub fn with_context(mut self, context: ErrorContext) -> Self {
+        self.context = Some(context);
+        self
+    }
+
     pub fn to_diagnostic(&self, cx: &BodyCheck<'_, 'db>) -> Diagnostic<'db> {
         let span = cx.span(self.span);
         match &self.kind {
             TypeErrorKind::Mismatch { expected, actual } => {
+                let expected_str = fmt_ty(cx.db, cx.stash(), *expected);
+                let actual_str = fmt_ty(cx.db, cx.stash(), *actual);
                 let msg = format!(
                     "type mismatch: expected `{}`, found `{}`",
-                    fmt_ty(cx.db, cx.stash(), *expected),
-                    fmt_ty(cx.db, cx.stash(), *actual),
+                    expected_str, actual_str,
                 );
-                Diagnostic::error(span, msg)
+                let mut diag = Diagnostic::error(span.clone(), &msg)
+                    .label(span, format!("found `{actual_str}`"));
+
+                if let Some(ctx) = &self.context {
+                    match ctx {
+                        ErrorContext::ReturnType { ret_span } => {
+                            diag = diag.secondary(
+                                cx.span(*ret_span),
+                                format!("expected `{expected_str}` because of return type"),
+                            );
+                        }
+                        ErrorContext::Argument { index, call_span } => {
+                            diag = diag.secondary(
+                                cx.span(*call_span),
+                                format!("expected `{expected_str}` for argument {}", index + 1),
+                            );
+                        }
+                        ErrorContext::FieldInit { field_span } => {
+                            diag = diag.secondary(
+                                cx.span(*field_span),
+                                format!("expected `{expected_str}` for this field"),
+                            );
+                        }
+                    }
+                }
+
+                diag
             }
             TypeErrorKind::UnresolvedInferVar { var } => {
                 Diagnostic::error(span, format!("could not infer type for ?{}", var.0))
@@ -162,6 +210,7 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
                     count: results.len(),
                 },
                 span,
+                context: None,
             };
             self.catch(err);
             return Res::Err;
@@ -306,6 +355,7 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
                     actual: a_canon,
                 },
                 span,
+                context: None,
             });
         }
 
@@ -416,6 +466,7 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
             let err = TypeError {
                 kind: TypeErrorKind::UnresolvedInferVar { var: idx },
                 span,
+                context: None,
             };
             let diag = err.to_diagnostic(self);
             self.diagnostics.push(diag);
@@ -449,6 +500,7 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
         let err = TypeError {
             kind: TypeErrorKind::Mismatch { expected, actual },
             span,
+            context: None,
         };
         self.catch(err);
     }
