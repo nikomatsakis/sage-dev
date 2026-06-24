@@ -611,11 +611,15 @@ impl<'a, 'db> Parser<'a, 'db> {
             LocalModItemSym::Mod(mod_sym)
         } else {
             // File-backed mod — file resolution deferred to `unexpanded_items`.
-            // We need the SourceFile. Look it up from the source root.
             let file = self.resolve_mod_file(name);
             let body_source = match file {
                 Some(f) => ModBodySource::File(f),
-                None => ModBodySource::Inline, // fallback, will produce empty items
+                None => {
+                    panic!(
+                        "cannot resolve `mod {};` — no source file found",
+                        name.text(self.db)
+                    );
+                }
             };
 
             let mod_sym = LocalModSym::new(

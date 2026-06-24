@@ -215,7 +215,6 @@ fn generic_construct_then_access() {
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "multi-file test setup needs unexpanded_items specify for inline modules"]
 fn cross_module_struct_field_access() {
     TestCrate::in_memory("mod other; fn f(w: other::Wrapper) -> u32 { w.value }")
         .file("other.rs", "pub struct Wrapper { pub value: u32 }")
@@ -223,7 +222,6 @@ fn cross_module_struct_field_access() {
 }
 
 #[test]
-#[ignore = "multi-file test setup needs unexpanded_items specify for inline modules"]
 fn cross_module_struct_field_non_intrinsic() {
     // The struct's field type (Inner) must be resolved from the *defining*
     // module's scope, not the caller's. This test would fail if the type
