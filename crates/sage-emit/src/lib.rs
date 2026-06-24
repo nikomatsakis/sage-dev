@@ -111,8 +111,8 @@ impl<'db> Emitter<'db> {
         let params: Vec<Param<NormalizedDef>> = self.emit_fn_params(sig_stash, fn_sig, local_fn);
         let return_ty = self.emit_ty(sig_stash, sig_stash[fn_sig.ret]);
 
-        let body = local_fn.body(self.db);
-        let body_expr = self.emit_body(&body);
+        let checked = local_fn.body(self.db);
+        let body_expr = self.emit_body(&checked.body);
 
         FnItem {
             def: NormalizedDef::Local(local_id),
@@ -452,11 +452,11 @@ impl<'db> Emitter<'db> {
 
     fn emit_literal(&self, lit: &SageLiteral) -> (LiteralKind, String) {
         match lit {
-            SageLiteral::Int => (LiteralKind::Int, "0".to_string()),
-            SageLiteral::Float => (LiteralKind::Float, "0.0".to_string()),
-            SageLiteral::String => (LiteralKind::Str, "".to_string()),
+            SageLiteral::Int(name) => (LiteralKind::Int, name.text(self.db).clone()),
+            SageLiteral::Float(name) => (LiteralKind::Float, name.text(self.db).clone()),
+            SageLiteral::String(name) => (LiteralKind::Str, name.text(self.db).clone()),
             SageLiteral::Bool(b) => (LiteralKind::Bool, b.to_string()),
-            SageLiteral::Char => (LiteralKind::Char, "".to_string()),
+            SageLiteral::Char(name) => (LiteralKind::Char, name.text(self.db).clone()),
         }
     }
 

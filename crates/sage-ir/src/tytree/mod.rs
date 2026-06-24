@@ -40,6 +40,24 @@ pub struct LocalVar<'db> {
 
 pub type TyBody<'db> = Stashed<Ptr<TyBodyData<'db>>>;
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct CheckedBody<'db> {
+    pub body: TyBody<'db>,
+    pub diagnostics: Vec<String>,
+}
+
+unsafe impl salsa::Update for CheckedBody<'_> {
+    unsafe fn maybe_update(old_pointer: *mut Self, new_value: Self) -> bool {
+        let old = unsafe { &*old_pointer };
+        if *old == new_value {
+            false
+        } else {
+            unsafe { *old_pointer = new_value };
+            true
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct TyBodyData<'db> {
     pub root: Ptr<TyExpr<'db>>,
@@ -56,7 +74,7 @@ pub struct TyExpr<'db> {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub enum TyExprData<'db> {
-    Literal(Literal),
+    Literal(Literal<'db>),
     Path(Res<'db>),
     Block(Slice<TyStmt<'db>>, Option<Ptr<TyExpr<'db>>>),
     Call(Ptr<TyExpr<'db>>, Slice<Ptr<TyExpr<'db>>>),
@@ -126,7 +144,7 @@ pub enum TyPatKind<'db> {
     Struct(Res<'db>, Slice<TyFieldPat<'db>>),
     TupleStruct(Res<'db>, Slice<Ptr<TyPat<'db>>>),
     Ref(Ptr<TyPat<'db>>, Mutability),
-    Literal(Literal),
+    Literal(Literal<'db>),
     Or(Slice<Ptr<TyPat<'db>>>),
     Rest,
     Missing,

@@ -5,7 +5,7 @@ use crate::name::Name;
 use crate::scope::ScopeSymbol;
 use crate::span::AbsoluteSpan;
 use crate::ty::{Binder, FnSig};
-use crate::tytree::TyBody;
+use crate::tytree::CheckedBody;
 
 #[salsa::tracked(debug)]
 pub struct LocalFnSym<'db> {
@@ -76,7 +76,7 @@ impl<'db> LocalFnSym<'db> {
 
     /// Resolves and type-checks the function body in a single walk.
     #[salsa::tracked(returns(ref))]
-    pub fn body(self, db: &'db dyn crate::Db) -> TyBody<'db> {
+    pub fn body(self, db: &'db dyn crate::Db) -> CheckedBody<'db> {
         use crate::check::BodyCheck;
         use crate::resolve::Resolver;
         use crate::ty::BinderExt;

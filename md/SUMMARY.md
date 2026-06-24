@@ -32,6 +32,7 @@
     - [IR Reshape](./rfds/ir-reshape.md)
     - [Parsing](./rfds/parse.md)
     - [Oracle Test Framework](./rfds/oracle-test-framework.md)
+    - [Error Sentinel Type](./rfds/error-sentinel-type.md)
   - [Completed](./rfds/completed.md)
     - [Initial Setup](./rfds/initial-setup.md)
     - [Relative Span Model](./rfds/relative-span-model.md)

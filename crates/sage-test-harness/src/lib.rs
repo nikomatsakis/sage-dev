@@ -45,17 +45,19 @@ impl TestCrate {
         let db = Database::default();
         db.attach(|db| {
             let (_krate, root) = self.setup(db);
+            let mut all_errors = Vec::new();
 
             let items = root.expanded_module_items(db);
             for item in items {
                 if let sage_ir::symbol::SymbolData::FnSymbol(FnSymbol::Local(local_fn)) =
                     item.data(db)
                 {
-                    let _ = local_fn.body(db);
+                    let checked = local_fn.body(db);
+                    all_errors.extend(checked.diagnostics.iter().cloned());
                 }
             }
 
-            vec![]
+            all_errors
         })
     }
 

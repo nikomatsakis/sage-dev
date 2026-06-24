@@ -11,15 +11,15 @@ use crate::span::RelativeSpan;
 // ---------------------------------------------------------------------------
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Literal {
-    Int,
-    Float,
-    String,
+pub enum Literal<'db> {
+    Int(Name<'db>),
+    Float(Name<'db>),
+    String(Name<'db>),
     Bool(bool),
-    Char,
+    Char(Name<'db>),
 }
 
-impl StashDirect for Literal {}
+impl StashDirect for Literal<'_> {}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum BinaryOp {
@@ -66,7 +66,7 @@ pub struct ExprCst<'db> {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub enum ExprCstKind<'db> {
-    Literal(Literal),
+    Literal(Literal<'db>),
     Path(Ptr<Path<'db>>),
     Block(Slice<StmtCst<'db>>, Option<Ptr<ExprCst<'db>>>),
     Call(Ptr<ExprCst<'db>>, Slice<ExprCst<'db>>),
@@ -138,7 +138,7 @@ pub enum PatCstKind<'db> {
     Struct(Ptr<Path<'db>>, Slice<FieldPatCst<'db>>),
     TupleStruct(Ptr<Path<'db>>, Slice<PatCst<'db>>),
     Ref(Ptr<PatCst<'db>>, Mutability),
-    Literal(Literal),
+    Literal(Literal<'db>),
     Or(Slice<PatCst<'db>>),
     Rest,
     Missing,
@@ -514,6 +514,8 @@ impl<'db> PatCst<'db> {
             PatCstKind::Wildcard => TyPatKind::Wildcard,
             PatCstKind::Bind(name, mutability) => {
                 let id = cx.add_binding(*name, span);
+                let local_ty = cx.local_type(id.0);
+                cx.assume_eq(ty, local_ty);
                 TyPatKind::Bind(id, *mutability)
             }
             PatCstKind::Path(path_ptr) => {
@@ -592,12 +594,12 @@ impl<'db> MatchArmCst<'db> {
 
 use crate::ty::Ty;
 
-fn check_literal_ty<'db>(cx: &mut BodyCheck<'_, 'db>, lit: Literal) -> Ptr<Ty<'db>> {
+fn check_literal_ty<'db>(cx: &mut BodyCheck<'_, 'db>, lit: Literal<'db>) -> Ptr<Ty<'db>> {
     match lit {
         Literal::Bool(_) => cx.alloc_ty(Ty::Bool),
-        Literal::Int => cx.fresh_ty_var(),
-        Literal::Float => cx.fresh_ty_var(),
-        Literal::String => {
+        Literal::Int(_) => cx.fresh_ty_var(),
+        Literal::Float(_) => cx.fresh_ty_var(),
+        Literal::String(_) => {
             let str_ty = cx.alloc_ty(Ty::Str);
             cx.alloc_ty(Ty::Ref(
                 str_ty,
@@ -605,7 +607,7 @@ fn check_literal_ty<'db>(cx: &mut BodyCheck<'_, 'db>, lit: Literal) -> Ptr<Ty<'d
                 crate::ty::Lifetime::Static,
             ))
         }
-        Literal::Char => cx.alloc_ty(Ty::Char),
+        Literal::Char(_) => cx.alloc_ty(Ty::Char),
     }
 }
 

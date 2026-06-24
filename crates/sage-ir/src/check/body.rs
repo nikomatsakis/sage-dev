@@ -57,6 +57,7 @@ pub struct BodyCheck<'a, 'db> {
     // Body state
     locals: Vec<Ptr<Ty<'db>>>,
     local_vars: Vec<LocalVar<'db>>,
+    infer_var_ptrs: Vec<Ptr<Ty<'db>>>,
     diagnostics: Vec<Diagnostic<'db>>,
 }
 
@@ -84,6 +85,7 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
             current_universe: Universe(1),
             locals: Vec::new(),
             local_vars: Vec::new(),
+            infer_var_ptrs: Vec::new(),
             diagnostics: Vec::new(),
         }
     }
@@ -155,7 +157,9 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
 
     pub fn fresh_ty_var(&mut self) -> Ptr<Ty<'db>> {
         let ty = self.fresh_ty_var_data();
-        self.target_stash.alloc(ty)
+        let ptr = self.target_stash.alloc(ty);
+        self.infer_var_ptrs.push(ptr);
+        ptr
     }
 
     pub fn fresh_ty_var_data(&mut self) -> Ty<'db> {
@@ -305,13 +309,9 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
     // ------------------------------------------------------------------
 
     pub fn finalize(&mut self) {
-        let version = self.egraph.current_version();
-        let var_count = self.egraph.version_tree().variable_count_at(version);
-
         let dst = &mut self.check.target_stash;
-        for i in 0..var_count.0 {
-            let idx = InferVarIndex(i);
-            let ty = dst.alloc(Ty::InferVar(idx));
+        for i in 0..self.infer_var_ptrs.len() {
+            let ty = self.infer_var_ptrs[i];
             let canon = self.egraph.find_mut(ty);
 
             if canon != ty {
@@ -321,6 +321,10 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
             let bound = self.egraph.get_bound(ty);
             match bound {
                 Bound::None => {
+                    let idx = match dst[ty] {
+                        Ty::InferVar(idx) => idx,
+                        _ => continue,
+                    };
                     let error_ty = dst.alloc(Ty::Error);
                     self.egraph.set_bound(dst, ty, Bound::Exactly(error_ty));
                     self.egraph.union(dst, ty, error_ty);
@@ -447,10 +451,105 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
     // Finish
     // ------------------------------------------------------------------
 
-    pub fn finish(self, root: Ptr<TyExpr<'db>>, span: RelativeSpan) -> TyBody<'db> {
+    pub fn finish(self, root: Ptr<TyExpr<'db>>, span: RelativeSpan) -> CheckedBody<'db> {
         let mut stash = self.check.target_stash;
+        let diagnostics: Vec<String> = self
+            .diagnostics
+            .iter()
+            .map(|d| render_diagnostic(self.db, &stash, d))
+            .collect();
         let locals = stash.alloc_slice(&self.local_vars);
-        let body = stash.alloc(TyBodyData { root, locals, span });
-        Stashed::new(stash, body)
+        let body_data = stash.alloc(TyBodyData { root, locals, span });
+        CheckedBody {
+            body: Stashed::new(stash, body_data),
+            diagnostics,
+        }
+    }
+}
+
+fn render_diagnostic(db: &dyn crate::Db, stash: &Stash, diag: &Diagnostic) -> String {
+    match &diag.kind {
+        DiagnosticKind::TypeMismatch { expected, actual } => {
+            format!(
+                "type mismatch: expected `{}`, found `{}`",
+                fmt_ty(db, stash, *expected),
+                fmt_ty(db, stash, *actual)
+            )
+        }
+        DiagnosticKind::UnresolvedInferVar { var } => {
+            format!("could not infer type for ?{}", var.0)
+        }
+        DiagnosticKind::AmbiguousName { count } => {
+            format!("ambiguous name: {count} candidates")
+        }
+    }
+}
+
+fn fmt_ty(db: &dyn crate::Db, stash: &Stash, ty: Ptr<Ty<'_>>) -> String {
+    match stash[ty] {
+        Ty::Bool => "bool".to_owned(),
+        Ty::Char => "char".to_owned(),
+        Ty::Int(i) => match i {
+            crate::ty::IntTy::I8 => "i8",
+            crate::ty::IntTy::I16 => "i16",
+            crate::ty::IntTy::I32 => "i32",
+            crate::ty::IntTy::I64 => "i64",
+            crate::ty::IntTy::I128 => "i128",
+            crate::ty::IntTy::Isize => "isize",
+        }
+        .to_owned(),
+        Ty::Uint(u) => match u {
+            crate::ty::UintTy::U8 => "u8",
+            crate::ty::UintTy::U16 => "u16",
+            crate::ty::UintTy::U32 => "u32",
+            crate::ty::UintTy::U64 => "u64",
+            crate::ty::UintTy::U128 => "u128",
+            crate::ty::UintTy::Usize => "usize",
+        }
+        .to_owned(),
+        Ty::Float(f) => match f {
+            crate::ty::FloatTy::F32 => "f32",
+            crate::ty::FloatTy::F64 => "f64",
+        }
+        .to_owned(),
+        Ty::Str => "str".to_owned(),
+        Ty::Never => "!".to_owned(),
+        Ty::Error => "<error>".to_owned(),
+        Ty::InferVar(idx) => format!("?{}", idx.0),
+        Ty::Param(p) => p
+            .name(db)
+            .map_or_else(|| "?".to_owned(), |n| n.text(db).clone()),
+        Ty::Tuple(elems) => {
+            let items: Vec<String> = stash[elems].iter().map(|e| fmt_ty(db, stash, *e)).collect();
+            format!("({})", items.join(", "))
+        }
+        Ty::Ref(inner, m, _) => {
+            let prefix = match m {
+                crate::cst::Mutability::Shared => "&",
+                crate::cst::Mutability::Mut => "&mut ",
+            };
+            format!("{prefix}{}", fmt_ty(db, stash, inner))
+        }
+        Ty::Adt(sym, args) => {
+            let name = sym
+                .name(db)
+                .map_or_else(|| "?".to_owned(), |(n, _)| n.text(db).clone());
+            let type_args: Vec<String> =
+                stash[args].iter().map(|a| fmt_ty(db, stash, *a)).collect();
+            if type_args.is_empty() {
+                name
+            } else {
+                format!("{name}<{}>", type_args.join(", "))
+            }
+        }
+        Ty::Slice(inner) => format!("[{}]", fmt_ty(db, stash, inner)),
+        Ty::Array(inner, _) => format!("[{}; _]", fmt_ty(db, stash, inner)),
+        Ty::FnPtr(params, ret) => {
+            let ps: Vec<String> = stash[params]
+                .iter()
+                .map(|p| fmt_ty(db, stash, *p))
+                .collect();
+            format!("fn({}) -> {}", ps.join(", "), fmt_ty(db, stash, ret))
+        }
     }
 }

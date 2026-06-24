@@ -20,10 +20,22 @@ impl<'a, 'db> Parser<'a, 'db> {
         };
 
         let kind = match node.kind() {
-            "integer_literal" => ExprCstKind::Literal(Literal::Int),
-            "float_literal" => ExprCstKind::Literal(Literal::Float),
-            "string_literal" | "raw_string_literal" => ExprCstKind::Literal(Literal::String),
-            "char_literal" => ExprCstKind::Literal(Literal::Char),
+            "integer_literal" => {
+                let text = self.text[node.byte_range()].to_owned();
+                ExprCstKind::Literal(Literal::Int(Name::new(self.db, text)))
+            }
+            "float_literal" => {
+                let text = self.text[node.byte_range()].to_owned();
+                ExprCstKind::Literal(Literal::Float(Name::new(self.db, text)))
+            }
+            "string_literal" | "raw_string_literal" => {
+                let text = self.text[node.byte_range()].to_owned();
+                ExprCstKind::Literal(Literal::String(Name::new(self.db, text)))
+            }
+            "char_literal" => {
+                let text = self.text[node.byte_range()].to_owned();
+                ExprCstKind::Literal(Literal::Char(Name::new(self.db, text)))
+            }
             "boolean_literal" => {
                 let val = &self.text[node.byte_range()] == "true";
                 ExprCstKind::Literal(Literal::Bool(val))
@@ -117,30 +129,43 @@ impl<'a, 'db> Parser<'a, 'db> {
         let mut tail: Option<Ptr<ExprCst<'db>>> = None;
         let mut cursor = node.walk();
 
-        for child in node.children(&mut cursor) {
+        let children: Vec<_> = node.children(&mut cursor).collect();
+        let last_expr_idx = children
+            .iter()
+            .rposition(|c| c.kind() == "expression_statement");
+        let has_trailing_semi = last_expr_idx.is_some_and(|i| {
+            children[i + 1..]
+                .iter()
+                .any(|c| c.kind() == "empty_statement" || c.kind() == ";")
+        });
+
+        for (i, child) in children.iter().enumerate() {
             match child.kind() {
                 "let_declaration" => {
-                    stmts.push(self.parse_let_stmt(stash, child, item_start));
+                    stmts.push(self.parse_let_stmt(stash, *child, item_start));
                 }
                 "expression_statement" => {
                     if let Some(expr_node) = child.child(0) {
                         if expr_node.kind() != ";" {
-                            let expr = self.parse_expr(stash, expr_node, item_start);
-                            let stmt_span = RelativeSpan {
-                                start: child.start_byte() as u32 - item_start,
-                                end: child.end_byte() as u32 - item_start,
-                            };
-                            stmts.push(StmtCst {
-                                kind: StmtCstKind::Expr(expr),
-                                span: stmt_span,
-                            });
+                            if Some(i) == last_expr_idx && !has_trailing_semi {
+                                tail = Some(self.parse_expr(stash, expr_node, item_start));
+                            } else {
+                                let expr = self.parse_expr(stash, expr_node, item_start);
+                                let stmt_span = RelativeSpan {
+                                    start: child.start_byte() as u32 - item_start,
+                                    end: child.end_byte() as u32 - item_start,
+                                };
+                                stmts.push(StmtCst {
+                                    kind: StmtCstKind::Expr(expr),
+                                    span: stmt_span,
+                                });
+                            }
                         }
                     }
                 }
-                "{" | "}" => {}
+                "{" | "}" | "empty_statement" => {}
                 _ if child.is_named() => {
-                    // Last expression without semicolon is the tail
-                    tail = Some(self.parse_expr(stash, child, item_start));
+                    tail = Some(self.parse_expr(stash, *child, item_start));
                 }
                 _ => {}
             }
@@ -957,8 +982,14 @@ impl<'a, 'db> Parser<'a, 'db> {
                 }
                 PatCstKind::Or(stash.alloc_slice(&pats))
             }
-            "integer_literal" => PatCstKind::Literal(Literal::Int),
-            "string_literal" => PatCstKind::Literal(Literal::String),
+            "integer_literal" => {
+                let text = self.text[node.byte_range()].to_owned();
+                PatCstKind::Literal(Literal::Int(Name::new(self.db, text)))
+            }
+            "string_literal" => {
+                let text = self.text[node.byte_range()].to_owned();
+                PatCstKind::Literal(Literal::String(Name::new(self.db, text)))
+            }
             "boolean_literal" => {
                 let val = &self.text[node.byte_range()] == "true";
                 PatCstKind::Literal(Literal::Bool(val))
