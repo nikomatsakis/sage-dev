@@ -4,6 +4,7 @@ use sage_stash::{Ptr, Slice, Stash, StashCopy, Stashed};
 
 use crate::check::Check;
 use crate::diagnostic::{Diagnostic, ErrorReported, Span};
+use crate::display::TyDisplay;
 use crate::local_syms::LocalModItemSym;
 use crate::name::Name;
 use crate::resolve::{Namespace, Resolution, Resolver};
@@ -67,8 +68,8 @@ impl<'db> TypeError<'db> {
         let span = cx.span(self.span);
         match &self.kind {
             TypeErrorKind::Mismatch { expected, actual } => {
-                let expected_str = fmt_ty(cx.db, cx.stash(), *expected);
-                let actual_str = fmt_ty(cx.db, cx.stash(), *actual);
+                let expected_str = TyDisplay::new(cx.db, cx.stash(), *expected).to_string();
+                let actual_str = TyDisplay::new(cx.db, cx.stash(), *actual).to_string();
                 let msg = format!(
                     "type mismatch: expected `{}`, found `{}`",
                     expected_str, actual_str,
@@ -609,75 +610,6 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
         CheckedBody {
             body: Stashed::new(stash, body_data),
             diagnostics: self.diagnostics,
-        }
-    }
-}
-
-pub fn fmt_ty(db: &dyn crate::Db, stash: &Stash, ty: Ptr<Ty<'_>>) -> String {
-    match stash[ty] {
-        Ty::Bool => "bool".to_owned(),
-        Ty::Char => "char".to_owned(),
-        Ty::Int(i) => match i {
-            crate::ty::IntTy::I8 => "i8",
-            crate::ty::IntTy::I16 => "i16",
-            crate::ty::IntTy::I32 => "i32",
-            crate::ty::IntTy::I64 => "i64",
-            crate::ty::IntTy::I128 => "i128",
-            crate::ty::IntTy::Isize => "isize",
-        }
-        .to_owned(),
-        Ty::Uint(u) => match u {
-            crate::ty::UintTy::U8 => "u8",
-            crate::ty::UintTy::U16 => "u16",
-            crate::ty::UintTy::U32 => "u32",
-            crate::ty::UintTy::U64 => "u64",
-            crate::ty::UintTy::U128 => "u128",
-            crate::ty::UintTy::Usize => "usize",
-        }
-        .to_owned(),
-        Ty::Float(f) => match f {
-            crate::ty::FloatTy::F32 => "f32",
-            crate::ty::FloatTy::F64 => "f64",
-        }
-        .to_owned(),
-        Ty::Str => "str".to_owned(),
-        Ty::Never => "!".to_owned(),
-        Ty::Error => "<error>".to_owned(),
-        Ty::InferVar(idx) => format!("?{}", idx.0),
-        Ty::Param(p) => p
-            .name(db)
-            .map_or_else(|| "?".to_owned(), |n| n.text(db).clone()),
-        Ty::Tuple(elems) => {
-            let items: Vec<String> = stash[elems].iter().map(|e| fmt_ty(db, stash, *e)).collect();
-            format!("({})", items.join(", "))
-        }
-        Ty::Ref(inner, m, _) => {
-            let prefix = match m {
-                crate::cst::Mutability::Shared => "&",
-                crate::cst::Mutability::Mut => "&mut ",
-            };
-            format!("{prefix}{}", fmt_ty(db, stash, inner))
-        }
-        Ty::Adt(sym, args) => {
-            let name = sym
-                .name(db)
-                .map_or_else(|| "?".to_owned(), |(n, _)| n.text(db).clone());
-            let type_args: Vec<String> =
-                stash[args].iter().map(|a| fmt_ty(db, stash, *a)).collect();
-            if type_args.is_empty() {
-                name
-            } else {
-                format!("{name}<{}>", type_args.join(", "))
-            }
-        }
-        Ty::Slice(inner) => format!("[{}]", fmt_ty(db, stash, inner)),
-        Ty::Array(inner, _) => format!("[{}; _]", fmt_ty(db, stash, inner)),
-        Ty::FnPtr(params, ret) => {
-            let ps: Vec<String> = stash[params]
-                .iter()
-                .map(|p| fmt_ty(db, stash, *p))
-                .collect();
-            format!("fn({}) -> {}", ps.join(", "), fmt_ty(db, stash, ret))
         }
     }
 }

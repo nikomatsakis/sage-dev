@@ -717,30 +717,35 @@ After implementing, `UPDATE_EXPECT=1` fills in:
 
 ### Phase 3: `TyDisplay` — reusable type formatting
 
+**Status: DONE**
+
 **Snapshot tests:**
 ```rust
 #[test]
 fn ty_display_unit_return() {
-    TestCrate::in_memory("fn f() -> u32 { }")
-        .check_errors(expect![[""]]);
-    // Should show: found `()`, expected `u32`
+    TestCrate::in_memory("fn f() -> u32 { }").check_errors(expect![[r#"
+        error at 14..17: type mismatch: expected `u32`, found `()`
+          at 14..17: found `()`
+          at 10..13: expected `u32` because of return type"#]]);
 }
 
 #[test]
 fn ty_display_fn_pointer() {
-    TestCrate::in_memory("fn f(g: fn(u32) -> bool) -> u32 { g }")
-        .check_errors(expect![[""]]);
-    // Should show: found `fn(u32) -> bool`, expected `u32`
+    TestCrate::in_memory("fn f(g: fn(u32) -> bool) -> u32 { g }").check_errors(expect![[r#"
+        error at 32..37: type mismatch: expected `u32`, found `fn(u32) -> bool`
+          at 32..37: found `fn(u32) -> bool`
+          at 28..31: expected `u32` because of return type"#]]);
 }
 ```
 
-These exercise `TyDisplay` on types that need non-trivial formatting. The snapshot captures the exact rendered form — if `()` renders as `(,)` or `fn(u32) -> bool` renders wrong, the snapshot catches it.
+**Work done:**
+- Extracted `fmt_ty` into `TyDisplay<'a, 'db>` struct with `impl Display` in `sage-ir/src/display.rs`
+- `TyDisplay::new(db, stash, ty)` is usable anywhere — diagnostics, hover info, debugging
+- Used `TyDisplay` in `TypeError::to_diagnostic()` via `.to_string()`
+- Deleted old `fmt_ty` function from `check/body.rs`
 
-**Work:**
-- Extract `fmt_ty` into `TyDisplay<'a, 'db>` struct with `impl Display`
-- Move to `sage-ir/src/ty/display.rs`
-- Use `TyDisplay` in diagnostic message construction
-- Delete old `fmt_ty` and `render_diagnostic`
+**Deviations from design:**
+- `TyDisplay` lives in `sage-ir/src/display.rs` (existing placeholder file) rather than `sage-ir/src/ty/display.rs` — simpler module layout, `ty.rs` remains a single file.
 
 ### Phase 4: Rich rendering with `annotate_snippets`
 

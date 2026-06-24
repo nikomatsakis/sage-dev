@@ -257,3 +257,25 @@ fn cross_module_struct_field_non_intrinsic() {
         )
         .check_ok();
 }
+
+// ---------------------------------------------------------------------------
+// TyDisplay: exercises non-trivial type formatting
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ty_display_unit_return() {
+    // Empty block body has type `()`, return type is `u32`
+    TestCrate::in_memory("fn f() -> u32 { }").check_errors(expect![[r#"
+        error at 14..17: type mismatch: expected `u32`, found `()`
+          at 14..17: found `()`
+          at 10..13: expected `u32` because of return type"#]]);
+}
+
+#[test]
+fn ty_display_fn_pointer() {
+    // g has type `fn(u32) -> bool`, return type is `u32`
+    TestCrate::in_memory("fn f(g: fn(u32) -> bool) -> u32 { g }").check_errors(expect![[r#"
+        error at 32..37: type mismatch: expected `u32`, found `fn(u32) -> bool`
+          at 32..37: found `fn(u32) -> bool`
+          at 28..31: expected `u32` because of return type"#]]);
+}
