@@ -1,7 +1,7 @@
 use sage_ir::Db;
 use sage_ir::cst::Mutability;
 use sage_ir::cst::expr::{BinaryOp as SageBinaryOp, Literal as SageLiteral};
-use sage_ir::local_syms::enums::{LocalEnumSym, LocalVariantSym, enum_variants};
+use sage_ir::local_syms::enums::{LocalEnumSym, enum_variants};
 use sage_ir::symbol::{EnumSymbol, FnSymbol, ModSymbol, StructSymbol, Symbol, SymbolData};
 use sage_ir::ty::{self, Ty};
 use sage_ir::tytree::{PathResolution, TyBody, TyExprData, TyFieldInit, TyStmt, TyStmtKind};
@@ -53,9 +53,6 @@ impl<'db> Emitter<'db> {
     }
 
     fn external_def_path(&self, sym: Symbol<'db>) -> NormalizedDef {
-        use sage_ir::symbol::SymExt;
-        use sage_ir::tcx::DefPathNs;
-
         let ext = match sym.data(self.db) {
             SymbolData::FnSymbol(sage_ir::symbol::FnSymbol::Ext(e)) => e,
             SymbolData::StructSymbol(sage_ir::symbol::StructSymbol::Ext(e)) => e,

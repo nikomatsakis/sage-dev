@@ -227,13 +227,13 @@ fn expand_attribute_macros_and_derives<'db>(
 /// and added to entries.
 fn expand_derives<'db>(
     db: &'db dyn Db,
-    module: LocalModSym<'db>,
+    _module: LocalModSym<'db>,
     skip_attrs: usize,
-    args: &[u8],
+    _args: &[u8],
     item: LocalModItemSym<'db>,
-    entries: &mut Vec<Symbol<'db>>,
+    _entries: &mut Vec<Symbol<'db>>,
 ) {
-    let input = attribute_macro_input(db, skip_attrs, item);
+    let _input = attribute_macro_input(db, skip_attrs, item);
 }
 
 /// Return the input string to an attribute macro invocation. It consists
