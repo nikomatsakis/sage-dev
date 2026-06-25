@@ -135,9 +135,6 @@ fn expand_unexpanded_items<'db>(
     }
 }
 
-/// Maximum nesting depth for macro expansion (same as rustc's default).
-const MAX_EXPANSION_DEPTH: usize = 128;
-
 fn expand_macro<'db>(
     db: &'db dyn Db,
     module: LocalModSym<'db>,

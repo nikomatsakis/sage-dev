@@ -1,3 +1,5 @@
+#![allow(warnings)]
+
 mod types;
 
 use types::Wrapper;

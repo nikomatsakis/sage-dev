@@ -1,3 +1,5 @@
+#![allow(warnings)]
+
 enum Wrapper {
     Val(u32),
 }

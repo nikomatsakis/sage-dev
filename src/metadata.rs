@@ -21,6 +21,7 @@ struct Package {
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 struct Target {
     name: String,
     kind: Vec<String>,

@@ -58,23 +58,6 @@ impl<'db> Path<'db> {
         results.into_iter().next()
     }
 
-    /// Collect all segment names in order (for module-level resolution).
-    pub(crate) fn collect_names(self, cx: &Check<'_, 'db>) -> Vec<Name<'db>> {
-        let mut names = Vec::new();
-        match self {
-            Path::Anchored(anchor, seg_slice) => {
-                anchor.collect_names_into(cx, &mut names);
-                let segs = &cx.source_stash[seg_slice];
-                names.extend(segs.iter().map(|s| s.name));
-            }
-            Path::Relative(first, rest_slice) => {
-                names.push(first.name);
-                let rest = &cx.source_stash[rest_slice];
-                names.extend(rest.iter().map(|s| s.name));
-            }
-        }
-        names
-    }
 
     /// Get the final segment (for type arg checking).
     pub(crate) fn final_segment(self, cx: &Check<'_, 'db>) -> PathSegment<'db> {
@@ -152,29 +135,6 @@ impl<'db> ToTokens<'db> for PathSegment<'db> {
     }
 }
 
-impl<'db> PathAnchor<'db> {
-    fn collect_names_into(self, cx: &Check<'_, 'db>, out: &mut Vec<Name<'db>>) {
-        match self.kind {
-            PathAnchorKind::ExternCrate(name) => {
-                out.push(name);
-            }
-            PathAnchorKind::CurrentCrate => {
-                out.push(Name::new(cx.db, "crate".to_owned()));
-            }
-            PathAnchorKind::Self_ => {
-                out.push(Name::new(cx.db, "self".to_owned()));
-            }
-            PathAnchorKind::DollarCrate => {
-                out.push(Name::new(cx.db, "$crate".to_owned()));
-            }
-            PathAnchorKind::Super(inner) => {
-                let inner_anchor = cx.source_stash[inner];
-                inner_anchor.collect_names_into(cx, out);
-                out.push(Name::new(cx.db, "super".to_owned()));
-            }
-        }
-    }
-}
 
 impl<'db> PathSegment<'db> {
     pub(crate) fn check_type_args(&self, cx: &mut Check<'_, 'db>) -> Slice<Ptr<Ty<'db>>> {

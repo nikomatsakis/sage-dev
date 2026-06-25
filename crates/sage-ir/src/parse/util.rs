@@ -1,6 +1,6 @@
 use crate::Db;
 use crate::name::Name;
-use crate::span::{AbsoluteSpan, ParseSource, RelativeSpan};
+use crate::span::{AbsoluteSpan, ParseSource};
 
 pub(super) fn node_field_text<'a>(
     node: tree_sitter::Node<'a>,
@@ -29,12 +29,6 @@ pub(super) fn item_start(
         .map_or(node.start_byte(), |a| a.start_byte()) as u32
 }
 
-pub(super) fn relative_span(node: tree_sitter::Node<'_>, item_start: u32) -> RelativeSpan {
-    RelativeSpan {
-        start: node.start_byte() as u32 - item_start,
-        end: node.end_byte() as u32 - item_start,
-    }
-}
 
 pub(super) fn absolute_span<'db>(
     source: ParseSource<'db>,

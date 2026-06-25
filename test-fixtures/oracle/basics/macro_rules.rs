@@ -1,3 +1,5 @@
+#![allow(warnings)]
+
 macro_rules! make_getter {
     () => {
         fn get_value() -> u32 {

@@ -72,7 +72,7 @@ struct InFlightQuery<'db> {
 /// Create one per top-level resolution request (e.g., per signature lowered
 /// or per body resolved). All resolution calls within that scope share the
 /// same cycle-detection context.
-pub(crate) struct Resolver<'db> {
+pub struct Resolver<'db> {
     db: &'db dyn Db,
     phase: ResolvePhase,
     scope: ScopeSymbol<'db>,
@@ -141,20 +141,6 @@ impl<'db> Resolver<'db> {
         }
     }
 
-    pub fn resolve_name_from_scope(
-        &mut self,
-        name: Name<'db>,
-        namespace: Namespace,
-    ) -> Vec<Resolution<'db>> {
-        if let Some(entry) = self.ribs.lookup(name, namespace) {
-            return vec![entry];
-        }
-        let module = self.module();
-        self.flexibly_resolve_name_from_module(module, name, namespace)
-            .into_iter()
-            .map(Resolution::Sym)
-            .collect()
-    }
 
     // -----------------------------------------------------------------------
     // Internal

@@ -1,3 +1,5 @@
+#![allow(warnings)]
+
 fn identity(x: u32) -> u32 {
     x
 }

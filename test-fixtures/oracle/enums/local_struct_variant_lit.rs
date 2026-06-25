@@ -1,3 +1,5 @@
+#![allow(warnings)]
+
 enum Message {
     Data { value: u32 },
 }

@@ -272,7 +272,7 @@ define_kind_symbols! {
     pub enum ImplSymbol<'db> { Local(crate::local_syms::impls::LocalImplSym<'db>), Ext(SymExtKind::Impl) }
     pub enum ModSymbol<'db> { Local(crate::local_syms::mods::LocalModSym<'db>), Ext(SymExtKind::Mod) }
     pub enum MacroDefSymbol<'db> { Local(crate::local_syms::macro_defs::LocalMacroDefSym<'db>), Ext(SymExtKind::MacroDef) }
-    pub enum UseSymbol<'db> { Local(crate::local_syms::uses::LocalUseSym<'db>), Ext(SymExtKind::Mod) }
+    pub enum UseSymbol<'db> { Local(crate::local_syms::uses::LocalUseSym<'db>), Ext(SymExtKind::Use) }
 
     { /* Local only */ }
 
