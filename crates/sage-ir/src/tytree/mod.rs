@@ -18,7 +18,7 @@ use crate::types::TokenTree;
 pub enum PathResolution<'db> {
     Def(Symbol<'db>),
     Local(LocalId),
-    Err(ErrorReported),
+    Error(ErrorReported),
 }
 
 /// Short alias.
