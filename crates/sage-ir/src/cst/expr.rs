@@ -650,7 +650,7 @@ fn res_to_ty<'db>(cx: &mut BodyCheck<'_, 'db>, res: Res<'db>) -> Ptr<Ty<'db>> {
     match res {
         Res::Local(LocalId(id)) => cx.local_type(id),
         Res::Def(sym) => def_to_ty(cx, sym),
-        Res::Err => cx.alloc_ty(Ty::Error),
+        Res::Err(_) => cx.alloc_ty(Ty::Error),
     }
 }
 
@@ -719,7 +719,7 @@ fn struct_lit_ty<'db>(cx: &mut BodyCheck<'_, 'db>, res: Res<'db>) -> StructLitRe
 
     let sym = match res {
         Res::Def(sym) => sym,
-        Res::Err | Res::Local(_) => {
+        Res::Err(_) | Res::Local(_) => {
             let empty = cx.stash_mut().alloc_slice(&[]);
             return StructLitResult {
                 ty: cx.alloc_ty(Ty::Error),

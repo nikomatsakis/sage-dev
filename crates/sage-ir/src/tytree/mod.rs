@@ -2,7 +2,7 @@ use sage_stash::{AllocStashData, Ptr, Slice, Stashed};
 
 use crate::cst::Mutability;
 use crate::cst::expr::{BinaryOp, Literal, UnaryOp};
-use crate::diagnostic::Diagnostic;
+use crate::diagnostic::{Diagnostic, ErrorReported};
 use crate::name::Name;
 use crate::span::RelativeSpan;
 use crate::symbol::Symbol;
@@ -18,7 +18,7 @@ use crate::types::TokenTree;
 pub enum PathResolution<'db> {
     Def(Symbol<'db>),
     Local(LocalId),
-    Err,
+    Err(ErrorReported),
 }
 
 /// Short alias.

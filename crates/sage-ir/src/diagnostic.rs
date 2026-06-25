@@ -117,6 +117,8 @@ impl<'db> Diagnostic<'db> {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ErrorReported(());
 
+impl sage_stash::StashDirect for ErrorReported {}
+
 impl ErrorReported {
     pub(crate) fn new() -> Self {
         ErrorReported(())

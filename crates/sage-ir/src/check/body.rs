@@ -213,14 +213,14 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
                 span,
                 context: Vec::new(),
             };
-            self.catch(err);
-            return Res::Err;
+            let e = self.catch(err);
+            return Res::Err(e);
         }
         match results.into_iter().next() {
             Some(Resolution::Sym(sym)) => Res::Def(sym),
             Some(Resolution::Local(id)) => Res::Local(id),
             Some(Resolution::Param(_) | Resolution::SelfTy(_) | Resolution::Error) | None => {
-                Res::Err
+                Res::Err(ErrorReported::new())
             }
         }
     }
