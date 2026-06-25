@@ -1,12 +1,3 @@
-//! `rustc_proc_macro::bridge::server::Server` implementation for sage.
-//!
-//! Uses `proc_macro2` for token stream manipulation with a dummy `SageSpan`
-//! (unit struct) because `proc_macro2::Span` doesn't implement `Eq + Hash`.
-//!
-//! Note: we implement the `Server` trait from `rustc_proc_macro` (the compiler's
-//! internal copy of `proc_macro`), not the standard library's `proc_macro`.
-//! The `Client` stored in `DeriveProcMacro` uses `rustc_proc_macro` types.
-
 use std::ops::{Bound, Range};
 
 use rustc_proc_macro::Delimiter;
@@ -15,7 +6,6 @@ use rustc_proc_macro::bridge::{
     server::Server,
 };
 
-/// Dummy span — we don't track span info through proc-macro expansion.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct SageSpan;
 
@@ -26,8 +16,6 @@ impl SageServer {
         SageServer
     }
 }
-
-// -- Bridge ↔ proc_macro2 conversion --
 
 type BridgeTokenTree = TokenTree<proc_macro2::TokenStream, SageSpan, String>;
 
@@ -120,7 +108,6 @@ fn pm2_to_bridge(tree: proc_macro2::TokenTree) -> BridgeTokenTree {
     }
 }
 
-/// Reconstruct literal text from bridge `Literal` fields.
 fn literal_to_string(lit: &Literal<SageSpan, String>) -> String {
     use bridge::LitKind;
     let mut s = match lit.kind {
@@ -150,7 +137,6 @@ fn literal_to_string(lit: &Literal<SageSpan, String>) -> String {
     s
 }
 
-/// Parse a literal string (from proc_macro2::Literal::to_string()) into a bridge Literal.
 fn parse_literal_string(s: &str) -> BridgeTokenTree {
     use bridge::LitKind;
 
@@ -230,7 +216,6 @@ fn parse_literal_string(s: &str) -> BridgeTokenTree {
     })
 }
 
-/// Find where a numeric suffix starts (e.g. "42u32" → 2, "3.14f64" → 4).
 fn find_numeric_suffix_start(s: &str) -> usize {
     let bytes = s.as_bytes();
     let mut i = bytes.len();
@@ -239,8 +224,6 @@ fn find_numeric_suffix_start(s: &str) -> usize {
     }
     if i == 0 { s.len() } else { i }
 }
-
-// -- Server trait implementation --
 
 impl Server for SageServer {
     type TokenStream = proc_macro2::TokenStream;

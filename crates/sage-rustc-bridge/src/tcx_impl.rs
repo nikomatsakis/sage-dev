@@ -1,9 +1,3 @@
-//! `TcxDb` implementation backed by `TyCtxt<'tcx>`.
-//!
-//! `RustcTcxDb` is never sent across threads — it stays on the original
-//! `after_expansion` thread. The salsa thread communicates with it via
-//! channels (see `driver.rs`).
-
 extern crate proc_macro;
 
 use std::sync::Arc;
@@ -186,15 +180,12 @@ impl<'tcx> RustcTcxDb<'tcx> {
             index: RustcDefIndex::from_u32(def_index.0),
         };
 
-        // Only proc-macro crates can be loaded via load_macro_untracked.
         let kind = self.tcx.def_kind(def_id);
         if !matches!(kind, DefKind::Macro(kinds) if kinds.contains(MacroKinds::DERIVE)) {
             return None;
         }
 
         let cstore = CStore::from_tcx(self.tcx);
-        // catch_unwind guards against ICEs in load_macro_untracked for
-        // re-exported macros whose DefId doesn't point to a proc-macro crate.
         let loaded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             cstore.load_macro_untracked(self.tcx, def_id)
         }))
@@ -209,10 +200,6 @@ impl<'tcx> RustcTcxDb<'tcx> {
             return None;
         };
 
-        // SAFETY: `load_macro_untracked` on a proc-macro crate always wraps
-        // `ProcMacro::CustomDerive { client }` in `Arc::new(DeriveProcMacro { client })`.
-        // `DeriveProcMacro` is a single-field struct and `Client` is `Copy`.
-        // `MultiItemModifier` doesn't extend `Any`, so we can't downcast.
         let client = unsafe {
             let ptr = Arc::as_ref(arc) as *const dyn rustc_expand::base::MultiItemModifier
                 as *const DeriveProcMacro;
@@ -252,7 +239,6 @@ impl<'tcx> RustcTcxDb<'tcx> {
             return None;
         };
 
-        // Same unsafe pattern as derive — extract the Client from BangProcMacro.
         let client = unsafe {
             let ptr = Arc::as_ref(arc) as *const dyn rustc_expand::base::BangProcMacro
                 as *const rustc_expand::proc_macro::BangProcMacro;
@@ -293,7 +279,6 @@ impl<'tcx> RustcTcxDb<'tcx> {
             return None;
         };
 
-        // Same unsafe pattern — extract the Client from AttrProcMacro.
         let client = unsafe {
             let ptr = Arc::as_ref(arc) as *const dyn rustc_expand::base::AttrProcMacro
                 as *const rustc_expand::proc_macro::AttrProcMacro;
@@ -309,7 +294,6 @@ impl<'tcx> RustcTcxDb<'tcx> {
     }
 }
 
-/// Map a `DefKind` to a `SymExtKind`.
 fn sym_ext_kind_for_def_kind(kind: DefKind) -> SymExtKind {
     use rustc_hir::def::CtorOf;
     match kind {
@@ -331,7 +315,6 @@ fn sym_ext_kind_for_def_kind(kind: DefKind) -> SymExtKind {
     }
 }
 
-/// Map a `DefKind` to the namespace(s) it occupies.
 fn namespaces_for_def_kind(kind: DefKind) -> Vec<Namespace> {
     match kind {
         DefKind::Mod

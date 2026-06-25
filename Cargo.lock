@@ -874,6 +874,7 @@ dependencies = [
  "proc-macro2",
  "rand",
  "sage-ir",
+ "sage-rustc-bridge",
  "sage-stash",
  "sage-test-harness",
  "salsa",
@@ -939,9 +940,19 @@ dependencies = [
  "regex",
  "rust-ref",
  "sage-emit",
+ "sage-ir",
  "sage-oracle",
+ "sage-rustc-bridge",
  "sage-test-harness",
  "serde_json",
+]
+
+[[package]]
+name = "sage-rustc-bridge"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "sage-ir",
 ]
 
 [[package]]

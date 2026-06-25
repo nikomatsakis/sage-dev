@@ -1,10 +1,15 @@
 #![feature(rustc_private)]
 
+extern crate rustc_driver;
+extern crate rustc_interface;
+extern crate rustc_middle;
+
 use std::path::{Path, PathBuf};
 
 use rust_ref::{Crate, NormalizedDef};
 
 pub mod annotations;
+pub mod combined;
 
 pub fn fixtures_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test-fixtures/oracle")

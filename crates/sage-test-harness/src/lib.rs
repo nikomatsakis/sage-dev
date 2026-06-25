@@ -147,7 +147,17 @@ pub fn with_test_crate_files<R>(
     files: &[(&str, &str)],
     f: impl for<'db> FnOnce(&'db dyn Db, ModSymbol<'db>) -> R,
 ) -> R {
-    let mut db = Database::default();
+    let db = Database::default();
+    with_test_crate_files_using_db(db, files, f)
+}
+
+/// Like `with_test_crate_files`, but uses a caller-provided `Database`.
+/// This allows passing a `Database::with_proxy(...)` that has real external crate support.
+pub fn with_test_crate_files_using_db<R>(
+    mut db: Database,
+    files: &[(&str, &str)],
+    f: impl for<'db> FnOnce(&'db dyn Db, ModSymbol<'db>) -> R,
+) -> R {
     let lib_file = {
         let mut lib = None;
         for (path, content) in files {
