@@ -35,6 +35,8 @@ pub enum SymExtKind {
     Struct,
     TupleStructCtor,
     Enum,
+    Variant,
+    VariantCtor,
     Trait,
     Impl,
     Mod,
@@ -67,6 +69,8 @@ impl<'db> SymExt<'db> {
             SymExtKind::Struct => Namespace::Type,
             SymExtKind::TupleStructCtor => Namespace::Value,
             SymExtKind::Enum => Namespace::Type,
+            SymExtKind::Variant => Namespace::Type,
+            SymExtKind::VariantCtor => Namespace::Value,
             SymExtKind::Trait => Namespace::Type,
             SymExtKind::Impl => return None,
             SymExtKind::Mod => Namespace::Type,
@@ -81,9 +85,10 @@ impl<'db> SymExt<'db> {
         Some((Name::new(db, n), namespace))
     }
 
+    /// Returns the children of this external symbol via `module_children`.
+    /// Works for modules (items) and enums (variants + constructors).
     #[salsa::tracked(returns(ref))]
     pub fn expanded_module_items(self, db: &'db dyn Db) -> Vec<Symbol<'db>> {
-        assert_eq!(self.kind(db), SymExtKind::Mod);
         db.tcx()
             .module_children(self.crate_num(db), self.def_index(db))
             .into_iter()
@@ -258,6 +263,8 @@ define_kind_symbols! {
     pub enum FnSymbol<'db> { Local(crate::local_syms::fns::LocalFnSym<'db>), Ext(SymExtKind::Fn) }
     pub enum StructSymbol<'db> { Local(crate::local_syms::structs::LocalStructSym<'db>), Ext(SymExtKind::Struct) }
     pub enum EnumSymbol<'db> { Local(crate::local_syms::enums::LocalEnumSym<'db>), Ext(SymExtKind::Enum) }
+    pub enum VariantSymbol<'db> { Local(crate::local_syms::enums::LocalVariantSym<'db>), Ext(SymExtKind::Variant) }
+    pub enum VariantCtorSymbol<'db> { Local(crate::local_syms::enums::LocalVariantCtorSym<'db>), Ext(SymExtKind::VariantCtor) }
     pub enum TraitSymbol<'db> { Local(crate::local_syms::traits::LocalTraitSym<'db>), Ext(SymExtKind::Trait) }
     pub enum TypeAliasSymbol<'db> { Local(crate::local_syms::type_aliases::LocalTypeAliasSym<'db>), Ext(SymExtKind::TypeAlias) }
     pub enum ConstSymbol<'db> { Local(crate::local_syms::consts::LocalConstSym<'db>), Ext(SymExtKind::Const) }
@@ -285,6 +292,20 @@ impl<'db> Symbol<'db> {
             SymbolDataPriv::FnSymbol(sym) => Some((sym.name(db), Namespace::Value)),
             SymbolDataPriv::StructSymbol(sym) => Some((sym.name(db), Namespace::Type)),
             SymbolDataPriv::EnumSymbol(sym) => Some((sym.name(db), Namespace::Type)),
+            SymbolDataPriv::VariantSymbol(sym) => {
+                let ns = if sym.is_tuple(db) {
+                    // Tuple variants: type namespace (ctor is in value ns)
+                    Namespace::Type
+                } else if sym.has_fields(db) {
+                    // Struct variants: type namespace
+                    Namespace::Type
+                } else {
+                    // Unit variants: value namespace
+                    Namespace::Value
+                };
+                Some((sym.name(db), ns))
+            }
+            SymbolDataPriv::VariantCtorSymbol(sym) => Some((sym.name(db), Namespace::Value)),
             SymbolDataPriv::TraitSymbol(sym) => Some((sym.name(db), Namespace::Type)),
             SymbolDataPriv::TypeAliasSymbol(sym) => Some((sym.name(db), Namespace::Type)),
             SymbolDataPriv::ConstSymbol(sym) => Some((sym.name(db), Namespace::Value)),
@@ -307,6 +328,16 @@ impl<'db> Symbol<'db> {
             _ => None,
         }
     }
+
+    /// If this symbol can be entered for path resolution (modules, enums),
+    /// return its children.
+    pub fn children(&self, db: &'db dyn Db) -> Option<&'db [Symbol<'db>]> {
+        match self.data(db) {
+            SymbolData::ModSymbol(m) => Some(m.expanded_module_items(db)),
+            SymbolData::EnumSymbol(e) => Some(e.variants(db)),
+            _ => None,
+        }
+    }
 }
 
 impl<'db> ModSymbol<'db> {
@@ -314,6 +345,15 @@ impl<'db> ModSymbol<'db> {
         match self {
             ModSymbol::Local(sym) => local_expanded_module_items(db, sym),
             ModSymbol::Ext(sym_ext) => sym_ext.expanded_module_items(db),
+        }
+    }
+}
+
+impl<'db> EnumSymbol<'db> {
+    pub fn variants(self, db: &'db dyn Db) -> &'db [Symbol<'db>] {
+        match self {
+            EnumSymbol::Local(sym) => crate::local_syms::enums::enum_variants(db, sym),
+            EnumSymbol::Ext(sym_ext) => sym_ext.expanded_module_items(db),
         }
     }
 }

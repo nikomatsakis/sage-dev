@@ -131,6 +131,14 @@ where
                             } => {
                                 let _ = reply.send(tcx_db.def_path(crate_num, def_index));
                             }
+                            TcxRequest::StructuredDefPath {
+                                crate_num,
+                                def_index,
+                                reply,
+                            } => {
+                                let _ =
+                                    reply.send(tcx_db.structured_def_path(crate_num, def_index));
+                            }
                             TcxRequest::ExpandDerive {
                                 crate_num,
                                 def_index,

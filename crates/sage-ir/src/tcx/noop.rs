@@ -1,6 +1,6 @@
 use crate::symbol::{CrateNum, DefIndex};
 
-use super::{RawChild, TcxDb};
+use super::{ExternalDefPath, RawChild, TcxDb};
 
 /// No-op implementation for tests without rustc.
 pub struct NoopTcxDb;
@@ -29,6 +29,14 @@ impl TcxDb for NoopTcxDb {
     }
 
     fn def_path(&self, _crate_num: CrateNum, _def_index: DefIndex) -> Option<String> {
+        None
+    }
+
+    fn structured_def_path(
+        &self,
+        _crate_num: CrateNum,
+        _def_index: DefIndex,
+    ) -> Option<ExternalDefPath> {
         None
     }
 

@@ -246,11 +246,15 @@ impl<'db> Resolver<'db> {
         rest: &[PathSegment<'db>],
         namespace: Namespace,
     ) -> Vec<Symbol<'db>> {
-        let modules: Vec<ModSymbol<'db>> = symbols
+        assert!(!rest.is_empty(), "`rest` must be non-empty");
+
+        symbols
             .into_iter()
-            .filter_map(|s| s.module(self.db))
-            .collect();
-        self.resolve_remaining_segments_from_modules(stash, modules, rest, namespace)
+            .flat_map(|s| {
+                let children = s.children(self.db).unwrap_or_default();
+                self.resolve_in_children(stash, children, rest, namespace)
+            })
+            .collect()
     }
 
     fn resolve_remaining_segments_from_modules(
@@ -278,6 +282,53 @@ impl<'db> Resolver<'db> {
                     panic!("resolve_remaining_segments invoked with empty `rest`")
                 }
             })
+            .collect()
+    }
+
+    fn resolve_in_children(
+        &mut self,
+        stash: &Stash,
+        children: &[Symbol<'db>],
+        rest: &[PathSegment<'db>],
+        namespace: Namespace,
+    ) -> Vec<Symbol<'db>> {
+        assert!(!rest.is_empty(), "`rest` must be non-empty");
+
+        match rest {
+            [final_segment] => {
+                self.lookup_name_in_children(children, final_segment.name, namespace)
+            }
+
+            [next_segment, rest @ ..] => {
+                let next_symbols =
+                    self.lookup_name_in_children(children, next_segment.name, Namespace::Type);
+                // For the recursive case, try children() on each resolved symbol
+                next_symbols
+                    .into_iter()
+                    .flat_map(|s| {
+                        let inner_children = s.children(self.db).unwrap_or_default();
+                        self.resolve_in_children(stash, inner_children, rest, namespace)
+                    })
+                    .collect()
+            }
+
+            [] => panic!("resolve_in_children invoked with empty `rest`"),
+        }
+    }
+
+    fn lookup_name_in_children(
+        &self,
+        children: &[Symbol<'db>],
+        name: Name<'db>,
+        namespace: Namespace,
+    ) -> Vec<Symbol<'db>> {
+        children
+            .iter()
+            .filter(|item| {
+                item.name(self.db)
+                    .is_some_and(|(n, ns)| n == name && ns == namespace)
+            })
+            .copied()
             .collect()
     }
 
@@ -338,6 +389,8 @@ impl<'db> Resolver<'db> {
                 SymbolData::FnSymbol(..)
                 | SymbolData::StructSymbol(..)
                 | SymbolData::EnumSymbol(..)
+                | SymbolData::VariantSymbol(..)
+                | SymbolData::VariantCtorSymbol(..)
                 | SymbolData::TraitSymbol(..)
                 | SymbolData::TypeAliasSymbol(..)
                 | SymbolData::ConstSymbol(..)

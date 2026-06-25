@@ -154,6 +154,9 @@ impl<'tcx> Emitter<'tcx> {
             hir::ItemKind::Struct(_, _, variant) => Some(Item::Struct(
                 self.emit_struct_item(item.owner_id.def_id, variant),
             )),
+            hir::ItemKind::Enum(_, _, enum_def) => Some(Item::Enum(
+                self.emit_enum_item(item.owner_id.def_id, enum_def),
+            )),
             hir::ItemKind::Mod(..) => Some(Item::Mod(self.emit_module(item.owner_id.def_id))),
             _ => None,
         }
@@ -241,6 +244,36 @@ impl<'tcx> Emitter<'tcx> {
             def: NormalizedDef::Local(local_id),
             name,
             fields,
+        }
+    }
+
+    fn emit_enum_item(
+        &mut self,
+        def_id: LocalDefId,
+        enum_def: &hir::EnumDef<'tcx>,
+    ) -> EnumItem<NormalizedDef> {
+        let local_id = self.assign_local_id(def_id.to_def_id());
+        let name = self.tcx.item_name(def_id.to_def_id()).to_string();
+
+        let variants = enum_def
+            .variants
+            .iter()
+            .map(|variant| {
+                let variant_def_id = variant.def_id.to_def_id();
+                let variant_local_id = self.assign_local_id(variant_def_id);
+                let variant_name = variant.ident.name.to_string();
+                VariantDef {
+                    def: NormalizedDef::Local(variant_local_id),
+                    name: variant_name,
+                    fields: vec![],
+                }
+            })
+            .collect();
+
+        EnumItem {
+            def: NormalizedDef::Local(local_id),
+            name,
+            variants,
         }
     }
 

@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::symbol::{CrateNum, DefIndex};
 
-use super::{RawChild, TcxDb};
+use super::{ExternalDefPath, RawChild, TcxDb};
 
 /// Request from the salsa thread to the TyCtxt thread.
 /// Each variant carries a oneshot sender for its typed response.
@@ -36,6 +36,11 @@ pub enum TcxRequest {
         crate_num: CrateNum,
         def_index: DefIndex,
         reply: mpsc::Sender<Option<String>>,
+    },
+    StructuredDefPath {
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        reply: mpsc::Sender<Option<ExternalDefPath>>,
     },
     ExpandDerive {
         crate_num: CrateNum,
@@ -156,6 +161,22 @@ impl TcxDb for ProxyTcxDb {
         let (reply, rx) = mpsc::channel();
         self.tx
             .send(TcxRequest::DefPath {
+                crate_num,
+                def_index,
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn structured_def_path(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+    ) -> Option<ExternalDefPath> {
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::StructuredDefPath {
                 crate_num,
                 def_index,
                 reply,

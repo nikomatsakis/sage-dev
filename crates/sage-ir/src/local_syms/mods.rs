@@ -161,6 +161,8 @@ fn expand_macro<'db>(
             SymbolData::FnSymbol(..)
             | SymbolData::StructSymbol(..)
             | SymbolData::EnumSymbol(..)
+            | SymbolData::VariantSymbol(..)
+            | SymbolData::VariantCtorSymbol(..)
             | SymbolData::TraitSymbol(..)
             | SymbolData::TypeAliasSymbol(..)
             | SymbolData::ConstSymbol(..)
