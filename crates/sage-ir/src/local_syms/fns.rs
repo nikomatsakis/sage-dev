@@ -101,7 +101,8 @@ impl<'db> LocalFnSym<'db> {
         let body_expr = match cst.body {
             Some(body_ptr) => src[body_ptr].check(&mut bx),
             None => {
-                let ty = bx.alloc_ty(crate::ty::Ty::Error);
+                let e = crate::diagnostic::ErrorReported::mint();
+                let ty = bx.alloc_ty(crate::ty::Ty::Error(e));
                 bx.alloc_expr(crate::tytree::TyExprData::Missing, ty, cst.span)
             }
         };

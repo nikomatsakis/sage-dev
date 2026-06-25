@@ -343,7 +343,7 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
                 self.runtime.wake_variable(idx);
                 return Ok(());
             }
-            (Ty::Error, _) | (_, Ty::Error) => return Ok(()),
+            (Ty::Error(_), _) | (_, Ty::Error(_)) => return Ok(()),
             _ => {}
         }
 
@@ -432,6 +432,7 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
     // ------------------------------------------------------------------
 
     pub fn finalize(&mut self) {
+        // First pass: identify unresolved variables and resolve AtLeast bounds.
         let mut unresolved_vars = Vec::new();
 
         let dst = &mut self.check.target_stash;
@@ -450,10 +451,7 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
                         Ty::InferVar(idx) => idx,
                         _ => continue,
                     };
-                    let error_ty = dst.alloc(Ty::Error);
-                    self.egraph.set_bound(dst, ty, Bound::Exactly(error_ty));
-                    self.egraph.union(dst, ty, error_ty);
-                    unresolved_vars.push(idx);
+                    unresolved_vars.push((i, idx));
                 }
                 Bound::AtLeast(bound_ty) => {
                     self.egraph.set_bound(dst, ty, Bound::Exactly(bound_ty));
@@ -463,7 +461,8 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
             }
         }
 
-        for idx in unresolved_vars {
+        // Second pass: emit diagnostics and set error types for unresolved vars.
+        for (i, idx) in unresolved_vars {
             let span = RelativeSpan { start: 0, end: 0 };
             let err = TypeError {
                 kind: TypeErrorKind::UnresolvedInferVar { var: idx },
@@ -471,7 +470,13 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
                 context: Vec::new(),
             };
             let diag = err.to_diagnostic(self);
-            self.diagnostics.push(diag);
+            let e = self.report(diag);
+
+            let ty = self.infer_var_ptrs[i];
+            let dst = &mut self.check.target_stash;
+            let error_ty = dst.alloc(Ty::Error(e));
+            self.egraph.set_bound(dst, ty, Bound::Exactly(error_ty));
+            self.egraph.union(dst, ty, error_ty);
         }
 
         self.runtime.wake_all();

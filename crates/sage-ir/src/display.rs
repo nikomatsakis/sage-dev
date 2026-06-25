@@ -58,7 +58,7 @@ fn fmt_ty(
         }),
         Ty::Str => f.write_str("str"),
         Ty::Never => f.write_str("!"),
-        Ty::Error => f.write_str("<error>"),
+        Ty::Error(_) => f.write_str("<error>"),
         Ty::InferVar(idx) => write!(f, "?{}", idx.0),
         Ty::Param(p) => {
             let name = p.name(db).map_or("?", |n| n.text(db));

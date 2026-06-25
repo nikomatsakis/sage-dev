@@ -1,4 +1,5 @@
 use crate::cst::Mutability;
+use crate::diagnostic::ErrorReported;
 use crate::generic_param::GenericParam;
 use crate::symbol::Symbol;
 use crate::ty::{Const, FloatTy, InferVarIndex, IntTy, Lifetime, Ty, UintTy};
@@ -18,7 +19,7 @@ pub enum Skeleton<'db> {
     Float(FloatTy),
     Str,
     Never,
-    Error,
+    Error(ErrorReported),
     Param(GenericParam<'db>),
     InferVar(InferVarIndex),
 
@@ -48,7 +49,7 @@ pub fn decompose<'db>(stash: &Stash, ty: Ptr<Ty<'db>>) -> Decomposed<'db> {
         Ty::Float(f) => leaf(Skeleton::Float(f)),
         Ty::Str => leaf(Skeleton::Str),
         Ty::Never => leaf(Skeleton::Never),
-        Ty::Error => leaf(Skeleton::Error),
+        Ty::Error(e) => leaf(Skeleton::Error(e)),
         Ty::Param(p) => leaf(Skeleton::Param(p)),
         Ty::InferVar(idx) => leaf(Skeleton::InferVar(idx)),
 
@@ -111,7 +112,7 @@ pub fn recompose<'db>(
         Skeleton::Float(f) => Ty::Float(f),
         Skeleton::Str => Ty::Str,
         Skeleton::Never => Ty::Never,
-        Skeleton::Error => Ty::Error,
+        Skeleton::Error(e) => Ty::Error(e),
         Skeleton::Param(p) => Ty::Param(p),
         Skeleton::InferVar(idx) => Ty::InferVar(idx),
 

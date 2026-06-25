@@ -496,7 +496,11 @@ impl<'db> ExprCst<'db> {
                 (TyExprData::Range(rl, rh), ty)
             }
             ExprCstKind::Missing => {
-                let ty = check.alloc_ty(Ty::Error);
+                let e = check.report(crate::diagnostic::Diagnostic::error(
+                    check.span(span),
+                    "syntax error",
+                ));
+                let ty = check.alloc_ty(Ty::Error(e));
                 (TyExprData::Missing, ty)
             }
         };
@@ -650,7 +654,7 @@ fn res_to_ty<'db>(cx: &mut BodyCheck<'_, 'db>, res: Res<'db>) -> Ptr<Ty<'db>> {
     match res {
         Res::Local(LocalId(id)) => cx.local_type(id),
         Res::Def(sym) => def_to_ty(cx, sym),
-        Res::Error(_) => cx.alloc_ty(Ty::Error),
+        Res::Error(e) => cx.alloc_ty(Ty::Error(e)),
     }
 }
 
@@ -719,10 +723,22 @@ fn struct_lit_ty<'db>(cx: &mut BodyCheck<'_, 'db>, res: Res<'db>) -> StructLitRe
 
     let sym = match res {
         Res::Def(sym) => sym,
-        Res::Error(_) | Res::Local(_) => {
+        Res::Error(e) => {
             let empty = cx.stash_mut().alloc_slice(&[]);
             return StructLitResult {
-                ty: cx.alloc_ty(Ty::Error),
+                ty: cx.alloc_ty(Ty::Error(e)),
+                local: None,
+                type_args: empty,
+            };
+        }
+        Res::Local(_) => {
+            let e = cx.report(crate::diagnostic::Diagnostic::error(
+                cx.span(crate::span::RelativeSpan { start: 0, end: 0 }),
+                "expected struct type",
+            ));
+            let empty = cx.stash_mut().alloc_slice(&[]);
+            return StructLitResult {
+                ty: cx.alloc_ty(Ty::Error(e)),
                 local: None,
                 type_args: empty,
             };
@@ -749,9 +765,13 @@ fn struct_lit_ty<'db>(cx: &mut BodyCheck<'_, 'db>, res: Res<'db>) -> StructLitRe
             }
         }
         _ => {
+            let e = cx.report(crate::diagnostic::Diagnostic::error(
+                cx.span(crate::span::RelativeSpan { start: 0, end: 0 }),
+                "expected struct type",
+            ));
             let empty = cx.stash_mut().alloc_slice(&[]);
             StructLitResult {
-                ty: cx.alloc_ty(Ty::Error),
+                ty: cx.alloc_ty(Ty::Error(e)),
                 local: None,
                 type_args: empty,
             }

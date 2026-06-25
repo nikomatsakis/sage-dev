@@ -104,7 +104,9 @@ impl<'db> TypeCst<'db> {
                     Resolution::Param(param) => Ty::Param(param),
                     Resolution::Sym(sym) => resolution_to_ty(cx.db, sym, type_args),
                     Resolution::SelfTy(ty) => ty,
-                    Resolution::Local(_) | Resolution::Error => Ty::Error,
+                    Resolution::Local(_) | Resolution::Error => {
+                        Ty::Error(crate::diagnostic::ErrorReported::mint())
+                    }
                 }
             }
             TypeCstKind::Reference(inner, m) => {
@@ -146,7 +148,9 @@ impl<'db> TypeCst<'db> {
                 Ty::FnPtr(param_slice, ret_ptr)
             }
             TypeCstKind::Never => Ty::Never,
-            TypeCstKind::Infer | TypeCstKind::Error => Ty::Error,
+            TypeCstKind::Infer | TypeCstKind::Error => {
+                Ty::Error(crate::diagnostic::ErrorReported::mint())
+            }
         }
     }
 }
