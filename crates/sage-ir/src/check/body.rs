@@ -22,11 +22,18 @@ use super::infer::version::{Universe, VarInfo, Version};
 // TypeError — the structured error that flows through Result during checking
 // ---------------------------------------------------------------------------
 
+/// A type error: either a fresh error needing reporting, or a previously
+/// reported error being propagated.
 #[derive(Clone, Debug)]
-pub struct TypeError<'db> {
-    pub kind: TypeErrorKind<'db>,
-    pub span: RelativeSpan,
-    pub context: Vec<ErrorContext>,
+pub enum TypeError<'db> {
+    /// A fresh error that needs to be reported at a catch point.
+    Fresh {
+        kind: TypeErrorKind<'db>,
+        span: RelativeSpan,
+        context: Vec<ErrorContext>,
+    },
+    /// An error that was already reported — just propagating the witness.
+    Reported(ErrorReported),
 }
 
 #[derive(Clone, Debug)]
@@ -60,13 +67,24 @@ pub enum ErrorContext {
 
 impl<'db> TypeError<'db> {
     pub fn with_context(mut self, context: ErrorContext) -> Self {
-        self.context.push(context);
+        match &mut self {
+            TypeError::Fresh { context: ctx, .. } => ctx.push(context),
+            TypeError::Reported(_) => {}
+        }
         self
     }
 
-    pub fn to_diagnostic(&self, cx: &BodyCheck<'_, 'db>) -> Diagnostic<'db> {
-        let span = cx.span(self.span);
-        match &self.kind {
+    pub fn to_diagnostic(&self, cx: &BodyCheck<'_, 'db>) -> Option<Diagnostic<'db>> {
+        let TypeError::Fresh {
+            kind,
+            span,
+            context,
+        } = self
+        else {
+            return None;
+        };
+        let span = cx.span(*span);
+        Some(match kind {
             TypeErrorKind::Mismatch { expected, actual } => {
                 let expected_str = TyDisplay::new(cx.db, cx.stash(), *expected).to_string();
                 let actual_str = TyDisplay::new(cx.db, cx.stash(), *actual).to_string();
@@ -77,7 +95,7 @@ impl<'db> TypeError<'db> {
                 let mut diag = Diagnostic::error(span.clone(), &msg)
                     .label(span, format!("found `{actual_str}`"));
 
-                for ctx in &self.context {
+                for ctx in context {
                     match ctx {
                         ErrorContext::ReturnType { ret_span } => {
                             diag = diag.secondary(
@@ -108,7 +126,7 @@ impl<'db> TypeError<'db> {
             TypeErrorKind::AmbiguousName { count } => {
                 Diagnostic::error(span, format!("ambiguous name: {count} candidates"))
             }
-        }
+        })
     }
 }
 
@@ -202,7 +220,7 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
         let check = &mut self.check;
         let results = check.resolver.resolve_path(check.source_stash, path, ns);
         if results.len() > 1 {
-            let err = TypeError {
+            let err = TypeError::Fresh {
                 kind: TypeErrorKind::AmbiguousName {
                     count: results.len(),
                 },
@@ -323,6 +341,7 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
         let b_data = dst[b_canon];
 
         match (a_data, b_data) {
+            (Ty::Error(e), _) | (_, Ty::Error(e)) => return Err(TypeError::Reported(e)),
             (Ty::InferVar(_), Ty::InferVar(_)) => {
                 self.egraph.union(dst, a_canon, b_canon);
                 return Ok(());
@@ -339,7 +358,7 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
                 self.runtime.wake_variable(idx);
                 return Ok(());
             }
-            (Ty::Error(_), _) | (_, Ty::Error(_)) => return Ok(()),
+
             _ => {}
         }
 
@@ -347,7 +366,7 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
         let db_decomposed = decompose(dst, b_canon);
 
         if da.skeleton != db_decomposed.skeleton {
-            return Err(TypeError {
+            return Err(TypeError::Fresh {
                 kind: TypeErrorKind::Mismatch {
                     expected: b_canon,
                     actual: a_canon,
@@ -460,13 +479,12 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
         // Second pass: emit diagnostics and set error types for unresolved vars.
         for (i, idx) in unresolved_vars {
             let span = RelativeSpan { start: 0, end: 0 };
-            let err = TypeError {
+            let err = TypeError::Fresh {
                 kind: TypeErrorKind::UnresolvedInferVar { var: idx },
                 span,
                 context: Vec::new(),
             };
-            let diag = err.to_diagnostic(self);
-            let e = self.report(diag);
+            let e = self.catch(err);
 
             let ty = self.infer_var_ptrs[i];
             let dst = &mut self.check.target_stash;
@@ -488,9 +506,15 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
     }
 
     /// Catch a TypeError: convert to Diagnostic (rendering types now) and report.
+    /// If already reported, just returns the existing witness.
     pub fn catch(&mut self, err: TypeError<'db>) -> ErrorReported {
-        let diag = err.to_diagnostic(self);
-        self.report(diag)
+        match &err {
+            TypeError::Reported(e) => *e,
+            TypeError::Fresh { .. } => {
+                let diag = err.to_diagnostic(self).unwrap();
+                self.report(diag)
+            }
+        }
     }
 
     pub fn report_type_mismatch(
@@ -499,7 +523,7 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
         actual: Ptr<Ty<'db>>,
         span: RelativeSpan,
     ) {
-        let err = TypeError {
+        let err = TypeError::Fresh {
             kind: TypeErrorKind::Mismatch { expected, actual },
             span,
             context: Vec::new(),
