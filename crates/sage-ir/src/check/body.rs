@@ -220,7 +220,8 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
             Some(Resolution::Sym(sym)) => Res::Def(sym),
             Some(Resolution::Local(id)) => Res::Local(id),
             Some(Resolution::Param(_) | Resolution::SelfTy(_) | Resolution::Error) | None => {
-                Res::Error(ErrorReported::new())
+                let e = self.report(Diagnostic::error(self.span(span), "unresolved name"));
+                Res::Error(e)
             }
         }
     }
@@ -483,7 +484,7 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
 
     pub fn report(&mut self, diag: Diagnostic<'db>) -> ErrorReported {
         self.diagnostics.push(diag);
-        ErrorReported::new()
+        ErrorReported::mint()
     }
 
     /// Catch a TypeError: convert to Diagnostic (rendering types now) and report.

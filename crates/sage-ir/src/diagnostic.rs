@@ -120,7 +120,8 @@ pub struct ErrorReported(());
 impl sage_stash::StashDirect for ErrorReported {}
 
 impl ErrorReported {
-    pub(crate) fn new() -> Self {
+    /// Mint a new witness. Only call this from `BodyCheck::report()`.
+    pub(crate) fn mint() -> Self {
         ErrorReported(())
     }
 }
