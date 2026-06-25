@@ -84,23 +84,27 @@ impl<'tcx> Emitter<'tcx> {
     fn def_path_for(&self, def_id: DefId) -> DefPath {
         let crate_name = self.tcx.crate_name(def_id.krate).to_string();
         let def_path = self.tcx.def_path(def_id);
+
+        let leaf_kind = match self.tcx.def_kind(def_id) {
+            HirDefKind::Fn | HirDefKind::AssocFn => rust_ref::DefKind::Fn,
+            HirDefKind::Struct => rust_ref::DefKind::Struct,
+            HirDefKind::Enum => rust_ref::DefKind::Enum,
+            HirDefKind::Variant | HirDefKind::Ctor(..) => rust_ref::DefKind::Enum,
+            HirDefKind::Trait | HirDefKind::TraitAlias => rust_ref::DefKind::Trait,
+            HirDefKind::TyAlias | HirDefKind::AssocTy => rust_ref::DefKind::TypeAlias,
+            HirDefKind::Mod => rust_ref::DefKind::Mod,
+            HirDefKind::Const { .. } | HirDefKind::AssocConst { .. } => rust_ref::DefKind::Const,
+            HirDefKind::Static { .. } => rust_ref::DefKind::Static,
+            _ => rust_ref::DefKind::Struct,
+        };
+
         let segments = def_path
             .data
             .iter()
             .filter_map(|elem| {
                 let name = elem.data.get_opt_name()?;
                 let kind = match &elem.data {
-                    rustc_hir::definitions::DefPathData::TypeNs(_) => {
-                        let def_kind = self.tcx.def_kind(def_id);
-                        match def_kind {
-                            HirDefKind::Struct => rust_ref::DefKind::Struct,
-                            HirDefKind::Enum => rust_ref::DefKind::Enum,
-                            HirDefKind::Trait => rust_ref::DefKind::Trait,
-                            HirDefKind::TyAlias => rust_ref::DefKind::TypeAlias,
-                            HirDefKind::Mod => rust_ref::DefKind::Mod,
-                            _ => rust_ref::DefKind::Struct,
-                        }
-                    }
+                    rustc_hir::definitions::DefPathData::TypeNs(_) => leaf_kind.clone(),
                     rustc_hir::definitions::DefPathData::ValueNs(_) => rust_ref::DefKind::Fn,
                     _ => return None,
                 };
@@ -334,6 +338,14 @@ impl<'tcx> Emitter<'tcx> {
                         args: vec![],
                         ty: self.emit_type(expr_ty),
                     },
+                    Res::Def(HirDefKind::Ctor(..), def_id) => {
+                        let variant_def_id = self.tcx.parent(def_id);
+                        Expr::Call {
+                            target: self.normalize_def(variant_def_id),
+                            args: vec![],
+                            ty: self.emit_type(expr_ty),
+                        }
+                    }
                     _ => Expr::Local {
                         name: format!("?{:?}", res),
                         index: 0,

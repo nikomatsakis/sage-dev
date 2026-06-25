@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 
 use rust_ref::{Crate, NormalizedDef};
 
-pub use emit::OracleError;
+pub use emit::{OracleError, emit_crate};
 
 pub fn analyze_file(path: &Path) -> Result<Crate<NormalizedDef>, OracleError> {
     analyze_crate(path, &[path.to_path_buf()])

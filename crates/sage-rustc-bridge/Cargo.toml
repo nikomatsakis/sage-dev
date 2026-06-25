@@ -1,0 +1,8 @@
+[package]
+name = "sage-rustc-bridge"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+proc-macro2 = "1.0.106"
+sage-ir = { version = "0.1.0", path = "../sage-ir" }

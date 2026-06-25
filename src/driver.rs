@@ -25,7 +25,6 @@ use sage_stash::{Stash, Stashed};
 use salsa::Database as _;
 
 use crate::metadata::{self, WorkspaceInfo};
-use crate::tcx_impl::RustcTcxDb;
 
 /// Everything needed to query sage inside the callback.
 pub struct SageContext<'db> {
@@ -88,98 +87,7 @@ where
                     _compiler: &interface::Compiler,
                     tcx: TyCtxt<'tcx>,
                 ) -> Compilation {
-                    let tcx_db = RustcTcxDb::new(tcx);
-
-                    // Serve TcxDb requests until the main thread drops its sender.
-                    for req in self.req_rx.take().unwrap() {
-                        match req {
-                            TcxRequest::ExternCrate { name, reply } => {
-                                let _ = reply.send(tcx_db.extern_crate(&name));
-                            }
-                            TcxRequest::ModuleChildren {
-                                crate_num,
-                                def_index,
-                                reply,
-                            } => {
-                                let _ = reply.send(tcx_db.module_children(crate_num, def_index));
-                            }
-                            TcxRequest::IsBuiltinDerive {
-                                crate_num,
-                                def_index,
-                                reply,
-                            } => {
-                                let _ = reply.send(tcx_db.is_builtin_derive(crate_num, def_index));
-                            }
-                            TcxRequest::ItemName {
-                                crate_num,
-                                def_index,
-                                reply,
-                            } => {
-                                let _ = reply.send(tcx_db.item_name(crate_num, def_index));
-                            }
-                            TcxRequest::IsModule {
-                                crate_num,
-                                def_index,
-                                reply,
-                            } => {
-                                let _ = reply.send(tcx_db.is_module(crate_num, def_index));
-                            }
-                            TcxRequest::DefPath {
-                                crate_num,
-                                def_index,
-                                reply,
-                            } => {
-                                let _ = reply.send(tcx_db.def_path(crate_num, def_index));
-                            }
-                            TcxRequest::StructuredDefPath {
-                                crate_num,
-                                def_index,
-                                reply,
-                            } => {
-                                let _ =
-                                    reply.send(tcx_db.structured_def_path(crate_num, def_index));
-                            }
-                            TcxRequest::ExpandDerive {
-                                crate_num,
-                                def_index,
-                                item_source,
-                                reply,
-                            } => {
-                                let _ = reply.send(tcx_db.expand_proc_macro_derive(
-                                    crate_num,
-                                    def_index,
-                                    &item_source,
-                                ));
-                            }
-                            TcxRequest::ExpandBang {
-                                crate_num,
-                                def_index,
-                                input_tokens,
-                                reply,
-                            } => {
-                                let _ = reply.send(tcx_db.expand_proc_macro_bang(
-                                    crate_num,
-                                    def_index,
-                                    &input_tokens,
-                                ));
-                            }
-                            TcxRequest::ExpandAttr {
-                                crate_num,
-                                def_index,
-                                attr_args,
-                                item_source,
-                                reply,
-                            } => {
-                                let _ = reply.send(tcx_db.expand_proc_macro_attr(
-                                    crate_num,
-                                    def_index,
-                                    &attr_args,
-                                    &item_source,
-                                ));
-                            }
-                        }
-                    }
-
+                    sage_rustc_bridge::serve_tcx_requests(tcx, self.req_rx.take().unwrap());
                     Compilation::Stop
                 }
             }
