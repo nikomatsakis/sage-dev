@@ -21,7 +21,6 @@
     - [Resolve at Position](./rfds/resolve-at-position.md)
     - [Stash Safety](./rfds/stash-safety.md)
     - [Faster Collision Chains](./rfds/stash-faster-collision-chains.md)
-    - [Enum Variant Symbols](./rfds/enum-variant-symbols.md)
     - [Type Inference](./rfds/type-inference.md)
     - [Symbol-Level Signature Queries](./rfds/symbol-signatures.md)
     - [Concurrent Type Checking](./rfds/concurrent-type-checking.md)
@@ -43,4 +42,5 @@
     - [Diagnostics Rendering](./rfds/diagnostics-rendering.md)
     - [Error Sentinel Type](./rfds/error-sentinel-type.md)
     - [IR Reshape](./rfds/ir-reshape.md)
+    - [Enum Variant Symbols](./rfds/enum-variant-symbols.md)
     - [Oracle Test Framework](./rfds/oracle-test-framework.md)

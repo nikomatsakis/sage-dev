@@ -1,6 +1,6 @@
 # RFD: Enum Variants as First-Class Symbols
 
-**Status:** Active
+**Status:** Completed
 
 **Depends on:**
 - [Per-Kind Symbol Data](./per-kind-symbol-data.md) — per-kind `SymbolData` enum
@@ -319,6 +319,18 @@ Once the resolver can enter enums, it should report an "unresolved name" error f
 - **sage-emit gap:** The emit layer doesn't register enum or variant defs in `local_def_map` today. Local-enum fixtures (B1, B2, B3, C1) require emit-layer updates in Step 4 for oracle comparison to match.
 - **Unit variant paths:** The oracle's `ExprKind::Path` only handles `Fn | AssocFn` — unit variants like bare `None` fall through. Defer unit-variant oracle tests until the oracle is updated.
 - **Prelude variants:** `Some(x)` without qualification works in Rust because the prelude re-exports variant constructors at module level. This depends on glob re-export logic, which is a non-goal of this RFD.
+
+## Implementation deviations
+
+1. **`LocalVariantSym` stores `cst: VariantCst<'db>` directly.** The plan sketched storing name + parent; we store the full CST value after deriving `salsa::Update` on `VariantCst`. All its fields (`Name`, `Slice`, `Option<Ptr<…>>`, `RelativeSpan`) already had `Update` impls.
+
+2. **Single `expanded_module_items` for both modules and enums.** The plan showed a separate `expanded_enum_items`; in practice rustc's `module_children` works identically on both, so we removed the `assert_eq!(kind, Mod)` and reuse one tracked function.
+
+3. **A1 test deferred.** `option_some_call.rs` requires external crate metadata but the test harness uses `NoopTcxDb`. The resolver infrastructure for external enum children is in place; testing it is blocked on the [Test Harness External Crates](./test-harness-external-crates.md) RFD.
+
+4. **Enum-children resolution uses `resolve_in_children` (not `resolve_name_from_module`).** Modules need use-resolution and cycle detection; enum children are a flat list. The resolver has two paths rather than one generalized function.
+
+5. **`TcxDb::structured_def_path` added.** Needed to produce proper `External(DefPath{krate, segments})` instead of `"?"` placeholders for external symbols in sage-emit. Not in the original plan but closes a pre-existing gap.
 
 ## Non-goals
 
