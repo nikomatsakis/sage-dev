@@ -24,6 +24,7 @@ pub struct Module<Def> {
 pub enum Item<Def> {
     Fn(FnItem<Def>),
     Struct(StructItem<Def>),
+    Enum(EnumItem<Def>),
     Mod(Module<Def>),
 }
 
@@ -47,6 +48,22 @@ pub struct Param<Def> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(serialize = "Def: Serialize", deserialize = "Def: Deserialize<'de>"))]
 pub struct StructItem<Def> {
+    pub def: Def,
+    pub name: String,
+    pub fields: Vec<FieldDef<Def>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound(serialize = "Def: Serialize", deserialize = "Def: Deserialize<'de>"))]
+pub struct EnumItem<Def> {
+    pub def: Def,
+    pub name: String,
+    pub variants: Vec<VariantDef<Def>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound(serialize = "Def: Serialize", deserialize = "Def: Deserialize<'de>"))]
+pub struct VariantDef<Def> {
     pub def: Def,
     pub name: String,
     pub fields: Vec<FieldDef<Def>>,
@@ -217,6 +234,7 @@ pub enum DefKind {
     Fn,
     Struct,
     Enum,
+    Variant,
     Trait,
     Impl,
     TypeAlias,
@@ -251,6 +269,7 @@ impl<Def> Item<Def> {
         match self {
             Item::Fn(item) => Item::Fn(item.map(f)),
             Item::Struct(item) => Item::Struct(item.map(f)),
+            Item::Enum(item) => Item::Enum(item.map(f)),
             Item::Mod(module) => Item::Mod(module.map(f)),
         }
     }
@@ -280,6 +299,26 @@ impl<Def> Param<Def> {
 impl<Def> StructItem<Def> {
     pub fn map<Def2>(self, f: &mut impl FnMut(Def) -> Def2) -> StructItem<Def2> {
         StructItem {
+            def: f(self.def),
+            name: self.name,
+            fields: self.fields.into_iter().map(|fd| fd.map(f)).collect(),
+        }
+    }
+}
+
+impl<Def> EnumItem<Def> {
+    pub fn map<Def2>(self, f: &mut impl FnMut(Def) -> Def2) -> EnumItem<Def2> {
+        EnumItem {
+            def: f(self.def),
+            name: self.name,
+            variants: self.variants.into_iter().map(|v| v.map(f)).collect(),
+        }
+    }
+}
+
+impl<Def> VariantDef<Def> {
+    pub fn map<Def2>(self, f: &mut impl FnMut(Def) -> Def2) -> VariantDef<Def2> {
+        VariantDef {
             def: f(self.def),
             name: self.name,
             fields: self.fields.into_iter().map(|fd| fd.map(f)).collect(),

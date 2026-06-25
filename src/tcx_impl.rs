@@ -140,6 +140,41 @@ impl<'tcx> RustcTcxDb<'tcx> {
         Some(self.tcx.def_path_str(def_id))
     }
 
+    pub fn structured_def_path(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+    ) -> Option<sage_ir::tcx::ExternalDefPath> {
+        use sage_ir::tcx::{DefPathNs, ExternalDefPath, ExternalDefPathSegment};
+
+        let def_id = DefId {
+            krate: RustcCrateNum::from_u32(crate_num.0),
+            index: rustc_hir::def_id::DefIndex::from_u32(def_index.0),
+        };
+        let crate_name = self.tcx.crate_name(def_id.krate).to_string();
+        let def_path = self.tcx.def_path(def_id);
+        let segments = def_path
+            .data
+            .iter()
+            .filter_map(|elem| {
+                let name = elem.data.get_opt_name()?;
+                let ns = match &elem.data {
+                    rustc_hir::definitions::DefPathData::TypeNs(_) => DefPathNs::Type,
+                    rustc_hir::definitions::DefPathData::ValueNs(_) => DefPathNs::Value,
+                    _ => return None,
+                };
+                Some(ExternalDefPathSegment {
+                    name: name.to_string(),
+                    ns,
+                })
+            })
+            .collect();
+        Some(ExternalDefPath {
+            krate: crate_name,
+            segments,
+        })
+    }
+
     pub fn expand_proc_macro_derive(
         &self,
         crate_num: CrateNum,
@@ -282,6 +317,8 @@ fn sym_ext_kind_for_def_kind(kind: DefKind) -> SymExtKind {
         DefKind::Struct => SymExtKind::Struct,
         DefKind::Ctor(CtorOf::Struct, _) => SymExtKind::TupleStructCtor,
         DefKind::Enum => SymExtKind::Enum,
+        DefKind::Variant => SymExtKind::Variant,
+        DefKind::Ctor(CtorOf::Variant, _) => SymExtKind::VariantCtor,
         DefKind::Trait | DefKind::TraitAlias => SymExtKind::Trait,
         DefKind::Impl { .. } => SymExtKind::Impl,
         DefKind::Mod => SymExtKind::Mod,

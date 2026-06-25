@@ -764,6 +764,24 @@ fn struct_lit_ty<'db>(cx: &mut BodyCheck<'_, 'db>, res: Res<'db>) -> StructLitRe
                 type_args: type_args_slice,
             }
         }
+        SymbolData::VariantSymbol(crate::symbol::VariantSymbol::Local(local_variant)) => {
+            let parent_enum = local_variant.parent_enum(cx.db);
+            let enum_sym: crate::symbol::Symbol<'db> = parent_enum.into();
+            let type_args_slice = cx.stash_mut().alloc_slice(&[]);
+            StructLitResult {
+                ty: cx.alloc_ty(Ty::Adt(enum_sym, type_args_slice)),
+                local: None,
+                type_args: type_args_slice,
+            }
+        }
+        SymbolData::VariantSymbol(crate::symbol::VariantSymbol::Ext(_)) => {
+            let type_args_slice = cx.stash_mut().alloc_slice(&[]);
+            StructLitResult {
+                ty: cx.alloc_ty(Ty::Adt(sym, type_args_slice)),
+                local: None,
+                type_args: type_args_slice,
+            }
+        }
         _ => {
             let e = cx.report(crate::diagnostic::Diagnostic::error(
                 cx.span(crate::span::RelativeSpan { start: 0, end: 0 }),

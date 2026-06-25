@@ -20,7 +20,7 @@ pub struct EnumCstData<'db> {
     pub span: RelativeSpan,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, salsa::Update)]
 pub struct VariantCst<'db> {
     pub name: Name<'db>,
     pub fields: Slice<FieldCst<'db>>,

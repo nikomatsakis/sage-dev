@@ -17,6 +17,25 @@ pub struct RawChild {
     pub kind: SymExtKind,
 }
 
+/// Structured external def path for oracle-compatible normalization.
+#[derive(Clone, Debug)]
+pub struct ExternalDefPath {
+    pub krate: String,
+    pub segments: Vec<ExternalDefPathSegment>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ExternalDefPathSegment {
+    pub name: String,
+    pub ns: DefPathNs,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum DefPathNs {
+    Type,
+    Value,
+}
+
 /// External crate metadata interface.
 ///
 /// Returns only owned, `'static` data. The caller is responsible for
@@ -44,6 +63,13 @@ pub trait TcxDb: Send + Sync {
 
     /// Human-readable path for an external definition, e.g. `"core::option::Option::Some"`.
     fn def_path(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<String>;
+
+    /// Structured def path with crate name and per-segment namespace info.
+    fn structured_def_path(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+    ) -> Option<ExternalDefPath>;
 
     /// Expand a proc-macro derive. Returns the expanded source text.
     fn expand_proc_macro_derive(

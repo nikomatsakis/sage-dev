@@ -1,7 +1,8 @@
 use sage_ir::Db;
 use sage_ir::cst::Mutability;
 use sage_ir::cst::expr::{BinaryOp as SageBinaryOp, Literal as SageLiteral};
-use sage_ir::symbol::{FnSymbol, ModSymbol, StructSymbol, Symbol, SymbolData};
+use sage_ir::local_syms::enums::{LocalEnumSym, enum_variants};
+use sage_ir::symbol::{EnumSymbol, FnSymbol, ModSymbol, StructSymbol, Symbol, SymbolData};
 use sage_ir::ty::{self, Ty};
 use sage_ir::tytree::{PathResolution, TyBody, TyExprData, TyFieldInit, TyStmt, TyStmtKind};
 use sage_stash::Stash;
@@ -37,14 +38,89 @@ impl<'db> Emitter<'db> {
     }
 
     fn normalize_def(&self, sym: Symbol<'db>) -> NormalizedDef {
-        if let Some(&(_, id)) = self.local_def_map.iter().find(|(s, _)| *s == sym) {
+        // For variant ctor symbols, map to the parent variant (mirrors rustc's behavior)
+        let lookup_sym = match sym.data(self.db) {
+            SymbolData::VariantCtorSymbol(sage_ir::symbol::VariantCtorSymbol::Local(ctor)) => {
+                ctor.variant(self.db).into()
+            }
+            _ => sym,
+        };
+        if let Some(&(_, id)) = self.local_def_map.iter().find(|(s, _)| *s == lookup_sym) {
             NormalizedDef::Local(id)
         } else {
-            NormalizedDef::External(DefPath {
+            self.external_def_path(lookup_sym)
+        }
+    }
+
+    fn external_def_path(&self, sym: Symbol<'db>) -> NormalizedDef {
+        let ext = match sym.data(self.db) {
+            SymbolData::FnSymbol(sage_ir::symbol::FnSymbol::Ext(e)) => e,
+            SymbolData::StructSymbol(sage_ir::symbol::StructSymbol::Ext(e)) => e,
+            SymbolData::EnumSymbol(sage_ir::symbol::EnumSymbol::Ext(e)) => e,
+            SymbolData::VariantSymbol(sage_ir::symbol::VariantSymbol::Ext(e)) => e,
+            SymbolData::VariantCtorSymbol(sage_ir::symbol::VariantCtorSymbol::Ext(e)) => e,
+            SymbolData::TraitSymbol(sage_ir::symbol::TraitSymbol::Ext(e)) => e,
+            SymbolData::ModSymbol(sage_ir::symbol::ModSymbol::Ext(e)) => e,
+            SymbolData::TypeAliasSymbol(sage_ir::symbol::TypeAliasSymbol::Ext(e)) => e,
+            SymbolData::ConstSymbol(sage_ir::symbol::ConstSymbol::Ext(e)) => e,
+            SymbolData::StaticSymbol(sage_ir::symbol::StaticSymbol::Ext(e)) => e,
+            _ => {
+                return NormalizedDef::External(DefPath {
+                    krate: "?".to_string(),
+                    segments: vec![],
+                });
+            }
+        };
+
+        self.ext_to_def_path(ext)
+    }
+
+    fn ext_to_def_path(&self, ext: sage_ir::symbol::SymExt<'db>) -> NormalizedDef {
+        use sage_ir::symbol::SymExtKind;
+        use sage_ir::tcx::DefPathNs;
+
+        let Some(sdp) = self
+            .db
+            .tcx()
+            .structured_def_path(ext.crate_num(self.db), ext.def_index(self.db))
+        else {
+            return NormalizedDef::External(DefPath {
                 krate: "?".to_string(),
                 segments: vec![],
+            });
+        };
+
+        let leaf_kind = match ext.kind(self.db) {
+            SymExtKind::Fn => DefKind::Fn,
+            SymExtKind::Struct | SymExtKind::TupleStructCtor => DefKind::Struct,
+            SymExtKind::Enum | SymExtKind::Variant | SymExtKind::VariantCtor => DefKind::Enum,
+            SymExtKind::Trait => DefKind::Trait,
+            SymExtKind::Mod => DefKind::Mod,
+            SymExtKind::TypeAlias => DefKind::TypeAlias,
+            SymExtKind::Const => DefKind::Const,
+            SymExtKind::Static => DefKind::Static,
+            _ => DefKind::Struct,
+        };
+
+        let segments = sdp
+            .segments
+            .into_iter()
+            .map(|seg| {
+                let kind = match seg.ns {
+                    DefPathNs::Type => leaf_kind.clone(),
+                    DefPathNs::Value => DefKind::Fn,
+                };
+                DefPathSegment {
+                    kind,
+                    name: seg.name,
+                }
             })
-        }
+            .collect();
+
+        NormalizedDef::External(DefPath {
+            krate: sdp.krate,
+            segments,
+        })
     }
 
     fn emit_mod(&mut self, module: ModSymbol<'db>) -> Module<NormalizedDef> {
@@ -80,10 +156,15 @@ impl<'db> Emitter<'db> {
             SymbolData::StructSymbol(StructSymbol::Local(local_struct)) => {
                 Some(Item::Struct(self.emit_struct(sym, local_struct)))
             }
+            SymbolData::EnumSymbol(EnumSymbol::Local(local_enum)) => {
+                Some(Item::Enum(self.emit_enum(sym, local_enum)))
+            }
             SymbolData::ModSymbol(mod_sym) => Some(Item::Mod(self.emit_mod(mod_sym))),
             SymbolData::FnSymbol(FnSymbol::Ext(_))
             | SymbolData::StructSymbol(StructSymbol::Ext(_))
-            | SymbolData::EnumSymbol(_)
+            | SymbolData::EnumSymbol(EnumSymbol::Ext(_))
+            | SymbolData::VariantSymbol(_)
+            | SymbolData::VariantCtorSymbol(_)
             | SymbolData::TraitSymbol(_)
             | SymbolData::TypeAliasSymbol(_)
             | SymbolData::ConstSymbol(_)
@@ -182,6 +263,47 @@ impl<'db> Emitter<'db> {
             def: NormalizedDef::Local(local_id),
             name,
             fields,
+        }
+    }
+
+    fn emit_enum(
+        &mut self,
+        sym: Symbol<'db>,
+        local_enum: LocalEnumSym<'db>,
+    ) -> EnumItem<NormalizedDef> {
+        let local_id = self.assign_local_id(sym);
+        let name = local_enum.name(self.db).text(self.db).to_string();
+
+        let variant_syms = enum_variants(self.db, local_enum);
+        let mut variants = Vec::new();
+        for &variant_sym in variant_syms {
+            match variant_sym.data(self.db) {
+                SymbolData::VariantSymbol(_) => {
+                    variants.push(self.emit_variant(variant_sym));
+                }
+                SymbolData::VariantCtorSymbol(_) => {}
+                _ => {}
+            }
+        }
+
+        EnumItem {
+            def: NormalizedDef::Local(local_id),
+            name,
+            variants,
+        }
+    }
+
+    fn emit_variant(&mut self, sym: Symbol<'db>) -> VariantDef<NormalizedDef> {
+        let local_id = self.assign_local_id(sym);
+        let name = sym
+            .name(self.db)
+            .map(|(n, _)| n.text(self.db).to_string())
+            .unwrap_or_default();
+
+        VariantDef {
+            def: NormalizedDef::Local(local_id),
+            name,
+            fields: vec![],
         }
     }
 
