@@ -52,9 +52,10 @@ impl<'db> Path<'db> {
     }
 
     /// Resolve this path to a `Resolution` — checks ribs first, then module scope.
-    pub(crate) fn resolve(self, cx: &mut Check<'_, 'db>, ns: Namespace) -> Resolution<'db> {
+    /// Returns `None` if not found.
+    pub(crate) fn resolve(self, cx: &mut Check<'_, 'db>, ns: Namespace) -> Option<Resolution<'db>> {
         let results = cx.resolver.resolve_path(cx.source_stash, self, ns);
-        results.into_iter().next().unwrap_or(Resolution::Error)
+        results.into_iter().next()
     }
 
     /// Collect all segment names in order (for module-level resolution).

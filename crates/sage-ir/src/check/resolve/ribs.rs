@@ -13,7 +13,6 @@ pub enum Resolution<'db> {
     Param(GenericParam<'db>),
     Sym(Symbol<'db>),
     SelfTy(Ty<'db>),
-    Error,
 }
 
 impl<'db> Resolution<'db> {

@@ -233,7 +233,7 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
         match results.into_iter().next() {
             Some(Resolution::Sym(sym)) => Res::Def(sym),
             Some(Resolution::Local(id)) => Res::Local(id),
-            Some(Resolution::Param(_) | Resolution::SelfTy(_) | Resolution::Error) | None => {
+            Some(Resolution::Param(_) | Resolution::SelfTy(_)) | None => {
                 let e = self.report(Diagnostic::error(self.span(span), "unresolved name"));
                 Res::Error(e)
             }

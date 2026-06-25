@@ -101,10 +101,10 @@ impl<'db> TypeCst<'db> {
                 let path = src[path_ptr];
                 let type_args = path.final_segment(cx).check_type_args(cx);
                 match path.resolve(cx, Namespace::Type) {
-                    Resolution::Param(param) => Ty::Param(param),
-                    Resolution::Sym(sym) => resolution_to_ty(cx.db, sym, type_args),
-                    Resolution::SelfTy(ty) => ty,
-                    Resolution::Local(_) | Resolution::Error => {
+                    Some(Resolution::Param(param)) => Ty::Param(param),
+                    Some(Resolution::Sym(sym)) => resolution_to_ty(cx.db, sym, type_args),
+                    Some(Resolution::SelfTy(ty)) => ty,
+                    Some(Resolution::Local(_)) | None => {
                         let e = cx.report(crate::diagnostic::Diagnostic::error(
                             cx.span(self.span),
                             "unresolved type",
