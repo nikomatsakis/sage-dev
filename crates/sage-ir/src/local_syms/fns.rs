@@ -47,6 +47,7 @@ impl<'db> LocalFnSym<'db> {
 
         let (src, cst) = self.cst(db).open_deref();
         let mut cx = Check::new(db, src, Resolver::new(db, self.scope(db)));
+        cx.current_sym = Some(crate::local_syms::LocalModItemSym::Function(self));
 
         let parent: Symbol<'db> = self.into();
         let generics = cst.generics.check(db, &mut cx, parent);
@@ -101,8 +102,7 @@ impl<'db> LocalFnSym<'db> {
         let body_expr = match cst.body {
             Some(body_ptr) => src[body_ptr].check(&mut bx),
             None => {
-                let e = crate::diagnostic::ErrorReported::mint();
-                let ty = bx.alloc_ty(crate::ty::Ty::Error(e));
+                let ty = bx.alloc_ty(crate::ty::Ty::Never);
                 bx.alloc_expr(crate::tytree::TyExprData::Missing, ty, cst.span)
             }
         };

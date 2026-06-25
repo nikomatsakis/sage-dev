@@ -105,7 +105,11 @@ impl<'db> TypeCst<'db> {
                     Resolution::Sym(sym) => resolution_to_ty(cx.db, sym, type_args),
                     Resolution::SelfTy(ty) => ty,
                     Resolution::Local(_) | Resolution::Error => {
-                        Ty::Error(crate::diagnostic::ErrorReported::mint())
+                        let e = cx.report(crate::diagnostic::Diagnostic::error(
+                            cx.span(self.span),
+                            "unresolved type",
+                        ));
+                        Ty::Error(e)
                     }
                 }
             }
@@ -149,7 +153,11 @@ impl<'db> TypeCst<'db> {
             }
             TypeCstKind::Never => Ty::Never,
             TypeCstKind::Infer | TypeCstKind::Error => {
-                Ty::Error(crate::diagnostic::ErrorReported::mint())
+                let e = cx.report(crate::diagnostic::Diagnostic::error(
+                    cx.span(self.span),
+                    "syntax error in type",
+                ));
+                Ty::Error(e)
             }
         }
     }

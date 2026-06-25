@@ -113,17 +113,24 @@ impl<'db> Diagnostic<'db> {
 // ---------------------------------------------------------------------------
 
 /// Witness that at least one diagnostic has been emitted.
-/// Only constructible by the diagnostic-reporting machinery.
+///
+/// This type is intentionally impossible to construct outside this module.
+/// The ONLY way to obtain one is by calling [`report`], which pushes a
+/// diagnostic into a collection. This guarantees at the type level that
+/// every `Ty::Error(e)` and `Res::Error(e)` was preceded by a user-visible
+/// diagnostic message.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ErrorReported(());
 
 impl sage_stash::StashDirect for ErrorReported {}
 
-impl ErrorReported {
-    /// Mint a new witness. Only call this from `BodyCheck::report()`.
-    pub(crate) fn mint() -> Self {
-        ErrorReported(())
-    }
+/// The sole entry point for minting `ErrorReported`.
+///
+/// Pushes `diag` into `diagnostics` and returns the witness token.
+/// Every construction of `Ty::Error` or `Res::Error` must flow through here.
+pub fn report<'db>(diagnostics: &mut Vec<Diagnostic<'db>>, diag: Diagnostic<'db>) -> ErrorReported {
+    diagnostics.push(diag);
+    ErrorReported(())
 }
 
 // ---------------------------------------------------------------------------

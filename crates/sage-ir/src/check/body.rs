@@ -132,10 +132,6 @@ pub struct BodyCheck<'a, 'db> {
     locals: Vec<Ptr<Ty<'db>>>,
     local_vars: Vec<LocalVar<'db>>,
     infer_var_ptrs: Vec<Ptr<Ty<'db>>>,
-    diagnostics: Vec<Diagnostic<'db>>,
-
-    /// The item being checked — used to anchor relative spans.
-    current_sym: LocalModItemSym<'db>,
 }
 
 impl<'a, 'db> DerefMut for BodyCheck<'a, 'db> {
@@ -159,8 +155,10 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
         resolver: Resolver<'db>,
         current_sym: LocalModItemSym<'db>,
     ) -> Self {
+        let mut check = Check::new(db, src, resolver);
+        check.current_sym = Some(current_sym);
         Self {
-            check: Check::new(db, src, resolver),
+            check,
             db,
             egraph: VersionedEGraph::new(),
             runtime: Runtime::new(),
@@ -168,8 +166,6 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
             locals: Vec::new(),
             local_vars: Vec::new(),
             infer_var_ptrs: Vec::new(),
-            diagnostics: Vec::new(),
-            current_sym,
         }
     }
 
@@ -178,7 +174,7 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
     // ------------------------------------------------------------------
 
     pub fn span(&self, relative: RelativeSpan) -> Span<'db> {
-        Span::Relative(self.current_sym, relative)
+        self.check.span(relative)
     }
 
     // ------------------------------------------------------------------
@@ -488,8 +484,7 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
     // ------------------------------------------------------------------
 
     pub fn report(&mut self, diag: Diagnostic<'db>) -> ErrorReported {
-        self.diagnostics.push(diag);
-        ErrorReported::mint()
+        self.check.report(diag)
     }
 
     /// Catch a TypeError: convert to Diagnostic (rendering types now) and report.
@@ -513,11 +508,11 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
     }
 
     pub fn diagnostics(&self) -> &[Diagnostic<'db>] {
-        &self.diagnostics
+        &self.check.diagnostics
     }
 
     pub fn has_errors(&self) -> bool {
-        !self.diagnostics.is_empty()
+        !self.check.diagnostics.is_empty()
     }
 
     // ------------------------------------------------------------------
@@ -615,7 +610,7 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
         let body_data = stash.alloc(TyBodyData { root, locals, span });
         CheckedBody {
             body: Stashed::new(stash, body_data),
-            diagnostics: self.diagnostics,
+            diagnostics: self.check.diagnostics,
         }
     }
 }
