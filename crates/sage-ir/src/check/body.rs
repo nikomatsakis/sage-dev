@@ -3,6 +3,9 @@ use std::ops::{Deref, DerefMut};
 use sage_stash::{Ptr, Slice, Stash, StashCopy, Stashed};
 
 use crate::check::Check;
+use crate::diagnostic::{Diagnostic, ErrorReported, Span};
+use crate::display::TyDisplay;
+use crate::local_syms::LocalModItemSym;
 use crate::name::Name;
 use crate::resolve::{Namespace, Resolution, Resolver};
 use crate::span::RelativeSpan;
@@ -16,17 +19,26 @@ use super::infer::runtime::Runtime;
 use super::infer::version::{Universe, VarInfo, Version};
 
 // ---------------------------------------------------------------------------
-// Diagnostics
+// TypeError — the structured error that flows through Result during checking
 // ---------------------------------------------------------------------------
 
+/// A type error: either a fresh error needing reporting, or a previously
+/// reported error being propagated.
 #[derive(Clone, Debug)]
-pub struct Diagnostic<'db> {
-    pub kind: DiagnosticKind<'db>,
+pub enum TypeError<'db> {
+    /// A fresh error that needs to be reported at a catch point.
+    Fresh {
+        kind: TypeErrorKind<'db>,
+        span: RelativeSpan,
+        context: Vec<ErrorContext>,
+    },
+    /// An error that was already reported — just propagating the witness.
+    Reported(ErrorReported),
 }
 
 #[derive(Clone, Debug)]
-pub enum DiagnosticKind<'db> {
-    TypeMismatch {
+pub enum TypeErrorKind<'db> {
+    Mismatch {
         expected: Ptr<Ty<'db>>,
         actual: Ptr<Ty<'db>>,
     },
@@ -38,8 +50,88 @@ pub enum DiagnosticKind<'db> {
     },
 }
 
+/// Contextual information about *why* a type constraint was required.
+#[derive(Clone, Debug)]
+pub enum ErrorContext {
+    ReturnType {
+        ret_span: RelativeSpan,
+    },
+    Argument {
+        index: usize,
+        call_span: RelativeSpan,
+    },
+    FieldInit {
+        field_span: RelativeSpan,
+    },
+}
+
+impl<'db> TypeError<'db> {
+    pub fn with_context(mut self, context: ErrorContext) -> Self {
+        match &mut self {
+            TypeError::Fresh { context: ctx, .. } => ctx.push(context),
+            TypeError::Reported(_) => {}
+        }
+        self
+    }
+
+    pub fn to_diagnostic(&self, cx: &BodyCheck<'_, 'db>) -> Option<Diagnostic<'db>> {
+        let TypeError::Fresh {
+            kind,
+            span,
+            context,
+        } = self
+        else {
+            return None;
+        };
+        let span = cx.span(*span);
+        Some(match kind {
+            TypeErrorKind::Mismatch { expected, actual } => {
+                let expected_str = TyDisplay::new(cx.db, cx.stash(), *expected).to_string();
+                let actual_str = TyDisplay::new(cx.db, cx.stash(), *actual).to_string();
+                let msg = format!(
+                    "type mismatch: expected `{}`, found `{}`",
+                    expected_str, actual_str,
+                );
+                let mut diag = Diagnostic::error(span.clone(), &msg)
+                    .label(span, format!("found `{actual_str}`"));
+
+                for ctx in context {
+                    match ctx {
+                        ErrorContext::ReturnType { ret_span } => {
+                            diag = diag.secondary(
+                                cx.span(*ret_span),
+                                format!("expected `{expected_str}` because of return type"),
+                            );
+                        }
+                        ErrorContext::Argument { index, call_span } => {
+                            diag = diag.secondary(
+                                cx.span(*call_span),
+                                format!("expected `{expected_str}` for argument {}", index + 1),
+                            );
+                        }
+                        ErrorContext::FieldInit { field_span } => {
+                            diag = diag.secondary(
+                                cx.span(*field_span),
+                                format!("expected `{expected_str}` for this field"),
+                            );
+                        }
+                    }
+                }
+
+                diag
+            }
+            TypeErrorKind::UnresolvedInferVar { var } => {
+                Diagnostic::error(span, format!("could not infer type for ?{}", var.0))
+            }
+            TypeErrorKind::AmbiguousName { count } => {
+                Diagnostic::error(span, format!("ambiguous name: {count} candidates"))
+            }
+        })
+    }
+}
+
 // ---------------------------------------------------------------------------
-// BodyCtx
+// BodyCheck
 // ---------------------------------------------------------------------------
 
 /// Unified body-checking context: resolves names and infers types in a
@@ -58,7 +150,6 @@ pub struct BodyCheck<'a, 'db> {
     locals: Vec<Ptr<Ty<'db>>>,
     local_vars: Vec<LocalVar<'db>>,
     infer_var_ptrs: Vec<Ptr<Ty<'db>>>,
-    diagnostics: Vec<Diagnostic<'db>>,
 }
 
 impl<'a, 'db> DerefMut for BodyCheck<'a, 'db> {
@@ -76,9 +167,16 @@ impl<'a, 'db> Deref for BodyCheck<'a, 'db> {
 }
 
 impl<'a, 'db> BodyCheck<'a, 'db> {
-    pub fn new(db: &'db dyn crate::Db, src: &'a Stash, resolver: Resolver<'db>) -> Self {
+    pub fn new(
+        db: &'db dyn crate::Db,
+        src: &'a Stash,
+        resolver: Resolver<'db>,
+        current_sym: LocalModItemSym<'db>,
+    ) -> Self {
+        let mut check = Check::new(db, src, resolver);
+        check.current_sym = Some(current_sym);
         Self {
-            check: Check::new(db, src, resolver),
+            check,
             db,
             egraph: VersionedEGraph::new(),
             runtime: Runtime::new(),
@@ -86,8 +184,15 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
             locals: Vec::new(),
             local_vars: Vec::new(),
             infer_var_ptrs: Vec::new(),
-            diagnostics: Vec::new(),
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Span helpers
+    // ------------------------------------------------------------------
+
+    pub fn span(&self, relative: RelativeSpan) -> Span<'db> {
+        self.check.span(relative)
     }
 
     // ------------------------------------------------------------------
@@ -106,22 +211,31 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
     // Path resolution
     // ------------------------------------------------------------------
 
-    pub fn resolve_path(&mut self, path: crate::cst::paths::Path<'db>, ns: Namespace) -> Res<'db> {
+    pub fn resolve_path(
+        &mut self,
+        path: crate::cst::paths::Path<'db>,
+        ns: Namespace,
+        span: RelativeSpan,
+    ) -> Res<'db> {
         let check = &mut self.check;
         let results = check.resolver.resolve_path(check.source_stash, path, ns);
         if results.len() > 1 {
-            self.diagnostics.push(Diagnostic {
-                kind: DiagnosticKind::AmbiguousName {
+            let err = TypeError::Fresh {
+                kind: TypeErrorKind::AmbiguousName {
                     count: results.len(),
                 },
-            });
-            return Res::Err;
+                span,
+                context: Vec::new(),
+            };
+            let e = self.catch(err);
+            return Res::Error(e);
         }
         match results.into_iter().next() {
             Some(Resolution::Sym(sym)) => Res::Def(sym),
             Some(Resolution::Local(id)) => Res::Local(id),
-            Some(Resolution::Param(_) | Resolution::SelfTy(_) | Resolution::Error) | None => {
-                Res::Err
+            Some(Resolution::Param(_) | Resolution::SelfTy(_)) | None => {
+                let e = self.report(Diagnostic::error(self.span(span), "unresolved name"));
+                Res::Error(e)
             }
         }
     }
@@ -208,13 +322,18 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
         self.egraph.union(&self.check.target_stash, a, b);
     }
 
-    pub fn require_eq(&mut self, a: Ptr<Ty<'db>>, b: Ptr<Ty<'db>>) {
+    pub fn require_eq(
+        &mut self,
+        a: Ptr<Ty<'db>>,
+        b: Ptr<Ty<'db>>,
+        span: RelativeSpan,
+    ) -> Result<(), TypeError<'db>> {
         use super::infer::skeleton::decompose;
 
         let a_canon = self.egraph.find_mut(a);
         let b_canon = self.egraph.find_mut(b);
         if a_canon == b_canon {
-            return;
+            return Ok(());
         }
 
         let dst = &self.check.target_stash;
@@ -222,23 +341,24 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
         let b_data = dst[b_canon];
 
         match (a_data, b_data) {
+            (Ty::Error(e), _) | (_, Ty::Error(e)) => return Err(TypeError::Reported(e)),
             (Ty::InferVar(_), Ty::InferVar(_)) => {
                 self.egraph.union(dst, a_canon, b_canon);
-                return;
+                return Ok(());
             }
             (Ty::InferVar(idx), _) => {
                 self.egraph.set_bound(dst, a_canon, Bound::Exactly(b_canon));
                 self.egraph.union(dst, a_canon, b_canon);
                 self.runtime.wake_variable(idx);
-                return;
+                return Ok(());
             }
             (_, Ty::InferVar(idx)) => {
                 self.egraph.set_bound(dst, b_canon, Bound::Exactly(a_canon));
                 self.egraph.union(dst, b_canon, a_canon);
                 self.runtime.wake_variable(idx);
-                return;
+                return Ok(());
             }
-            (Ty::Error, _) | (_, Ty::Error) => return,
+
             _ => {}
         }
 
@@ -246,8 +366,14 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
         let db_decomposed = decompose(dst, b_canon);
 
         if da.skeleton != db_decomposed.skeleton {
-            self.report_type_mismatch(b_canon, a_canon);
-            return;
+            return Err(TypeError::Fresh {
+                kind: TypeErrorKind::Mismatch {
+                    expected: b_canon,
+                    actual: a_canon,
+                },
+                span,
+                context: Vec::new(),
+            });
         }
 
         assert_eq!(
@@ -261,31 +387,43 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
             .into_iter()
             .zip(db_decomposed.children.into_iter())
         {
-            self.require_eq(ca, cb);
+            self.require_eq(ca, cb, span)?;
         }
+
+        Ok(())
     }
 
-    pub fn require_sub(&mut self, a: Ptr<Ty<'db>>, b: Ptr<Ty<'db>>) {
+    pub fn require_sub(
+        &mut self,
+        a: Ptr<Ty<'db>>,
+        b: Ptr<Ty<'db>>,
+        span: RelativeSpan,
+    ) -> Result<(), TypeError<'db>> {
         let a_canon = self.egraph.find_mut(a);
         let b_canon = self.egraph.find_mut(b);
         if a_canon == b_canon {
-            return;
+            return Ok(());
         }
 
         let a_data = self.target_stash[a_canon];
         let b_data = self.target_stash[b_canon];
 
         match (a_data, b_data) {
-            (Ty::Never, _) => {}
+            (Ty::Never, _) => Ok(()),
             (Ty::Ref(inner_a, m_a, _), Ty::Ref(inner_b, m_b, _)) if m_a == m_b => {
-                self.require_sub(inner_a, inner_b);
+                self.require_sub(inner_a, inner_b, span)
             }
-            _ => self.require_eq(a_canon, b_canon),
+            _ => self.require_eq(a_canon, b_canon, span),
         }
     }
 
-    pub fn require_coerce(&mut self, a: Ptr<Ty<'db>>, b: Ptr<Ty<'db>>) {
-        self.require_sub(a, b);
+    pub fn require_coerce(
+        &mut self,
+        a: Ptr<Ty<'db>>,
+        b: Ptr<Ty<'db>>,
+        span: RelativeSpan,
+    ) -> Result<(), TypeError<'db>> {
+        self.require_sub(a, b, span)
     }
 
     // ------------------------------------------------------------------
@@ -309,6 +447,9 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
     // ------------------------------------------------------------------
 
     pub fn finalize(&mut self) {
+        // First pass: identify unresolved variables and resolve AtLeast bounds.
+        let mut unresolved_vars = Vec::new();
+
         let dst = &mut self.check.target_stash;
         for i in 0..self.infer_var_ptrs.len() {
             let ty = self.infer_var_ptrs[i];
@@ -325,12 +466,7 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
                         Ty::InferVar(idx) => idx,
                         _ => continue,
                     };
-                    let error_ty = dst.alloc(Ty::Error);
-                    self.egraph.set_bound(dst, ty, Bound::Exactly(error_ty));
-                    self.egraph.union(dst, ty, error_ty);
-                    self.diagnostics.push(Diagnostic {
-                        kind: DiagnosticKind::UnresolvedInferVar { var: idx },
-                    });
+                    unresolved_vars.push((i, idx));
                 }
                 Bound::AtLeast(bound_ty) => {
                     self.egraph.set_bound(dst, ty, Bound::Exactly(bound_ty));
@@ -338,6 +474,23 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
                 }
                 Bound::Exactly(_) => {}
             }
+        }
+
+        // Second pass: emit diagnostics and set error types for unresolved vars.
+        for (i, idx) in unresolved_vars {
+            let span = RelativeSpan { start: 0, end: 0 };
+            let err = TypeError::Fresh {
+                kind: TypeErrorKind::UnresolvedInferVar { var: idx },
+                span,
+                context: Vec::new(),
+            };
+            let e = self.catch(err);
+
+            let ty = self.infer_var_ptrs[i];
+            let dst = &mut self.check.target_stash;
+            let error_ty = dst.alloc(Ty::Error(e));
+            self.egraph.set_bound(dst, ty, Bound::Exactly(error_ty));
+            self.egraph.union(dst, ty, error_ty);
         }
 
         self.runtime.wake_all();
@@ -348,18 +501,42 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
     // Diagnostics
     // ------------------------------------------------------------------
 
-    pub fn report_type_mismatch(&mut self, expected: Ptr<Ty<'db>>, actual: Ptr<Ty<'db>>) {
-        self.diagnostics.push(Diagnostic {
-            kind: DiagnosticKind::TypeMismatch { expected, actual },
-        });
+    pub fn report(&mut self, diag: Diagnostic<'db>) -> ErrorReported {
+        self.check.report(diag)
+    }
+
+    /// Catch a TypeError: convert to Diagnostic (rendering types now) and report.
+    /// If already reported, just returns the existing witness.
+    pub fn catch(&mut self, err: TypeError<'db>) -> ErrorReported {
+        match &err {
+            TypeError::Reported(e) => *e,
+            TypeError::Fresh { .. } => {
+                let diag = err.to_diagnostic(self).unwrap();
+                self.report(diag)
+            }
+        }
+    }
+
+    pub fn report_type_mismatch(
+        &mut self,
+        expected: Ptr<Ty<'db>>,
+        actual: Ptr<Ty<'db>>,
+        span: RelativeSpan,
+    ) {
+        let err = TypeError::Fresh {
+            kind: TypeErrorKind::Mismatch { expected, actual },
+            span,
+            context: Vec::new(),
+        };
+        self.catch(err);
     }
 
     pub fn diagnostics(&self) -> &[Diagnostic<'db>] {
-        &self.diagnostics
+        &self.check.diagnostics
     }
 
     pub fn has_errors(&self) -> bool {
-        !self.diagnostics.is_empty()
+        !self.check.diagnostics.is_empty()
     }
 
     // ------------------------------------------------------------------
@@ -453,103 +630,11 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
 
     pub fn finish(self, root: Ptr<TyExpr<'db>>, span: RelativeSpan) -> CheckedBody<'db> {
         let mut stash = self.check.target_stash;
-        let diagnostics: Vec<String> = self
-            .diagnostics
-            .iter()
-            .map(|d| render_diagnostic(self.db, &stash, d))
-            .collect();
         let locals = stash.alloc_slice(&self.local_vars);
         let body_data = stash.alloc(TyBodyData { root, locals, span });
         CheckedBody {
             body: Stashed::new(stash, body_data),
-            diagnostics,
-        }
-    }
-}
-
-fn render_diagnostic(db: &dyn crate::Db, stash: &Stash, diag: &Diagnostic) -> String {
-    match &diag.kind {
-        DiagnosticKind::TypeMismatch { expected, actual } => {
-            format!(
-                "type mismatch: expected `{}`, found `{}`",
-                fmt_ty(db, stash, *expected),
-                fmt_ty(db, stash, *actual)
-            )
-        }
-        DiagnosticKind::UnresolvedInferVar { var } => {
-            format!("could not infer type for ?{}", var.0)
-        }
-        DiagnosticKind::AmbiguousName { count } => {
-            format!("ambiguous name: {count} candidates")
-        }
-    }
-}
-
-fn fmt_ty(db: &dyn crate::Db, stash: &Stash, ty: Ptr<Ty<'_>>) -> String {
-    match stash[ty] {
-        Ty::Bool => "bool".to_owned(),
-        Ty::Char => "char".to_owned(),
-        Ty::Int(i) => match i {
-            crate::ty::IntTy::I8 => "i8",
-            crate::ty::IntTy::I16 => "i16",
-            crate::ty::IntTy::I32 => "i32",
-            crate::ty::IntTy::I64 => "i64",
-            crate::ty::IntTy::I128 => "i128",
-            crate::ty::IntTy::Isize => "isize",
-        }
-        .to_owned(),
-        Ty::Uint(u) => match u {
-            crate::ty::UintTy::U8 => "u8",
-            crate::ty::UintTy::U16 => "u16",
-            crate::ty::UintTy::U32 => "u32",
-            crate::ty::UintTy::U64 => "u64",
-            crate::ty::UintTy::U128 => "u128",
-            crate::ty::UintTy::Usize => "usize",
-        }
-        .to_owned(),
-        Ty::Float(f) => match f {
-            crate::ty::FloatTy::F32 => "f32",
-            crate::ty::FloatTy::F64 => "f64",
-        }
-        .to_owned(),
-        Ty::Str => "str".to_owned(),
-        Ty::Never => "!".to_owned(),
-        Ty::Error => "<error>".to_owned(),
-        Ty::InferVar(idx) => format!("?{}", idx.0),
-        Ty::Param(p) => p
-            .name(db)
-            .map_or_else(|| "?".to_owned(), |n| n.text(db).clone()),
-        Ty::Tuple(elems) => {
-            let items: Vec<String> = stash[elems].iter().map(|e| fmt_ty(db, stash, *e)).collect();
-            format!("({})", items.join(", "))
-        }
-        Ty::Ref(inner, m, _) => {
-            let prefix = match m {
-                crate::cst::Mutability::Shared => "&",
-                crate::cst::Mutability::Mut => "&mut ",
-            };
-            format!("{prefix}{}", fmt_ty(db, stash, inner))
-        }
-        Ty::Adt(sym, args) => {
-            let name = sym
-                .name(db)
-                .map_or_else(|| "?".to_owned(), |(n, _)| n.text(db).clone());
-            let type_args: Vec<String> =
-                stash[args].iter().map(|a| fmt_ty(db, stash, *a)).collect();
-            if type_args.is_empty() {
-                name
-            } else {
-                format!("{name}<{}>", type_args.join(", "))
-            }
-        }
-        Ty::Slice(inner) => format!("[{}]", fmt_ty(db, stash, inner)),
-        Ty::Array(inner, _) => format!("[{}; _]", fmt_ty(db, stash, inner)),
-        Ty::FnPtr(params, ret) => {
-            let ps: Vec<String> = stash[params]
-                .iter()
-                .map(|p| fmt_ty(db, stash, *p))
-                .collect();
-            format!("fn({}) -> {}", ps.join(", "), fmt_ty(db, stash, ret))
+            diagnostics: self.check.diagnostics,
         }
     }
 }

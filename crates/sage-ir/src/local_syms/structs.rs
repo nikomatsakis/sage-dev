@@ -49,6 +49,7 @@ impl<'db> LocalStructSym<'db> {
 
         let (src, cst) = self.cst(db).open_deref();
         let mut cx = Check::new(db, src, Resolver::new(db, self.scope(db)));
+        cx.current_sym = Some(crate::local_syms::LocalModItemSym::Struct(self));
 
         let parent: Symbol<'db> = self.into();
         let generics = cst.generics.check(db, &mut cx, parent);
@@ -75,6 +76,7 @@ impl<'db> LocalStructSym<'db> {
         let (src, cst) = self.cst(db).open_deref();
 
         let mut cx = Check::new(db, src, Resolver::new(db, self.scope(db)));
+        cx.current_sym = Some(crate::local_syms::LocalModItemSym::Struct(self));
         cx.resolver
             .ribs
             .add_generic_params(db, self.sig(db).iter_symbols());

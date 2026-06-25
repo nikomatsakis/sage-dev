@@ -188,25 +188,84 @@ pub fn check_annotations(
     fixture: &Fixture,
     parsed: &annotations::ParsedAnnotations,
 ) -> Result<(), String> {
-    let sage = fixture.sage_output();
-    let sage_has_errors = sage_output_has_errors(&sage);
+    let source = fixture.source_text();
+
+    // Collect actual diagnostics from sage with line info.
+    let sage_diags = match fixture {
+        Fixture::SingleFile(_) => sage_test_harness::collect_diagnostics(&source),
+        Fixture::Directory { entry, files } => {
+            let src_dir = entry.parent().unwrap();
+            let pairs: Vec<(String, String)> = files
+                .iter()
+                .map(|f| {
+                    let rel = f
+                        .strip_prefix(src_dir)
+                        .unwrap()
+                        .to_string_lossy()
+                        .to_string();
+                    let content = std::fs::read_to_string(f).unwrap();
+                    (rel, content)
+                })
+                .collect();
+            let refs: Vec<(&str, &str)> = pairs
+                .iter()
+                .map(|(p, c)| (p.as_str(), c.as_str()))
+                .collect();
+            sage_test_harness::collect_diagnostics_files(&refs)
+        }
+    };
 
     let mut errors = Vec::new();
 
-    // If annotations expect errors, sage should have produced errors.
+    // If annotations expect errors, sage should have produced diagnostics.
     let expects_errors = parsed
         .annotations
         .iter()
         .any(|a| a.severity == annotations::ExpectedSeverity::Error);
 
-    if expects_errors && !sage_has_errors {
-        errors.push("annotations expect ERROR but sage produced no errors".to_string());
+    if expects_errors && sage_diags.is_empty() {
+        errors.push("annotations expect ERROR but sage produced no diagnostics".to_string());
     }
 
-    if !expects_errors && sage_has_errors {
+    if !expects_errors && !sage_diags.is_empty() {
+        let msgs: Vec<_> = sage_diags
+            .iter()
+            .map(|d| format!("  line {}: {}", d.line, d.message))
+            .collect();
         errors.push(format!(
-            "sage produced errors but no ERROR annotations are present"
+            "sage produced diagnostics but no ERROR annotations are present:\n{}",
+            msgs.join("\n")
         ));
+    }
+
+    // Check each annotation is matched by at least one diagnostic.
+    for ann in &parsed.annotations {
+        if ann.severity != annotations::ExpectedSeverity::Error {
+            continue;
+        }
+        let matched = sage_diags.iter().any(|d| {
+            d.line == ann.line && (ann.pattern.is_empty() || ann.matches_message(&d.message))
+        });
+        if !matched {
+            let on_line: Vec<_> = sage_diags.iter().filter(|d| d.line == ann.line).collect();
+            if on_line.is_empty() {
+                errors.push(format!(
+                    "expected error on line {} matching '{}' but sage produced no error on that line",
+                    ann.line, ann.pattern
+                ));
+            } else {
+                let msgs: Vec<_> = on_line
+                    .iter()
+                    .map(|d| format!("  '{}'", d.message))
+                    .collect();
+                errors.push(format!(
+                    "expected error on line {} matching '{}' but got:\n{}",
+                    ann.line,
+                    ann.pattern,
+                    msgs.join("\n")
+                ));
+            }
+        }
     }
 
     // Check oracle agreement.
@@ -222,6 +281,7 @@ pub fn check_annotations(
 
     if !expects_errors && !oracle_errored {
         // Both should succeed — compare output normally.
+        let sage = fixture.sage_output();
         if let Ok(oracle) = &oracle_result {
             if let Err(msg) = assert_crates_eq(&fixture.name(), oracle, &sage) {
                 errors.push(msg);

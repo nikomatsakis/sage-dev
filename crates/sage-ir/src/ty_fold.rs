@@ -62,7 +62,7 @@ pub fn default_fold_ty<'db>(folder: &mut impl TyFolder<'db>, ty: Ty<'db>) -> Ty<
         Ty::Param(generic_param) => Ty::Param(generic_param),
         Ty::InferVar(infer_var_index) => Ty::InferVar(infer_var_index),
         Ty::Never => Ty::Never,
-        Ty::Error => Ty::Error,
+        Ty::Error(e) => Ty::Error(e),
     }
 }
 

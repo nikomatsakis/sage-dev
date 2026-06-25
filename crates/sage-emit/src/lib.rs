@@ -292,7 +292,7 @@ impl<'db> Emitter<'db> {
                         ty: expr_ty,
                     }
                 }
-                PathResolution::Err => Expr::Local {
+                PathResolution::Error(_) => Expr::Local {
                     name: "?err".to_string(),
                     index: 0,
                 },

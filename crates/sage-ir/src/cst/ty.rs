@@ -101,10 +101,16 @@ impl<'db> TypeCst<'db> {
                 let path = src[path_ptr];
                 let type_args = path.final_segment(cx).check_type_args(cx);
                 match path.resolve(cx, Namespace::Type) {
-                    Resolution::Param(param) => Ty::Param(param),
-                    Resolution::Sym(sym) => resolution_to_ty(cx.db, sym, type_args),
-                    Resolution::SelfTy(ty) => ty,
-                    Resolution::Local(_) | Resolution::Error => Ty::Error,
+                    Some(Resolution::Param(param)) => Ty::Param(param),
+                    Some(Resolution::Sym(sym)) => resolution_to_ty(cx.db, sym, type_args),
+                    Some(Resolution::SelfTy(ty)) => ty,
+                    Some(Resolution::Local(_)) | None => {
+                        let e = cx.report(crate::diagnostic::Diagnostic::error(
+                            cx.span(self.span),
+                            "unresolved type",
+                        ));
+                        Ty::Error(e)
+                    }
                 }
             }
             TypeCstKind::Reference(inner, m) => {
@@ -146,7 +152,13 @@ impl<'db> TypeCst<'db> {
                 Ty::FnPtr(param_slice, ret_ptr)
             }
             TypeCstKind::Never => Ty::Never,
-            TypeCstKind::Infer | TypeCstKind::Error => Ty::Error,
+            TypeCstKind::Infer | TypeCstKind::Error => {
+                let e = cx.report(crate::diagnostic::Diagnostic::error(
+                    cx.span(self.span),
+                    "syntax error in type",
+                ));
+                Ty::Error(e)
+            }
         }
     }
 }

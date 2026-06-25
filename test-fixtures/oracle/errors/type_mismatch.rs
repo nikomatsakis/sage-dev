@@ -1,10 +1,8 @@
-fn returns_wrong_type() -> u32 {
+fn returns_wrong_type() -> u32 { //# ERROR type mismatch
     "hello"
-    //# ERROR
 }
 
-fn wrong_arg_type() -> u32 {
+fn wrong_arg_type() -> u32 { //# ERROR type mismatch
     let x: u32 = "oops";
-    //# ERROR
     x
 }
