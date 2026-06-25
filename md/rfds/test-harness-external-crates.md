@@ -1,6 +1,6 @@
 # RFD: Test Harness External Crate Support
 
-**Status:** Proposed
+**Status:** Completed
 
 **Depends on:**
 - [Oracle Test Framework](./oracle-test-framework.md) — the existing comparison infrastructure
