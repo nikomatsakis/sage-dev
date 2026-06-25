@@ -28,6 +28,7 @@
     - [Numeric Inference Variables](./rfds/numeric-inference-variables.md)
     - [Trait System](./rfds/trait-system.md)
     - [Parsing](./rfds/parse.md)
+    - [Test Harness External Crates](./rfds/test-harness-external-crates.md)
   - [Completed](./rfds/completed.md)
     - [Initial Setup](./rfds/initial-setup.md)
     - [Relative Span Model](./rfds/relative-span-model.md)
