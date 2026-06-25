@@ -1,4 +1,3 @@
-//# RUSTC ERROR
 enum Color {
     Red,
 }
