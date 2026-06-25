@@ -38,6 +38,7 @@ pub struct LocalVariantSym<'db> {
     pub name: Name<'db>,
     pub parent_enum: LocalEnumSym<'db>,
     pub cst: VariantCst<'db>,
+    #[tracked]
     pub span: AbsoluteSpan<'db>,
     pub is_tuple: bool,
 }
