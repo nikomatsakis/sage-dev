@@ -711,7 +711,7 @@ After implementing, `UPDATE_EXPECT=1` fills in:
 - `render_short()` now emits labels as indented sub-lines
 
 **Deviations from design:**
-- Did not convert `resolve_path()` to return `Result` — it remains fire-and-forget with internal `catch()`. This matches the Phase 1 deviation.
+- `resolve_path()` returns `Res<'db>` (not `Result`). This is intentional: expression checking always produces a `TyExpr` and continues checking siblings, so callers need a `Res` value to proceed. `Res::Error(ErrorReported)` carries the witness, achieving the same propagation guarantee as `Result` without forcing every caller to match/unwrap.
 - Did not add a `with_context` block helper — simple `.with_context(...)` on the error value at catch sites is sufficient for now.
 - The diagnostic message still includes both types in the headline (`"type mismatch: expected \`bool\`, found \`u32\`"`) rather than splitting them purely into labels. This avoids losing information when rendered without labels.
 
