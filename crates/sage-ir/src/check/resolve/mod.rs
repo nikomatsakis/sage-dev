@@ -176,7 +176,7 @@ impl<'db> Resolver<'db> {
                 let symbols =
                     self.flexibly_resolve_name_from_module(module, first.name, Namespace::Type);
 
-                self.resolve_remaining_segments(module, stash, symbols, &stash[rest], namespace)
+                self.resolve_remaining_segments(stash, symbols, &stash[rest], namespace)
             }
             Path::Anchored(anchor, members) => {
                 let anchor_modules = resolve_anchor(self.db, module, stash, anchor.kind);
@@ -192,7 +192,9 @@ impl<'db> Resolver<'db> {
                         .collect();
                 }
 
-                self.resolve_remaining_segments_from_modules(stash, anchor_modules, rest, namespace)
+                let symbols: Vec<Symbol<'db>> =
+                    anchor_modules.into_iter().map(mod_to_symbol).collect();
+                self.resolve_remaining_segments(stash, symbols, rest, namespace)
             }
         }
     }
@@ -240,7 +242,6 @@ impl<'db> Resolver<'db> {
 
     fn resolve_remaining_segments(
         &mut self,
-        _origin: ModSymbol<'db>,
         stash: &Stash,
         symbols: Vec<Symbol<'db>>,
         rest: &[PathSegment<'db>],
@@ -250,78 +251,34 @@ impl<'db> Resolver<'db> {
 
         symbols
             .into_iter()
-            .flat_map(|s| {
-                let children = s.children(self.db).unwrap_or_default();
-                self.resolve_in_children(stash, children, rest, namespace)
-            })
-            .collect()
-    }
-
-    fn resolve_remaining_segments_from_modules(
-        &mut self,
-        stash: &Stash,
-        module_symbols: impl IntoIterator<Item = ModSymbol<'db>>,
-        rest: &[PathSegment<'db>],
-        namespace: Namespace,
-    ) -> Vec<Symbol<'db>> {
-        assert!(!rest.is_empty(), "`rest` must be non-empty");
-
-        let modules: Vec<_> = module_symbols.into_iter().collect();
-        modules
-            .into_iter()
-            .flat_map(|m| match rest {
-                [final_segment] => self.resolve_name_from_module(m, final_segment.name, namespace),
+            .flat_map(|s| match rest {
+                [final_segment] => {
+                    self.resolve_name_in(s, final_segment.name, namespace)
+                }
 
                 [next_segment, rest @ ..] => {
                     let next_symbols =
-                        self.resolve_name_from_module(m, next_segment.name, Namespace::Type);
-                    self.resolve_remaining_segments(m, stash, next_symbols, rest, namespace)
+                        self.resolve_name_in(s, next_segment.name, Namespace::Type);
+                    self.resolve_remaining_segments(stash, next_symbols, rest, namespace)
                 }
 
-                [] => {
-                    panic!("resolve_remaining_segments invoked with empty `rest`")
-                }
+                [] => unreachable!(),
             })
             .collect()
     }
 
-    fn resolve_in_children(
+    /// Look up a name inside a "container" symbol. For modules this goes
+    /// through use-import resolution; for enums it's a flat child lookup.
+    fn resolve_name_in(
         &mut self,
-        stash: &Stash,
-        children: &[Symbol<'db>],
-        rest: &[PathSegment<'db>],
-        namespace: Namespace,
-    ) -> Vec<Symbol<'db>> {
-        assert!(!rest.is_empty(), "`rest` must be non-empty");
-
-        match rest {
-            [final_segment] => {
-                self.lookup_name_in_children(children, final_segment.name, namespace)
-            }
-
-            [next_segment, rest @ ..] => {
-                let next_symbols =
-                    self.lookup_name_in_children(children, next_segment.name, Namespace::Type);
-                // For the recursive case, try children() on each resolved symbol
-                next_symbols
-                    .into_iter()
-                    .flat_map(|s| {
-                        let inner_children = s.children(self.db).unwrap_or_default();
-                        self.resolve_in_children(stash, inner_children, rest, namespace)
-                    })
-                    .collect()
-            }
-
-            [] => panic!("resolve_in_children invoked with empty `rest`"),
-        }
-    }
-
-    fn lookup_name_in_children(
-        &self,
-        children: &[Symbol<'db>],
+        sym: Symbol<'db>,
         name: Name<'db>,
         namespace: Namespace,
     ) -> Vec<Symbol<'db>> {
+        if let Some(m) = sym.module(self.db) {
+            return self.resolve_name_from_module(m, name, namespace);
+        }
+        let children = sym.children(self.db).unwrap_or_default();
         children
             .iter()
             .filter(|item| {
