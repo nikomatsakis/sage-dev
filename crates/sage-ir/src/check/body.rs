@@ -26,7 +26,7 @@ use super::infer::version::{Universe, VarInfo, Version};
 pub struct TypeError<'db> {
     pub kind: TypeErrorKind<'db>,
     pub span: RelativeSpan,
-    pub context: Option<ErrorContext>,
+    pub context: Vec<ErrorContext>,
 }
 
 #[derive(Clone, Debug)]
@@ -60,7 +60,7 @@ pub enum ErrorContext {
 
 impl<'db> TypeError<'db> {
     pub fn with_context(mut self, context: ErrorContext) -> Self {
-        self.context = Some(context);
+        self.context.push(context);
         self
     }
 
@@ -77,7 +77,7 @@ impl<'db> TypeError<'db> {
                 let mut diag = Diagnostic::error(span.clone(), &msg)
                     .label(span, format!("found `{actual_str}`"));
 
-                if let Some(ctx) = &self.context {
+                for ctx in &self.context {
                     match ctx {
                         ErrorContext::ReturnType { ret_span } => {
                             diag = diag.secondary(
@@ -211,7 +211,7 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
                     count: results.len(),
                 },
                 span,
-                context: None,
+                context: Vec::new(),
             };
             self.catch(err);
             return Res::Err;
@@ -356,7 +356,7 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
                     actual: a_canon,
                 },
                 span,
-                context: None,
+                context: Vec::new(),
             });
         }
 
@@ -467,7 +467,7 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
             let err = TypeError {
                 kind: TypeErrorKind::UnresolvedInferVar { var: idx },
                 span,
-                context: None,
+                context: Vec::new(),
             };
             let diag = err.to_diagnostic(self);
             self.diagnostics.push(diag);
@@ -501,7 +501,7 @@ impl<'a, 'db> BodyCheck<'a, 'db> {
         let err = TypeError {
             kind: TypeErrorKind::Mismatch { expected, actual },
             span,
-            context: None,
+            context: Vec::new(),
         };
         self.catch(err);
     }
