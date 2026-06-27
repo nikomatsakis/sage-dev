@@ -1,7 +1,28 @@
+use proc_macro::TokenStream;
 use quote::quote;
+use syn::ItemFn;
 use synstructure::{AddBounds, decl_derive};
 
 decl_derive!([FromImpls] => from_impls_derive);
+
+/// Transforms an `async fn` into one whose body is `Box::pin(async move { ... }).await`.
+/// This gives the function a concrete return type, enabling recursive async calls
+/// without infinite type sizes.
+#[proc_macro_attribute]
+pub fn boxed_async_fn(_args: TokenStream, input: TokenStream) -> TokenStream {
+    let mut item: ItemFn = syn::parse_macro_input!(input as ItemFn);
+
+    if item.sig.asyncness.is_none() {
+        return syn::Error::new_spanned(&item.sig.fn_token, "expected an async function")
+            .into_compile_error()
+            .into();
+    }
+
+    let block = &item.block;
+    item.block = syn::parse2(quote!({ Box::pin(async move #block).await })).unwrap();
+
+    TokenStream::from(quote!(#item))
+}
 
 fn from_impls_derive(mut s: synstructure::Structure) -> proc_macro2::TokenStream {
     s.add_bounds(AddBounds::None);

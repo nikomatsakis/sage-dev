@@ -328,3 +328,82 @@ fn ty_display_fn_pointer() {
           |                             |
           |                             expected `u32` because of return type"#]]);
 }
+
+// ---------------------------------------------------------------------------
+// Async infrastructure: block_on + await_concrete
+// ---------------------------------------------------------------------------
+
+#[test]
+fn await_concrete_immediate() {
+    // await_concrete on an already-concrete type returns immediately
+    TestCrate::in_memory("fn f(x: u32) -> u32 { x }").check_ok();
+}
+
+#[test]
+fn await_concrete_via_unification() {
+    // The call `id(x)` exercises: callee type is infer var → unified to fn(u32)->u32
+    // → check_call_ty resolves it → return type checks
+    TestCrate::in_memory(
+        "fn id(x: u32) -> u32 { x }
+         fn f(x: u32) -> u32 { id(x) }",
+    )
+    .check_ok();
+}
+
+#[test]
+fn fn_call_arg_mismatch() {
+    TestCrate::in_memory(
+        "fn id(x: u32) -> u32 { x }
+         fn f(x: bool) -> u32 { id(x) }",
+    )
+    .check_errors(expect![[r#"
+        error: type mismatch: expected `u32`, found `bool`
+         --> lib.rs:2:36
+          |
+        2 |          fn f(x: bool) -> u32 { id(x) }
+          |                                    ^ found `bool`"#]]);
+}
+
+// ---------------------------------------------------------------------------
+// Return expression: constrain against declared return type
+// ---------------------------------------------------------------------------
+
+#[test]
+fn return_expr_ok() {
+    TestCrate::in_memory("fn f(x: u32) -> u32 { return x; }").check_ok();
+}
+
+#[test]
+fn return_expr_mismatch() {
+    TestCrate::in_memory("fn f(x: u32) -> bool { return x; }").check_errors(expect![[r#"
+        error: type mismatch: expected `bool`, found `u32`
+         --> lib.rs:1:24
+          |
+        1 | fn f(x: u32) -> bool { return x; }
+          |                 ----   ^^^^^^^^ found `u32`
+          |                 |
+          |                 expected `bool` because of return type"#]]);
+}
+
+#[test]
+fn return_unit_mismatch() {
+    TestCrate::in_memory("fn f() -> u32 { return; }").check_errors(expect![[r#"
+        error: type mismatch: expected `u32`, found `()`
+         --> lib.rs:1:17
+          |
+        1 | fn f() -> u32 { return; }
+          |           ---   ^^^^^^ found `()`
+          |           |
+          |           expected `u32` because of return type"#]]);
+}
+
+#[test]
+fn early_return_with_later_code() {
+    TestCrate::in_memory(
+        "fn f(x: u32) -> u32 {
+             if x > 0 { return x; }
+             x + 1
+         }",
+    )
+    .check_ok();
+}

@@ -43,10 +43,16 @@ impl Runtime {
         }
     }
 
-    /// Spawn a new task.
-    pub fn spawn(&mut self, future: impl Future<Output = ()> + 'static) {
+    /// Allocate a task ID without spawning (used for the main task in block_on).
+    pub fn alloc_task_id(&mut self) -> TaskId {
         let id = TaskId(self.next_id);
         self.next_id += 1;
+        id
+    }
+
+    /// Spawn a new task.
+    pub fn spawn(&mut self, future: impl Future<Output = ()> + 'static) {
+        let id = self.alloc_task_id();
         self.ready.push_back(Task {
             id,
             future: Box::pin(future),

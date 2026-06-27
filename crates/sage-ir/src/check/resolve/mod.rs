@@ -72,6 +72,7 @@ struct InFlightQuery<'db> {
 /// Create one per top-level resolution request (e.g., per signature lowered
 /// or per body resolved). All resolution calls within that scope share the
 /// same cycle-detection context.
+#[derive(Clone)]
 pub(crate) struct Resolver<'db> {
     db: &'db dyn Db,
     phase: ResolvePhase,
@@ -252,13 +253,10 @@ impl<'db> Resolver<'db> {
         symbols
             .into_iter()
             .flat_map(|s| match rest {
-                [final_segment] => {
-                    self.resolve_name_in(s, final_segment.name, namespace)
-                }
+                [final_segment] => self.resolve_name_in(s, final_segment.name, namespace),
 
                 [next_segment, rest @ ..] => {
-                    let next_symbols =
-                        self.resolve_name_in(s, next_segment.name, Namespace::Type);
+                    let next_symbols = self.resolve_name_in(s, next_segment.name, Namespace::Type);
                     self.resolve_remaining_segments(stash, next_symbols, rest, namespace)
                 }
 

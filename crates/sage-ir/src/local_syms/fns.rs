@@ -78,7 +78,7 @@ impl<'db> LocalFnSym<'db> {
     /// Resolves and type-checks the function body in a single walk.
     #[salsa::tracked(returns(ref))]
     pub fn body(self, db: &'db dyn crate::Db) -> CheckedBody<'db> {
-        use crate::check::BodyCheck;
+        use crate::check::infer_ctx::{ErrorContext, InferCtx, Scope};
         use crate::local_syms::LocalModItemSym;
         use crate::resolve::Resolver;
         use crate::ty::BinderExt;
@@ -87,43 +87,52 @@ impl<'db> LocalFnSym<'db> {
         let (src, cst) = self.cst(db).open_deref();
 
         let current_sym = LocalModItemSym::Function(self);
-        let mut bx = BodyCheck::new(db, src, Resolver::new(db, self.scope(db)), current_sym);
+        let mut cx = InferCtx::new(db, src, Some(current_sym));
+        let mut scope = Scope::new(Resolver::new(db, self.scope(db)));
 
         // Bring generics into scope.
-        bx.resolver.ribs.add_generic_params(db, sig.iter_symbols());
+        scope
+            .resolver
+            .ribs
+            .add_generic_params(db, sig.iter_symbols());
 
         // Import the signature's param/return types into the body stash.
-        let imported = bx.import_fn_sig(&sig);
+        let imported = cx.import_fn_sig(&sig);
+        let ret_span = cst.ret.map(|r| src[r].span);
+        cx.set_ret_ty(imported.ret, ret_span);
 
         // Bind function parameters as locals with their declared types.
-        bx.bind_params(imported.params, cst.params);
+        scope.bind_params(&cx, imported.params, cst.params);
 
         // Walk the body CST: resolve names + infer types → TyExpr.
-        let body_expr = match cst.body {
-            Some(body_ptr) => src[body_ptr].check(&mut bx),
-            None => {
-                let ty = bx.alloc_ty(crate::ty::Ty::Never);
-                bx.alloc_expr(crate::tytree::TyExprData::Missing, ty, cst.span)
-            }
-        };
-
-        // Constrain body type against declared return type.
-        let body_ty = bx.stash()[body_expr].ty;
-        let body_span = bx.stash()[body_expr].span;
-        if let Err(e) = bx.require_coerce(body_ty, imported.ret, body_span) {
-            let e = if let Some(ret_ptr) = cst.ret {
-                let ret_span = src[ret_ptr].span;
-                e.with_context(crate::check::body::ErrorContext::ReturnType { ret_span })
-            } else {
-                e
+        let body_expr = cx.block_on(async {
+            let expr = match cst.body {
+                Some(body_ptr) => src[body_ptr].check_with(&cx, &scope).await,
+                None => {
+                    let ty = cx.alloc_ty(crate::ty::Ty::Never);
+                    cx.alloc_expr(crate::tytree::TyExprData::Missing, ty, cst.span)
+                }
             };
-            bx.catch(e);
-        }
+
+            // Constrain body type against declared return type.
+            let body_ty = cx.stash()[expr].ty;
+            let body_span = cx.stash()[expr].span;
+            if let Err(e) = cx.require_coerce(body_ty, imported.ret, body_span) {
+                let e = if let Some(ret_ptr) = cst.ret {
+                    let ret_span = src[ret_ptr].span;
+                    e.with_context(ErrorContext::ReturnType { ret_span })
+                } else {
+                    e
+                };
+                cx.catch(e);
+            }
+            expr
+        });
 
         // Resolve remaining inference variables.
-        bx.finalize();
-        bx.resolve_types();
+        cx.finalize();
+        cx.resolve_types();
 
-        bx.finish(body_expr, cst.span)
+        cx.finish(body_expr, cst.span)
     }
 }
