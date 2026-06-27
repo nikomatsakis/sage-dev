@@ -110,6 +110,9 @@ pub struct InferCtx<'check, 'db> {
     pub(crate) source_stash: &'check Stash,
     current_sym: Option<LocalModItemSym<'db>>,
 
+    // The declared return type of the function being checked, and its span.
+    ret_ty: Option<(Ptr<Ty<'db>>, Option<RelativeSpan>)>,
+
     // Shared mutable state
     egraph: RefCell<VersionedEGraph<'db>>,
     runtime: RefCell<Runtime>,
@@ -136,6 +139,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
             db,
             source_stash,
             current_sym,
+            ret_ty: None,
             egraph: RefCell::new(VersionedEGraph::new()),
             runtime: RefCell::new(Runtime::new()),
             target_stash: RefCell::new(Stash::new()),
@@ -145,6 +149,14 @@ impl<'check, 'db> InferCtx<'check, 'db> {
             pending_wakes: RefCell::new(Vec::new()),
             diagnostics: RefCell::new(Vec::new()),
         }
+    }
+
+    pub fn set_ret_ty(&mut self, ty: Ptr<Ty<'db>>, span: Option<RelativeSpan>) {
+        self.ret_ty = Some((ty, span));
+    }
+
+    pub fn ret_ty(&self) -> Option<(Ptr<Ty<'db>>, Option<RelativeSpan>)> {
+        self.ret_ty
     }
 
     // ------------------------------------------------------------------

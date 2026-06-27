@@ -87,7 +87,7 @@ impl<'db> LocalFnSym<'db> {
         let (src, cst) = self.cst(db).open_deref();
 
         let current_sym = LocalModItemSym::Function(self);
-        let cx = InferCtx::new(db, src, Some(current_sym));
+        let mut cx = InferCtx::new(db, src, Some(current_sym));
         let mut scope = Scope::new(Resolver::new(db, self.scope(db)));
 
         // Bring generics into scope.
@@ -98,6 +98,8 @@ impl<'db> LocalFnSym<'db> {
 
         // Import the signature's param/return types into the body stash.
         let imported = cx.import_fn_sig(&sig);
+        let ret_span = cst.ret.map(|r| src[r].span);
+        cx.set_ret_ty(imported.ret, ret_span);
 
         // Bind function parameters as locals with their declared types.
         scope.bind_params(&cx, imported.params, cst.params);

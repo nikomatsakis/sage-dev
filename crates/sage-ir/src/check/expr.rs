@@ -229,6 +229,20 @@ impl<'db> ExprCst<'db> {
                     Some(v) => Some(cx.source_stash[*v].check_with(cx, scope).await),
                     None => None,
                 };
+                if let Some((ret_ty, ret_span)) = cx.ret_ty() {
+                    let val_ty = match rv {
+                        Some(expr) => cx.stash()[expr].ty,
+                        None => cx.unit_ty(),
+                    };
+                    if let Err(e) = cx.require_coerce(val_ty, ret_ty, span) {
+                        let e = if let Some(ret_span) = ret_span {
+                            e.with_context(ErrorContext::ReturnType { ret_span })
+                        } else {
+                            e
+                        };
+                        cx.catch(e);
+                    }
+                }
                 let ty = cx.alloc_ty(Ty::Never);
                 (TyExprData::Return(rv), ty)
             }
