@@ -1,6 +1,6 @@
 # RFD: Async Type Checker
 
-**Status:** Active
+**Status:** Active — Phases A, B, C, D complete
 
 **Depends on:**
 - [Type Inference](./type-inference.md) (completed) — egraph, bounds, runtime, skeleton
@@ -27,9 +27,12 @@ The [Type Inference RFD](./type-inference.md) designed an async execution model 
 | Monotonic bounds (None → AtLeast → Exactly) | `check/infer/bound.rs` | Done |
 | Version tree (branch/discard) | `check/infer/version.rs` | Done |
 | Skeleton decompose/recompose | `check/infer/skeleton.rs` | Done |
-| Constraint ops (require_eq, require_sub, require_coerce) | `check/body.rs` | Done |
-| BodyCheck context (locals, resolver, finalize) | `check/body.rs` | Done |
-| Synchronous CST walker | `cst/expr.rs` | Done (to be replaced) |
+| Shared InferCtx (RefCell, &self) | `check/infer_ctx.rs` | Done |
+| Task-local Scope (resolver, locals) | `check/infer_ctx.rs` | Done |
+| Constraint ops (require_eq, require_sub, require_coerce) | `check/infer_ctx.rs` | Done |
+| Expression checker with Result error model | `check/expr.rs` | Done |
+| CheckError + RecordErr | `check/infer_ctx.rs` | Done |
+| ExprSlot, TyExprData::Error/Unresolved | `tytree/mod.rs` | Done |
 
 ## Design
 
@@ -494,15 +497,39 @@ This is already partially implemented but needs to be wired into `block_on` as w
 
 The transition can be incremental:
 
-1. **Phase A:** Split `BodyCheck` into `InferCtx` (shared, `&self` + `RefCell`, with diagnostic accumulator) and `Scope` (task-local, `&Scope` for reads). Introduce `TyExprData::Error(ErrorReported)` and `TyExprData::Unresolved(ExprSlot)` variants. Keep the walker synchronous — just change the context threading. All existing tests pass unchanged.
+1. **Phase A:** ✅ Split `BodyCheck` into `InferCtx` (shared, `&self` + `RefCell`, with diagnostic accumulator) and `Scope` (task-local, `&mut Scope` for now). Introduce `TyExprData::Error(ErrorReported)` and `TyExprData::Unresolved(ExprSlot)` variants. Keep the walker synchronous — just change the context threading. All existing tests pass unchanged.
 
-2. **Phase B:** Make `ExprCst::check` an `async fn` returning `Result<Ptr<TyExpr>, CheckError>`. Implement the scoped spawn API with `'check` lifetime (unsafe erasure internally). Initially, nothing actually suspends — all arms complete immediately (as they do today). The `block_on` call in `body()` drives the single future. Tests still pass.
+2. **Phase B:** ✅ Introduce `CheckError` type and the `Result`-returning `check_expr` inner method. The public `check_with` catches errors at scope boundaries and substitutes `TyExprData::Error` nodes. Non-fatal constraint errors use `.record_err(cx)`. The function is still synchronous (not yet `async`); the `async` keyword and `block_on` wrapper arrive in Phase C when suspension is actually needed.
 
-3. **Phase C:** Introduce `await_concrete` at method resolution and call sites. Add `.spawned(scope)` for concurrent argument checking and block initializers with `ExprSlot`. Constraint ops become obligation-spawning. Now the async model is live — tasks actually suspend and wake each other. New tests exercise inference that requires suspension.
+3. **Phase C:** ✅ Converted `check_expr` to `async fn` via `#[boxed_async_fn]` proc macro (recursive async with `Box::pin`). `Scope` is now `Clone` and passed by `&Scope` (shared reference); block-level code clones locally for binding mutations. `check_with` is `async`, recursive calls use `.await`. Entry point wraps everything in `block_on`. `await_concrete` is implemented and unit-tested; call/field arms use `find_mut` for now (switching to `await_concrete` requires concurrent background resolution, which arrives with trait solving). Added `pending_wakes` queue to decouple variable wakeups from runtime borrows.
 
-4. **Phase D:** Remove the synchronous walker entirely (it's dead code after Phase B).
+4. **Phase D:** ✅ Removed the old synchronous walker (`cst/expr.rs` body-checking section) and the `BodyCheck` struct entirely.
 
-Each phase is independently testable and shippable. Phase A is the largest mechanical diff; Phases B–C are the interesting semantic changes.
+Each phase is independently testable and shippable. Phase A was the largest mechanical diff; Phase C is the interesting semantic change remaining.
+
+### Implementation notes
+
+- **Scope is `Clone`, passed by `&Scope`.** Expression checking takes `&Scope` (shared reference). Block-level code clones locally for binding mutations. `Resolver` and `Ribs` also derive `Clone`.
+- **`#[boxed_async_fn]` macro** transforms `async fn check_expr(...)` into `fn check_expr(...) { Box::pin(async move { ... }).await }`, enabling recursive async without infinite type sizes. Added to `sage-macros-from-impls` crate.
+- **`await_concrete` not yet wired into call/field.** Currently uses `find_mut` (eager). Switching to `await_concrete` requires concurrent resolution from a background task (arrives with trait solving). The primitive is tested via unit tests.
+- **Pending wake queue:** `InferCtx::pending_wakes` collects variable indices whose bounds changed during a poll. `flush_and_drain` feeds them into the runtime between polls, avoiding RefCell double-borrow.
+- **Resolver cloning in `resolve_path` / `check_ty`.** The resolver needs `&mut self` for cycle detection (`in_flight`). Since we pass `&Scope`, we clone the resolver for each resolution. This is not on the hot path (per-name, not per-node).
+
+### Files
+
+| Component | File | Status |
+|-----------|------|--------|
+| Shared inference context (InferCtx) | `check/infer_ctx.rs` | Done |
+| Task-local scope (Scope, Clone) | `check/infer_ctx.rs` | Done |
+| Async expression checker (check_with/check_expr) | `check/expr.rs` | Done |
+| `#[boxed_async_fn]` proc macro | `sage-macros-from-impls/src/lib.rs` | Done |
+| Entry point with block_on | `local_syms/fns.rs` | Done |
+| CST expression nodes (data only) | `cst/expr.rs` | Done |
+| TyExprData::Error, Unresolved, ExprSlot | `tytree/mod.rs` | Done |
+| CheckError, RecordErr | `check/infer_ctx.rs` | Done |
+| block_on, flush_and_drain, await_concrete | `check/infer_ctx.rs` | Done |
+| pending_wakes queue | `check/infer_ctx.rs` | Done |
+| Unit tests (block_on, await_concrete) | `check/infer_ctx.rs` | Done |
 
 ## Open questions
 

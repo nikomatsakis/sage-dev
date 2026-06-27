@@ -1,4 +1,4 @@
-use sage_stash::{AllocStashData, Ptr, Slice, Stashed};
+use sage_stash::{AllocStashData, Ptr, Slice, StashDirect, Stashed};
 
 use crate::cst::Mutability;
 use crate::cst::expr::{BinaryOp, Literal, UnaryOp};
@@ -8,6 +8,13 @@ use crate::span::RelativeSpan;
 use crate::symbol::Symbol;
 use crate::ty::Ty;
 use crate::types::TokenTree;
+
+/// Placeholder for an expression that hasn't been checked yet.
+/// Used when a block spawns a background initializer check.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ExprSlot(pub u32);
+
+impl StashDirect for ExprSlot {}
 
 // ---------------------------------------------------------------------------
 // Resolved-body primitives (shared with check/, ribs, cst/paths)
@@ -110,6 +117,8 @@ pub enum TyExprData<'db> {
     StructLit(Res<'db>, Slice<TyFieldInit<'db>>),
     Range(Option<Ptr<TyExpr<'db>>>, Option<Ptr<TyExpr<'db>>>),
     MacroCall(Res<'db>, TokenTree<'db>),
+    Error(ErrorReported),
+    Unresolved(ExprSlot),
     Missing,
 }
 

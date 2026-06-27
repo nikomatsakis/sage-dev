@@ -328,3 +328,38 @@ fn ty_display_fn_pointer() {
           |                             |
           |                             expected `u32` because of return type"#]]);
 }
+
+// ---------------------------------------------------------------------------
+// Async infrastructure: block_on + await_concrete
+// ---------------------------------------------------------------------------
+
+#[test]
+fn await_concrete_immediate() {
+    // await_concrete on an already-concrete type returns immediately
+    TestCrate::in_memory("fn f(x: u32) -> u32 { x }").check_ok();
+}
+
+#[test]
+fn await_concrete_via_unification() {
+    // The call `id(x)` exercises: callee type is infer var → unified to fn(u32)->u32
+    // → check_call_ty resolves it → return type checks
+    TestCrate::in_memory(
+        "fn id(x: u32) -> u32 { x }
+         fn f(x: u32) -> u32 { id(x) }",
+    )
+    .check_ok();
+}
+
+#[test]
+fn fn_call_arg_mismatch() {
+    TestCrate::in_memory(
+        "fn id(x: u32) -> u32 { x }
+         fn f(x: bool) -> u32 { id(x) }",
+    )
+    .check_errors(expect![[r#"
+        error: type mismatch: expected `u32`, found `bool`
+         --> lib.rs:2:36
+          |
+        2 |          fn f(x: bool) -> u32 { id(x) }
+          |                                    ^ found `bool`"#]]);
+}

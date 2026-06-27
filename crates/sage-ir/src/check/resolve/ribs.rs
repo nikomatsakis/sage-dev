@@ -24,7 +24,7 @@ impl<'db> Resolution<'db> {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Ribs<'db> {
     scopes: Vec<Vec<(Name<'db>, Namespace, Resolution<'db>)>>,
 }
