@@ -548,9 +548,17 @@ impl<'db> TypeCst<'db> {
                 match results.into_iter().next() {
                     Some(Resolution::Sym(sym)) => match sym.data(cx.db) {
                         SymbolData::IntrinsicTypeSymbol(s) => intrinsic_to_ty(s.intrinsic(cx.db)),
-                        _ => {
+                        SymbolData::StructSymbol(_)
+                        | SymbolData::EnumSymbol(_)
+                        | SymbolData::TraitSymbol(_)
+                        | SymbolData::TypeAliasSymbol(_) => {
                             let type_args = cx.stash_mut().alloc_slice(&[]);
                             Ty::Adt(sym, type_args)
+                        }
+                        _ => {
+                            let e =
+                                cx.record(Diagnostic::error(cx.span(self.span), "expected type"));
+                            Ty::Error(e)
                         }
                     },
                     Some(Resolution::Param(param)) => Ty::Param(param),
