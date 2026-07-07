@@ -1,4 +1,4 @@
-# Active RFDs
+# Accepted RFDs
 
 RFDs currently under discussion or implementation.
 
