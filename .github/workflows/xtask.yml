@@ -27,6 +27,7 @@ jobs:
         run: |
           cargo install mdbook --locked
           cargo install mdbook-mermaid --locked
+          cargo install mdbook-ezanchor --locked
       - run: cargo xtask ci lint
 
   test:
