@@ -15,6 +15,7 @@
   - [Stash](./design/stash.md)
   - [Spans](./design/spans.md)
   - [Oracle Test Harness](./design/oracle-test-harness.md)
+  - [Examples](./design/examples.md)
   - [Architecture Decisions](./design/decisions.md)
 - [Research](./design/research/README.md)
   - [tree-sitter-rust Grammar Reference](./design/research/tree-sitter-rust-grammar.md)
