@@ -2,7 +2,9 @@
 
 ## Architecture documentation
 
-The `md/` directory contains an mdbook with sage's design docs and RFDs.
+The `md/` directory contains an mdbook with sage's design docs and RFDs. The
+full update contract is in `md/contributing/maintaining-the-docs.md` — read it
+before editing the book.
 
 **You MUST keep these documents up-to-date as the codebase evolves.** When you
 make a change that affects the architecture, pipeline, key decisions, or current
@@ -11,12 +13,18 @@ commit.
 
 Specifically:
 
-- **`md/design/arch.md`** — the big-picture architecture. Update when adding
-  new pipeline stages, changing the overall approach, or introducing major new
-  components.
-- **`md/rfds/`** — planning documents. Update the active RFD's "Current state"
-  and "Next steps" sections as work progresses. When an RFD's scope is complete,
-  mark it as such and ensure the design docs reflect the final state.
+- **`md/design/`** — architecture pages describe the *destination*. Update when
+  adding new pipeline stages, changing the overall approach, or introducing major
+  new components.
+- **`md/design/decisions.md`** — cross-cutting architecture decisions (`D<n>`).
+  Add a new entry when a load-bearing decision is made or changed.
+- **`md/rfds/`** — planning documents. Each RFD is a directory
+  (`rfds/<name>/README.md` + `implementation.md`). Update the accepted RFD's
+  `implementation.md` as work progresses. When an RFD's scope is complete, move
+  it from Accepted to Completed in `SUMMARY.md` and update the architecture
+  pages to reflect the final state.
+- **`md/implementation/roadmap.md`** — cross-RFD status and ordering. Update
+  when an RFD is accepted, completed, or its group dependencies change.
 
 ## Rust conventions
 

@@ -4,16 +4,20 @@ authors = ["Niko Matsakis"]
 language = "en"
 src = "md"
 
-[preprocessor]
+[preprocessor.anchor]
+command = "mdbook-ezanchor"
+scan-dirs = ["src"]
 
 [preprocessor.mermaid]
 command = "mdbook-mermaid"
 optional = true
 
-[output]
-
 [output.html]
 additional-js = ["mermaid.min.js", "mermaid-init.js"]
+
+[output.html.fold]
+enable = true
+level = 0
 
 [output.linkcheck2]
 optional = true
