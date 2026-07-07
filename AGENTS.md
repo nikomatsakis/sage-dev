@@ -2,9 +2,15 @@
 
 ## Architecture documentation
 
-The `md/` directory contains an mdbook with sage's design docs and RFDs. The
-full update contract is in `md/contributing/maintaining-the-docs.md` — read it
-before editing the book.
+The `md/` directory contains an mdbook with sage's design docs and RFDs.
+
+**Before starting design or coding work**, read `md/design/architecture.md` and
+any relevant architecture pages under `md/design/`. This ensures your work
+aligns with the intended system design. If an accepted RFD covers the area
+you're working in, read that too (`md/rfds/<name>/README.md`).
+
+The full update contract is in `md/contributing/maintaining-the-docs.md` — read
+it before editing the book.
 
 **You MUST keep these documents up-to-date as the codebase evolves.** When you
 make a change that affects the architecture, pipeline, key decisions, or current
