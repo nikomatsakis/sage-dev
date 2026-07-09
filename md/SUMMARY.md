@@ -45,6 +45,8 @@
   - [Trait System](./rfds/trait-system/README.md)
     - [Implementation plan and status](./rfds/trait-system/implementation.md)
   - [Trait Solving](./rfds/trait-solving/README.md)
+    - [Solving implementation sketch](./rfds/trait-solving/impl-sketches/solving.md)
+    - [Whiteboard implementation sketch](./rfds/trait-solving/impl-sketches/whiteboard.md)
     - [Implementation plan and status](./rfds/trait-solving/implementation.md)
   - [Method Resolution](./rfds/method-resolution/README.md)
     - [Implementation plan and status](./rfds/method-resolution/implementation.md)

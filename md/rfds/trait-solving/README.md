@@ -3,12 +3,24 @@
 **Status:** Draft
 
 **Depends on:**
-- [Trait System](./trait-system.md) — `TraitRef`, `WherePredicate`, `ImplSignature`, data model
-- [Type Inference](./type-inference.md) — `VersionedEGraph`, inference variables, async executor
+- [Trait System](../trait-system/README.md) — `TraitRef`, `WherePredicate`, `ImplSignature`, data model
+- [Type Inference](../type-inference/README.md) — `VersionedEGraph`, inference variables, async executor
 
 ## Goal
 
 Design the trait solver: given a goal like `Vec<?X>: Debug`, prove it (or report failure). The solver operates inside the same async executor as type checking, uses the versioned egraph for speculative exploration, and coordinates sub-proofs via a shared whiteboard.
+
+## MVP contract
+
+The first implementation is intentionally narrower than the full design:
+
+- **Goal language:** implement `TraitImpl`, `Equals`, `All`, `Exists`, `Implies`, and `Maybe`.
+- **Deferred goals:** `ForAll`, `Normalize`, higher-ranked lifetimes, and meaningful lifetime/outlives proving are not part of the MVP.
+- **Whiteboard scope:** one whiteboard per `GoalQuery::prove` invocation. Cross-query/global caching is deferred.
+- **Candidate sources:** environment assumptions first, then local trait impl clauses from the trait-system data model. A linear scan is acceptable for the first implementation.
+- **Alternative merging:** early return only for `Yes { subst: [], modulo: All([]) }`; otherwise compare alternatives using the conservative MVP subsumption check in the implementation sketch.
+- **Type equality:** reuse the inference egraph's structural unification machinery through a diagnostic-free helper factored out of `InferCtx::require_eq`.
+- **Residual obligations:** unresolved but still-possible goals are returned in `modulo` and retried by callers as inference makes progress.
 
 ## External interface
 
@@ -38,7 +50,7 @@ enum Goal<'db> {
 enum Atom<'db> {
     TraitImpl(TraitSym<'db>, Slice<GenericArg<'db>>),   // Output: ProofValue::True
     Equals(GenericArg<'db>, GenericArg<'db>),           // Output: ProofValue::True
-    Normalize(AliasSym<'db>, Slice<GenericArg<'db>>),   // Output: ProofValue::Ty
+    Normalize(AliasSym<'db>, Slice<GenericArg<'db>>),   // Planned, not MVP
     Outlives(GenericArg<'db>, Lifetime<'db>),           // Output: ProofValue::True
 }
 
@@ -50,27 +62,61 @@ enum Assumption<'db> {
 }
 ```
 
-Goals have an **output type** determined by their atom kind. `Normalize` produces a type; everything else produces `True` on success.
+Goals have an **output type** determined by their atom kind. MVP atoms produce `True` on success. Planned `Normalize` goals will produce a type once associated type normalization is designed.
 
-### Result type
+### Result types
 
 ```rust
-/// The result of proving a goal. Lives in its own stash (a Stashed value)
-/// so that it can be returned across canonicalization boundaries.
-enum ProofResult<'db> {
-    /// Proven, modulo these residual goals.
+/// Result that crosses canonicalization, stash, and egraph boundaries.
+/// The binder declares fresh existential variables introduced while extracting
+/// a result from a fork-local egraph.
+type QueryResult<'db> = Binder<'db, QueryResultData<'db>>;
+
+enum QueryResultData<'db> {
+    /// Proven, modulo these residual goals and substitution.
     Yes {
         value: ProofValue<'db>,
+        /// Equalities learned during the proof (bindings for the query's
+        /// canonical variables). Applied by the caller to its egraph.
+        subst: Subst<'db>,
+        /// Residual goals that must still be proven.
         modulo: Goal<'db>,
     },
 
     /// Ambiguous — multiple alternatives apply with incompatible residuals.
+    /// Carries hints: the anti-unification of the successful alternatives'
+    /// substitutions. Fresh existential variables stand for the parts where
+    /// alternatives diverge. Hints are always "shallow" — no repeated
+    /// variables (e.g., Vec<(?A, ?B)> not Vec<(?A, ?A)>), since they come
+    /// from anti-unification.
+    ///
+    /// Hints are necessary conditions: they MUST hold, but are not sufficient
+    /// to determine which alternative is correct. The caller can unify them
+    /// into its egraph; if unification fails, the goal is disproven.
+    ///
     /// Can only transition to Yes { modulo: All([]) } (fully proven).
-    Maybe,
+    Maybe {
+        hints: Subst<'db>,
+    },
 
     /// Disproven. Terminal — once No, always No.
     No,
 }
+
+/// Result flowing inside one proof context. Equalities are implicit in that
+/// context's egraph, so no substitution is needed here.
+enum GoalResult<'db> {
+    Yes {
+        value: ProofValue<'db>,
+        modulo: Goal<'db>,
+    },
+    Maybe,
+    No,
+}
+
+/// A substitution: bindings from canonical variables to types/lifetimes.
+/// In Yes: the definite equalities. In Maybe: the anti-unified hints.
+type Subst<'db> = Slice<(AlphaEquivParam<'db>, GenericArg<'db>)>;
 
 enum ProofValue<'db> {
     True,
@@ -78,7 +124,7 @@ enum ProofValue<'db> {
 }
 ```
 
-The `ProofResult` is stashed — each whiteboard entry and each `GoalQuery::prove` return value is a `Stashed<ProofResult<'db>>`. The caller instantiates it into their own stash via substitution.
+The `QueryResult` is stashed — each whiteboard entry and each `GoalQuery::prove` return value is a `Stashed<QueryResult<'db>>`. The caller opens the binder, allocates local inference variables for any bound existentials, and instantiates the result into their own stash via substitution. `GoalResult` is internal to a single proof context.
 
 **Transition lattice:**
 ```
@@ -96,7 +142,7 @@ Key constraint: `Maybe` can only transition to `Yes` when `modulo` is trivially 
 #[salsa::tracked]
 impl<'db> GoalQuery<'db> {
     #[salsa::tracked]
-    pub fn prove(self, db: &'db dyn Db) -> Stashed<ProofResult<'db>>;
+    pub fn prove(self, db: &'db dyn Db) -> Stashed<QueryResult<'db>>;
 }
 ```
 
@@ -135,7 +181,7 @@ struct WhiteboardKey<'db> {
 
 struct WhiteboardEntry<'db> {
     /// Write-once: None while in progress, Some when complete.
-    result: Option<Stashed<ProofResult<'db>>>,
+    result: Option<Stashed<QueryResult<'db>>>,
     /// Wakers of tasks blocked waiting for completion.
     wakers: Vec<Waker>,
 }
@@ -145,23 +191,29 @@ Each whiteboard entry produces its result in a **distinct stash** (the `Stashed`
 
 ### Proving an atomic goal
 
-When a task needs to prove an atomic goal:
+**Insta-flounder:** Before doing any work, check if the atom is too underspecified to make progress:
+- `TraitImpl(trait, [?X, ...])` where the self-type is a bare inference variable → flounder (return `Maybe`). We can't do candidate assembly without knowing the self-type.
+
+These will be retried by the conjunction's flounder loop once a sibling pins the variable.
+
+When a task needs to prove an atomic goal (that didn't insta-flounder):
 
 1. **Canonicalize** the goal from the current egraph → produces a `WhiteboardKey` + a reverse mapping.
 2. **Look up** the whiteboard:
    - **Entry exists, complete:** read the result immediately.
-   - **Entry exists, in progress:** this is a cycle → return `No`.
+   - **Entry exists, in progress and not on the current dependency stack:** subscribe to the entry and await completion.
+   - **Entry exists, in progress and already on the current dependency stack:** this is a proof cycle → return `No`.
    - **No entry:** create one, spawn an async task to prove it.
 3. When the spawned task completes, it writes the result into the entry and wakes all waiting tasks.
 4. **Instantiate** the result back into the caller's stash/egraph via the reverse mapping.
 
 This gives natural **goal deduplication** — if multiple parts of the proof tree need the same atomic goal at the same depth, the second one waits for the first to finish.
 
-**Cycles:** Finding an in-progress entry for your own goal means you've recursed into yourself. The result is `No` (unprovable). For coinductive cases (auto traits), the caller should add an explicit assumption to the environment before recursing, rather than relying on cycle-as-success.
+**Cycles:** Finding an in-progress entry on the current dependency stack means you've recursed into yourself. The result is `No` (unprovable). The whiteboard therefore needs a task-local proof stack or equivalent dependency tracking; `result: None` alone does not distinguish a cycle from an independent duplicate request. For coinductive cases (auto traits), the caller should add an explicit assumption to the environment before recursing, rather than relying on cycle-as-success.
 
 ### Recursion and termination
 
-**Cycles are disallowed.** Finding an in-progress entry on the whiteboard for the same goal is always `No`. There is no coinductive cycle-as-success mechanism in the solver itself.
+**Cycles are disallowed.** Finding the same in-progress goal on the current dependency stack is always `No`. There is no coinductive cycle-as-success mechanism in the solver itself.
 
 **Auto traits (Send, Sync, etc.)** are handled by adding an explicit assumption before recursing into fields. For example, when proving `Foo<?T>: Send`, we add `Foo<?T>: Send` to the environment before proving each field is `Send`. If a field has type `Foo<?T>`, it matches the assumption (just another alternative that unifies against the goal). The assumption may contain inference variables — that's fine, they get canonicalized normally (becoming universals in the canonical form, meaning "this holds for any value of this variable").
 
@@ -177,14 +229,14 @@ The async function `prove_goal` handles non-atomic goal structure:
 async fn prove_goal<'db>(
     goal: &Goal<'db>,
     ctx: &ProofCtx<'db>,  // owns egraph version, stash, env, depth
-) -> ProofResult<'db>;
+) -> GoalResult<'db>;
 ```
 
 Decomposition rules:
 - **`Goal::Atom(atom)`** → check whiteboard, subscribe or spawn.
-- **`Goal::All(goals)`** → prove conjunctively (flounder loop, shared egraph version).
+- **`Goal::All(goals)`** → prove conjunctively (flounder loop, shared egraph version). Sub-goals are processed sequentially for now (see open question 7).
 - **`Goal::Exists(binder)`** → open the binder by allocating fresh inference variables in the egraph, then prove the inner goal.
-- **`Goal::ForAll(binder)`** → open the binder by allocating fresh universals (higher universe), then prove the inner goal.
+- **`Goal::ForAll(binder)`** → deferred (see future work). Not needed for MVP.
 - **`Goal::Implies(assumptions, goal)`** → extend the environment with the assumptions, then prove the inner goal.
 - **`Goal::Maybe`** → return `Maybe` immediately.
 
@@ -200,12 +252,14 @@ When proving an atomic goal, we assemble all candidate clauses whose head could 
 Alternatives run as **scoped async tasks**. The parent starts with `No` and incorporates results as they arrive:
 
 - **First `Yes`** → becomes the current answer.
-- **Another `Yes` with compatible residuals** (one subsumes the other) → upgrade to the tighter one.
+- **Another `Yes` with compatible residuals** (one answer's conditions subsume the other) → keep the more general one.
 - **Another `Yes` with incompatible residuals** → retract to `Maybe`.
 - **`No`** → ignored (doesn't change the current answer).
 - **All alternatives complete** → the current answer is final.
 
-**Early termination:** If any alternative yields `Yes { modulo: All([]) }` (fully proven, no residuals), it's a clear winner — drop sibling futures immediately. This is the common case for concrete types where only one impl applies.
+**Early termination:** If any alternative yields `Yes { subst: [], modulo: All([]) }` (fully proven, no residuals, and no bindings for caller variables), it's a clear winner — drop sibling futures immediately. If the proof learns bindings such as `?X = u32`, sibling alternatives must still run because another candidate may learn an incompatible binding such as `?X = i32`.
+
+The implementation sketch defines the conservative MVP subsumption check used by "compatible residuals": substitutions and proof values are compared with egraph-backed type equality, and residual implications are recognized when one conjunction is a subset of the other (`X && Y => X`). Full solver-backed implication is a later refinement.
 
 ### Conjunctions (the flounder loop)
 
@@ -221,27 +275,24 @@ loop {
             Yes { modulo: All([]) } → remove from pending (fully proven)
             Yes { modulo: residuals } → replace with residuals
             No → the whole conjunction fails, return No
-            Maybe → keep in pending (floundered)
+            Maybe → keep the substituted goal in pending (floundered)
 
     if nothing changed this iteration:
         break — remaining pending goals are residuals
 }
 ```
 
-**Termination:** fixpoint — when no sub-goal's substituted form changes between iterations. Remaining floundered goals become the conjunction's residuals.
+**Termination:** fixpoint — when no sub-goal's substituted form changes between iterations. Remaining floundered goals become the conjunction's residuals. If an atomic sub-goal returns `Maybe`, any hints have already been applied to the shared egraph by `prove_atom`; the conjunction keeps the substituted goal as a residual and retries it only if later substitution changes it.
 
 **Communication between siblings:** Because conjuncts share an egraph version, proving one sub-goal may unify variables that appear in another. On the next loop iteration, the second sub-goal's substituted form changes, triggering a retry. This is how `?X: Clone` gets resolved after a sibling pins `?X = u32`.
 
 ### Associated types (normalization)
 
-`Atom::Normalize(alias, args)` goals produce a `ProofValue::Ty` — the normalized type.
+`Atom::Normalize(alias, args)` goals are planned, but not part of the solver MVP. Associated type normalization needs a follow-up data-model decision in the trait-system RFD: projection representation, impl associated type definitions, and associated type equality constraints such as `Iterator<Item = u32>`.
 
-Strategy:
-- The proof selects an impl, extracts the associated type definition.
-- The result is a single shallow normalization step.
-- The result type is added to the caller's egraph (unified with the projection node).
-- Further normalization (if the result is itself a projection) happens via the egraph's lazy recanon-on-find.
-- Cycles are naturally handled: the egraph represents them as self-referential nodes.
+The MVP solver handles trait impl, equality, and outlives goals. Projection normalization should be added once the trait-system data model can represent the inputs and outputs precisely.
+
+See [Solving implementation sketch](./impl-sketches/solving.md) for the full pseudo-code walkthrough of the algorithm.
 
 ## Integration with the type checker
 
@@ -249,7 +300,7 @@ The type checker creates goals and submits them:
 
 1. **Canonicalize** the goal from the type checker's inference context (mapping inference variables + generic params to `AlphaEquivParam` indices, allocating into a fresh stash).
 2. Call `GoalQuery::prove(db)` at the salsa boundary.
-3. **Instantiate** the `Stashed<ProofResult>` back into the type checker's stash/egraph via the reverse mapping.
+3. **Instantiate** the `Stashed<QueryResult>` back into the type checker's stash/egraph via the reverse mapping.
 4. If the result has residuals, hold them as deferred obligations. As inference progresses, re-canonicalize and re-prove (salsa may cache the previous result if inputs haven't changed).
 
 For method resolution specifically: submit `ReceiverTy: Trait`, and once `Yes` comes back, the method is resolved. The `modulo` residuals become background obligations.
@@ -258,6 +309,8 @@ For method resolution specifically: submit `ReceiverTy: Trait`, and once `Yes` c
 
 - **Sophisticated caching** — currently each `GoalQuery::prove` recomputes. Later: exploit salsa memoization, cross-query deduplication beyond the whiteboard.
 - **Cycles (coinductive)** — auto traits. Currently cycles → `No`. Coinductive cases are handled by explicit assumptions in the environment.
+- **ForAll goals** — requires universe checking, egraph child versions with collapse/propagation back to parent, and handling aliases that reference higher-universe variables. Complex interaction with conjunction concurrency. Separate RFD.
+- **Associated type normalization** — requires projection representation, impl associated type definitions, and associated type equality constraints in the trait-system data model.
 - **Higher-ranked lifetimes** — `for<'a> &'a T: Trait`. Defer.
 - **Coherence / overlap** — separate concern.
 - **Specialization** — selecting more specific impls.
@@ -276,3 +329,5 @@ For method resolution specifically: submit `ReceiverTy: Trait`, and once `Yes` c
 5. **Recursion depth default** — what's a reasonable cap? Rust code rarely needs deep recursion in trait solving. 64? 128?
 
 6. **Stash for results** — each whiteboard entry produces its result in its own stash. Is there value in sharing a stash across entries within a single `prove` invocation? Probably not — isolation is more important than the small allocation savings.
+
+7. **Conjunction concurrency** — currently `Goal::All` processes sub-goals sequentially (the flounder loop runs them one at a time). A future RFD could explore concurrent conjunction solving. For now, sequential is correct and simple.

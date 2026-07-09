@@ -3,9 +3,9 @@
 **Status:** Draft
 
 **Depends on:**
-- [Trait System](./trait-system.md) — `TraitRef`, `WherePredicate`, `ImplSignature`
-- [Type Inference](./type-inference.md) — `InferCtx`, `VersionedEGraph`, inference variables
-- [Per-kind symbol data](./per-kind-symbol-data.md) — `FnSymbol`, `ImplSymbol`, `TraitSymbol`
+- [Trait System](../trait-system/README.md) — `TraitRef`, `WherePredicate`, `ImplSignature`
+- [Type Inference](../type-inference/README.md) — `InferCtx`, `VersionedEGraph`, inference variables
+- [Per-kind symbol data](../per-kind-symbol-data/README.md) — `FnSymbol`, `ImplSymbol`, `TraitSymbol`
 
 ## Problem
 
