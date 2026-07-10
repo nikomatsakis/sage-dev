@@ -64,10 +64,10 @@ domain.
 allocation means same CST + same scope = same fingerprint = no downstream
 re-execution.
 
-## Trait obligations (planned)
+## Trait obligations
 
-Trait and type-equality obligations will be handled by the planned
-`check::solve` subsystem. The body checker keeps an obligation registry rather
+Trait and type-equality goals are handled by the `check::solve` subsystem. The
+body checker keeps an obligation registry rather
 than treating a conditional solver answer as final: substitutions are applied,
 residual goals remain registered, and every residual must either be discharged
 or produce a diagnostic before body checking finishes.
@@ -84,10 +84,21 @@ impl discovery and memoization do not depend on ambient state.
 Proof-local equality changes are transactional. A short-lived operation runs in
 a child egraph version and collapses that child into its direct parent only
 after the whole operation succeeds. A failed operation discards the child.
-Concurrent impl candidates remain isolated sibling versions; they produce
-canonical responses and are discarded rather than being merged into their
-common parent. Inference-variable IDs are globally unique and carry an owning
-version, so branch-local types cannot be reinterpreted in a sibling.
+Concurrent impl candidates own isolated proof contexts and match within a
+local child version; they produce canonical responses and are dropped rather
+than being merged into a requester. Within each egraph, inference-variable IDs
+are globally unique and carry an owning version, so branch-local types cannot
+be reinterpreted outside their owning ancestry.
+
+The body environment contains opened function predicates and the deduplicated
+defining predicates of referenced local traits. Generic function uses and
+struct/enum construction or explicit type uses submit their instantiated
+parameter environments. Obligations retain source provenance, deduplicate after
+canonicalization, retry only after relevant inference wakes, and receive a
+mandatory terminal proof pass after inference fallback. `CheckedBody` creation
+asserts that the obligation registry, runtime, wake queue, and root egraph have
+no live work. Selected-method predicates will use the same staged-batch API when
+method resolution lands.
 
 ## Resolution model
 

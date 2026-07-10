@@ -14,6 +14,10 @@ pub type ImplCst<'db> = Stashed<Ptr<ImplCstData<'db>>>;
 pub struct ImplCstData<'db> {
     pub attrs: Slice<AttrCst<'db>>,
     pub generics: Slice<GenericParamCst<'db>>,
+    pub is_unsafe: bool,
+    pub is_negative: bool,
+    pub is_const: bool,
+    pub is_default: bool,
     pub self_ty: Ptr<TypeCst<'db>>,
     pub trait_path: Option<Ptr<Path<'db>>>,
     pub where_clauses: Slice<WhereClauseCst<'db>>,
@@ -38,9 +42,21 @@ impl<'db> ImplCstData<'db> {
         skip: &dyn Fn(usize) -> bool,
     ) {
         emit_attrs_filtered(ctx, sink, self.attrs, skip);
+        if self.is_default {
+            sink.ident("default");
+        }
+        if self.is_const {
+            sink.ident("const");
+        }
+        if self.is_unsafe {
+            sink.ident("unsafe");
+        }
         sink.ident("impl");
         emit_generics(ctx, sink, self.generics);
         if let Some(trait_ptr) = self.trait_path {
+            if self.is_negative {
+                sink.punct(crate::tokens::Punct::Bang);
+            }
             ctx.stash[trait_ptr].to_tokens(ctx, sink);
             sink.ident("for");
         }

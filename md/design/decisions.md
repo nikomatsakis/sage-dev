@@ -43,10 +43,11 @@ bounds, and wake effects cannot escape. The probe API permits collapse only
 when the probe is the parent's only live child, so no sibling can observe its
 parent changing underneath an in-progress computation.
 
-Concurrent alternatives are different: sibling candidate versions are never
-merged into their common parent. Each candidate extracts a canonical response,
-after which its version is discarded. This keeps alternative-specific choices
-isolated while reusing the same versioning mechanism for rollback.
+Concurrent alternatives are different: each candidate owns an isolated proof
+context and performs its speculative matching in a child version of that
+context. Candidate versions are never merged into a requester. Each candidate
+extracts a canonical response before its isolated context is dropped, so no
+alternative-specific choice can become another candidate's ancestor state.
 
 Because descendants read sparse state through their ancestry, per-version
 writes target leaf versions only. Creating a child freezes its parent until
@@ -55,8 +56,7 @@ lookup from the frozen parent is allowed, but path compression, variable
 allocation, equality/bound changes, rebuild publication, semantic revisions,
 and wake publication are not. Append-only global stash allocation is the sole
 non-version fact exempt from this rule. This gives each branch a stable
-ancestor snapshot without copying the parent maps. The producer arena root used
-by trait solving is intentionally frozen for its whole query.
+ancestor snapshot without copying the parent maps.
 
 ## D7: Inference-variable identities are unique across egraph versions
 
@@ -76,3 +76,18 @@ Variable metadata keeps immutable creation universe separate from a versioned
 current universe ceiling. Equality may transactionally lower that ceiling to
 prevent delayed leaks through nested flexible variables; committed lowering is
 a semantic wake/revision, and canonical query identity uses the current ceiling.
+
+## D8: Whiteboard producers own isolated proof contexts
+
+Every in-progress trait-solver frame imports its canonical query into a fresh
+proof stash and egraph owned by the frame producer. Candidate alternatives do
+the same before opening their local child transaction. The per-query
+whiteboard, rather than a shared egraph root, is the common coordination point:
+it owns producer futures, subscriptions, parent links, and branch-independent
+stashed responses.
+
+This costs additional per-frame instantiation, but it prevents a suspended
+producer from borrowing a shared mutable egraph and makes requester
+cancellation independent from producer lifetime. Raw inference-variable and
+version identities cannot cross contexts because every published response is
+validated and canonicalized first.

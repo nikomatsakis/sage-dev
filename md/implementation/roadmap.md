@@ -24,17 +24,17 @@ one or more RFDs. Status is one of:
 
 | Group | RFDs | Notes |
 |---|---|---|
-| Async type checker | [async-type-checker] | Phases A-D landed; solver-ready scoped runtime and body-completion gate remains |
+| Async type checker | [async-type-checker] | Phases A-D plus solver-ready scoped tasks and body quiescence recovery landed |
 | Stash hardening | [stash-safety], [stash-faster-collision-chains] | |
 | Signatures & resolution | [symbol-signatures], [resolve-at-position] | |
 | Numeric types | [numeric-inference-variables] | |
-| Trait system | [trait-system] | Checked local trait/impl data plus function/ADT predicate environments; no implementation steps landed |
+| Trait system | [trait-system] | Checked local trait/impl data, deterministic local impl enumeration, and function/struct/enum predicate environments landed; trait/impl item queries remain |
+| Trait solving | [trait-solving] | Positive type-only local solver, active per-query whiteboard, transactional query boundary, and body obligation lifecycle landed; final RFD hardening remains |
 
 ## Planned
 
 | Group | RFDs | Notes |
 |---|---|---|
-| Trait solving | [trait-solving] | Depends on the [trait-system] signatures and impl enumeration; no solver code landed |
 | Method resolution | [method-resolution] | Inherent lookup follows [trait-system]; trait methods additionally depend on [trait-solving]; no method-resolution code landed |
 
 [initial-setup]: ../rfds/initial-setup/README.md

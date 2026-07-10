@@ -4,7 +4,7 @@ use std::fmt;
 
 use sage_stash::{Ptr, Stash};
 
-use crate::ty::Ty;
+use crate::ty::{TraitRef, Ty, WherePredicate};
 
 /// Wrapper that implements `Display` for a stash-allocated type.
 ///
@@ -24,6 +24,71 @@ impl<'a, 'db> TyDisplay<'a, 'db> {
 impl fmt::Display for TyDisplay<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt_ty(f, self.db, self.stash, self.ty)
+    }
+}
+
+pub struct TraitRefDisplay<'a, 'db> {
+    db: &'db dyn crate::Db,
+    stash: &'a Stash,
+    trait_ref: TraitRef<'db>,
+}
+
+impl<'a, 'db> TraitRefDisplay<'a, 'db> {
+    pub fn new(db: &'db dyn crate::Db, stash: &'a Stash, trait_ref: TraitRef<'db>) -> Self {
+        Self {
+            db,
+            stash,
+            trait_ref,
+        }
+    }
+}
+
+impl fmt::Display for TraitRefDisplay<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use crate::symbol::TraitSymbol;
+
+        let name = match self.trait_ref.trait_sym {
+            TraitSymbol::Local(local) => local.name(self.db).text(self.db),
+            TraitSymbol::Ext(external) => external
+                .name(self.db)
+                .map_or("?", |(name, _)| name.text(self.db)),
+        };
+        f.write_str(name)?;
+        if !self.stash[self.trait_ref.args].is_empty() {
+            f.write_str("<")?;
+            for (index, argument) in self.stash[self.trait_ref.args].iter().enumerate() {
+                if index > 0 {
+                    f.write_str(", ")?;
+                }
+                fmt_ty(f, self.db, self.stash, *argument)?;
+            }
+            f.write_str(">")?;
+        }
+        Ok(())
+    }
+}
+
+pub struct WherePredicateDisplay<'a, 'db> {
+    db: &'db dyn crate::Db,
+    stash: &'a Stash,
+    predicate: WherePredicate<'db>,
+}
+
+impl<'a, 'db> WherePredicateDisplay<'a, 'db> {
+    pub fn new(db: &'db dyn crate::Db, stash: &'a Stash, predicate: WherePredicate<'db>) -> Self {
+        Self {
+            db,
+            stash,
+            predicate,
+        }
+    }
+}
+
+impl fmt::Display for WherePredicateDisplay<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt_ty(f, self.db, self.stash, self.predicate.self_ty)?;
+        f.write_str(": ")?;
+        TraitRefDisplay::new(self.db, self.stash, self.predicate.trait_ref).fmt(f)
     }
 }
 

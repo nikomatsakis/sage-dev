@@ -3,15 +3,13 @@
 //! All types are stash-allocated (`Copy`, `AllocStashData`). They live in the
 //! same stash as the signature or body they belong to. No global interning.
 
-use std::marker::PhantomData;
-
 use sage_stash::{AllocStashData, Ptr, Slice, StashHash, Stashed};
 
 use crate::cst::Mutability;
 use crate::diagnostic::ErrorReported;
 use crate::generic_param::GenericParam;
 use crate::name::Name;
-use crate::symbol::Symbol;
+use crate::symbol::{ConstSymbol, FnSymbol, Symbol, TraitSymbol, TypeAliasSymbol};
 
 // ---------------------------------------------------------------------------
 // Ty
@@ -119,6 +117,9 @@ pub struct Binder<'db, T> {
     pub generics: Slice<GenericParam<'db>>,
 }
 
+// Safety: `T: StashData` guarantees the required copyability, lifetime erasure,
+// and unique `StaticSelf`; wrapping both `T` and the stash-owned generic slice
+// in `Binder` preserves those invariants without adding references of its own.
 unsafe impl<'db, T: sage_stash::StashData<'db>> sage_stash::StashData<'db> for Binder<'db, T> {
     type StaticSelf = Binder<'static, T::StaticSelf>;
 }
@@ -173,11 +174,12 @@ where
 pub struct FnSig<'db> {
     pub params: Slice<Ptr<Ty<'db>>>,
     pub ret: Ptr<Ty<'db>>,
+    pub parameter_env: CheckedParameterEnv<'db>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct StructSig<'db> {
-    pub dummy: PhantomData<&'db ()>,
+    pub parameter_env: CheckedParameterEnv<'db>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
@@ -194,10 +196,97 @@ pub struct FieldSig<'db> {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct EnumSig<'db> {
     pub variants: Slice<VariantSig<'db>>,
+    pub parameter_env: CheckedParameterEnv<'db>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct VariantSig<'db> {
     pub name: Name<'db>,
     pub fields: Slice<FieldSig<'db>>,
+}
+
+// ---------------------------------------------------------------------------
+// Trait-system signatures
+// ---------------------------------------------------------------------------
+
+/// `Trait<A, B>` in a bound or impl header. `Self` is kept separately.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub struct TraitRef<'db> {
+    pub trait_sym: TraitSymbol<'db>,
+    pub args: Slice<Ptr<Ty<'db>>>,
+}
+
+/// A positive type predicate, `self_ty: trait_ref`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub struct WherePredicate<'db> {
+    pub self_ty: Ptr<Ty<'db>>,
+    pub trait_ref: TraitRef<'db>,
+}
+
+/// Whether all applicability data can be consumed by the type-only MVP.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub enum SolverEligibility {
+    Eligible,
+    Unsupported,
+}
+
+impl SolverEligibility {
+    pub fn and(self, other: Self) -> Self {
+        if self == Self::Eligible && other == Self::Eligible {
+            Self::Eligible
+        } else {
+            Self::Unsupported
+        }
+    }
+
+    pub fn is_eligible(self) -> bool {
+        self == Self::Eligible
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub struct CheckedParameterEnv<'db> {
+    pub where_clauses: Slice<WherePredicate<'db>>,
+    pub solver_eligibility: SolverEligibility,
+}
+
+pub type TraitSignature<'db> = Binder<'db, TraitSignatureData<'db>>;
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub struct TraitSignatureData<'db> {
+    pub self_param: GenericParam<'db>,
+    pub where_clauses: Slice<WherePredicate<'db>>,
+    pub solver_eligibility: SolverEligibility,
+}
+
+pub type ImplSignature<'db> = Binder<'db, ImplSignatureData<'db>>;
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub struct ImplSignatureData<'db> {
+    pub trait_ref: Option<TraitRef<'db>>,
+    pub self_ty: Ptr<Ty<'db>>,
+    pub where_clauses: Slice<WherePredicate<'db>>,
+    pub solver_eligibility: SolverEligibility,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub enum TraitItemDef<'db> {
+    Function(FnSymbol<'db>),
+    Type(TypeAliasSymbol<'db>),
+    Const(ConstSymbol<'db>),
+}
+
+pub type TraitItems<'db> = Binder<'db, Slice<TraitItemDef<'db>>>;
+pub type ImplItems<'db> = Binder<'db, Slice<TraitItemDef<'db>>>;
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub enum MethodReceiver {
+    Value { mutable_binding: bool },
+    Ref { mutability: Mutability },
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub struct CheckedReceiver<'db> {
+    pub owner_self_ty: Ptr<Ty<'db>>,
+    pub form: MethodReceiver,
 }

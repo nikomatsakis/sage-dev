@@ -61,10 +61,10 @@ instantiation, not a `Goal::ForAll` proof rule.
 ```rust
 #[salsa::interned]
 struct GoalQuery<'db> {
-    data: Stashed<GoalQueryData<'db, Goal<'db>>>,
+    data: Stashed<GoalQueryData<'db>>,
 }
 
-struct GoalQueryData<'db, G> {
+struct GoalQueryData<'db> {
     /// Selects the Trait System's deterministic local-impl list.
     local_crate: LocalCrateSymbol<'db>,
     /// The caller's current universe relative to this query's universe base.
@@ -80,7 +80,7 @@ struct GoalQueryData<'db, G> {
     /// omitted from `assumptions`.
     assumptions_complete: bool,
     assumptions: Slice<Assumption<'db>>,
-    goal: G,
+    goal: Goal<'db>,
 }
 
 struct CanonicalVarInfo<'db> {
@@ -340,9 +340,10 @@ existing version's inference facts.
 Inference-variable IDs are globally unique within the egraph and record their
 owning version. A version may access variables owned by itself or its
 ancestors, never a sibling. Consequently, a `Ty::InferVar` allocated by one
-candidate cannot be reinterpreted as a different variable in another
-candidate. Version identities are stable for the egraph lifetime or carry a
-generation when storage slots are reused.
+branch cannot be reinterpreted in a sibling. Concurrent candidates additionally
+own distinct egraphs, so their raw variable identities never share a stash or
+proof context. Version identities are stable for one egraph lifetime or carry
+a generation when storage slots are reused.
 
 The egraph therefore needs these operations before concurrent alternatives can
 be implemented:
@@ -357,8 +358,8 @@ be implemented:
 Collapsing has a strict safety precondition: the child being collapsed is the
 only live child of its parent. The MVP uses this simple rule so committing a
 probe cannot change inference state underneath a live sibling. Concurrent
-candidate siblings therefore never collapse into their common parent; they
-only extract responses and discard their versions after joining.
+candidates use independent proof contexts; each extracts a response from its
+local child transaction and then drops the context after joining.
 
 Structural unification and response application use a nested child as a
 transactional probe:
@@ -378,10 +379,10 @@ committed probe keep their globally unique IDs and are atomically re-owned by
 the parent; variables from discarded descendants cannot appear in parent
 state.
 
-Candidate versions themselves are not collapsed into the common parent:
-different alternatives may make incompatible choices. Each candidate extracts
-a canonical response from its child and then discards that child. Applying the
-chosen aggregate response to a caller is a separate transactional operation.
+Candidate contexts are not collapsed into a requester: different alternatives
+may make incompatible choices. Each candidate extracts a canonical response
+from its local child and then drops the isolated context. Applying the chosen
+aggregate response to a caller is a separate transactional operation.
 
 ## Internal architecture
 
@@ -392,20 +393,20 @@ canonical atom/environment/depth **and its parent frame**. Exact duplicates
 under the same parent share a future; equal goals reached through different
 parents remain separate frames. Parent links are also used for cycle detection.
 
-Frame production is requester-independent. Each query execution creates an
-immutable producer-arena root plus a separate top-level request version. A new
-frame imports its canonical key into a fresh frame-owned branch directly under
-that arena root and runs in a query-owned producer scope. It never inherits the
-first requester's candidate version, and it never collapses into the arena
-root. After extracting and stashing its response, the producer joins all nested
-work and discards its frame branch before publishing the result.
+Frame production is requester-independent. Each new frame imports its
+canonical key into a fresh producer-owned proof stash and egraph and runs in a
+query-owned producer scope. Candidate alternatives likewise get independent
+proof contexts and perform matching in a local child transaction. A producer
+therefore never inherits or borrows the first requester's candidate version.
+After extracting and stashing its response, it joins all nested work and drops
+its isolated proof context before publishing the result.
 
 Each returned frame future owns a subscription allocated at lookup time.
 Polling an incomplete frame updates that subscription with `cx.waker()`, and
 dropping the future removes it. A creator's cancellation therefore cannot stop
 a producer while another subscriber remains. If the last subscriber to an
 incomplete frame disappears, the whiteboard removes the key, requests producer
-cancellation, joins its nested work, and discards its frame branch; a later
+cancellation, joins its nested work, and drops its proof context; a later
 lookup starts a new frame rather than waiting on the cancelled one. Completion
 takes and wakes every remaining subscriber. See the
 [whiteboard implementation sketch](./impl-sketches/whiteboard.md).
@@ -416,17 +417,18 @@ For an atomic request at depth `D`:
 2. Walk the parent-frame chain. If the same canonical atom and environment
    appears in an ancestor (depth is ignored for this comparison), return `No`.
 3. Reuse or create the exact parent-keyed frame.
-4. If newly created, start its canonical frame context in the query-owned
-   producer scope; otherwise await its future. The producer is not a child of
-   the requesting candidate's scope or egraph version.
+4. If newly created, start its isolated canonical frame context in the
+   query-owned producer scope; otherwise await its future. The producer is not
+   a child of the requesting candidate's scope or egraph version.
 5. Instantiate the completed response transactionally in the requesting
    context.
 
 The query-owned scope cannot exit until every frame producer has completed or
-has been cancelled and drained. Cancellation always stops and joins tasks that
-can access a frame version before discarding that version. This lets a losing
-candidate discard its own branch immediately after dropping its subscriptions,
-without invalidating a shared producer still needed by a surviving candidate.
+has been cancelled and drained. Cancellation drops all nested candidate tasks
+and subscriptions before dropping the producer-owned proof context. This lets
+a losing candidate drop its own isolated context immediately after releasing
+its subscriptions, without invalidating a shared producer still needed by a
+surviving candidate.
 
 The MVP is inductive, so a cycle is never treated as success. Structural auto
 trait recursion is deferred with auto traits rather than simulated by injecting
@@ -496,13 +498,12 @@ the enabled candidate sources are complete for that atom.
 
 ### Alternatives
 
-Applicable candidates run concurrently in separate child versions. The runtime
-must provide scoped tasks which may borrow the solver state, a join point, and
+Applicable candidates run concurrently in separate proof contexts, each with a
+local child transaction. The runtime provides scoped tasks, a join point, and
 cancellation. Returning from an atomic proof is forbidden while a sibling
-future can still access its version. If an unconditional answer wins early,
-the scope cancels and drains every sibling before their versions are discarded.
-The current detached `'static` spawning API and no-op wakers are therefore
-prerequisites to replace, not sufficient implementation machinery.
+future can still access its context. If an unconditional answer wins early,
+the scope cancels and drains every sibling before their proof states are
+dropped.
 
 Merging retains every `Yes` answer until all alternatives finish, then computes
 the non-dominated set from the complete answer relation. This avoids making a

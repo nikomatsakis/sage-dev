@@ -60,7 +60,17 @@ crates/sage-ir/src/
       version.rs      — version tree, Universe, and VarInfo
       runtime.rs      — wake/sleep runtime for deferred constraints
       bound.rs        — Bound (None, AtLeast, Exactly)
-    solve/            — trait goals, canonicalization, proof search (**planned**)
+      unify.rs        — transactional structural equality
+      obligations.rs  — body trait-obligation records and staged batches
+    solve/            — positive type-only trait solver
+      goal.rs         — canonical goals, assumptions, and query identity
+      canonical.rs    — caller-to-query canonicalization and reverse mappings
+      boundary.rs     — query import, response extraction, and caller application
+      result.rs       — response binders and validated substitutions
+      clauses.rs      — environment/local-impl candidate assembly
+      prove.rs        — structural proving and per-query proof frames
+      merge.rs        — order-independent answer reduction and subsumption
+      anti_unify.rs   — hard-hint intersection
 
   tytree/           — Typed tree (output of body checking)
     mod.rs          — CheckedBody, TyBody, TyExpr, TyStmt, TyPat, Res
@@ -78,8 +88,10 @@ flowchart TD
     Expanded --> Resolve[Resolver name lookup]
     Resolve --> FnSig[LocalFnSym::sig]
     Resolve --> StructSig[LocalStructSym::sig]
+    Resolve --> EnumSig[LocalEnumSym::sig]
     FnSig --> FnBinder[Stashed Binder of FnSig]
     StructSig --> StructBinder[Stashed Binder of StructSig]
+    EnumSig --> EnumBinder[Stashed Binder of EnumSig]
     FnBinder --> FnBody[LocalFnSym::body]
     StructBinder --> Fields[LocalStructSym::fields]
     FnBody --> Checked[CheckedBody]
@@ -109,10 +121,11 @@ flowchart TD
 - `Name` — string interning
 - `SymExt` — external symbol handle (CrateNum + DefIndex)
 
-## Planned trait-system and solver flow
+## Trait-system and solver flow
 
-This section describes the intended destination. The trait signature queries,
-`check/solve/`, method integration, and obligation store are not implemented yet; their
+The positive, inductive, type-only solver and its body-obligation integration
+exist. Method resolution, external impl discovery, normalization, higher-ranked
+reasoning, and the other explicitly deferred extensions remain planned; their
 status is tracked in the [Build-Out Roadmap](../implementation/roadmap.md).
 
 Checked local trait and impl signatures live on their owning symbols. A
@@ -127,6 +140,8 @@ owning trait/impl predicates; ADT predicates remain available for
 well-formedness obligations. Ordinary calls, selected methods, and ADT use
 instantiate their callee/type predicate environments into the body obligation
 store rather than dropping declared bounds after generic substitution.
+Free-function uses and struct/enum construction or explicit type use are wired
+today. Selected-method submission remains owned by the Method Resolution RFD.
 
 Canonicalization preserves the logical role and scope of every input variable:
 
@@ -148,15 +163,25 @@ Per-version writes are leaf-only. Creating a child freezes the parent's sparse
 state until its children are discarded or its sole child is collapsed, giving
 every speculative branch a stable ancestor snapshot without copying maps.
 
-Proof alternatives run in isolated sibling egraph versions. Nested transactional
-operations may collapse a successful child probe into its owning candidate version, but a
-candidate version is never collapsed into the alternatives' common parent. Each candidate
-extracts a canonical response and is then discarded. After answer merging, applying the
-aggregate response is a separate transaction against the caller: it commits only after the
-entire substitution, occurs check, and universe-leak check succeeds. Failed, cancelled, and
-losing candidates therefore publish none of their alternative-specific state. An ambiguous
-aggregate may still publish a merged hard hint: only equalities necessary for every
-still-possible alternative, never a candidate-specific near miss.
+Proof alternatives run in independent proof contexts and perform speculative
+matching in a local child egraph version. Nested transactional operations may
+collapse an exclusive successful probe within that context, but candidate
+state is never collapsed into a requester. Each candidate instead extracts a
+canonical response and drops its context. After answer merging, applying the
+aggregate response is a separate transaction against the caller: it commits
+only after the entire substitution, occurs check, and universe-leak check
+succeeds. Failed, cancelled, and losing candidates therefore publish none of
+their alternative-specific state. An ambiguous aggregate may still publish a
+merged hard hint: only equalities necessary for every still-possible
+alternative, never a candidate-specific near miss.
+
+Each actual tracked proof execution owns a parent-sensitive active frame table.
+Its canonical keys include the local crate, environment, variable metadata,
+and remaining depth; ancestor repeats are inductive `No`, while depth
+exhaustion is `Maybe`. In-progress duplicates share a producer through
+creation-time subscriptions and real wakers. Every producer and candidate owns
+an isolated proof context (D8); only validated branch-independent responses are
+shared, and completed responses are reusable only inside that execution.
 
 ```mermaid
 flowchart TD

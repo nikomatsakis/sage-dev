@@ -1,18 +1,17 @@
 # Implementation plan and status
 
-Each step leaves the workspace building and adds focused tests. No step below is complete
-yet.
+Each step leaves the workspace building and adds focused tests.
 
 ### Step 1: Checked trait data types
 
-- [ ] Add type-only `TraitRef`, `WherePredicate`, `SolverEligibility`,
+- [x] Add type-only `TraitRef`, `WherePredicate`, `SolverEligibility`,
   `TraitSignatureData`, `ImplSignatureData`, `TraitItemDef`,
   `MethodReceiver`, `CheckedReceiver`, and their binder-wrapped aliases.
-- [ ] Extend the CST/parser before checked lowering so it preserves trait
+- [x] Extend the CST/parser before checked lowering so it preserves trait
   supertraits, `auto`/`unsafe`, trait generic defaults, impl
   negative/default/unsafe/const markers, and the exact receiver/associated-fn
   distinction. Eligibility must not infer absence from syntax the CST dropped.
-- [ ] Add stash allocation, copying, hashing, folding, and display support.
+- [x] Add stash allocation, copying, hashing, folding, and display support.
 - [ ] Test that trait arguments preserve order and that unsupported lifetime, const, and
   associated-type syntax is reported rather than omitted.
 - [ ] Round-trip or structurally inspect every preserved header/receiver marker
@@ -20,24 +19,24 @@ yet.
 
 ### Step 2: Trait signature lowering
 
-- [ ] Implement `LocalTraitSym::sig` as the sole minting point for trait generics.
-- [ ] Synthesize the trait's `Self` type parameter, store it as `self_param`, and place it
+- [x] Implement `LocalTraitSym::sig` as the sole minting point for trait generics.
+- [x] Synthesize the trait's `Self` type parameter, store it as `self_param`, and place it
   before the explicit type parameters in the signature binder.
-- [ ] Set `solver_eligibility` to `Eligible` only after every defining
+- [x] Set `solver_eligibility` to `Eligible` only after every defining
   predicate is represented and every source generic is a type parameter. Mark
   lifetime/const-generic or otherwise unsupported trait signatures
   `Unsupported` without silently dropping their syntax.
-- [ ] Mark auto-trait declarations `Unsupported`; coinductive structural
+- [x] Mark auto-trait declarations `Unsupported`; coinductive structural
   candidates are not ordinary positive impl clauses.
-- [ ] Mark supertrait syntax and trait type-parameter defaults `Unsupported`
+- [x] Mark supertrait syntax and trait type-parameter defaults `Unsupported`
   until elaboration/default substitution are implemented; neither may appear
   as an eligible empty/short argument contract.
-- [ ] Lower generic-parameter trait bounds and `where` predicates into the same
+- [x] Lower generic-parameter trait bounds and `where` predicates into the same
   `WherePredicate` representation.
-- [ ] Validate exact explicit type-argument arity for every eligible `TraitRef`
+- [x] Validate exact explicit type-argument arity for every eligible `TraitRef`
   (with `Self` excluded). Trait defaults are deferred, so missing/extra args
   are diagnosed rather than truncated, freshened, or silently defaulted.
-- [ ] Reuse existing `CheckGenerics`, resolver ribs, and the two-stash checking pattern.
+- [x] Reuse existing `CheckGenerics`, resolver ribs, and the two-stash checking pattern.
 - [ ] Test multiple bounds, nested type arguments, unknown traits, and stable generic
   identities across repeated query execution.
 - [ ] Test that `TraitRef::args` excludes `Self` while trait where-clauses and item
@@ -50,18 +49,18 @@ yet.
 
 ### Step 3: Impl signature lowering with one binder
 
-- [ ] Implement `LocalImplSym::sig` returning one `Binder<ImplSignatureData>`.
-- [ ] Resolve the optional trait path, self type, and every where-clause under one shared
+- [x] Implement `LocalImplSym::sig` returning one `Binder<ImplSignatureData>`.
+- [x] Resolve the optional trait path, self type, and every where-clause under one shared
   generic substitution.
-- [ ] Distinguish inherent impls (`trait_ref: None`) from trait impls.
-- [ ] Mark an impl `Eligible` only when its complete header and applicability
+- [x] Distinguish inherent impls (`trait_ref: None`) from trait impls.
+- [x] Mark an impl `Eligible` only when its complete header and applicability
   conditions can be opened by the type-only consumers. Lifetime/const-generic
   impls and impls with unsupported predicates remain represented but are
   ineligible candidates.
-- [ ] Detect implicit/elided lifetime binders in impl headers and predicates.
+- [x] Detect implicit/elided lifetime binders in impl headers and predicates.
   Mark them `Unsupported` rather than lowering an erased lifetime as a matching
   wildcard; allow a concrete `'static` leaf to remain structural.
-- [ ] Recognize and gate declaration polarity/kind while lowering: negative,
+- [x] Recognize and gate declaration polarity/kind while lowering: negative,
   const, and default/specializing impls are `Unsupported` and can never be
   reinterpreted as ordinary positive clauses. A separate checked polarity enum
   is deferred because consumers cannot open ineligible signatures.
@@ -79,10 +78,10 @@ yet.
 
 ### Step 4: Function and ADT parameter environments
 
-- [ ] Add reusable `CheckedParameterEnv { where_clauses,
+- [x] Add reusable `CheckedParameterEnv { where_clauses,
   solver_eligibility }` data and embed it under the existing function and ADT
   signature binders.
-- [ ] Use the same lowering helper for generic-parameter bounds and explicit
+- [x] Use the same lowering helper for generic-parameter bounds and explicit
   `where` predicates on functions, structs, and enums; do not leave the Symbol
   Signatures where-clause slots permanently empty.
 - [ ] Expose a data-only helper which opens a function's predicates plus its
@@ -92,11 +91,11 @@ yet.
   `Self: ThisTrait<Args>` for a trait/default method or the opened impl-head
   fact for a trait-impl method. Inherent impl bodies add no synthetic trait
   fact.
-- [ ] Expand each eligible local-trait fact into its instantiated defining
+- [x] Expand each eligible local-trait fact into its instantiated defining
   `WherePredicate`s using a deduplicating data worklist to a fixed point. Do not
   perform deferred supertrait elaboration or invoke proof search, and do not use
   a partial external/unsupported defining-predicate set.
-- [ ] Retain ADT predicates for well-formedness obligations at construction/use
+- [x] Retain ADT predicates for well-formedness obligations at construction/use
   sites even if that obligation integration lands with body checking.
 - [ ] Mark an owner unsupported when any required lifetime, const,
   higher-ranked, projection, or otherwise unrepresented predicate remains, and
@@ -111,10 +110,10 @@ Tests:
 - [ ] The opened data for a default trait method contains its own
   `Self: Trait` fact; a trait-impl method contains the analogous opened head,
   while an inherent method does not.
-- [ ] Given `trait Tr<U> where U: Bound`, a body assumption `T: Tr<U>` also
+- [x] Given `trait Tr<U> where U: Bound`, a body assumption `T: Tr<U>` also
   exposes `U: Bound`; recursive defining predicates terminate after
   deduplication and supertraits are not synthesized.
-- [ ] Struct/enum predicates remain attached to the ADT signature and are not
+- [x] Struct/enum predicates remain attached to the ADT signature and are not
   lost when fields/variants are queried separately.
 - [ ] An unsupported non-type predicate is diagnosed and cannot masquerade as
   a complete empty parameter environment.
@@ -152,27 +151,27 @@ Tests:
 
 ### Step 6: Local impl enumeration
 
-- [ ] Implement `local_impls(db, LocalCrateSymbol)` by recursively walking expanded local
+- [x] Implement `local_impls(db, LocalCrateSymbol)` by recursively walking expanded local
   modules.
 - [ ] Include inline modules, file modules, and macro-produced impls exactly once in
   deterministic order.
 - [ ] Add tests for nested modules, multiple impls for one trait, inherent impls, and
   macro-expanded impls.
-- [ ] Keep consumer filtering as a linear scan for the MVP.
+- [x] Keep consumer filtering as a linear scan for the MVP.
 
 ### Step 7: Consumer boundaries
 
 - [ ] Expose helpers that open an impl binder freshly for one solver or method-resolution
   candidate.
-- [ ] Verify separate candidates never share inference variables while repeated uses of
+- [x] Verify separate candidates never share inference variables while repeated uses of
   one impl generic remain correlated within a candidate.
-- [ ] Add integration fixtures consumed by the trait-solving and method-resolution RFDs;
+- [x] Add integration fixtures consumed by the trait-solving and method-resolution RFDs;
   do not implement proof search or method selection in this RFD.
-- [ ] Expose to the MVP solver only impls whose trait signature and defining
+- [x] Expose to the MVP solver only impls whose trait signature and defining
   predicates are available and whose impl and trait eligibility markers are
   both `Eligible`. Keep local impls of external traits out until the external
   metadata boundary supplies those predicates.
-- [ ] Treat a relevant `Unsupported` signature as an incomplete candidate
+- [x] Treat a relevant `Unsupported` signature as an incomplete candidate
   source, never as an eligible signature with an empty predicate set.
 - [ ] Give method resolution the same eligibility gate for type-only inherent
   and trait openings.

@@ -69,49 +69,20 @@ one.
 ```rust
 fn prove_query(db: &dyn Db, query: GoalQuery) -> Stashed<QueryResult> {
     let query_data = query.open_data(db);
-    let state = SolverState::new(
+    let mut request = instantiate_query(query_data);
+    let whiteboard = Whiteboard::new();
+    let result = whiteboard.drive(prove_goal(
         db,
-        query_data.local_crate,
-        query_data.canonical_universe,
-        query_data.next_response_param,
-    );
-    // The arena root is immutable. The request and every canonical frame owner
-    // are siblings, so a producer never becomes a child of a requester which
-    // may be cancelled or transactionally updated.
-    let arena_root = state.egraph.root_version();
-    let request_version = state.egraph.branch(arena_root);
-
-    state.runtime.block_on_scoped(|query_scope| async {
-        let whiteboard = Whiteboard::new(
-            &state,
-            arena_root,
-            query_scope.frame_producer_scope(),
-        );
-        let cx = ProofCtx::import_query(
-            &state,
-            &whiteboard,
-            request_version,
-            query_data.canonical_vars,
-            query_data.assumptions_complete,
-            query_data.assumptions,
-        );
-        let goal = cx.import_goal(query_data.goal);
-        let result = prove_goal(&cx, goal, query_scope).await;
-
-        let response = match result {
-            GoalResult::No => QueryResult::no(),
-            GoalResult::Maybe => cx.extract_maybe_response(),
-            GoalResult::Yes { modulo } => cx.extract_yes_response(modulo),
-        };
-        let response = cx.stash_response(response);
-
-        // Drain producers orphaned by cancelled alternatives. A producer joins
-        // its descendants and discards its own arena-root child before it can
-        // publish a result.
-        whiteboard.join_or_cancel_producers().await;
-        cx.egraph.discard(request_version);
-        response
-    })
+        &whiteboard,
+        &mut request,
+        request.version,
+        request.assumptions,
+        request.goal,
+        0,
+        None,
+    ));
+    whiteboard.assert_drained();
+    extract_query_result(db, &request, result)
 }
 ```
 
@@ -135,10 +106,10 @@ a closed query uses its caller's current universe as that base.
 `GoalQuery::prove` is Salsa-tracked, so Salsa may reuse its completed output.
 `SolverState` and `Whiteboard` are created only when that tracked function is
 actually executed and never escape that execution. Frame production uses the
-query-owned scope but not the request branch. Every frame imports its canonical
-key into a fresh child of `arena_root`, and that branch is discarded after
-response extraction. A shared frame therefore does not borrow inference state
-or task lifetime from whichever candidate first requested it.
+query-owned scope but not the request context. Every frame imports its
+canonical key into a fresh producer-owned proof stash and egraph, which are
+dropped after response extraction. A shared frame therefore does not borrow
+inference state or task lifetime from whichever candidate first requested it.
 
 ## Transaction primitive
 
@@ -177,11 +148,10 @@ fn probe<T>(cx: &ProofCtx, op: impl FnOnce(&ProofCtx) -> Result<T, NoSolution>)
 }
 ```
 
-The precondition is why candidate siblings are never committed into their
-common parent. They run concurrently, extract independent canonical responses,
-and are discarded. A nested transactional probe is collapsed only into an
-exclusive candidate/context version after all children of that context have
-joined or been cancelled.
+Candidate alternatives each own an independent context. They run concurrently,
+extract canonical responses, and drop those contexts. A nested transactional
+probe is collapsed only into an exclusive candidate/context version after all
+children of that context have joined or been cancelled.
 
 `try_unify`, applying a complete response substitution, and applying a complete
 hint substitution each run as one probe. Recursive unification may add many
@@ -318,15 +288,15 @@ every nested residual binder. It freshens binder declarations and bound
 occurrences independently of the free-input and response-variable mappings, so
 overlapping alpha indices from separately canonicalized objects cannot capture.
 
-`NewFrameOwner::spawn_canonical` is a whiteboard/query operation, not a method
-on the requesting candidate scope. It creates a fresh child of the immutable
-producer-arena root, imports the complete canonical key into that branch, and
-sets `frame_cx.parent_frame` to the new frame. On success it stashes the
-response, joins nested work, discards the frame branch, and only then publishes
-the result. On cancellation it joins nested work and discards without
-publishing. The returned `ProofFuture` is only a subscription, so dropping the
-candidate which first created the frame cannot invalidate a producer still
-needed by another candidate.
+Starting a canonical frame is a whiteboard/query operation, not a method on the
+requesting candidate scope. It imports the complete canonical key into a fresh
+producer-owned `QueryProofState` and records the new frame as the parent for
+nested requests. On success it stashes the response, joins nested work, drops
+the isolated proof context, and only then publishes the result. On cancellation
+it drops nested scoped work and the proof context without publishing. The
+returned `ProofFuture` is only a subscription, so dropping the candidate which
+first created the frame cannot invalidate a producer still needed by another
+candidate.
 
 ## Atomic dispatch
 
@@ -420,11 +390,15 @@ async fn solve_trait_impl(
     }
 
     let mut alternatives = scope.futures_unordered();
-    for candidate in assembled.clauses {
-        // Every sibling gets an explicit child version. None is collapsed
-        // into `cx.version`.
-        let version = cx.egraph.branch(cx.version);
-        alternatives.spawn(try_candidate(cx.with_version(version), atom, candidate, scope));
+    for candidate_index in 0..assembled.clauses.len() {
+        // Every sibling imports the canonical atom into an independent proof
+        // context, then opens one local child transaction for head matching.
+        alternatives.spawn(try_isolated_candidate(
+            cx.canonical_query(),
+            candidate_index,
+            atom,
+            scope,
+        ));
     }
 
     let mut possible = PossibleAnswers {
@@ -439,7 +413,7 @@ async fn solve_trait_impl(
     while let Some(result) = alternatives.next().await {
         if result.is_unconditional_yes() {
             // Empty subst + trivially true modulo. Cancellation must finish
-            // before any sibling version is discarded.
+            // before any sibling proof context is dropped.
             alternatives.cancel_and_join().await;
             return result;
         }
@@ -452,9 +426,8 @@ async fn solve_trait_impl(
 }
 ```
 
-`try_candidate` stashes its response before dropping its branch, so the result
-does not borrow branch-local inference state. A cancellation guard discards the
-branch after its future has stopped.
+`try_isolated_candidate` stashes its response before dropping its proof
+context, so the result does not borrow candidate-local inference state.
 
 ### Order-independent finalization
 
@@ -613,9 +586,8 @@ async fn try_candidate(
 ```
 
 Head matching may bind fresh clause variables and existential goal inputs, but
-never rigid query placeholders. The candidate branch is always extracted and
-discarded; even a successful candidate is not collapsed into the atom's common
-parent.
+never rigid query placeholders. The candidate context is always extracted and
+dropped; even a successful candidate is not collapsed into the requester.
 
 ## Extracting responses
 

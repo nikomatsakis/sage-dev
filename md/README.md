@@ -42,5 +42,7 @@ The pipeline runs against [mini-redis](https://github.com/tokio-rs/mini-redis)
 end-to-end, with snapshot tests covering both signatures and resolved
 bodies.
 
-**Not yet implemented:** type checking, method resolution, trait
-selection. These are the next milestones on the roadmap.
+Body type checking and inference are implemented, including a positive,
+type-only local trait solver with retained body obligations. Method resolution,
+external impl discovery, associated-type normalization, higher-ranked solving,
+and the other deferred solver extensions remain on the roadmap.

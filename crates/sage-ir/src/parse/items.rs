@@ -126,6 +126,10 @@ impl<'a, 'db> Parser<'a, 'db> {
                             None
                         }
                     });
+                    let receiver = child.child_by_field_name("pattern").and_then(|pattern| {
+                        (self.text[pattern.byte_range()] == *"self")
+                            .then_some(crate::cst::fns::ReceiverCst::Typed)
+                    });
                     let ty = child
                         .child_by_field_name("type")
                         .map(|n| self.parse_type(stash, n, item_start))
@@ -138,6 +142,7 @@ impl<'a, 'db> Parser<'a, 'db> {
                     params.push(ParamCst {
                         name,
                         ty,
+                        receiver,
                         span: p_span,
                     });
                 }
@@ -147,6 +152,28 @@ impl<'a, 'db> Parser<'a, 'db> {
                         end: child.end_byte() as u32 - item_start,
                     };
                     let name = Some(Name::new(self.db, "self".to_owned()));
+                    let text = &self.text[child.byte_range()];
+                    let mutable = child
+                        .children(&mut child.walk())
+                        .any(|part| part.kind() == "mutable_specifier" || part.kind() == "mut");
+                    let lifetime = child
+                        .children(&mut child.walk())
+                        .find(|part| part.kind() == "lifetime")
+                        .map(|part| Name::new(self.db, self.text[part.byte_range()].to_owned()));
+                    let receiver = if text.trim_start().starts_with('&') {
+                        crate::cst::fns::ReceiverCst::Ref {
+                            mutability: if mutable {
+                                crate::cst::Mutability::Mut
+                            } else {
+                                crate::cst::Mutability::Shared
+                            },
+                            lifetime,
+                        }
+                    } else {
+                        crate::cst::fns::ReceiverCst::Value {
+                            mutable_binding: mutable,
+                        }
+                    };
                     let ty = stash.alloc(crate::cst::ty::TypeCst {
                         kind: crate::cst::ty::TypeCstKind::Infer,
                         span: p_span,
@@ -154,6 +181,7 @@ impl<'a, 'db> Parser<'a, 'db> {
                     params.push(ParamCst {
                         name,
                         ty,
+                        receiver: Some(receiver),
                         span: p_span,
                     });
                 }
@@ -421,6 +449,22 @@ impl<'a, 'db> Parser<'a, 'db> {
         let name = node_name(self.db, node, self.text);
         let attrs = self.parse_attr_nodes(&mut stash, pending_attrs, start);
         let generics = self.parse_generics(&mut stash, node, start);
+        let mut supertraits = Vec::new();
+        if let Some(bounds) = node.child_by_field_name("bounds") {
+            self.parse_type_bounds(&mut stash, bounds, start, &mut supertraits);
+        }
+        let header_end = node
+            .child_by_field_name("body")
+            .map_or(node.end_byte(), |body| body.start_byte());
+        let modifier_start = self.text[..node.start_byte()]
+            .rfind(['\n', ';', '{', '}'])
+            .map_or(0, |index| index + 1);
+        let header = &self.text[modifier_start..header_end];
+        let header_words: Vec<_> = header
+            .split(|character: char| !character.is_alphanumeric() && character != '_')
+            .collect();
+        let is_unsafe = header_words.contains(&"unsafe");
+        let is_auto = header_words.contains(&"auto");
         let where_clauses = self.parse_where_clauses(&mut stash, node, start);
         let items = self.parse_trait_body(&mut stash, node, start);
 
@@ -432,6 +476,9 @@ impl<'a, 'db> Parser<'a, 'db> {
             attrs,
             name,
             generics,
+            supertraits: stash.alloc_slice(&supertraits),
+            is_unsafe,
+            is_auto,
             where_clauses,
             items,
             span,
@@ -492,6 +539,22 @@ impl<'a, 'db> Parser<'a, 'db> {
         let start = item_start(node, pending_attrs);
         let attrs = self.parse_attr_nodes(&mut stash, pending_attrs, start);
         let generics = self.parse_generics(&mut stash, node, start);
+        let header_end = node
+            .child_by_field_name("body")
+            .map_or(node.end_byte(), |body| body.start_byte());
+        let modifier_start = self.text[..node.start_byte()]
+            .rfind(['\n', ';', '{', '}'])
+            .map_or(0, |index| index + 1);
+        let header = &self.text[modifier_start..header_end];
+        let header_words: Vec<_> = header
+            .split(|character: char| !character.is_alphanumeric() && character != '_')
+            .collect();
+        let is_unsafe = header_words.contains(&"unsafe");
+        let is_const = header_words.contains(&"const");
+        let is_default = header_words.contains(&"default");
+        let is_negative = node
+            .children(&mut node.walk())
+            .any(|child| child.kind() == "!");
         let where_clauses = self.parse_where_clauses(&mut stash, node, start);
 
         let self_ty = node
@@ -521,6 +584,10 @@ impl<'a, 'db> Parser<'a, 'db> {
         let cst_data = ImplCstData {
             attrs,
             generics,
+            is_unsafe,
+            is_negative,
+            is_const,
+            is_default,
             self_ty,
             trait_path,
             where_clauses,

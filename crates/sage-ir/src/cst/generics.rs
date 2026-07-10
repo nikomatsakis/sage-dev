@@ -14,6 +14,7 @@ pub enum GenericParamCst<'db> {
     Type {
         name: Name<'db>,
         bounds: Slice<TypeBoundCst<'db>>,
+        default: Option<Ptr<TypeCst<'db>>>,
         span: RelativeSpan,
     },
     Lifetime {
@@ -42,7 +43,12 @@ use crate::tokens::{Punct, ToTokens, TokenCtx, TokenSink};
 impl<'db> ToTokens<'db> for GenericParamCst<'db> {
     fn to_tokens(&self, ctx: &TokenCtx<'_, 'db>, sink: &mut dyn TokenSink) {
         match *self {
-            GenericParamCst::Type { name, bounds, .. } => {
+            GenericParamCst::Type {
+                name,
+                bounds,
+                default,
+                ..
+            } => {
                 sink.ident(name.text(ctx.db));
                 let bounds_slice = &ctx.stash[bounds];
                 if !bounds_slice.is_empty() {
@@ -53,6 +59,10 @@ impl<'db> ToTokens<'db> for GenericParamCst<'db> {
                         }
                         bound.to_tokens(ctx, sink);
                     }
+                }
+                if let Some(default) = default {
+                    sink.punct(Punct::Eq);
+                    ctx.stash[default].to_tokens(ctx, sink);
                 }
             }
             GenericParamCst::Lifetime { name, .. } => {

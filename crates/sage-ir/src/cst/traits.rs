@@ -4,6 +4,7 @@ use crate::cst::attrs::AttrCst;
 use crate::cst::consts::ConstCstData;
 use crate::cst::fns::FnCstData;
 use crate::cst::generics::GenericParamCst;
+use crate::cst::generics::TypeBoundCst;
 use crate::cst::type_aliases::TypeAliasCstData;
 use crate::cst::where_clause::WhereClauseCst;
 use crate::name::Name;
@@ -16,6 +17,9 @@ pub struct TraitCstData<'db> {
     pub attrs: Slice<AttrCst<'db>>,
     pub name: Name<'db>,
     pub generics: Slice<GenericParamCst<'db>>,
+    pub supertraits: Slice<TypeBoundCst<'db>>,
+    pub is_unsafe: bool,
+    pub is_auto: bool,
     pub where_clauses: Slice<WhereClauseCst<'db>>,
     pub items: Slice<TraitItemCst<'db>>,
     pub span: RelativeSpan,
@@ -45,9 +49,25 @@ impl<'db> TraitCstData<'db> {
         skip: &dyn Fn(usize) -> bool,
     ) {
         emit_attrs_filtered(ctx, sink, self.attrs, skip);
+        if self.is_unsafe {
+            sink.ident("unsafe");
+        }
+        if self.is_auto {
+            sink.ident("auto");
+        }
         sink.ident("trait");
         sink.ident(self.name.text(ctx.db));
         emit_generics(ctx, sink, self.generics);
+        let supertraits = &ctx.stash[self.supertraits];
+        if !supertraits.is_empty() {
+            sink.punct(crate::tokens::Punct::Colon);
+            for (index, bound) in supertraits.iter().enumerate() {
+                if index > 0 {
+                    sink.punct(crate::tokens::Punct::Plus);
+                }
+                bound.to_tokens(ctx, sink);
+            }
+        }
         emit_where_clauses(ctx, sink, self.where_clauses);
         sink.group(Delimiter::Brace, &mut |s| {
             for item in &ctx.stash[self.items] {

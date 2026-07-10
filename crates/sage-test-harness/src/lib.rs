@@ -210,3 +210,1055 @@ pub fn setup_root_module<'db>(
     let root = ModSymbol::Local(root_mod);
     (krate, root)
 }
+
+#[cfg(test)]
+mod trait_system_tests {
+    use super::*;
+    use sage_ir::local_syms::impls::local_impls;
+    use sage_ir::scope::ScopeSymbol;
+    use sage_ir::symbol::{SymbolData, TraitSymbol};
+    use sage_ir::ty::{SolverEligibility, Ty};
+
+    #[test]
+    fn trait_and_impl_signatures_share_complete_generic_binders() {
+        with_test_crate(
+            "trait Bound {}\ntrait PairBound<T> where T: Bound {}\nimpl<T: Bound> PairBound<T> for (T, T) {}",
+            |db, root| {
+                let items = root.expanded_module_items(db);
+                let pair_trait = items
+                    .iter()
+                    .find_map(|symbol| match symbol.data(db) {
+                        SymbolData::TraitSymbol(TraitSymbol::Local(local))
+                            if local.name(db).text(db) == "PairBound" =>
+                        {
+                            Some(local)
+                        }
+                        _ => None,
+                    })
+                    .unwrap();
+                let signature = pair_trait.sig(db);
+                let (stash, binder) = signature.open();
+                assert_eq!(stash[binder.generics].len(), 2); // Self, T
+                assert_eq!(binder.value.solver_eligibility, SolverEligibility::Eligible);
+                assert_eq!(stash[binder.value.where_clauses].len(), 1);
+
+                let ScopeSymbol::Crate(krate) = pair_trait.scope(db) else {
+                    panic!("root item should be crate-scoped")
+                };
+                let impls = local_impls(db, krate);
+                assert_eq!(impls.len(), 1);
+                let impl_signature = impls[0].sig(db);
+                let (stash, binder) = impl_signature.open();
+                assert_eq!(stash[binder.generics].len(), 1);
+                assert_eq!(binder.value.solver_eligibility, SolverEligibility::Eligible);
+                let Ty::Tuple(elements) = stash[binder.value.self_ty] else {
+                    panic!("expected tuple impl self type")
+                };
+                let elements = &stash[elements];
+                assert_eq!(elements.len(), 2);
+                assert_eq!(stash[elements[0]], stash[elements[1]]);
+            },
+        );
+    }
+
+    #[test]
+    fn lifetime_generic_impl_is_not_solver_eligible() {
+        with_test_crate(
+            "trait Bound {}\nimpl<'a, T> Bound for &'a T {}",
+            |db, root| {
+                let items = root.expanded_module_items(db);
+                let local_trait = items
+                    .iter()
+                    .find_map(|symbol| match symbol.data(db) {
+                        SymbolData::TraitSymbol(TraitSymbol::Local(local)) => Some(local),
+                        _ => None,
+                    })
+                    .unwrap();
+                let ScopeSymbol::Crate(krate) = local_trait.scope(db) else {
+                    panic!("root item should be crate-scoped")
+                };
+                let signature = local_impls(db, krate)[0].sig(db);
+                assert_eq!(
+                    signature.root().value.solver_eligibility,
+                    SolverEligibility::Unsupported
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn deferred_trait_headers_are_preserved_and_ineligible() {
+        with_test_crate(
+            "trait Bound {}\ntrait Super: Bound {}\ntrait Defaulted<T = i32> {}",
+            |db, root| {
+                let items = root.expanded_module_items(db);
+                for name in ["Super", "Defaulted"] {
+                    let local = items
+                        .iter()
+                        .find_map(|symbol| match symbol.data(db) {
+                            SymbolData::TraitSymbol(TraitSymbol::Local(local))
+                                if local.name(db).text(db) == name =>
+                            {
+                                Some(local)
+                            }
+                            _ => None,
+                        })
+                        .unwrap();
+                    assert_eq!(
+                        local.sig(db).root().value.solver_eligibility,
+                        SolverEligibility::Unsupported,
+                        "{name} must not become an unconditional clause",
+                    );
+                }
+            },
+        );
+    }
+
+    #[test]
+    fn negative_and_elided_reference_impls_are_ineligible_but_static_is_structural() {
+        with_test_crate(
+            "trait Bound {}\nimpl !Bound for bool {}\nimpl Bound for &i32 {}\nimpl Bound for &'static bool {}",
+            |db, root| {
+                let items = root.expanded_module_items(db);
+                let local_trait = items
+                    .iter()
+                    .find_map(|symbol| match symbol.data(db) {
+                        SymbolData::TraitSymbol(TraitSymbol::Local(local)) => Some(local),
+                        _ => None,
+                    })
+                    .unwrap();
+                let ScopeSymbol::Crate(krate) = local_trait.scope(db) else {
+                    panic!("root item should be crate-scoped")
+                };
+                let eligibility: Vec<_> = local_impls(db, krate)
+                    .iter()
+                    .map(|local| local.sig(db).root().value.solver_eligibility)
+                    .collect();
+                assert_eq!(
+                    eligibility,
+                    [
+                        SolverEligibility::Unsupported,
+                        SolverEligibility::Unsupported,
+                        SolverEligibility::Eligible,
+                    ]
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn function_and_adt_signatures_retain_parameter_environments() {
+        use sage_ir::symbol::{EnumSymbol, FnSymbol, StructSymbol};
+
+        with_test_crate(
+            "trait Bound {}\nfn requires<T: Bound>() {}\nstruct Container<T> where T: Bound { value: T }\nenum Choice<T> where T: Bound { Value { value: T } }",
+            |db, root| {
+                let items = root.expanded_module_items(db);
+                let function = items
+                    .iter()
+                    .find_map(|symbol| match symbol.data(db) {
+                        SymbolData::FnSymbol(FnSymbol::Local(local)) => Some(local),
+                        _ => None,
+                    })
+                    .unwrap();
+                let function_sig = function.sig(db);
+                let (stash, binder) = function_sig.open();
+                assert_eq!(stash[binder.value.parameter_env.where_clauses].len(), 1);
+                assert_eq!(
+                    binder.value.parameter_env.solver_eligibility,
+                    SolverEligibility::Eligible
+                );
+
+                let strukt = items
+                    .iter()
+                    .find_map(|symbol| match symbol.data(db) {
+                        SymbolData::StructSymbol(StructSymbol::Local(local)) => Some(local),
+                        _ => None,
+                    })
+                    .unwrap();
+                let struct_sig = strukt.sig(db);
+                let (stash, binder) = struct_sig.open();
+                assert_eq!(stash[binder.value.parameter_env.where_clauses].len(), 1);
+                assert_eq!(
+                    binder.value.parameter_env.solver_eligibility,
+                    SolverEligibility::Eligible
+                );
+
+                let enumeration = items
+                    .iter()
+                    .find_map(|symbol| match symbol.data(db) {
+                        SymbolData::EnumSymbol(EnumSymbol::Local(local)) => Some(local),
+                        _ => None,
+                    })
+                    .unwrap();
+                let enum_sig = enumeration.sig(db);
+                let (stash, binder) = enum_sig.open();
+                assert_eq!(stash[binder.value.parameter_env.where_clauses].len(), 1);
+                assert_eq!(
+                    binder.value.parameter_env.solver_eligibility,
+                    SolverEligibility::Eligible
+                );
+            },
+        );
+    }
+}
+
+#[cfg(test)]
+mod trait_solver_boundary_tests {
+    use super::*;
+    use sage_ir::check::infer::egraph::VersionedEGraph;
+    use sage_ir::check::infer::unify::try_unify;
+    use sage_ir::check::infer::version::{Universe, Version};
+    use sage_ir::check::solve::{
+        AppliedCertainty, Assumption, Atom, CanonicalVarRole, Goal, GoalResult, QueryResultData,
+        apply_query_response, canonicalize_goal, extract_query_result, instantiate_query,
+    };
+    use sage_ir::generic_param::{AlphaEquivParam, GenericParam, GenericParamKind};
+    use sage_ir::scope::ScopeSymbol;
+    use sage_ir::symbol::{SymbolData, TraitSymbol};
+    use sage_ir::ty::{IntTy, Ty};
+
+    fn crate_from_root_items<'db>(
+        db: &'db dyn Db,
+        root: sage_ir::symbol::ModSymbol<'db>,
+    ) -> LocalCrateSymbol<'db> {
+        let local_trait = root
+            .expanded_module_items(db)
+            .iter()
+            .find_map(|symbol| match symbol.data(db) {
+                SymbolData::TraitSymbol(TraitSymbol::Local(local)) => Some(local),
+                _ => None,
+            })
+            .unwrap();
+        let ScopeSymbol::Crate(krate) = local_trait.scope(db) else {
+            panic!("root item should be crate-scoped")
+        };
+        krate
+    }
+
+    #[test]
+    fn canonical_equality_round_trips_transactionally() {
+        with_test_crate("trait Marker {}", |db, root| {
+            let krate = crate_from_root_items(db, root);
+            let mut caller_stash = Stash::new();
+            let mut caller_egraph = VersionedEGraph::new();
+            let input_index = caller_egraph.alloc_var(Version::ROOT, Universe(1));
+            let input = caller_stash.alloc(Ty::InferVar(input_index));
+            let integer = caller_stash.alloc(Ty::Int(IntTy::I32));
+            let assumptions = caller_stash.alloc_slice::<Assumption>(&[]);
+            let canonical = canonicalize_goal(
+                db,
+                &caller_stash,
+                &caller_egraph,
+                Version::ROOT,
+                krate,
+                Universe(1),
+                true,
+                assumptions,
+                Goal::Atom(Atom::Equals(input, integer)),
+            );
+
+            let mut proof = instantiate_query(&canonical.data);
+            let Goal::Atom(Atom::Equals(left, right)) = proof.goal else {
+                panic!("expected equality goal")
+            };
+            try_unify(
+                &mut proof.egraph,
+                &mut proof.stash,
+                proof.version,
+                left,
+                right,
+            )
+            .unwrap();
+            let modulo = Goal::true_(&mut proof.stash);
+            let response = extract_query_result(db, &proof, GoalResult::Yes { modulo });
+            let applied = apply_query_response(
+                db,
+                &mut caller_stash,
+                &mut caller_egraph,
+                Version::ROOT,
+                &canonical.data,
+                &canonical.mapping,
+                &response,
+            )
+            .unwrap();
+
+            assert!(matches!(applied.certainty, AppliedCertainty::Yes { .. }));
+            assert_eq!(caller_egraph.find(Version::ROOT, input), integer);
+        });
+    }
+
+    #[test]
+    fn response_extraction_preserves_repeated_local_variable_sharing() {
+        with_test_crate("trait Marker {}", |db, root| {
+            let krate = crate_from_root_items(db, root);
+            let mut caller_stash = Stash::new();
+            let mut caller_egraph = VersionedEGraph::new();
+            let input_index = caller_egraph.alloc_var(Version::ROOT, Universe::ROOT);
+            let input = caller_stash.alloc(Ty::InferVar(input_index));
+            let assumptions = caller_stash.alloc_slice::<Assumption>(&[]);
+            let canonical = canonicalize_goal(
+                db,
+                &caller_stash,
+                &caller_egraph,
+                Version::ROOT,
+                krate,
+                Universe::ROOT,
+                true,
+                assumptions,
+                Goal::Atom(Atom::Equals(input, input)),
+            );
+            let mut proof = instantiate_query(&canonical.data);
+            let local_index = proof.egraph.alloc_var(proof.version, Universe::ROOT);
+            let local = proof.stash.alloc(Ty::InferVar(local_index));
+            let elements = proof.stash.alloc_slice(&[local, local]);
+            let tuple = proof.stash.alloc(Ty::Tuple(elements));
+            try_unify(
+                &mut proof.egraph,
+                &mut proof.stash,
+                proof.version,
+                proof.inputs[0].ty,
+                tuple,
+            )
+            .unwrap();
+            let modulo = Goal::true_(&mut proof.stash);
+            let response = extract_query_result(db, &proof, GoalResult::Yes { modulo });
+            let (stash, result) = response.open();
+            assert_eq!(stash[result.bound_vars].len(), 1);
+            let QueryResultData::Yes { subst, .. } = result.value else {
+                panic!("expected yes response")
+            };
+            let [entry] = &stash[subst] else {
+                panic!("expected one substitution")
+            };
+            let Ty::Tuple(elements) = stash[entry.value] else {
+                panic!("expected tuple substitution")
+            };
+            let elements = &stash[elements];
+            assert_eq!(stash[elements[0]], stash[elements[1]]);
+        });
+    }
+
+    #[test]
+    fn canonical_roles_and_relative_universes_remain_distinct() {
+        with_test_crate("trait Marker {}", |db, root| {
+            let krate = crate_from_root_items(db, root);
+            let mut stash = Stash::new();
+            let mut egraph = VersionedEGraph::new();
+            let input_index = egraph.alloc_var(Version::ROOT, Universe(1));
+            let input = stash.alloc(Ty::InferVar(input_index));
+            let rigid =
+                GenericParam::AlphaEquiv(AlphaEquivParam::new(db, GenericParamKind::Type, 99));
+            egraph.register_placeholder(rigid, Universe(2));
+            let rigid_ty = stash.alloc(Ty::Param(rigid));
+            let assumptions = stash.alloc_slice::<Assumption>(&[]);
+            let canonical = canonicalize_goal(
+                db,
+                &stash,
+                &egraph,
+                Version::ROOT,
+                krate,
+                Universe(2),
+                true,
+                assumptions,
+                Goal::Atom(Atom::Equals(input, rigid_ty)),
+            );
+            let (stash, data) = canonical.data.open();
+            let variables = &stash[data.canonical_vars];
+            assert_eq!(data.canonical_universe, 1);
+            assert_eq!(variables[0].role, CanonicalVarRole::ExistentialInput);
+            assert_eq!(variables[0].relative_universe, 0);
+            assert_eq!(variables[1].role, CanonicalVarRole::RigidPlaceholder);
+            assert_eq!(variables[1].relative_universe, 1);
+        });
+    }
+}
+
+#[cfg(test)]
+mod trait_solver_proof_tests {
+    use super::*;
+    use sage_ir::check::infer::egraph::VersionedEGraph;
+    use sage_ir::check::infer::version::{Universe, Version};
+    use sage_ir::check::solve::{
+        Assumption, Atom, Goal, GoalQuery, QueryResultData, canonicalize_goal,
+    };
+    use sage_ir::scope::ScopeSymbol;
+    use sage_ir::symbol::{SymbolData, TraitSymbol};
+    use sage_ir::ty::{IntTy, TraitRef, Ty};
+
+    fn trait_and_crate<'db>(
+        db: &'db dyn Db,
+        root: sage_ir::symbol::ModSymbol<'db>,
+        name: &str,
+    ) -> (TraitSymbol<'db>, LocalCrateSymbol<'db>) {
+        let local = root
+            .expanded_module_items(db)
+            .iter()
+            .find_map(|symbol| match symbol.data(db) {
+                SymbolData::TraitSymbol(TraitSymbol::Local(local))
+                    if local.name(db).text(db) == name =>
+                {
+                    Some(local)
+                }
+                _ => None,
+            })
+            .unwrap();
+        let ScopeSymbol::Crate(krate) = local.scope(db) else {
+            panic!("root trait should be crate-scoped")
+        };
+        (TraitSymbol::Local(local), krate)
+    }
+
+    #[test]
+    fn environment_fact_proves_bare_flexible_self() {
+        with_test_crate("trait Marker {}", |db, root| {
+            let (marker, krate) = trait_and_crate(db, root, "Marker");
+            let mut stash = Stash::new();
+            let mut egraph = VersionedEGraph::new();
+            let index = egraph.alloc_var(Version::ROOT, Universe::ROOT);
+            let self_ty = stash.alloc(Ty::InferVar(index));
+            let args = stash.alloc_slice(&[]);
+            let trait_ref = TraitRef {
+                trait_sym: marker,
+                args,
+            };
+            let assumptions = stash.alloc_slice(&[Assumption::TraitImpl { self_ty, trait_ref }]);
+            let canonical = canonicalize_goal(
+                db,
+                &stash,
+                &egraph,
+                Version::ROOT,
+                krate,
+                Universe::ROOT,
+                true,
+                assumptions,
+                Goal::Atom(Atom::TraitImpl { self_ty, trait_ref }),
+            );
+            let query = GoalQuery::new(db, canonical.data);
+            let result = query.prove(db);
+            let (stash, result) = result.open();
+            let QueryResultData::Yes { subst, modulo } = result.value else {
+                panic!("environment fact should prove goal")
+            };
+            assert!(stash[subst].is_empty());
+            assert!(modulo.is_trivially_true(stash));
+        });
+    }
+
+    #[test]
+    fn generic_impl_where_clause_is_proved_by_nested_impl() {
+        with_test_crate(
+            "trait Marker {}\ntrait Wrapper {}\nimpl Marker for i32 {}\nimpl<T: Marker> Wrapper for (T,) {}",
+            |db, root| {
+                let (wrapper, krate) = trait_and_crate(db, root, "Wrapper");
+                let mut stash = Stash::new();
+                let egraph = VersionedEGraph::new();
+                let integer = stash.alloc(Ty::Int(IntTy::I32));
+                let elements = stash.alloc_slice(&[integer]);
+                let self_ty = stash.alloc(Ty::Tuple(elements));
+                let args = stash.alloc_slice(&[]);
+                let assumptions = stash.alloc_slice::<Assumption>(&[]);
+                let canonical = canonicalize_goal(
+                    db,
+                    &stash,
+                    &egraph,
+                    Version::ROOT,
+                    krate,
+                    Universe::ROOT,
+                    true,
+                    assumptions,
+                    Goal::Atom(Atom::TraitImpl {
+                        self_ty,
+                        trait_ref: TraitRef {
+                            trait_sym: wrapper,
+                            args,
+                        },
+                    }),
+                );
+                let result = GoalQuery::new(db, canonical.data).prove(db);
+                let (stash, result) = result.open();
+                let QueryResultData::Yes { modulo, .. } = result.value else {
+                    panic!("nested impl obligations should prove")
+                };
+                assert!(modulo.is_trivially_true(stash));
+            },
+        );
+    }
+
+    #[test]
+    fn exhaustive_local_search_without_candidate_is_no() {
+        with_test_crate("trait Marker {}", |db, root| {
+            let (marker, krate) = trait_and_crate(db, root, "Marker");
+            let mut stash = Stash::new();
+            let egraph = VersionedEGraph::new();
+            let self_ty = stash.alloc(Ty::Bool);
+            let args = stash.alloc_slice(&[]);
+            let assumptions = stash.alloc_slice::<Assumption>(&[]);
+            let canonical = canonicalize_goal(
+                db,
+                &stash,
+                &egraph,
+                Version::ROOT,
+                krate,
+                Universe::ROOT,
+                true,
+                assumptions,
+                Goal::Atom(Atom::TraitImpl {
+                    self_ty,
+                    trait_ref: TraitRef {
+                        trait_sym: marker,
+                        args,
+                    },
+                }),
+            );
+            let result = GoalQuery::new(db, canonical.data).prove(db);
+            assert!(matches!(result.root().value, QueryResultData::No));
+        });
+    }
+
+    #[test]
+    fn unconditional_environment_answer_cancels_and_cleans_impl_sibling() {
+        with_test_crate("trait Marker {}\nimpl Marker for bool {}", |db, root| {
+            let (marker, krate) = trait_and_crate(db, root, "Marker");
+            let mut stash = Stash::new();
+            let egraph = VersionedEGraph::new();
+            let self_ty = stash.alloc(Ty::Bool);
+            let args = stash.alloc_slice(&[]);
+            let trait_ref = TraitRef {
+                trait_sym: marker,
+                args,
+            };
+            let assumptions = stash.alloc_slice(&[Assumption::TraitImpl { self_ty, trait_ref }]);
+            let canonical = canonicalize_goal(
+                db,
+                &stash,
+                &egraph,
+                Version::ROOT,
+                krate,
+                Universe::ROOT,
+                true,
+                assumptions,
+                Goal::Atom(Atom::TraitImpl { self_ty, trait_ref }),
+            );
+            let result = GoalQuery::new(db, canonical.data).prove(db);
+            assert!(matches!(result.root().value, QueryResultData::Yes { .. }));
+        });
+    }
+
+    #[test]
+    fn inductive_impl_cycle_is_no() {
+        with_test_crate(
+            "trait Recursive {}\nimpl<T: Recursive> Recursive for T {}",
+            |db, root| {
+                let (recursive, krate) = trait_and_crate(db, root, "Recursive");
+                let mut stash = Stash::new();
+                let egraph = VersionedEGraph::new();
+                let self_ty = stash.alloc(Ty::Bool);
+                let args = stash.alloc_slice(&[]);
+                let assumptions = stash.alloc_slice::<Assumption>(&[]);
+                let canonical = canonicalize_goal(
+                    db,
+                    &stash,
+                    &egraph,
+                    Version::ROOT,
+                    krate,
+                    Universe::ROOT,
+                    true,
+                    assumptions,
+                    Goal::Atom(Atom::TraitImpl {
+                        self_ty,
+                        trait_ref: TraitRef {
+                            trait_sym: recursive,
+                            args,
+                        },
+                    }),
+                );
+                let result = GoalQuery::new(db, canonical.data).prove(db);
+                assert!(matches!(result.root().value, QueryResultData::No));
+            },
+        );
+    }
+
+    #[test]
+    fn local_trait_defining_predicates_are_candidate_obligations() {
+        with_test_crate(
+            "trait Bound {}\ntrait Needs<T> where T: Bound {}\nimpl Needs<bool> for i32 {}",
+            |db, root| {
+                let (needs, krate) = trait_and_crate(db, root, "Needs");
+                let mut stash = Stash::new();
+                let egraph = VersionedEGraph::new();
+                let self_ty = stash.alloc(Ty::Int(IntTy::I32));
+                let argument = stash.alloc(Ty::Bool);
+                let args = stash.alloc_slice(&[argument]);
+                let assumptions = stash.alloc_slice::<Assumption>(&[]);
+                let canonical = canonicalize_goal(
+                    db,
+                    &stash,
+                    &egraph,
+                    Version::ROOT,
+                    krate,
+                    Universe::ROOT,
+                    true,
+                    assumptions,
+                    Goal::Atom(Atom::TraitImpl {
+                        self_ty,
+                        trait_ref: TraitRef {
+                            trait_sym: needs,
+                            args,
+                        },
+                    }),
+                );
+                let result = GoalQuery::new(db, canonical.data).prove(db);
+                assert!(matches!(result.root().value, QueryResultData::No));
+            },
+        );
+
+        with_test_crate(
+            "trait Bound {}\ntrait Needs<T> where T: Bound {}\nimpl Bound for bool {}\nimpl Needs<bool> for i32 {}",
+            |db, root| {
+                let (needs, krate) = trait_and_crate(db, root, "Needs");
+                let mut stash = Stash::new();
+                let egraph = VersionedEGraph::new();
+                let self_ty = stash.alloc(Ty::Int(IntTy::I32));
+                let argument = stash.alloc(Ty::Bool);
+                let args = stash.alloc_slice(&[argument]);
+                let assumptions = stash.alloc_slice::<Assumption>(&[]);
+                let canonical = canonicalize_goal(
+                    db,
+                    &stash,
+                    &egraph,
+                    Version::ROOT,
+                    krate,
+                    Universe::ROOT,
+                    true,
+                    assumptions,
+                    Goal::Atom(Atom::TraitImpl {
+                        self_ty,
+                        trait_ref: TraitRef {
+                            trait_sym: needs,
+                            args,
+                        },
+                    }),
+                );
+                let result = GoalQuery::new(db, canonical.data).prove(db);
+                assert!(matches!(result.root().value, QueryResultData::Yes { .. }));
+            },
+        );
+    }
+
+    #[test]
+    fn bare_flexible_self_without_environment_is_maybe() {
+        with_test_crate("trait Marker {}\nimpl Marker for bool {}", |db, root| {
+            let (marker, krate) = trait_and_crate(db, root, "Marker");
+            let mut stash = Stash::new();
+            let mut egraph = VersionedEGraph::new();
+            let variable = egraph.alloc_var(Version::ROOT, Universe::ROOT);
+            let self_ty = stash.alloc(Ty::InferVar(variable));
+            let args = stash.alloc_slice(&[]);
+            let assumptions = stash.alloc_slice::<Assumption>(&[]);
+            let canonical = canonicalize_goal(
+                db,
+                &stash,
+                &egraph,
+                Version::ROOT,
+                krate,
+                Universe::ROOT,
+                true,
+                assumptions,
+                Goal::Atom(Atom::TraitImpl {
+                    self_ty,
+                    trait_ref: TraitRef {
+                        trait_sym: marker,
+                        args,
+                    },
+                }),
+            );
+            let result = GoalQuery::new(db, canonical.data).prove(db);
+            assert!(matches!(result.root().value, QueryResultData::Maybe { .. }));
+        });
+    }
+
+    #[test]
+    fn proof_depth_limit_is_maybe() {
+        let mut source = String::new();
+        for level in 0..70 {
+            source.push_str(&format!("trait Level{level} {{}}\n"));
+        }
+        for level in 0..69 {
+            source.push_str(&format!(
+                "impl Level{level} for bool where bool: Level{} {{}}\n",
+                level + 1
+            ));
+        }
+        with_test_crate(&source, |db, root| {
+            let (first, krate) = trait_and_crate(db, root, "Level0");
+            let mut stash = Stash::new();
+            let egraph = VersionedEGraph::new();
+            let self_ty = stash.alloc(Ty::Bool);
+            let args = stash.alloc_slice(&[]);
+            let assumptions = stash.alloc_slice::<Assumption>(&[]);
+            let canonical = canonicalize_goal(
+                db,
+                &stash,
+                &egraph,
+                Version::ROOT,
+                krate,
+                Universe::ROOT,
+                true,
+                assumptions,
+                Goal::Atom(Atom::TraitImpl {
+                    self_ty,
+                    trait_ref: TraitRef {
+                        trait_sym: first,
+                        args,
+                    },
+                }),
+            );
+            let result = GoalQuery::new(db, canonical.data).prove(db);
+            assert!(matches!(result.root().value, QueryResultData::Maybe { .. }));
+        });
+    }
+
+    #[test]
+    fn query_local_crate_controls_impl_discovery_and_identity() {
+        let mut database = Database::default();
+        let first_file = database.add_source_file(
+            "first.rs".to_owned(),
+            "trait Marker {}\nimpl Marker for bool {}".to_owned(),
+        );
+        let second_file = database.add_source_file("second.rs".to_owned(), String::new());
+        database.attach(|db| {
+            let (first_crate, first_root) = setup_root_module(db, first_file);
+            let (second_crate, _) = setup_root_module(db, second_file);
+            let marker = first_root
+                .expanded_module_items(db)
+                .iter()
+                .find_map(|symbol| match symbol.data(db) {
+                    SymbolData::TraitSymbol(marker) => Some(marker),
+                    _ => None,
+                })
+                .unwrap();
+
+            let make_query = |local_crate| {
+                let mut stash = Stash::new();
+                let egraph = VersionedEGraph::new();
+                let self_ty = stash.alloc(Ty::Bool);
+                let args = stash.alloc_slice(&[]);
+                let assumptions = stash.alloc_slice::<Assumption>(&[]);
+                canonicalize_goal(
+                    db,
+                    &stash,
+                    &egraph,
+                    Version::ROOT,
+                    local_crate,
+                    Universe::ROOT,
+                    true,
+                    assumptions,
+                    Goal::Atom(Atom::TraitImpl {
+                        self_ty,
+                        trait_ref: TraitRef {
+                            trait_sym: marker,
+                            args,
+                        },
+                    }),
+                )
+            };
+            let first = GoalQuery::new(db, make_query(first_crate).data);
+            let second = GoalQuery::new(db, make_query(second_crate).data);
+            assert_ne!(first, second);
+            assert!(matches!(
+                first.prove(db).root().value,
+                QueryResultData::Yes { .. }
+            ));
+            assert!(matches!(second.prove(db).root().value, QueryResultData::No));
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "canonical query contains a caller inference variable")]
+    fn public_query_rejects_uncanonicalized_caller_variables() {
+        with_test_crate("trait Marker {}", |db, root| {
+            let (_, krate) = trait_and_crate(db, root, "Marker");
+            let mut stash = Stash::new();
+            let variable = stash.alloc(Ty::InferVar(sage_ir::ty::InferVarIndex(0)));
+            let assumptions = stash.alloc_slice::<Assumption>(&[]);
+            let canonical_vars = stash.alloc_slice(&[]);
+            let data = sage_ir::check::solve::GoalQueryData {
+                local_crate: krate,
+                canonical_universe: 0,
+                canonical_vars,
+                next_response_param: 0,
+                assumptions_complete: true,
+                assumptions,
+                goal: Goal::Atom(Atom::Equals(variable, variable)),
+            };
+            GoalQuery::new(db, Stashed::new(stash, data)).prove(db);
+        });
+    }
+
+    #[test]
+    fn conjunction_retries_after_a_sibling_pins_its_input() {
+        with_test_crate("trait Marker {}\nimpl Marker for bool {}", |db, root| {
+            let (marker, krate) = trait_and_crate(db, root, "Marker");
+            let mut stash = Stash::new();
+            let mut egraph = VersionedEGraph::new();
+            let variable = egraph.alloc_var(Version::ROOT, Universe::ROOT);
+            let self_ty = stash.alloc(Ty::InferVar(variable));
+            let boolean = stash.alloc(Ty::Bool);
+            let args = stash.alloc_slice(&[]);
+            let goals = stash.alloc_slice(&[
+                Goal::Atom(Atom::TraitImpl {
+                    self_ty,
+                    trait_ref: TraitRef {
+                        trait_sym: marker,
+                        args,
+                    },
+                }),
+                Goal::Atom(Atom::Equals(self_ty, boolean)),
+            ]);
+            let assumptions = stash.alloc_slice::<Assumption>(&[]);
+            let canonical = canonicalize_goal(
+                db,
+                &stash,
+                &egraph,
+                Version::ROOT,
+                krate,
+                Universe::ROOT,
+                true,
+                assumptions,
+                Goal::All(goals),
+            );
+            let result = GoalQuery::new(db, canonical.data).prove(db);
+            assert!(matches!(result.root().value, QueryResultData::Yes { .. }));
+        });
+    }
+
+    #[test]
+    fn implication_assumptions_do_not_leak_to_siblings() {
+        with_test_crate("trait Marker {}", |db, root| {
+            let (marker, krate) = trait_and_crate(db, root, "Marker");
+            let mut stash = Stash::new();
+            let boolean = stash.alloc(Ty::Bool);
+            let integer = stash.alloc(Ty::Int(IntTy::I32));
+            let args = stash.alloc_slice(&[]);
+            let trait_ref = TraitRef {
+                trait_sym: marker,
+                args,
+            };
+            let local_assumptions = stash.alloc_slice(&[Assumption::TraitImpl {
+                self_ty: boolean,
+                trait_ref,
+            }]);
+            let inner_goal = stash.alloc(Goal::Atom(Atom::TraitImpl {
+                self_ty: boolean,
+                trait_ref,
+            }));
+            let goals = stash.alloc_slice(&[
+                Goal::Implies(local_assumptions, inner_goal),
+                Goal::Atom(Atom::TraitImpl {
+                    self_ty: integer,
+                    trait_ref,
+                }),
+            ]);
+            let assumptions = stash.alloc_slice::<Assumption>(&[]);
+            let egraph = VersionedEGraph::new();
+            let canonical = canonicalize_goal(
+                db,
+                &stash,
+                &egraph,
+                Version::ROOT,
+                krate,
+                Universe::ROOT,
+                true,
+                assumptions,
+                Goal::All(goals),
+            );
+            let result = GoalQuery::new(db, canonical.data).prove(db);
+            assert!(matches!(result.root().value, QueryResultData::No));
+        });
+    }
+
+    #[test]
+    fn relevant_unsupported_impl_keeps_search_incomplete() {
+        with_test_crate(
+            "trait Marker {}\nimpl<'a> Marker for bool {}",
+            |db, root| {
+                let (marker, krate) = trait_and_crate(db, root, "Marker");
+                let mut stash = Stash::new();
+                let self_ty = stash.alloc(Ty::Bool);
+                let args = stash.alloc_slice(&[]);
+                let assumptions = stash.alloc_slice::<Assumption>(&[]);
+                let egraph = VersionedEGraph::new();
+                let canonical = canonicalize_goal(
+                    db,
+                    &stash,
+                    &egraph,
+                    Version::ROOT,
+                    krate,
+                    Universe::ROOT,
+                    true,
+                    assumptions,
+                    Goal::Atom(Atom::TraitImpl {
+                        self_ty,
+                        trait_ref: TraitRef {
+                            trait_sym: marker,
+                            args,
+                        },
+                    }),
+                );
+                let result = GoalQuery::new(db, canonical.data).prove(db);
+                assert!(
+                    matches!(result.root().value, QueryResultData::Maybe { .. }),
+                    "unexpected result: {:?}",
+                    result.root().value
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn repeated_impl_generic_rejects_non_repeated_tuple() {
+        with_test_crate("trait Pair {}\nimpl<T> Pair for (T, T) {}", |db, root| {
+            let (pair, krate) = trait_and_crate(db, root, "Pair");
+            let prove = |left: Ty<'_>, right: Ty<'_>| {
+                let mut stash = Stash::new();
+                let left = stash.alloc(left);
+                let right = stash.alloc(right);
+                let elements = stash.alloc_slice(&[left, right]);
+                let self_ty = stash.alloc(Ty::Tuple(elements));
+                let args = stash.alloc_slice(&[]);
+                let assumptions = stash.alloc_slice::<Assumption>(&[]);
+                let egraph = VersionedEGraph::new();
+                let canonical = canonicalize_goal(
+                    db,
+                    &stash,
+                    &egraph,
+                    Version::ROOT,
+                    krate,
+                    Universe::ROOT,
+                    true,
+                    assumptions,
+                    Goal::Atom(Atom::TraitImpl {
+                        self_ty,
+                        trait_ref: TraitRef {
+                            trait_sym: pair,
+                            args,
+                        },
+                    }),
+                );
+                match GoalQuery::new(db, canonical.data).prove(db).root().value {
+                    QueryResultData::Yes { .. } => 0,
+                    QueryResultData::Maybe { .. } => 1,
+                    QueryResultData::No => 2,
+                }
+            };
+            assert_eq!(prove(Ty::Bool, Ty::Bool), 0);
+            assert_eq!(prove(Ty::Bool, Ty::Int(IntTy::I32)), 2);
+        });
+    }
+}
+
+#[cfg(test)]
+mod trait_obligation_tests {
+    use super::*;
+
+    #[test]
+    fn generic_function_use_checks_its_instantiated_bounds() {
+        let diagnostics = collect_diagnostics(
+            "trait Bound {}\nfn requires<T: Bound>(value: T) {}\nfn caller() { requires(true); }",
+        );
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.line == 3 && diagnostic.message == "trait obligation is not satisfied"
+        }));
+    }
+
+    #[test]
+    fn equivalent_obligations_deduplicate_after_inference() {
+        let diagnostics = collect_diagnostics(
+            "trait Bound {}\nfn requires<T: Bound>(value: T) {}\nfn caller() { requires(true); requires(true); }",
+        );
+        let failures = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.message == "trait obligation is not satisfied")
+            .count();
+        assert_eq!(failures, 1);
+    }
+
+    #[test]
+    fn function_bounds_prove_from_impls_and_enclosing_assumptions() {
+        TestCrate::in_memory(
+            "trait Bound {}\nimpl Bound for bool {}\nfn requires<T: Bound>(value: T) {}\nfn concrete() { requires(true); }\nfn generic<T: Bound>(value: T) { requires(value); }",
+        )
+        .check_ok();
+    }
+
+    #[test]
+    fn body_environment_elaborates_local_trait_defining_predicates() {
+        TestCrate::in_memory(
+            "trait Bound {}\ntrait Needs<T> where T: Bound {}\nfn need_bound<T: Bound>(value: T) {}\nfn forward<X, Y>(x: X, y: Y) where X: Needs<Y> { need_bound(y); }",
+        )
+        .check_ok();
+    }
+
+    #[test]
+    fn struct_construction_checks_its_instantiated_bounds() {
+        let diagnostics = collect_diagnostics(
+            "trait Bound {}\nstruct Container<T: Bound> { value: T }\nfn caller() { let value = Container { value: true }; }",
+        );
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.line == 3 && diagnostic.message == "trait obligation is not satisfied"
+        }));
+    }
+
+    #[test]
+    fn struct_bounds_converge_after_field_inference() {
+        TestCrate::in_memory(
+            "trait Bound {}\nimpl Bound for bool {}\nstruct Container<T: Bound> { value: T }\nfn caller() { let value = Container { value: true }; }",
+        )
+        .check_ok();
+    }
+
+    #[test]
+    fn enum_variant_construction_checks_instantiated_bounds() {
+        let diagnostics = collect_diagnostics(
+            "trait Bound {}\nenum Choice<T: Bound> { Tuple(T), Record { value: T } }\nfn caller() { let a = Choice::Tuple(true); let b = Choice::Record { value: true }; }",
+        );
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.line == 3 && diagnostic.message == "trait obligation is not satisfied"
+        }));
+    }
+
+    #[test]
+    fn enum_variant_bounds_converge_after_argument_and_field_inference() {
+        TestCrate::in_memory(
+            "trait Bound {}\nimpl Bound for bool {}\nenum Choice<T: Bound> { Tuple(T), Record { value: T } }\nfn caller() { let a = Choice::Tuple(true); let b = Choice::Record { value: true }; }",
+        )
+        .check_ok();
+    }
+
+    #[test]
+    fn explicit_adt_type_use_checks_struct_and_enum_bounds() {
+        let diagnostics = collect_diagnostics(
+            "trait Bound {}\nstruct Container<T: Bound> { value: T }\nenum Choice<T: Bound> { Value { value: T } }\nfn caller(value: bool) { let a = value as Container<bool>; let b = value as Choice<bool>; }",
+        );
+        let failures = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.message == "trait obligation is not satisfied")
+            .count();
+        assert_eq!(failures, 1, "equivalent ADT obligations should deduplicate");
+    }
+
+    #[test]
+    fn unsupported_parameter_environment_is_not_treated_as_empty() {
+        let diagnostics = collect_diagnostics(
+            "trait Bound {}\nimpl Bound for bool {}\nfn requires<'a, T: Bound>(value: T) {}\nfn caller() { requires(true); }",
+        );
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.line == 4
+                    && diagnostic.message == "trait obligation could not be resolved"
+            }),
+            "unexpected diagnostics: {diagnostics:?}"
+        );
+    }
+}

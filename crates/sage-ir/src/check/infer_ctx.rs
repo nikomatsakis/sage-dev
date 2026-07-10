@@ -1,5 +1,9 @@
 use std::cell::RefCell;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::task::Wake;
 
+use rustc_hash::{FxHashMap, FxHashSet};
 use sage_stash::{Ptr, Stash, StashCopy, Stashed};
 
 use crate::diagnostic::{Diagnostic, ErrorReported, Span};
@@ -7,14 +11,32 @@ use crate::display::TyDisplay;
 use crate::local_syms::LocalModItemSym;
 use crate::name::Name;
 use crate::resolve::{Namespace, Resolution, Resolver};
+use crate::scope::LocalCrateSymbol;
 use crate::span::RelativeSpan;
-use crate::ty::{Binder, FnSig, InferVarIndex, Ty};
+use crate::ty::{Binder, CheckedParameterEnv, FnSig, InferVarIndex, SolverEligibility, Ty};
 use crate::tytree::*;
 
 use super::infer::bound::Bound;
 use super::infer::egraph::VersionedEGraph;
+use super::infer::obligations::{
+    Obligation, ObligationManager, ObligationProvenance, ObligationReason, ObligationState,
+    StagedObligationBatch,
+};
 use super::infer::runtime::Runtime;
-use super::infer::version::{Universe, VarInfo, Version};
+use super::infer::unify::{UnifyError, try_set_bound, try_unify};
+use super::infer::version::{Universe, Version};
+
+struct MainTaskWake(AtomicBool);
+
+impl Wake for MainTaskWake {
+    fn wake(self: Arc<Self>) {
+        self.0.store(true, Ordering::Release);
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.store(true, Ordering::Release);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // TypeError — carried over from body.rs
@@ -109,6 +131,7 @@ pub struct InferCtx<'check, 'db> {
     pub db: &'db dyn crate::Db,
     pub(crate) source_stash: &'check Stash,
     current_sym: Option<LocalModItemSym<'db>>,
+    local_crate: Option<LocalCrateSymbol<'db>>,
 
     // The declared return type of the function being checked, and its span.
     ret_ty: Option<(Ptr<Ty<'db>>, Option<RelativeSpan>)>,
@@ -117,9 +140,13 @@ pub struct InferCtx<'check, 'db> {
     egraph: RefCell<VersionedEGraph<'db>>,
     runtime: RefCell<Runtime>,
     target_stash: RefCell<Stash>,
-    infer_var_ptrs: RefCell<Vec<Ptr<Ty<'db>>>>,
     local_vars: RefCell<Vec<LocalVar<'db>>>,
     expr_slots: RefCell<Vec<Option<Ptr<TyExpr<'db>>>>>,
+
+    // Trait facts available to this body and its retained proof requests.
+    solver_assumptions: RefCell<sage_stash::Slice<super::solve::Assumption<'db>>>,
+    assumptions_complete: RefCell<bool>,
+    obligations: RefCell<ObligationManager<'db>>,
 
     // Wake queue: variables whose bounds changed during a poll.
     // Processed by block_on between polls (avoids double-borrow of runtime).
@@ -135,17 +162,40 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         source_stash: &'check Stash,
         current_sym: Option<LocalModItemSym<'db>>,
     ) -> Self {
+        let local_crate = match current_sym {
+            Some(LocalModItemSym::Function(function)) => Some(function.scope(db).local_crate(db)),
+            Some(
+                LocalModItemSym::Struct(_)
+                | LocalModItemSym::Enum(_)
+                | LocalModItemSym::Trait(_)
+                | LocalModItemSym::Impl(_)
+                | LocalModItemSym::TypeAlias(_)
+                | LocalModItemSym::Const(_)
+                | LocalModItemSym::Static(_)
+                | LocalModItemSym::Mod(_)
+                | LocalModItemSym::Use(_)
+                | LocalModItemSym::MacroDef(_)
+                | LocalModItemSym::MacroInvocation(_)
+                | LocalModItemSym::Error(_),
+            )
+            | None => None,
+        };
+        let mut target_stash = Stash::new();
+        let solver_assumptions = target_stash.alloc_slice(&[]);
         Self {
             db,
             source_stash,
             current_sym,
+            local_crate,
             ret_ty: None,
             egraph: RefCell::new(VersionedEGraph::new()),
             runtime: RefCell::new(Runtime::new()),
-            target_stash: RefCell::new(Stash::new()),
-            infer_var_ptrs: RefCell::new(Vec::new()),
+            target_stash: RefCell::new(target_stash),
             local_vars: RefCell::new(Vec::new()),
             expr_slots: RefCell::new(Vec::new()),
+            solver_assumptions: RefCell::new(solver_assumptions),
+            assumptions_complete: RefCell::new(true),
+            obligations: RefCell::new(ObligationManager::default()),
             pending_wakes: RefCell::new(Vec::new()),
             diagnostics: RefCell::new(Vec::new()),
         }
@@ -283,12 +333,13 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     // ------------------------------------------------------------------
 
     pub fn fresh_ty_var(&self) -> Ptr<Ty<'db>> {
-        let universe = Universe(1); // TODO: use scope's universe
-        let idx = self.egraph.borrow_mut().alloc_var(VarInfo { universe });
+        self.fresh_ty_var_in(Version::ROOT, Universe(1))
+    }
+
+    pub(crate) fn fresh_ty_var_in(&self, version: Version, universe: Universe) -> Ptr<Ty<'db>> {
+        let idx = self.egraph.borrow_mut().alloc_var(version, universe);
         let ty = Ty::InferVar(idx);
-        let ptr = self.target_stash.borrow_mut().alloc(ty);
-        self.infer_var_ptrs.borrow_mut().push(ptr);
-        ptr
+        self.target_stash.borrow_mut().alloc(ty)
     }
 
     // ------------------------------------------------------------------
@@ -296,23 +347,31 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     // ------------------------------------------------------------------
 
     pub fn find(&self, ty: Ptr<Ty<'db>>) -> Ptr<Ty<'db>> {
-        self.egraph.borrow().find(ty)
+        self.find_in(Version::ROOT, ty)
     }
 
     pub fn find_mut(&self, ty: Ptr<Ty<'db>>) -> Ptr<Ty<'db>> {
-        self.egraph.borrow_mut().find_mut(ty)
+        self.egraph.borrow_mut().find_mut(Version::ROOT, ty)
     }
 
     pub fn get_bound(&self, ty: Ptr<Ty<'db>>) -> Bound<'db> {
-        self.egraph.borrow().get_bound(ty)
+        self.egraph.borrow().get_bound(Version::ROOT, ty)
     }
 
     pub fn set_bound(&self, ty: Ptr<Ty<'db>>, bound: Bound<'db>) {
-        let stash = self.target_stash.borrow();
-        self.egraph.borrow_mut().set_bound(&stash, ty, bound);
-        if let Ty::InferVar(idx) = stash[ty] {
-            self.pending_wakes.borrow_mut().push(idx);
-        }
+        let effects = try_set_bound(
+            &mut self.egraph.borrow_mut(),
+            &mut self.target_stash.borrow_mut(),
+            Version::ROOT,
+            ty,
+            bound,
+        )
+        .expect("invalid inference bound");
+        self.publish_commit_effects(effects);
+    }
+
+    pub(crate) fn find_in(&self, version: Version, ty: Ptr<Ty<'db>>) -> Ptr<Ty<'db>> {
+        self.egraph.borrow().find(version, ty)
     }
 
     // ------------------------------------------------------------------
@@ -320,8 +379,17 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     // ------------------------------------------------------------------
 
     pub fn assume_eq(&self, a: Ptr<Ty<'db>>, b: Ptr<Ty<'db>>) {
-        let stash = self.target_stash.borrow();
-        self.egraph.borrow_mut().union(&stash, a, b);
+        match try_unify(
+            &mut self.egraph.borrow_mut(),
+            &mut self.target_stash.borrow_mut(),
+            Version::ROOT,
+            a,
+            b,
+        ) {
+            Ok(effects) => self.publish_commit_effects(effects),
+            Err(UnifyError::Reported(_)) => {}
+            Err(error) => panic!("invalid assumed equality: {error:?}"),
+        }
     }
 
     pub fn require_eq(
@@ -330,75 +398,36 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         b: Ptr<Ty<'db>>,
         span: RelativeSpan,
     ) -> Result<(), TypeError<'db>> {
-        use super::infer::skeleton::decompose;
-
-        let a_canon = self.egraph.borrow_mut().find_mut(a);
-        let b_canon = self.egraph.borrow_mut().find_mut(b);
-        if a_canon == b_canon {
-            return Ok(());
-        }
-
-        let stash = self.target_stash.borrow();
-        let a_data = stash[a_canon];
-        let b_data = stash[b_canon];
-
-        match (a_data, b_data) {
-            (Ty::Error(e), _) | (_, Ty::Error(e)) => return Err(TypeError::Reported(e)),
-            (Ty::InferVar(_), Ty::InferVar(_)) => {
-                self.egraph.borrow_mut().union(&stash, a_canon, b_canon);
-                return Ok(());
+        let result = {
+            let mut egraph = self.egraph.borrow_mut();
+            let mut stash = self.target_stash.borrow_mut();
+            try_unify(&mut egraph, &mut stash, Version::ROOT, a, b)
+        };
+        match result {
+            Ok(effects) => {
+                self.publish_commit_effects(effects);
+                Ok(())
             }
-            (Ty::InferVar(idx), _) => {
-                let mut eg = self.egraph.borrow_mut();
-                eg.set_bound(&stash, a_canon, Bound::Exactly(b_canon));
-                eg.union(&stash, a_canon, b_canon);
-                drop(eg);
-                self.pending_wakes.borrow_mut().push(idx);
-                return Ok(());
-            }
-            (_, Ty::InferVar(idx)) => {
-                let mut eg = self.egraph.borrow_mut();
-                eg.set_bound(&stash, b_canon, Bound::Exactly(a_canon));
-                eg.union(&stash, b_canon, a_canon);
-                drop(eg);
-                self.pending_wakes.borrow_mut().push(idx);
-                return Ok(());
-            }
-            _ => {}
-        }
-
-        let da = decompose(&stash, a_canon);
-        let db_decomposed = decompose(&stash, b_canon);
-
-        if da.skeleton != db_decomposed.skeleton {
-            return Err(TypeError::Fresh {
+            Err(UnifyError::Reported(error)) => Err(TypeError::Reported(error)),
+            Err(UnifyError::Mismatch { left, right }) => Err(TypeError::Fresh {
                 kind: TypeErrorKind::Mismatch {
-                    expected: b_canon,
-                    actual: a_canon,
+                    expected: right,
+                    actual: left,
                 },
                 span,
                 context: Vec::new(),
-            });
+            }),
+            Err(UnifyError::OccursCheck { .. } | UnifyError::UniverseLeak { .. }) => {
+                Err(TypeError::Fresh {
+                    kind: TypeErrorKind::Mismatch {
+                        expected: self.find(b),
+                        actual: self.find(a),
+                    },
+                    span,
+                    context: Vec::new(),
+                })
+            }
         }
-
-        assert_eq!(
-            da.children.len(),
-            db_decomposed.children.len(),
-            "same skeleton but different child counts"
-        );
-
-        // Drop the stash borrow before recursive calls
-        drop(stash);
-
-        for (ca, cb) in da
-            .children
-            .into_iter()
-            .zip(db_decomposed.children.into_iter())
-        {
-            self.require_eq(ca, cb, span)?;
-        }
-
-        Ok(())
     }
 
     pub fn require_sub(
@@ -407,8 +436,8 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         b: Ptr<Ty<'db>>,
         span: RelativeSpan,
     ) -> Result<(), TypeError<'db>> {
-        let a_canon = self.egraph.borrow_mut().find_mut(a);
-        let b_canon = self.egraph.borrow_mut().find_mut(b);
+        let a_canon = self.egraph.borrow_mut().find_mut(Version::ROOT, a);
+        let b_canon = self.egraph.borrow_mut().find_mut(Version::ROOT, b);
         if a_canon == b_canon {
             return Ok(());
         }
@@ -423,7 +452,24 @@ impl<'check, 'db> InferCtx<'check, 'db> {
             (Ty::Ref(inner_a, m_a, _), Ty::Ref(inner_b, m_b, _)) if m_a == m_b => {
                 self.require_sub(inner_a, inner_b, span)
             }
-            _ => self.require_eq(a_canon, b_canon, span),
+            (
+                Ty::Bool
+                | Ty::Char
+                | Ty::Int(_)
+                | Ty::Uint(_)
+                | Ty::Float(_)
+                | Ty::Str
+                | Ty::Adt(_, _)
+                | Ty::Ref(_, _, _)
+                | Ty::Tuple(_)
+                | Ty::Slice(_)
+                | Ty::Array(_, _)
+                | Ty::FnPtr(_, _)
+                | Ty::Param(_)
+                | Ty::InferVar(_)
+                | Ty::Error(_),
+                _,
+            ) => self.require_eq(a_canon, b_canon, span),
         }
     }
 
@@ -440,16 +486,12 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     // Versioning
     // ------------------------------------------------------------------
 
-    pub fn branch(&self) -> Version {
-        self.egraph.borrow_mut().branch()
+    pub(crate) fn branch_from(&self, parent: Version) -> Version {
+        self.egraph.borrow_mut().branch_from(parent)
     }
 
-    pub fn switch_to(&self, v: Version) {
-        self.egraph.borrow_mut().set_current_version(v);
-    }
-
-    pub fn discard_branch(&self, v: Version) {
-        self.egraph.borrow_mut().discard(v);
+    pub(crate) fn discard_branch(&self, version: Version) {
+        self.egraph.borrow_mut().discard(version);
     }
 
     // ------------------------------------------------------------------
@@ -470,6 +512,11 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     // ------------------------------------------------------------------
     // Execution
     // ------------------------------------------------------------------
+
+    fn publish_commit_effects(&self, effects: super::infer::egraph::CommitEffects) {
+        self.obligations.borrow_mut().wake(&effects.wakes);
+        self.pending_wakes.borrow_mut().extend(effects.wakes);
+    }
 
     /// Catch a CheckError: record the diagnostic and substitute an error node.
     pub fn error_expr(&self, err: CheckError<'db>, span: RelativeSpan) -> Ptr<TyExpr<'db>> {
@@ -499,7 +546,22 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     /// (which push to pending_wakes); between each poll we flush wakes
     /// into the runtime and drain ready background tasks.
     pub fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
-        use super::infer::runtime::{CURRENT_TASK, TaskId};
+        self.block_on_inner(future, false)
+    }
+
+    /// Run the root body scope while allowing stable quiescence to drive
+    /// inference fallback and mandatory obligation progress. A source task may
+    /// therefore suspend on information which finalization itself supplies.
+    pub(crate) fn block_on_body<F: std::future::Future>(&self, future: F) -> F::Output {
+        self.block_on_inner(future, true)
+    }
+
+    fn block_on_inner<F: std::future::Future>(
+        &self,
+        future: F,
+        recover_at_quiescence: bool,
+    ) -> F::Output {
+        use super::infer::runtime::CURRENT_TASK;
         use std::pin::pin;
         use std::task::{Context, Poll, Waker};
 
@@ -508,11 +570,19 @@ impl<'check, 'db> InferCtx<'check, 'db> {
             let mut rt = self.runtime.borrow_mut();
             rt.alloc_task_id()
         };
+        let notified = Arc::new(MainTaskWake(AtomicBool::new(true)));
+        let waker = Waker::from(notified.clone());
 
         let mut future = pin!(future);
         loop {
+            if !notified.0.swap(false, Ordering::AcqRel) {
+                self.flush_and_drain();
+                if !notified.0.load(Ordering::Acquire) {
+                    panic!("deadlock: main task pending with no wake source");
+                }
+                continue;
+            }
             CURRENT_TASK.with(|t| *t.borrow_mut() = Some(main_task_id));
-            let waker = Waker::noop();
             let mut cx = Context::from_waker(&waker);
             let result = future.as_mut().poll(&mut cx);
             CURRENT_TASK.with(|t| *t.borrow_mut() = None);
@@ -528,12 +598,20 @@ impl<'check, 'db> InferCtx<'check, 'db> {
                     // main task is waiting on. If nothing moved, deadlock.
                     let wakes_before = self.pending_wakes.borrow().len();
                     self.flush_and_drain();
-                    let rt = self.runtime.borrow();
-                    if rt.is_quiescent() && self.pending_wakes.borrow().is_empty() {
+                    let quiescent = self.runtime.borrow().is_quiescent()
+                        && self.pending_wakes.borrow().is_empty();
+                    if quiescent {
                         // Nothing running, nothing pending — if we just
                         // flushed wakes, try once more (the main task
                         // may have been unblocked). Otherwise, deadlock.
-                        if wakes_before == 0 {
+                        if wakes_before == 0 && !notified.0.load(Ordering::Acquire) {
+                            if recover_at_quiescence {
+                                self.finalize();
+                                self.flush_and_drain();
+                                if notified.0.load(Ordering::Acquire) {
+                                    continue;
+                                }
+                            }
                             panic!("deadlock: main task pending with no runnable tasks");
                         }
                     }
@@ -555,7 +633,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
             match data {
                 Ty::InferVar(idx) => {
                     // Suspend: register current task to wake on this variable's next bound change.
-                    poll_fn(|_cx| {
+                    poll_fn(|poll_context| {
                         // Re-check in case it resolved between iterations
                         let canon = self.find(ty);
                         let data = self.target_stash.borrow()[canon];
@@ -565,13 +643,29 @@ impl<'check, 'db> InferCtx<'check, 'db> {
                         // Register waker
                         let task_id = CURRENT_TASK.with(|t| *t.borrow());
                         if let Some(task_id) = task_id {
-                            self.runtime.borrow_mut().wait_on(idx, task_id);
+                            self.runtime
+                                .borrow_mut()
+                                .wait_on(idx, task_id, poll_context.waker());
                         }
                         Poll::Pending
                     })
                     .await;
                 }
-                _ => return canon,
+                Ty::Bool
+                | Ty::Char
+                | Ty::Int(_)
+                | Ty::Uint(_)
+                | Ty::Float(_)
+                | Ty::Str
+                | Ty::Adt(_, _)
+                | Ty::Ref(_, _, _)
+                | Ty::Tuple(_)
+                | Ty::Slice(_)
+                | Ty::Array(_, _)
+                | Ty::FnPtr(_, _)
+                | Ty::Param(_)
+                | Ty::Never
+                | Ty::Error(_) => return canon,
             }
         }
     }
@@ -618,7 +712,405 @@ impl<'check, 'db> InferCtx<'check, 'db> {
             .ret
             .stash_copy(sig_stash, &mut *self.target_stash.borrow_mut());
 
-        FnSig { params, ret }
+        let parameter_env = fn_sig
+            .parameter_env
+            .stash_copy(sig_stash, &mut *self.target_stash.borrow_mut());
+
+        FnSig {
+            params,
+            ret,
+            parameter_env,
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Trait environments and obligations
+    // ------------------------------------------------------------------
+
+    /// Install the opened function parameter environment as body assumptions.
+    pub fn set_solver_environment(&self, environment: CheckedParameterEnv<'db>) {
+        use super::solve::Assumption;
+
+        let (predicates, assumptions_complete) = self.elaborate_solver_predicates(environment);
+        let assumptions: Vec<_> = predicates
+            .into_iter()
+            .map(|predicate| Assumption::TraitImpl {
+                self_ty: predicate.self_ty,
+                trait_ref: predicate.trait_ref,
+            })
+            .collect();
+        let assumptions = Assumption::flatten(&mut self.target_stash.borrow_mut(), assumptions);
+        *self.solver_assumptions.borrow_mut() = assumptions;
+        *self.assumptions_complete.borrow_mut() = assumptions_complete;
+    }
+
+    fn elaborate_solver_predicates(
+        &self,
+        environment: CheckedParameterEnv<'db>,
+    ) -> (Vec<crate::ty::WherePredicate<'db>>, bool) {
+        use super::solve::IrCopier;
+        use crate::symbol::TraitSymbol;
+        use crate::ty::BinderExt;
+
+        let mut complete = environment.solver_eligibility.is_eligible();
+        let mut queue = self.target_stash.borrow()[environment.where_clauses].to_vec();
+        let mut output = Vec::new();
+        let mut seen = FxHashSet::default();
+
+        while let Some(predicate) = queue.pop() {
+            let key = {
+                let source = self.target_stash.borrow();
+                let mut target = Stash::new();
+                let copied = predicate.stash_copy(&source, &mut target);
+                Stashed::new(target, copied)
+            };
+            if !seen.insert(key) {
+                continue;
+            }
+            output.push(predicate);
+
+            let TraitSymbol::Local(local_trait) = predicate.trait_ref.trait_sym else {
+                complete = false;
+                continue;
+            };
+            let signature = local_trait.sig(self.db);
+            let (source, binder) = signature.open();
+            if !binder.value.solver_eligibility.is_eligible() {
+                complete = false;
+                continue;
+            }
+
+            let mut mapping = FxHashMap::default();
+            mapping.insert(binder.value.self_param, predicate.self_ty);
+            for (generic, argument) in signature
+                .iter_symbols()
+                .skip(1)
+                .zip(self.target_stash.borrow()[predicate.trait_ref.args].to_vec())
+            {
+                mapping.insert(generic, argument);
+            }
+            let defining = source[binder.value.where_clauses].to_vec();
+            let mut target = self.target_stash.borrow_mut();
+            let mut copier = IrCopier::new(source, &mut target, mapping, None);
+            queue.extend(
+                defining
+                    .into_iter()
+                    .map(|predicate| copier.copy_predicate(predicate)),
+            );
+        }
+
+        output.reverse();
+        (output, complete)
+    }
+
+    pub fn submit_parameter_env(
+        &self,
+        environment: CheckedParameterEnv<'db>,
+        span: RelativeSpan,
+        reason: ObligationReason,
+    ) {
+        let mut batch = StagedObligationBatch::new();
+        batch.push_parameter_env(environment, span, reason);
+        self.publish_obligation_batch(batch);
+    }
+
+    /// Publish obligations staged beside an inference transaction. A caller
+    /// that rolls its inference child back simply drops the batch.
+    pub fn publish_obligation_batch(&self, batch: StagedObligationBatch<'db>) {
+        use super::solve::{Atom, Goal};
+
+        for (environment, provenance) in batch.environments {
+            let predicates = self.target_stash.borrow()[environment.where_clauses].to_vec();
+            for predicate in predicates {
+                self.submit_obligation_goal(
+                    Goal::Atom(Atom::TraitImpl {
+                        self_ty: predicate.self_ty,
+                        trait_ref: predicate.trait_ref,
+                    }),
+                    provenance,
+                );
+            }
+            if environment.solver_eligibility == SolverEligibility::Unsupported {
+                self.submit_obligation_goal(Goal::Maybe, provenance);
+            }
+        }
+    }
+
+    pub fn submit_trait_obligation(
+        &self,
+        self_ty: Ptr<Ty<'db>>,
+        trait_ref: crate::ty::TraitRef<'db>,
+        span: RelativeSpan,
+        reason: ObligationReason,
+    ) {
+        self.submit_obligation_goal(
+            super::solve::Goal::Atom(super::solve::Atom::TraitImpl { self_ty, trait_ref }),
+            ObligationProvenance { span, reason },
+        );
+    }
+
+    fn canonicalize_obligation_goal(
+        &self,
+        local_crate: crate::scope::LocalCrateSymbol<'db>,
+        assumptions_complete: bool,
+        assumptions: sage_stash::Slice<super::solve::Assumption<'db>>,
+        goal: super::solve::Goal<'db>,
+    ) -> (
+        super::solve::CanonicalizedGoal<'db>,
+        Vec<crate::ty::InferVarIndex>,
+    ) {
+        let canonical = super::solve::canonicalize_goal(
+            self.db,
+            &self.target_stash.borrow(),
+            &self.egraph.borrow(),
+            Version::ROOT,
+            local_crate,
+            Universe(1),
+            assumptions_complete,
+            assumptions,
+            goal,
+        );
+        let stalled_on = canonical
+            .mapping
+            .inputs
+            .iter()
+            .filter_map(|input| match input {
+                super::solve::CallerCanonicalVar::Existential(variable) => Some(*variable),
+                super::solve::CallerCanonicalVar::Rigid(_) => None,
+            })
+            .collect();
+        (canonical, stalled_on)
+    }
+
+    fn submit_obligation_goal(
+        &self,
+        goal: super::solve::Goal<'db>,
+        provenance: ObligationProvenance,
+    ) {
+        let local_crate = self
+            .local_crate
+            .expect("trait obligations require a local crate context");
+        let assumptions = *self.solver_assumptions.borrow();
+        let assumptions_complete = *self.assumptions_complete.borrow();
+        let (canonical, stalled_on) =
+            self.canonicalize_obligation_goal(local_crate, assumptions_complete, assumptions, goal);
+
+        let mut manager = self.obligations.borrow_mut();
+        if let Some(existing) = manager.obligations.iter_mut().find(|existing| {
+            existing.state != ObligationState::Terminal
+                && existing.canonical_goal == canonical.data
+                && existing.mapping.absolute_universe_base
+                    == canonical.mapping.absolute_universe_base
+                && existing.mapping.inputs == canonical.mapping.inputs
+        }) {
+            if !existing.provenance.contains(&provenance) {
+                existing.provenance.push(provenance);
+            }
+            return;
+        }
+        manager.obligations.push(Obligation {
+            goal,
+            assumptions,
+            assumptions_complete,
+            local_crate,
+            canonical_goal: canonical.data,
+            mapping: canonical.mapping,
+            provenance: vec![provenance],
+            state: ObligationState::Ready,
+            stalled_on,
+            last_attempted_revision: None,
+        });
+    }
+
+    fn recanonicalize_obligation(&self, index: usize) -> u64 {
+        let (goal, assumptions, assumptions_complete, local_crate) = {
+            let manager = self.obligations.borrow();
+            let obligation = &manager.obligations[index];
+            (
+                obligation.goal,
+                obligation.assumptions,
+                obligation.assumptions_complete,
+                obligation.local_crate,
+            )
+        };
+        let revision = self.egraph.borrow().semantic_revision(Version::ROOT);
+        let (canonical, stalled_on) =
+            self.canonicalize_obligation_goal(local_crate, assumptions_complete, assumptions, goal);
+        let mut manager = self.obligations.borrow_mut();
+        let obligation = &mut manager.obligations[index];
+        obligation.canonical_goal = canonical.data;
+        obligation.mapping = canonical.mapping;
+        obligation.stalled_on = stalled_on;
+        revision
+    }
+
+    fn process_ready_obligations(&self) {
+        loop {
+            self.deduplicate_pending_obligations();
+            let ready = self.obligations.borrow().ready_indices();
+            if ready.is_empty() {
+                return;
+            }
+            for index in ready {
+                self.attempt_obligation(index, false);
+            }
+        }
+    }
+
+    fn deduplicate_pending_obligations(&self) {
+        let pending = self.obligations.borrow().pending_indices();
+        for &index in &pending {
+            self.recanonicalize_obligation(index);
+        }
+        let mut manager = self.obligations.borrow_mut();
+        for (position, &index) in pending.iter().enumerate() {
+            if manager.obligations[index].state == ObligationState::Terminal {
+                continue;
+            }
+            for &duplicate in &pending[position + 1..] {
+                if manager.obligations[duplicate].state == ObligationState::Terminal {
+                    continue;
+                }
+                let equivalent = {
+                    let left = &manager.obligations[index];
+                    let right = &manager.obligations[duplicate];
+                    left.canonical_goal == right.canonical_goal
+                        && left.mapping.absolute_universe_base
+                            == right.mapping.absolute_universe_base
+                        && left.mapping.inputs == right.mapping.inputs
+                };
+                if equivalent {
+                    let additional = manager.obligations[duplicate].provenance.clone();
+                    for provenance in additional {
+                        if !manager.obligations[index].provenance.contains(&provenance) {
+                            manager.obligations[index].provenance.push(provenance);
+                        }
+                    }
+                    manager.obligations[duplicate].state = ObligationState::Terminal;
+                }
+            }
+        }
+    }
+
+    fn attempt_obligation(&self, index: usize, terminal: bool) {
+        use super::solve::{AppliedCertainty, GoalQuery, apply_query_response};
+
+        let revision = self.recanonicalize_obligation(index);
+        let (canonical_goal, mapping, unchanged) = {
+            let manager = self.obligations.borrow();
+            let obligation = &manager.obligations[index];
+            (
+                obligation.canonical_goal.clone(),
+                obligation.mapping.clone(),
+                obligation.last_attempted_revision == Some(revision),
+            )
+        };
+        if unchanged && !terminal {
+            self.obligations.borrow_mut().obligations[index].state = ObligationState::Stalled;
+            return;
+        }
+
+        let response = GoalQuery::new(self.db, canonical_goal.clone()).prove(self.db);
+        let applied = {
+            let mut stash = self.target_stash.borrow_mut();
+            let mut egraph = self.egraph.borrow_mut();
+            apply_query_response(
+                self.db,
+                &mut stash,
+                &mut egraph,
+                Version::ROOT,
+                &canonical_goal,
+                &mapping,
+                &response,
+            )
+        };
+        let Ok(applied) = applied else {
+            self.fail_obligation(
+                index,
+                "trait obligation was disproved by incompatible inference",
+            );
+            return;
+        };
+        let post_revision = applied.effects.semantic_revision;
+        let wakes = applied.effects.wakes.clone();
+        self.publish_commit_effects(applied.effects);
+
+        match applied.certainty {
+            AppliedCertainty::No => {
+                self.fail_obligation(index, "trait obligation is not satisfied");
+            }
+            AppliedCertainty::Maybe => {
+                if terminal {
+                    self.fail_obligation(index, "trait obligation could not be resolved");
+                    return;
+                }
+                self.recanonicalize_obligation(index);
+                let mut manager = self.obligations.borrow_mut();
+                let obligation = &mut manager.obligations[index];
+                obligation.last_attempted_revision = Some(post_revision);
+                obligation.state = if obligation
+                    .stalled_on
+                    .iter()
+                    .any(|variable| wakes.contains(variable))
+                {
+                    ObligationState::Ready
+                } else {
+                    ObligationState::Stalled
+                };
+            }
+            AppliedCertainty::Yes { modulo } => {
+                if modulo.is_trivially_true(&self.target_stash.borrow()) {
+                    let mut manager = self.obligations.borrow_mut();
+                    manager.obligations[index].state = ObligationState::Terminal;
+                    manager.obligations[index].last_attempted_revision = Some(post_revision);
+                } else if terminal {
+                    self.fail_obligation(index, "trait obligation remains conditional");
+                } else {
+                    {
+                        let mut manager = self.obligations.borrow_mut();
+                        let obligation = &mut manager.obligations[index];
+                        obligation.goal = modulo;
+                        obligation.last_attempted_revision = Some(post_revision);
+                        obligation.state = ObligationState::Stalled;
+                    }
+                    self.recanonicalize_obligation(index);
+                }
+            }
+        }
+    }
+
+    fn fail_obligation(&self, index: usize, message: &str) {
+        let provenances = {
+            let mut manager = self.obligations.borrow_mut();
+            let obligation = &mut manager.obligations[index];
+            if obligation.state == ObligationState::Terminal {
+                return;
+            }
+            obligation.state = ObligationState::Terminal;
+            obligation.provenance.clone()
+        };
+        let Some(first) = provenances.first().copied() else {
+            return;
+        };
+        let mut diagnostic = Diagnostic::error(self.span(first.span), message)
+            .label(self.span(first.span), first.reason.description());
+        for provenance in provenances.into_iter().skip(1) {
+            diagnostic =
+                diagnostic.secondary(self.span(provenance.span), provenance.reason.description());
+        }
+        self.record(diagnostic);
+    }
+
+    fn terminally_discharge_obligations(&self) {
+        self.deduplicate_pending_obligations();
+        let pending = self.obligations.borrow().pending_indices();
+        for index in pending {
+            self.attempt_obligation(index, true);
+        }
+        assert!(
+            !self.obligations.borrow().has_pending(),
+            "body checking finished with a pending trait obligation"
+        );
     }
 
     // ------------------------------------------------------------------
@@ -626,40 +1118,46 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     // ------------------------------------------------------------------
 
     pub fn finalize(&self) {
+        // First consume every proof that current inference already enables.
+        self.process_ready_obligations();
+
         let mut unresolved_vars = Vec::new();
 
-        let infer_var_ptrs = self.infer_var_ptrs.borrow();
-        for i in 0..infer_var_ptrs.len() {
-            let ty = infer_var_ptrs[i];
-            let canon = self.egraph.borrow_mut().find_mut(ty);
+        let variables: Vec<_> = self
+            .egraph
+            .borrow()
+            .version_tree()
+            .visible_variables(Version::ROOT)
+            .collect();
+        for idx in variables {
+            let ty = self.target_stash.borrow_mut().alloc(Ty::InferVar(idx));
+            let canon = self.egraph.borrow_mut().find_mut(Version::ROOT, ty);
 
             if canon != ty {
                 continue;
             }
 
-            let bound = self.egraph.borrow().get_bound(ty);
+            let bound = self.egraph.borrow().get_bound(Version::ROOT, ty);
             match bound {
                 Bound::None => {
-                    let stash = self.target_stash.borrow();
-                    let idx = match stash[ty] {
-                        Ty::InferVar(idx) => idx,
-                        _ => continue,
-                    };
-                    unresolved_vars.push((i, idx));
+                    unresolved_vars.push((ty, idx));
                 }
                 Bound::AtLeast(bound_ty) => {
-                    let stash = self.target_stash.borrow();
-                    self.egraph
-                        .borrow_mut()
-                        .set_bound(&stash, ty, Bound::Exactly(bound_ty));
-                    self.egraph.borrow_mut().union(&stash, ty, bound_ty);
+                    let effects = try_unify(
+                        &mut self.egraph.borrow_mut(),
+                        &mut self.target_stash.borrow_mut(),
+                        Version::ROOT,
+                        ty,
+                        bound_ty,
+                    )
+                    .expect("final bound must be structurally valid");
+                    self.publish_commit_effects(effects);
                 }
                 Bound::Exactly(_) => {}
             }
         }
-        drop(infer_var_ptrs);
 
-        for (i, idx) in unresolved_vars {
+        for (ty, idx) in unresolved_vars {
             let span = RelativeSpan { start: 0, end: 0 };
             let err = TypeError::Fresh {
                 kind: TypeErrorKind::UnresolvedInferVar { var: idx },
@@ -668,35 +1166,56 @@ impl<'check, 'db> InferCtx<'check, 'db> {
             };
             let e = self.catch(err);
 
-            let ty = self.infer_var_ptrs.borrow()[i];
             let error_ty = self.target_stash.borrow_mut().alloc(Ty::Error(e));
-            {
-                let stash = self.target_stash.borrow();
-                self.egraph
-                    .borrow_mut()
-                    .set_bound(&stash, ty, Bound::Exactly(error_ty));
-                self.egraph.borrow_mut().union(&stash, ty, error_ty);
+            let effects = try_unify(
+                &mut self.egraph.borrow_mut(),
+                &mut self.target_stash.borrow_mut(),
+                Version::ROOT,
+                ty,
+                error_ty,
+            );
+            match effects {
+                Ok(effects) => self.publish_commit_effects(effects),
+                // Error recovery deliberately relates an unresolved variable
+                // to the sentinel even though ordinary equality propagates it.
+                Err(UnifyError::Reported(_)) => {
+                    let child = self.egraph.borrow_mut().branch_from(Version::ROOT);
+                    {
+                        let stash = self.target_stash.borrow();
+                        let mut egraph = self.egraph.borrow_mut();
+                        egraph.set_bound_in(child, &stash, ty, Bound::Exactly(error_ty));
+                        egraph.union(child, &stash, ty, error_ty);
+                    }
+                    let effects = self.egraph.borrow_mut().collapse_into(child, Version::ROOT);
+                    self.publish_commit_effects(effects);
+                }
+                Err(error) => panic!("failed to install error recovery type: {error:?}"),
             }
         }
 
+        // Fallback and final bounds may make retained goals concrete. Give
+        // those goals one ordinary retry before the mandatory terminal pass.
+        self.process_ready_obligations();
+        self.terminally_discharge_obligations();
+
+        self.flush_and_drain();
         self.runtime.borrow_mut().wake_all();
         self.runtime.borrow_mut().drain();
     }
 
     pub fn resolve_types(&self) {
-        let version = self.egraph.borrow().current_version();
-        let var_count = self
+        let variables: Vec<_> = self
             .egraph
             .borrow()
             .version_tree()
-            .variable_count_at(version);
+            .visible_variables(Version::ROOT)
+            .collect();
 
         let mut stash = self.target_stash.borrow_mut();
         let mut egraph = self.egraph.borrow_mut();
-        for i in 0..var_count.0 {
-            let idx = InferVarIndex(i);
+        for idx in variables {
             let ty_ptr = stash.alloc(Ty::InferVar(idx));
-            let resolved = egraph.find_mut(ty_ptr);
+            let resolved = egraph.find_mut(Version::ROOT, ty_ptr);
             if resolved != ty_ptr {
                 let resolved_ty = stash[resolved];
                 stash[ty_ptr] = resolved_ty;
@@ -709,6 +1228,22 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     // ------------------------------------------------------------------
 
     pub fn finish(self, root: Ptr<TyExpr<'db>>, span: RelativeSpan) -> CheckedBody<'db> {
+        assert!(
+            !self.obligations.borrow().has_pending(),
+            "body finished with a pending trait obligation"
+        );
+        assert!(
+            self.egraph.borrow().version_tree().is_leaf(Version::ROOT),
+            "body finished with a live inference branch"
+        );
+        assert!(
+            self.runtime.borrow().is_quiescent(),
+            "body finished with a live inference task"
+        );
+        assert!(
+            self.pending_wakes.borrow().is_empty(),
+            "body finished with unpublished inference wakes"
+        );
         let mut stash = self.target_stash.into_inner();
         let local_vars = self.local_vars.into_inner();
         let locals = stash.alloc_slice(&local_vars);
@@ -862,17 +1397,6 @@ mod tests {
         // Create an inference variable
         let var = cx.fresh_ty_var();
         let bool_ty = cx.alloc_ty(Ty::Bool);
-
-        // Spawn a background task that resolves the variable
-        cx.runtime.borrow_mut().spawn({
-            let var = var;
-            let bool_ty = bool_ty;
-            async move {
-                // This task needs access to cx, but we can't easily pass &cx
-                // into a 'static future. Instead, test the mechanism via
-                // directly resolving through the pending_wakes path.
-            }
-        });
 
         // For this test, resolve the variable directly after creating the
         // block_on future to demonstrate the await_concrete → wake → resolve path.

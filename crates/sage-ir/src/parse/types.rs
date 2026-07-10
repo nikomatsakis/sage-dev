@@ -58,13 +58,20 @@ impl<'a, 'db> Parser<'a, 'db> {
         item_start: u32,
     ) -> TypeCstKind<'db> {
         let mut mutability = Mutability::Shared;
+        let mut lifetime = crate::cst::ty::LifetimeCst::Anonymous;
         let mut inner_node = None;
         let mut cursor = node.walk();
 
         for child in node.children(&mut cursor) {
             match child.kind() {
                 "mutable_specifier" => mutability = Mutability::Mut,
-                "&" | "lifetime" => {}
+                "lifetime" => {
+                    lifetime = crate::cst::ty::LifetimeCst::Named(crate::name::Name::new(
+                        self.db,
+                        self.text[child.byte_range()].to_owned(),
+                    ));
+                }
+                "&" => {}
                 _ => {
                     inner_node = Some(child);
                 }
@@ -74,7 +81,7 @@ impl<'a, 'db> Parser<'a, 'db> {
         match inner_node {
             Some(inner) => {
                 let inner_ptr = self.parse_type(stash, inner, item_start);
-                TypeCstKind::Reference(inner_ptr, mutability)
+                TypeCstKind::Reference(inner_ptr, mutability, lifetime)
             }
             None => TypeCstKind::Error,
         }

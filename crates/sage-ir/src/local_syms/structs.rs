@@ -39,7 +39,7 @@ impl<'db> LocalStructSym<'db> {
     /// Computes the "signature" of a struct: its generics and where-clauses.
     ///
     /// Reads the CST's generic parameters, mints `GenericParam` symbols for
-    /// each, and returns a `Binder` wrapping a (currently empty) `StructSig`.
+    /// each, and returns the checked parameter environment under their binder.
     #[salsa::tracked]
     pub fn sig(self, db: &'db dyn crate::Db) -> Stashed<Binder<'db, StructSig<'db>>> {
         use crate::check::Check;
@@ -54,10 +54,17 @@ impl<'db> LocalStructSym<'db> {
         let parent: Symbol<'db> = self.into();
         let generics = cst.generics.check(db, &mut cx, parent);
 
-        // TODO: lower where-clauses into trait bounds on generics
-
+        let (where_clauses, solver_eligibility) = crate::check::trait_env::lower_predicates(
+            &mut cx,
+            cst.generics,
+            generics,
+            cst.where_clauses,
+        );
         let struct_sig = StructSig {
-            dummy: std::marker::PhantomData,
+            parameter_env: crate::ty::CheckedParameterEnv {
+                where_clauses,
+                solver_eligibility,
+            },
         };
         let binder = Binder::new(struct_sig, generics);
         cx.finish(binder)
