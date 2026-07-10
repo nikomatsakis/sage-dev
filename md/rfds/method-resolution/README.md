@@ -3,281 +3,357 @@
 **Status:** Draft
 
 **Depends on:**
-- [Trait System](../trait-system/README.md) — `TraitRef`, `WherePredicate`, `ImplSignature`
-- [Type Inference](../type-inference/README.md) — `InferCtx`, `VersionedEGraph`, inference variables
-- [Per-kind symbol data](../per-kind-symbol-data/README.md) — `FnSymbol`, `ImplSymbol`, `TraitSymbol`
+
+- [Trait System](../trait-system/README.md) — checked trait and impl signatures and local impl enumeration
+- [Trait Solving](../trait-solving/README.md) — proof of a fixed trait goal
+- [Type Inference](../type-inference/README.md) — `InferCtx`, probes, and inference variables
+- [Per-kind symbol data](../per-kind-symbol-data/README.md) — function, impl, and trait symbols
 
 ## Problem
 
-The type checker currently stubs out method calls — it resolves expressions to `fresh_ty_var()` without actually finding the method. Similarly, function calls on paths work only for free functions (resolving `FnSymbol::Local` via `def_to_ty`), but cannot resolve associated functions (`Vec::new`, `String::from`) or methods on receivers.
-
-This blocks:
-
-1. **`x.foo()` method calls** — the checker produces a fresh var instead of the method's return type.
-2. **Associated function calls** — `Foo::bar()` where `bar` is in an `impl Foo` block.
-3. **Trait method calls** — `x.foo()` where `foo` is defined by a trait and dispatched through an impl.
-4. **Generic bounds** — `fn f<T: Clone>(x: T) { x.clone() }` cannot find `clone` on `T`.
-5. **UFCS** — `<Foo as Bar>::method()`.
+The type checker currently gives method calls a fresh result type without finding a method.
+Associated functions on type paths and trait-provided methods are likewise unresolved. Sage
+needs a lookup algorithm that discovers methods by name, tests candidate receiver types
+without leaking speculative equalities, and records any trait obligations selected by the
+call.
 
 ## Scope
 
-This RFD covers the **resolution algorithm**: given a receiver type (or a path like `Foo::bar`) and a method name, how do we find the `FnSymbol` to call? It covers:
+The MVP covers:
 
-- The inherent method index (which methods are available on a given type)
-- Trait method resolution (which impl provides a method for a given type)
-- Auto-ref and auto-deref during method lookup
-- The interaction with inference variables (awaiting bounds)
+- methods from local inherent impls;
+- methods from explicit type-parameter bounds and local traits in lookup scope;
+- one built-in reference dereference step and receiver auto-reference;
+- checked `self`, `mut self`, `&self`, and `&mut self` receiver forms, with
+  associated functions excluded from dot-call lookup;
+- deferral while the receiver or a trait proof remains ambiguous;
+- transactional instantiation of the unique method signature;
+- registration of residual trait obligations with body checking.
 
-It does NOT cover:
+External methods, prelude and import-complete trait visibility, custom `Deref`, associated
+type normalization, specialization, and full UFCS are follow-up work. Coherence remains a
+separate concern; lookup must preserve ambiguity instead of choosing an overlapping method.
 
-- The trait solver itself (proving arbitrary `T: Trait` goals) — that's a separate RFD
-- Coherence checking / overlap detection
-- Associated types (beyond what's needed to instantiate method signatures)
+Local privacy is not deferred. Before lookup, this RFD preserves
+`visibility_modifier` syntax on local function/trait CST and symbols, lowers it
+to a checked `Visibility` (`private`, `pub`, `pub(crate)`, `pub(super)`, and
+`pub(in path)`), and provides `is_visible_from(defining_module,
+lookup_module)`. Import/prelude completeness controls which traits are brought
+into the candidate set; visibility separately rejects inaccessible traits and
+inherent functions already discovered.
 
-## Design
+## Solver boundary
 
-### Phase 1: Inherent method index
+Method-name discovery does not belong in the trait solver. A solver goal always names one
+fixed trait:
 
-The first, most impactful step is resolving methods defined in `impl Foo { ... }` blocks — no traits involved.
-
-#### The query: `inherent_methods`
-
-```rust
-/// For a given type-defining symbol (struct, enum), return all methods
-/// from all inherent impl blocks visible in the current crate.
-#[salsa::tracked]
-fn inherent_methods<'db>(
-    db: &'db dyn Db,
-    sym: Symbol<'db>,
-    source_root: SourceRoot,
-) -> Stashed<InherentMethodTable<'db>>;
-
-struct InherentMethodTable<'db> {
-    /// Methods indexed by name for fast lookup.
-    methods: FxHashMap<Name<'db>, Vec<InherentMethod<'db>>>,
-}
-
-struct InherentMethod<'db> {
-    fn_sym: FnSymbol<'db>,
-    /// The impl this method comes from (needed for generic instantiation).
-    impl_sym: ImplSymbol<'db>,
-}
+```text
+LookupSelfTy: CandidateTrait<TraitArgs...>
 ```
 
-**Building the index:** Walk all items in the module tree (expanded module), collect `LocalImplSym` entries whose `self_ty` resolves to the target symbol (ignoring generics — just matching the head type constructor). For each impl, collect its function items.
+There is no existential `?Trait` solver query. The solver returns proof certainty,
+substitutions, and residual obligations; it does not return an impl or trait identity. The
+method resolver already knows the candidate trait and obtains the function symbol from that
+trait's items. This keeps solver caching and clause selection independent of name lookup.
+`LookupSelfTy` is the receiver after the current built-in deref step but before
+the selected method's value/shared/mutable autoref adjustment.
 
-This is a crate-level index: one query per type-defining symbol, recomputed when any impl block in the crate changes (salsa tracks the module items). The index is keyed by `Name` so method lookup is O(1).
+Trait-method integration is implemented by this RFD after the core solver is available. It
+is not a final step of the trait-solving RFD.
 
-#### Resolving `x.method(args)`
+## Resolution result
+
+Inherent methods retain their owning impl because the impl binder is needed to instantiate
+the method signature. Trait methods retain the already-selected trait, not a selected impl.
 
 ```rust
-fn resolve_method<'db>(
-    cx: &InferCtx<'_, 'db>,
-    receiver_ty: Ptr<Ty<'db>>,
-    method_name: Name<'db>,
-) -> MethodResolution<'db>;
-
-enum MethodResolution<'db> {
-    Found {
-        fn_sym: FnSymbol<'db>,
+pub enum MethodOrigin<'db> {
+    Inherent {
         impl_sym: ImplSymbol<'db>,
-        /// How the receiver was adjusted (deref steps + autoref).
-        adjustments: ReceiverAdjustments,
     },
-    /// Receiver is an inference variable — caller should await.
+    Trait {
+        trait_sym: TraitSymbol<'db>,
+    },
+}
+
+pub struct ResolvedMethod<'db> {
+    pub fn_sym: FnSymbol<'db>,
+    pub origin: MethodOrigin<'db>,
+    pub adjustments: ReceiverAdjustments,
+}
+
+pub enum MethodResolution<'db> {
+    Found(ResolvedMethod<'db>),
     NeedsMoreInfo,
+    Ambiguous,
     NotFound,
+    /// Propagate an existing receiver error without a secondary lookup error.
+    Error(ErrorReported),
 }
 ```
 
-The resolution algorithm (for Phase 1, inherent only):
+`Found` means the unique candidate's inference effects have been applied transactionally
+and all nontrivial residuals have been registered with the caller's obligation store. It
+does not mean those residuals may be forgotten; body finalization must discharge them.
 
-1. **Canonicalize the receiver.** Follow the egraph to find the canonical type.
-2. **If the receiver is `InferVar`** — return `NeedsMoreInfo`. The caller will await the variable's bound.
-3. **Extract the head type constructor.** For `Ty::Adt(sym, _)` → `sym`. For primitives, use the corresponding lang item / intrinsic symbol.
-4. **Look up in the inherent method table** for that symbol.
-5. **Auto-deref chain.** If not found, try one layer of deref:
-   - `&T` → try methods on `T`
-   - `&mut T` → try methods on `T`
-   - `Box<T>` → try methods on `T`
-   - Custom `Deref` impls are Phase 2 (requires trait solving).
-6. **Auto-ref.** If not found on `T`, try `&T` and `&mut T` as receivers. This handles the common case where the method takes `&self` but the caller has an owned value.
+If receiver normalization yields `Ty::Error(existing)`, lookup immediately
+returns `Error(existing)`. It does not enumerate methods or emit
+`NotFound`/ambiguity; the checked call becomes recovery IR carrying the original
+error.
 
-**Priorities** (Rust's method resolution order):
-1. Direct inherent methods on the exact receiver type
-2. Methods found via auto-deref (one step at a time)
-3. Methods found via auto-ref (`&self`, `&mut self`)
-4. Trait methods (Phase 2)
+Candidate evaluation distinguishes three non-`No` states at one receiver step
+and priority tier:
 
-### Phase 2: Trait method resolution
+- **definite** — `Yes` with a trivial residual;
+- **conditional** — `Yes` with a nontrivial residual retained with that
+  candidate; and
+- **unknown** — solver `Maybe`, incomplete external/provider metadata, or a
+  potentially relevant owner/method signature whose eligibility is
+  `Unsupported`.
 
-Once we have trait signatures (from the trait-system RFD) and a basic solver, we can resolve trait methods.
+No candidate response or residual is applied while constructing this set. The
+rows below are considered in order, making the resolution result deterministic:
 
-#### Where-clause methods
+| Definite | Conditional | Unknown | Result |
+|---:|---:|---:|---|
+| 0 | 0 | 0 | `NotFound` (only when candidate sources are exhaustive) |
+| 1 | 0 | 0 | `Found` |
+| 0 | 1 | 0 | `Found`, with that candidate's residual staged for commit |
+| 2+ | any | any | `Ambiguous` |
+| 0-1 | any | 1+ | `NeedsMoreInfo` |
+| 1 | 1+ | 0 | `NeedsMoreInfo` |
+| 0 | 2+ | 0 | `NeedsMoreInfo` |
 
-The simplest case: methods available from where-clauses on the current function.
+A sole conditional candidate may be selected because failure of its residual
+makes the method call fail; there is no alternative method choice to recover.
+A definite candidate plus a conditional or unknown candidate, multiple
+conditional candidates, or a conditional candidate plus an unknown candidate
+remains `NeedsMoreInfo`, because a competitor may become applicable or
+disappear. `NeedsMoreInfo` retains the original method-lookup request and its
+stall dependencies as a body-checker lookup obligation; it does not publish any
+one candidate's residual obligations. The lookup is rerun after a relevant
+inference change. At final body-checker fixpoint, an unresolved lookup becomes a
+diagnostic rather than an arbitrary selection.
 
-```rust
-fn f<T: Iterator>(x: T) {
-    x.next(); // T: Iterator gives us access to Iterator::next
-}
-```
+## Candidate discovery
 
-Resolution:
-1. After failing inherent lookup, scan the in-scope where-clauses.
-2. For each `T: Trait` bound where `T` matches the receiver type, check if `Trait` has a method with the target name.
-3. If found, the method signature comes from the trait definition, instantiated with the bound's type arguments.
+### Inherent candidates
 
-This doesn't require a solver — just matching the receiver against declared bounds.
-
-#### Impl dispatch (requires solver)
-
-For concrete types:
-```rust
-let v: Vec<i32> = Vec::new();
-v.iter(); // Vec<i32>: IntoIterator (or Iterator methods via deref to slice)
-```
-
-Resolution:
-1. After failing inherent + where-clause lookup, query the solver: "does `ReceiverTy: ?Trait` where `?Trait` has method `name`?"
-2. The solver searches all trait impls in scope, finds matching ones, and returns the impl + trait.
-3. Instantiate the method signature from the impl.
-
-This is the most complex case and requires the trait solver infrastructure. Deferred to after the solver RFD is written.
-
-### Instantiating method signatures
-
-Once we have a method, we need to produce its type in the current inference context:
+The crate, rather than a source-file collection, is the lookup boundary:
 
 ```rust
-fn instantiate_method<'db>(
-    cx: &InferCtx<'_, 'db>,
-    method: &InherentMethod<'db>,
-    receiver_ty: Ptr<Ty<'db>>,
-    type_args: &[Ptr<Ty<'db>>],  // explicit turbofish, if any
-) -> InstantiatedMethodSig<'db>;
-
-struct InstantiatedMethodSig<'db> {
-    /// Parameter types (excluding self — already matched against receiver).
-    params: Vec<Ptr<Ty<'db>>>,
-    /// Return type.
-    ret: Ptr<Ty<'db>>,
-}
+fn inherent_method_candidates<'db>(
+    db: &'db dyn Db,
+    krate: LocalCrateSymbol<'db>,
+    receiver_head: Symbol<'db>,
+    name: Name<'db>,
+) -> Vec<InherentMethodCandidate<'db>>;
 ```
 
-Steps:
-1. Load the method's `FnSig` from its `FnSymbol`.
-2. Load the impl's generic parameters (from `ImplSignature`).
-3. **Unify the impl's `Self` type against the receiver** to infer the impl's type parameters. For example, if the impl is `impl<T> Vec<T>` and the receiver is `Vec<i32>`, unify `Vec<T>` with `Vec<i32>` → `T = i32`.
-4. **Substitute** the impl's type parameters into the method signature.
-5. For any remaining method-level generic parameters (from the fn's own generics), allocate fresh inference variables (or use explicit turbofish args).
-6. Return the instantiated parameter and return types.
+Candidate discovery linearly scans `local_impls(db, krate)`, keeps signatures with
+`trait_ref: None` and the requested self-type head, then finds function items with the
+requested name which satisfy `is_visible_from` for the call's lookup module. An inaccessible
+function is not an applicable or unknown candidate, though diagnostics may
+mention it after lookup otherwise returns `NotFound`. Each candidate opens its
+single `Binder<ImplSignatureData>` independently; the self type, where-clauses,
+and method signature share that opening.
 
-### Interaction with inference variables
+Dot-call discovery keeps only functions with a supported `CheckedReceiver`.
+The receiver's opened `owner_self_ty` and `MethodReceiver` form determine
+whether the current deref/autoref step can call it. A function with no receiver
+is an associated function, not a dot-call candidate; typed or explicit-lifetime
+receivers remain unsupported rather than being guessed from `Ty::Infer`.
 
-When the receiver is not yet known (e.g., `let x = foo(); x.bar()`), the type checker must wait:
+Classify each post-deref lookup self-type head by inherent provider. A local
+nominal head uses the exhaustive local scan. A structural head on which Rust
+permits no inherent provider (notably the `&T`/`&mut T` wrapper before the
+built-in deref step) is exhaustively empty and may continue to the next adjustment. An
+external nominal, primitive, slice/`str`, or other builtin provider whose item
+metadata is unavailable makes the inherent tier unknown/incomplete. Because
+inherent methods have priority, that last case returns
+`NeedsMoreInfo`/unsupported rather than falling through to a local trait method
+or concluding `NotFound`.
 
-```rust
-ExprCstKind::MethodCall(obj, name, args) => {
-    let ro = obj.check_with(cx, scope).await;
-    let receiver_ty = cx.find_mut(cx.stash()[ro].ty);
-    
-    match resolve_method(cx, receiver_ty, *name) {
-        MethodResolution::Found { fn_sym, impl_sym, adjustments } => {
-            // Check args against the instantiated signature
-            let sig = instantiate_method(cx, fn_sym, impl_sym, receiver_ty, &[]);
-            // ... check each arg against sig.params ...
-            (TyExprData::MethodCall(ro, *name, args_slice), sig.ret)
-        }
-        MethodResolution::NeedsMoreInfo => {
-            // In Phase 1: just return fresh var (same as today)
-            // In Phase 2 (async): await the receiver's bound, then retry
-            let ty = cx.fresh_ty_var();
-            (TyExprData::MethodCall(ro, *name, args_slice), ty)
-        }
-        MethodResolution::NotFound => {
-            // Record diagnostic, return error type
-            cx.record(Diagnostic::error(..., "no method `{name}` on type ..."));
-            let ty = cx.alloc_ty(Ty::Error(e));
-            (TyExprData::MethodCall(ro, *name, args_slice), ty)
-        }
-    }
-}
-```
+Only `SolverEligibility::Eligible` impl signatures can be opened by the MVP
+method resolver. A potentially matching inherent impl marked `Unsupported`
+(including a lifetime/const-generic impl) contributes an unknown/incomplete
+candidate source; it is not silently omitted in a way which permits
+`NotFound` or a competing `Found` result.
 
-The async version (Phase 2, once the runtime supports it) would look like:
+The function item must also have eligible method-candidate metadata. A
+same-name function with unsupported receiver syntax, lifetime/const
+method-level generics, an incomplete own parameter environment, or a deferred
+projection in its signature contributes an unknown candidate; the represented
+subset must never become `Found`.
 
-```rust
-let receiver_ty = loop {
-    let ty = cx.find_mut(cx.stash()[ro].ty);
-    if !ty.is_infer_var() { break ty; }
-    cx.await_bound(ty).await;
-};
-```
+Matching the full impl self type against the post-deref lookup self type is
+speculative. It runs in an inference probe and commits only after the resolver
+selects one candidate. A failed or discarded candidate cannot leave receiver
+or impl-generic equalities behind.
 
-### Auto-deref and auto-ref
+### Trait candidates
 
-Rust's method resolution performs a deref chain followed by auto-ref at each step. For the initial implementation, we simplify:
+The resolver enumerates traits that provide the requested method name from:
 
-**Phase 1 (no Deref trait):**
-- Strip one `&` / `&mut` from the receiver → try inherent methods on the inner type.
-- If receiver is `T` (not a reference), try methods that take `&self` by auto-refing to `&T`.
+1. explicit bounds in the current parameter environment; and
+2. local traits visible from the call's lookup scope.
 
-**Phase 2 (with Deref trait):**
-- Full deref chain: `T` → `<T as Deref>::Target` → `<<T as Deref>::Target as Deref>::Target` → ...
-- At each step, try the method with `self`, `&self`, `&mut self` receivers.
-- Stop at a fixed depth (or when Deref is not implemented).
+Candidate discovery returns `(TraitSymbol, FnSymbol)` pairs. It does not inspect trait
+impls. For each pair, the resolver opens the trait generics with fresh type inference
+variables in an isolated probe and asks the solver the fixed goal
+`LookupSelfTy: Trait<Args...>`.
 
-### Associated functions (UFCS and qualified paths)
+The pair is the canonical discovery identity and is deduplicated before any
+opening or outcome counting. Explicit bounds and the visible-local-trait scan
+are two ways to discover the same trait item, not two method candidates. Trait
+arguments are opened once for the deduplicated pair; the solver environment can
+then constrain that opening from an explicit bound.
 
-For `Foo::bar()` or `<Foo as Trait>::bar()`:
+As with inherent lookup, the matching trait function must have a supported
+checked receiver. Associated functions are excluded from dot syntax even when
+their names match.
 
-```rust
-ExprCstKind::Path(path) where path has multiple segments => {
-    // e.g., path = ["Vec", "new"] or ["Iterator", "next"]
-    // 1. Resolve the type prefix ("Vec" → StructSymbol)
-    // 2. Look up the method name in inherent_methods for that symbol
-    // 3. If not found, look in trait impls for that type
-}
-```
+Trait functions use the same method-candidate eligibility gate. An eligible
+trait owner does not make a partially represented method signature eligible.
 
-This reuses the same `inherent_methods` index, just entered from the type path rather than from a receiver expression.
+An explicit bound naming an external trait is still a trait in lookup scope.
+If external trait-item metadata is unavailable, the requested name may exist,
+so that bound contributes an unknown/incomplete method source. It cannot be
+silently omitted in favor of `NotFound` or a competing local trait.
 
-## Implementation plan
+The resolver opens only an `Eligible` local trait signature. A relevant
+`Unsupported` signature is tracked as an unknown candidate, since its complete
+generic and defining-predicate contract is unavailable to the type-only
+resolver.
 
-### Step 1: `inherent_methods` query
+Solver outcomes are interpreted as follows:
 
-Build the crate-level index from `impl` blocks → methods, keyed by self-type symbol. This needs:
-- Walking the expanded module to find all `LocalImplSym` entries
-- For each impl, resolving its `self_ty` CST to determine the head symbol
-- Collecting the `FnSymbol` items from the impl's item list
+- `No` removes that trait candidate;
+- `Maybe` contributes an unknown candidate and therefore yields
+  `NeedsMoreInfo` unless two already-definite candidates establish
+  `Ambiguous` independently;
+- `Yes` makes the trait a viable candidate, but its substitution remains in the probe;
+- `Yes` with residuals is conditional and remains viable only together with those
+  residual obligations.
 
-### Step 2: Basic method resolution (inherent only, known types)
+The resolver classifies every candidate using the table above before selecting
+one. It retains, but does not yet apply, each response and conditional residual.
+Applying responses while enumerating would make candidate completion order
+affect inference.
 
-Wire `resolve_method` into the `MethodCall` arm of `check_expr`. When the receiver type is a known `Ty::Adt(sym, args)`, look up `inherent_methods(sym)` and find the method by name. Instantiate its signature against the receiver's type args.
+An explicit bound such as `T: Iterator` uses the same path: `Iterator` is a discovered
+trait candidate, and the solver proves the fixed goal from its environment assumption.
 
-### Step 3: Auto-ref
+## Lookup order and receiver adjustments
 
-When the method takes `&self` or `&mut self`, match against the receiver type correctly. This means reading the first parameter of the method sig and checking if it's `&Self` or `&mut Self`.
+The MVP first builds a deterministic lookup-self sequence:
 
-### Step 4: Where-clause methods
+1. the canonical receiver type;
+2. one built-in dereference from `&T` or `&mut T` to `T`.
 
-Once the trait-system data model is in place: scan the function's where-clauses for `T: Trait` bounds, check if `Trait` defines the method.
+Impl-head matching and the fixed trait goal always use that step's
+`LookupSelfTy`. Only after a candidate is viable does its `CheckedReceiver`
+choose the call adjustment: value receiver, shared autoref `&LookupSelfTy`, or
+mutable autoref `&mut LookupSelfTy`. The adjusted call receiver is checked
+against the method signature but is never substituted for `LookupSelfTy` in
+the impl/trait proposition. Thus `s.foo()` for `fn foo(&self)` proves
+`S: Trait`, not `&S: Trait`, while recording an `&S` autoref.
 
-### Step 5: Trait impl dispatch
+At each receiver step, inherent methods are considered before trait methods. A
+lower-priority tier is considered only after the higher-priority tier is
+exhaustively `No`. Search stops at the first receiver step whose tier produces
+`Found` or `Ambiguous`; `NeedsMoreInfo` defers that step without falling through.
+Multiple definitely applicable inherent methods or multiple definitely
+applicable traits at that step produce `Ambiguous`; lookup does not use source
+order as a tie-breaker. Conditional and unknown combinations follow the table
+above.
 
-Once the trait solver exists: full trait method resolution for concrete types.
+A bare inference-variable receiver yields `NeedsMoreInfo` and is retried when its bound
+changes. The MVP does not enumerate every method in the crate to infer an unconstrained
+receiver type.
 
-## Open questions
+Custom `Deref` requires associated-type normalization and is deferred. Its eventual
+receiver sequence will be built by repeatedly proving the fixed `T: Deref` goal and
+normalizing `Deref::Target`; the method resolver still owns the sequence and name lookup.
 
-1. **Ext symbols (from dependencies).** The `inherent_methods` query works for local impls. For external crates, we need to query the `SymExt` metadata for methods. How does the ext symbol system expose impl blocks and their methods? (This likely needs new `SymExtKind` infrastructure or a separate query for ext methods.)
+## Instantiating method signatures
 
-2. **Multiple candidates.** When multiple methods match (e.g., from different impls, or inherent vs trait), what are the priority rules? Rust's are: inherent wins over trait; more specific impl wins; ambiguity is an error.
+### Inherent methods
 
-3. **Self type matching.** For `impl<T> Foo<T>`, the self type is `Foo<T>` with a free generic. Matching this against `Foo<i32>` is unification, not equality. Do we reuse the egraph's `require_eq` for this, or implement a lighter-weight pattern match?
+1. Open the owning impl's single binder with fresh variables.
+2. Unify the opened impl self type with the selected `LookupSelfTy` in a probe.
+3. Prove the opened impl where-clauses and retain any response/residual locally.
+4. Import the function signature using the same impl-generic substitution.
+5. Instantiate method-level generics from explicit arguments or fresh variables.
+6. Instantiate the method function's own checked parameter environment with
+   those method generics and prove/stage every resulting predicate.
+7. Check argument, receiver, and result compatibility in the same selected-method
+   transaction.
+8. Commit inference effects and publish staged residual obligations only after
+   every check succeeds.
 
-4. **Visibility.** Should private methods be visible during resolution (and rejected later), or filtered out during the index build?
+### Trait methods
 
-5. **Method-level generics.** `foo.bar::<u32>()` (turbofish on methods) — how do we parse and thread explicit type args to `instantiate_method`?
+1. Retain the trait-generic substitution from the unique fixed-trait proof.
+2. Load the function signature from the trait item, not an impl item selected by the
+   solver.
+3. Substitute `Self` and trait arguments, then instantiate method-level generics.
+4. Instantiate and prove/stage the method function's own checked parameter
+   environment after method-generic substitution.
+5. In one selected-method transaction, apply the solver response and check the
+   receiver, call arguments, and result against the instantiated signature.
+6. Stage all trait-proof and method-predicate residual obligations inside that
+   transaction. Publish them only when the inference child commits; discard
+   them with every failed compatibility check.
 
-6. **Primitive types.** Methods on `i32`, `str`, `[T]`, etc. need to resolve to impls that aren't in user code. These likely come from the extern prelude / lang-item system.
+The selected-method transaction covers both inference state and obligation
+registration, including the selected function signature's own predicates.
+Obligation records are first accumulated in a transaction-local
+buffer; the global obligation store is not versioned by the egraph and must not
+be mutated before commit. A signature/argument mismatch reports a call error and
+discards the selected candidate's response, fresh method variables, wakeups,
+and staged obligations together. Method arguments are not used as overload
+resolution tie-breakers: once name/receiver lookup selected a method, an
+argument mismatch does not fall through to a losing candidate.
+
+Caller-egraph probes are synchronous and non-suspending. Receiver/argument
+expression tasks and any `await_concrete` wait finish (or return
+`NeedsMoreInfo`) before a child version is created; Salsa solver calls execute
+synchronously and return canonical responses inside the same poll. No method
+future may hold a child version across `.await`, because leaf-only version
+mutation freezes the caller parent while that child exists.
+
+Associated type occurrences in trait method signatures remain unsupported until
+normalization is implemented.
+
+## Associated functions and qualified paths
+
+For the MVP, `Type::function` considers visible local inherent functions with
+no `CheckedReceiver`; receiver-taking functions through associated syntax are
+part of deferred UFCS. Candidate impl-head matching, ambiguity, impl
+where-predicate proof, function-generic/parameter-environment instantiation,
+argument/result compatibility, and obligation staging use the same isolated
+classification plus single selected-call transaction as dot calls.
+
+Fully qualified `<Type as Trait>::function` already supplies a fixed trait. Once
+qualified-path lowering exists, the MVP supports receiver-less associated
+functions by proving `Type: Trait<Args>`, loading the trait item, and performing
+the same transactional call checks. Visibility and unsupported/incomplete
+metadata use the ordinary outcome table. Unqualified trait-associated function
+lookup and complete UFCS behavior remain deferred.
+
+An external `Type::function` lookup is likewise unsupported/unknown until
+external inherent-item metadata exists; the absence of local impls is not an
+exhaustive `NotFound` result.
+
+## Deferred work
+
+- External inherent and trait methods through `TcxDb`.
+- Lifetime/const-generic impl, trait, and method candidate instantiation.
+- Complete import, visibility, and prelude handling for traits in lookup scope.
+- Custom `Deref` chains and associated type normalization.
+- Full UFCS, trait-associated functions, and explicit method turbofish handling.
+- Primitive, slice, `str`, and other builtin method providers.
+- Specialization-aware priority after coherence support exists.
+
+See [Implementation plan and status](./implementation.md) for the staged work.

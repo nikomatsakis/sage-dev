@@ -1,28 +1,31 @@
 # RFD: Async Type Checker
 
-**Status:** Active — Phases A, B, C, D complete
+**Status:** Active — Phases A-D complete; solver-ready runtime/completion gate remains
 
 **Depends on:**
-- [Type Inference](./type-inference.md) (completed) — egraph, bounds, runtime, skeleton
+- [Type Inference](../type-inference/README.md) — egraph, bounds, runtime, skeleton
 
 **Subsumes:**
-- [Concurrent Type Checking](./concurrent-type-checking.md) — the open questions there are resolved by this design
+- [Concurrent Type Checking](../concurrent-type-checking/README.md) — the open questions there are resolved by this design
 
 ## Problem
 
-The type inference infrastructure is built (egraph, bounds, versioning, runtime) but the body checker (`cst/expr.rs`) walks the CST synchronously, taking `&mut BodyCheck`. This means:
+At proposal time, the type inference infrastructure existed but the body
+checker walked the CST synchronously through `&mut BodyCheck`. That prevented:
 
 1. **No suspension on unknowns.** Method resolution, trait queries, and downstream type propagation cannot wait for an inference variable to resolve — they must produce a result (or an error) immediately.
 2. **No concurrency within a body.** Independent sub-expressions, match arms, and function arguments are checked sequentially even though they could run interleaved, feeding information to each other through inference variable wakeups.
 3. **Eager errors.** When a type isn't yet known (e.g., awaiting return type from a call whose arguments haven't been checked), the checker must pessimistically error or leave a variable unresolved rather than suspending and retrying when information arrives.
 
-The [Type Inference RFD](./type-inference.md) designed an async execution model (§ "Execution model: async type checking") that solves all three. The runtime scaffold (`runtime.rs`) implements the executor. This RFD covers the remaining work to wire the async model into the actual expression checker.
+Phases A-D replaced that checker with the async `InferCtx`/`Scope` model. The
+remaining gate is solver-driven: real scoped task ownership/wakers and the
+quiescence-based body-completion state machine described below.
 
 ## What's already built
 
 | Component | File | Status |
 |-----------|------|--------|
-| Custom executor (spawn, drain, block_on, wake) | `check/infer/runtime.rs` | Done |
+| Inference executor scaffold (detached spawn, drain, block_on, pending-wake queue) | `check/infer/runtime.rs` | Done; scoped tasks and real `Waker`s are a solver prerequisite |
 | Versioned egraph + union-find | `check/infer/egraph.rs` | Done |
 | Monotonic bounds (None → AtLeast → Exactly) | `check/infer/bound.rs` | Done |
 | Version tree (branch/discard) | `check/infer/version.rs` | Done |
@@ -38,7 +41,8 @@ The [Type Inference RFD](./type-inference.md) designed an async execution model 
 
 ### Split context into shared state + scoped context
 
-`BodyCheck` currently bundles everything behind `&mut self`. The async model requires separating:
+The pre-migration `BodyCheck` bundled everything behind `&mut self`. The landed
+async model separates:
 
 1. **Shared inference state (`InferCtx`)** — the egraph, runtime, stash, variable tracking, and diagnostic accumulator. Truly shared across all concurrent tasks; protected by `RefCell` since the executor is single-threaded and cooperative.
 
@@ -71,7 +75,12 @@ struct Scope<'db> {
 }
 ```
 
-The `'check` lifetime covers the entire body-checking operation. All spawned futures live within `'check` — the scoped spawn API guarantees all tasks are joined before `'check` ends. Internally this requires unsafe lifetime erasure in `spawn` (accepting `'check` futures, storing them as `'static`), which is sound because the scope guarantees join-before-return.
+The destination design gives the body-checking operation a `'check` scope and
+requires every borrowed future to join before that scope ends. The current
+runtime does not yet provide that contract: its spawn surface is detached and
+`'static`. Trait Solving Step 2 must add a scoped API (and justify any lifetime
+erasure with enforced join/cancel/drain) before solver candidates borrow proof
+state across suspension.
 
 Safety: the executor is single-threaded and cooperative — no two tasks are polled simultaneously, so `RefCell` borrows on `InferCtx` never overlap. The types are `!Send + !Sync` which is correct.
 
@@ -470,6 +479,17 @@ pub fn body(self, db: &'db dyn crate::Db) -> CheckedBody<'db> {
 }
 ```
 
+This sketch shows the pre-trait-solver entry point. Solver integration replaces
+the one-shot `block_on`/`finalize` pair with a body-completion state machine:
+keep the root scope open; jointly drain runnable expression/constraint tasks,
+committed wakes, and ready obligations to stable quiescence; finalize stalled
+variables to their final bound or `Ty::Error`; then wake and drain again. Woken
+tasks may visit more source and submit more obligations, so the cycle repeats
+until no variable can change. Stable obligations/lookup waits are then
+terminalized with diagnostics and wake their expression tasks before the root
+is required to join. The [Trait Solving RFD](../trait-solving/README.md) owns
+the detailed contract.
+
 ### Tracking the current task
 
 For `next_bound` to register a waker, the task needs to know its own ID. The runtime already has `CURRENT_TASK` as a thread-local. The executor sets it before each `poll`:
@@ -491,7 +511,12 @@ fn drain(&mut self) {
 }
 ```
 
-This is already partially implemented but needs to be wired into `block_on` as well.
+This snippet describes the current polling scaffold, where inference updates
+are routed through task IDs and the pending-wake queue. It is not sufficient for
+the trait solver's ordinary `Future` waiters: before candidate concurrency
+lands, `Waker::noop()` must be replaced by a real task waker that re-enqueues
+the owning task, and the runtime must gain scoped join/cancel/drain semantics.
+That prerequisite is tracked by the Trait Solving implementation plan.
 
 ## Migration strategy
 
@@ -505,7 +530,9 @@ The transition can be incremental:
 
 4. **Phase D:** ✅ Removed the old synchronous walker (`cst/expr.rs` body-checking section) and the `BodyCheck` struct entirely.
 
-Each phase is independently testable and shippable. Phase A was the largest mechanical diff; Phase C is the interesting semantic change remaining.
+Each phase was independently testable and shippable. Phase A was the largest
+mechanical diff; the next runtime work belongs to the scoped trait-solving
+prerequisites described above.
 
 ### Implementation notes
 
@@ -537,12 +564,15 @@ Each phase is independently testable and shippable. Phase A was the largest mech
 
 2. **Stash allocation from async tasks.** Multiple tasks may need to allocate into `target_stash` concurrently. With `RefCell`, this is fine as long as no task holds a `Ref`/`RefMut` across a yield point. We should lint for this.
 
-3. **How much concurrency helps.** For most function bodies, the benefit is suspension/retry on unknowns (not parallelism). The real win is latency hiding for trait solver queries. We should benchmark after Phase C.
+3. **How much concurrency helps.** For most function bodies, the benefit is suspension/retry on unknowns (not parallelism). The real win is latency hiding for trait solver queries. We should benchmark after solver integration.
 
 4. **`next_bound` state tracking.** The stream needs to know what the caller last observed to avoid redundant wakeups. Likely a per-registration "last seen version" counter on the variable.
 
 ## Relation to other RFDs
 
-- **Trait System** — trait solving is the primary consumer of `await_concrete`. Method resolution suspends until the receiver type resolves, then queries the trait solver. That work is orthogonal and can proceed in parallel with this RFD.
+- **Trait Solving and Method Resolution** — these are the primary consumers of
+  `await_concrete` and depend on the scoped-runtime/body-completion gate. Their
+  implementation plans own the remaining solver-specific steps; this RFD
+  records the shared runtime destination.
 - **Numeric Inference Variables** — trivial addon once the async model is in place; numeric vars just have additional constraints on what `next_bound` accepts.
 - **Concurrent Type Checking (old RFD)** — fully subsumed. The questions it raised are answered here.

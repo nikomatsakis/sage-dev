@@ -3,24 +3,56 @@
 **Status:** Draft
 
 **Depends on:**
-- [Trait System](../trait-system/README.md) — `TraitRef`, `WherePredicate`, `ImplSignature`, data model
-- [Type Inference](../type-inference/README.md) — `VersionedEGraph`, inference variables, async executor
+- [Trait System](../trait-system/README.md) — `TraitRef`, `WherePredicate`,
+  `ImplSignature`, and local impl discovery
+- [Type Inference](../type-inference/README.md) — `VersionedEGraph`, inference
+  variables, universes, and the async executor
+- [Async Type Checker](../async-type-checker/README.md) — scoped task lifetime,
+  real wakeups, joining, and cancellation
 
 ## Goal
 
-Design the trait solver: given a goal like `Vec<?X>: Debug`, prove it (or report failure). The solver operates inside the same async executor as type checking, uses the versioned egraph for speculative exploration, and coordinates sub-proofs via a shared whiteboard.
+Design the trait solver: given a goal such as `Vec<?X>: Debug`, determine
+whether it follows from the assumptions at the proving site and the positive
+trait impls in the current crate. The solver uses versioned inference state for
+speculation and coordinates repeated atomic sub-proofs through a per-execution
+whiteboard.
 
 ## MVP contract
 
-The first implementation is intentionally narrower than the full design:
+The first implementation is intentionally type-only, positive, and
+inductive:
 
-- **Goal language:** implement `TraitImpl`, `Equals`, `All`, `Exists`, `Implies`, and `Maybe`.
-- **Deferred goals:** `ForAll`, `Normalize`, higher-ranked lifetimes, and meaningful lifetime/outlives proving are not part of the MVP.
-- **Whiteboard scope:** one whiteboard per `GoalQuery::prove` invocation. Cross-query/global caching is deferred.
-- **Candidate sources:** environment assumptions first, then local trait impl clauses from the trait-system data model. A linear scan is acceptable for the first implementation.
-- **Alternative merging:** early return only for `Yes { subst: [], modulo: All([]) }`; otherwise compare alternatives using the conservative MVP subsumption check in the implementation sketch.
-- **Type equality:** reuse the inference egraph's structural unification machinery through a diagnostic-free helper factored out of `InferCtx::require_eq`.
-- **Residual obligations:** unresolved but still-possible goals are returned in `modulo` and retried by callers as inference makes progress.
+- **Atoms:** `TraitImpl { self_ty, trait_ref }` and `Equals(lhs, rhs)`, where
+  every argument is a type.
+- **Structural goals:** `All`, `Exists`, `Implies`, and `Maybe`.
+- **Clauses:** assumptions at the proving site first, followed by positive local
+  impl clauses whose trait signatures are available locally. The Trait System
+  owns deterministic `local_impls(db, LocalCrateSymbol)` discovery; the solver
+  linearly scans that list.
+- **Cycles:** an atomic goal recurring in its own parent-frame chain is `No`.
+  Reaching the fixed recursion limit of 64 is `Maybe`.
+- **Alternatives:** all possible answers are considered. Only an unconditional
+  `Yes` with no caller-variable bindings may terminate sibling alternatives
+  early.
+- **Equality:** structural unification is transactional. It runs in an egraph
+  child version and collapses that child into its parent only after the entire
+  operation, including occurs and universe-leak checks, succeeds.
+- **Residuals:** unresolved but still-possible goals are returned in `modulo`,
+  registered as obligations, and retried only when relevant inference state
+  changes.
+
+The following are explicitly outside the MVP: lifetime/outlives goals,
+goal-level `ForAll`, associated-type normalization, higher-ranked bounds,
+auto and other builtin traits, negative impls, external-crate impl discovery,
+local impls of external traits whose defining predicates are unavailable,
+coherence, specialization, and method resolution. These features require
+additional data-model or proof-search rules; the MVP does not approximate them
+as successes.
+
+Generic impl declarations still have binders. Candidate assembly opens such a
+binder with fresh existential variables for that candidate. This is clause
+instantiation, not a `Goal::ForAll` proof rule.
 
 ## External interface
 
@@ -29,114 +61,157 @@ The first implementation is intentionally narrower than the full design:
 ```rust
 #[salsa::interned]
 struct GoalQuery<'db> {
-    goal: Stashed<GoalQueryData<'db, Goal<'db>>>,
+    data: Stashed<GoalQueryData<'db, Goal<'db>>>,
 }
 
 struct GoalQueryData<'db, G> {
-    for_all: Slice<GenericParam<'db>>,   // canonical variables (AlphaEquivParam)
-    assumptions: Slice<Assumption<'db>>, // environment at the proving site
+    /// Selects the Trait System's deterministic local-impl list.
+    local_crate: LocalCrateSymbol<'db>,
+    /// The caller's current universe relative to this query's universe base.
+    canonical_universe: u32,
+    /// Metadata for every free alpha-equivalent input in `assumptions` and
+    /// `goal`, in deterministic first-appearance order. Binder-local params
+    /// are canonicalized in place but do not appear here.
+    canonical_vars: Slice<CanonicalVarInfo<'db>>,
+    /// First alpha-equivalent parameter index not occupied anywhere in the
+    /// canonical query, including nested binder-local parameters.
+    next_response_param: u32,
+    /// False when unsupported/deferred source predicates were diagnosed and
+    /// omitted from `assumptions`.
+    assumptions_complete: bool,
+    assumptions: Slice<Assumption<'db>>,
     goal: G,
 }
 
+struct CanonicalVarInfo<'db> {
+    param: AlphaEquivParam<'db>,
+    kind: GenericParamKind,
+    role: CanonicalVarRole,
+    /// Universe relative to the query's universe base.
+    relative_universe: u32,
+}
+
+enum CanonicalVarRole {
+    /// A caller generic parameter. It is rigid inside the query.
+    RigidPlaceholder,
+    /// A caller inference variable. The solver may constrain it.
+    ExistentialInput,
+}
+
 enum Goal<'db> {
-    Exists(Binder<'db, Ptr<Goal<'db>>>),                // Output: from subgoal
-    ForAll(Binder<'db, Ptr<Goal<'db>>>),                // Output: from subgoal
-    Implies(Slice<Assumption<'db>>, Ptr<Goal<'db>>),    // Output: from subgoal
-    All(Slice<Goal<'db>>),                              // Output: ProofValue::True
+    Exists(Binder<'db, Ptr<Goal<'db>>>),
+    Implies(Slice<Assumption<'db>>, Ptr<Goal<'db>>),
+    All(Slice<Goal<'db>>),
     Atom(Atom<'db>),
-    Maybe,                                              // Output: n/a, cannot be proven
+    /// The goal is still possible but cannot currently be decided.
+    Maybe,
 }
 
 enum Atom<'db> {
-    TraitImpl(TraitSym<'db>, Slice<GenericArg<'db>>),   // Output: ProofValue::True
-    Equals(GenericArg<'db>, GenericArg<'db>),           // Output: ProofValue::True
-    Normalize(AliasSym<'db>, Slice<GenericArg<'db>>),   // Planned, not MVP
-    Outlives(GenericArg<'db>, Lifetime<'db>),           // Output: ProofValue::True
+    TraitImpl {
+        self_ty: Ptr<Ty<'db>>,
+        trait_ref: TraitRef<'db>,
+    },
+    Equals(Ptr<Ty<'db>>, Ptr<Ty<'db>>),
 }
 
 enum Assumption<'db> {
-    ForAll(Binder<'db, Ptr<Assumption<'db>>>),
-    Implies(Slice<Goal<'db>>, Ptr<Atom<'db>>),
+    /// A trait fact with an empty body. Equality assumptions are not part of
+    /// the positive MVP environment.
+    TraitImpl {
+        self_ty: Ptr<Ty<'db>>,
+        trait_ref: TraitRef<'db>,
+    },
+    /// A positive Horn clause: `conditions => consequence`.
+    Implies(Slice<Goal<'db>>, Ptr<WherePredicate<'db>>),
+    /// Convenience representation flattened while building the environment.
     All(Slice<Assumption<'db>>),
-    Atom(Atom<'db>),
 }
 ```
 
-Goals have an **output type** determined by their atom kind. MVP atoms produce `True` on success. Planned `Normalize` goals will produce a type once associated type normalization is designed.
+Both MVP atoms prove only truth. Type-valued proof results will be introduced
+with normalization rather than being predeclared with unclear semantics.
+`Equals` is goal-only: hypothetical equality environments need a scoped egraph
+model and are deferred, so `Assumption` heads are statically trait-only.
 
 ### Result types
 
 ```rust
-/// Result that crosses canonicalization, stash, and egraph boundaries.
-/// The binder declares fresh existential variables introduced while extracting
-/// a result from a fork-local egraph.
-type QueryResult<'db> = Binder<'db, QueryResultData<'db>>;
+/// Variables created while extracting a response. All are existential and
+/// use indices at or after `GoalQueryData::next_response_param`, so they cannot
+/// collide with a free input or nested binder-local parameter.
+struct ResponseVarInfo<'db> {
+    param: AlphaEquivParam<'db>,
+    kind: GenericParamKind,
+    relative_universe: u32,
+}
+
+struct QueryResult<'db> {
+    bound_vars: Slice<ResponseVarInfo<'db>>,
+    value: QueryResultData<'db>,
+}
 
 enum QueryResultData<'db> {
-    /// Proven, modulo these residual goals and substitution.
     Yes {
-        value: ProofValue<'db>,
-        /// Equalities learned during the proof (bindings for the query's
-        /// canonical variables). Applied by the caller to its egraph.
+        /// Definite equalities learned for existential query inputs.
         subst: Subst<'db>,
-        /// Residual goals that must still be proven.
+        /// Goals which must still be discharged under their captured
+        /// environment.
         modulo: Goal<'db>,
     },
-
-    /// Ambiguous — multiple alternatives apply with incompatible residuals.
-    /// Carries hints: the anti-unification of the successful alternatives'
-    /// substitutions. Fresh existential variables stand for the parts where
-    /// alternatives diverge. Hints are always "shallow" — no repeated
-    /// variables (e.g., Vec<(?A, ?B)> not Vec<(?A, ?A)>), since they come
-    /// from anti-unification.
-    ///
-    /// Hints are necessary conditions: they MUST hold, but are not sufficient
-    /// to determine which alternative is correct. The caller can unify them
-    /// into its egraph; if unification fails, the goal is disproven.
-    ///
-    /// Can only transition to Yes { modulo: All([]) } (fully proven).
+    /// At least one alternative remains possible, but no unique definite
+    /// answer exists. Hints are necessary, not sufficient, conditions.
     Maybe {
         hints: Subst<'db>,
     },
-
-    /// Disproven. Terminal — once No, always No.
+    /// Candidate sources were exhaustive and every candidate was definitively
+    /// disproven.
     No,
 }
 
-/// Result flowing inside one proof context. Equalities are implicit in that
-/// context's egraph, so no substitution is needed here.
+/// Keys are always type-kind canonical variables whose role is
+/// `ExistentialInput`. Rigid type/lifetime/const placeholders may occur inside
+/// values but never as keys.
+type Subst<'db> = Slice<(AlphaEquivParam<'db>, Ptr<Ty<'db>>)>;
+
+/// Internal to one proof context. Equalities live in that context's explicit
+/// egraph version, so they are not repeated here.
 enum GoalResult<'db> {
-    Yes {
-        value: ProofValue<'db>,
-        modulo: Goal<'db>,
-    },
+    Yes { modulo: Goal<'db> },
     Maybe,
     No,
 }
-
-/// A substitution: bindings from canonical variables to types/lifetimes.
-/// In Yes: the definite equalities. In Maybe: the anti-unified hints.
-type Subst<'db> = Slice<(AlphaEquivParam<'db>, GenericArg<'db>)>;
-
-enum ProofValue<'db> {
-    True,
-    Ty(Ty<'db>),
-}
 ```
 
-The `QueryResult` is stashed — each whiteboard entry and each `GoalQuery::prove` return value is a `Stashed<QueryResult<'db>>`. The caller opens the binder, allocates local inference variables for any bound existentials, and instantiates the result into their own stash via substitution. `GoalResult` is internal to a single proof context.
+The result is stashed at every canonical/egraph boundary. Instantiation
+allocates one caller inference variable for each `bound_vars` entry, preserving
+its relative universe, and uses the same mapping across `subst` and `modulo`.
+While importing `modulo`, a separate push/pop binder remapper freshens every
+nested `Exists` declaration and its bound occurrences in the requester. Free
+query inputs, response existentials, and residual-local binder parameters are
+three disjoint namespaces; numeric alpha-parameter overlap in independently
+canonicalized requester/response objects must never capture an occurrence.
 
-**Transition lattice:**
-```
-No                                          (terminal)
-Yes { modulo: G } → Yes { modulo: G' }     where G' ⊆ G (residuals shrink)
-Yes { modulo: G } → Maybe                  (discovered incompatible alternative)
-Maybe → Yes { modulo: All([]) }            (fully proven — ambiguity becomes moot)
-```
+A definite `Yes` response preserves sharing. If one fork-local variable occurs
+twice, both occurrences refer to the same response variable. For example,
+`?X = (T, T)` is not weakened to `?X = (?A, ?B)`. Only `Maybe` hints may use
+the deliberately shallow, non-repeating anti-unification form.
 
-Key constraint: `Maybe` can only transition to `Yes` when `modulo` is trivially true (`All([])`). This is because once we've seen multiple incompatible alternatives, we can never know which residual set is correct — the only escape is proving the goal unconditionally.
+`Maybe::hints` contains only hard necessary equalities common to every
+still-possible alternative. A heuristic near-miss such as “this impl would
+apply if `?X` were `u32`” is not a hard hint and must not be committed to the
+caller. Ranking or exposing such suggestions is separate, deferred diagnostic
+work rather than part of the MVP proof result.
 
-### Entry point
+The `bound_vars` on a `Maybe` bind its hints just as they bind a `Yes`
+substitution and residual. Hint merging therefore operates on a binder-aware
+value, not on a bare `Subst`. After anti-unification, entries of the form
+`?Input = fresh ?Response` whose response variable occurs nowhere else are
+tautologies and are removed, followed by pruning and renumbering unused
+response variables. Applying an ambiguous hint must add real information; it
+must not create a fresh alias and a semantic revision on every retry.
+
+### Entry point and caching boundary
 
 ```rust
 #[salsa::tracked]
@@ -146,188 +221,442 @@ impl<'db> GoalQuery<'db> {
 }
 ```
 
-This is the synchronous salsa boundary. Internally it creates a local inference context, whiteboard, and async executor, then blocks on the result. Eventually we'll have more sophisticated caching, but this is the starting point.
+`GoalQuery::prove` is the synchronous Salsa boundary. Salsa may reuse the
+completed result of the same canonical query, including its crate and
+environment. An execution that Salsa actually runs creates a fresh inference
+context, runtime, and whiteboard. The whiteboard deduplicates in-progress work
+only within that execution; it is not another global or cross-query cache.
 
 ## Canonicalization
 
-Before entering the solver, the caller **canonicalizes** its goal:
+The caller canonicalizes the goal and assumptions together. It chooses an
+absolute universe base and retains that base in the caller-side mapping rather
+than the cached key. With free inputs, the base is the lowest current ceiling
+among the inputs and the caller's current universe; with no free inputs, the
+base is the caller's current universe. `canonical_universe` records the current
+universe relative to that base, so two otherwise-identical queries at
+meaningfully different binder depths do not share an invalid cached result.
 
-1. Walk the goal in a deterministic order.
-2. When encountering a `GenericParam` (universal from the caller's context) or an `InferVar` (existential), map it to a fresh `AlphaEquivParam { kind, index }`, starting at index 0 and incrementing.
-3. Record the reverse mapping: `AlphaEquivParam(i) → original variable in caller's egraph`.
-4. Allocate the canonicalized goal into a fresh stash → produces a `GoalQuery` (salsa-interned, so structurally-identical queries share identity).
+Canonicalization then proceeds as follows:
 
-The `GoalQueryData` has a flat structure: one level of `for_all` (binding the canonical variables), assumptions (the environment), and the goal. Nested quantifiers inside the goal (`Goal::Exists`, `Goal::ForAll`, `Goal::Implies`) are handled internally by the solver during proof.
+1. Walk both in deterministic order and assign one `AlphaEquivParam` to each
+   distinct caller variable.
+2. Record `kind`, `role`, and universe relative to the selected base in
+   `CanonicalVarInfo`. For an existential inference input, this is its current
+   versioned universe ceiling, not immutable creation universe; a lowered
+   ceiling therefore participates in the canonical query/cache identity.
+3. Map `Ty::Param` values to `RigidPlaceholder` and inference variables to
+   `ExistentialInput`. An inference variable appearing in an assumption stays
+   existential; canonicalization never generalizes it into a universal.
+   Lifetime and const parameters embedded in a type are visited and
+   alpha-renamed as rigid placeholders; the MVP has no flexible lifetime or
+   const inference inputs.
+4. On entering `Goal::Exists`, allocate deterministic canonical parameters for
+   its declarations in binder order, push a binder mapping, fold the body, and
+   pop it. Bound occurrences use that mapping and are excluded from
+   `canonical_vars` and the caller reverse map. Nested binders are
+   capture-avoiding; the type-only MVP rejects non-type `Exists` declarations.
+5. Record a reverse mapping from each free canonical parameter to the original
+   caller generic or egraph inference variable.
+6. Record the first unused alpha-parameter index after both free and bound
+   query parameters as `next_response_param`, preserve the source parameter
+   environment's completeness bit, include `LocalCrateSymbol`, and allocate the
+   complete query in a fresh stash.
 
-When results come back, the caller **instantiates** them: fold the result from the entry's stash into the caller's stash, substituting each `AlphaEquivParam(i)` with `mapping[i]`. Universe constraints are respected because the mapped-back variables already carry the correct universe in the caller's egraph.
+When importing a query, the solver starts at `canonical_universe`, instantiates
+rigid inputs as rigid placeholders and existential inputs as inference
+variables in the declared relative universes, and opens nested binders with a
+capture-avoiding binder stack. Rigid placeholders cannot become the left-hand
+side of a substitution or be bound by unification. When applying a response,
+only existential-input entries are mapped back into the caller egraph. The
+caller adds its retained absolute universe base to every response-relative
+universe; this is defined even for a closed query with no canonical inputs.
+
+Response extraction records relative universes for variables created during
+proof. Applying a response must run the universe-leak check before committing
+it, so a response-local variable cannot escape into an older caller universe.
+
+Universe validation also constrains flexible variables nested inside a binding.
+If `?X@U0 = Vec<?T@U1>`, the transaction lowers `?T`'s current universe ceiling
+to `U0` (or fails if that ceiling cannot be changed); checking only for an
+immediate rigid placeholder would allow `?T` to bind a `U1` placeholder later
+and leak indirectly. Universe ceilings are versioned sparse state, separate
+from each variable's immutable creation universe. Unification computes a
+fixed point: an eclass takes the minimum ceiling of its flexible variables,
+nested flexible variables in structural members are lowered to that ceiling,
+and a rigid placeholder above it rejects the transaction. All lowering rolls
+back with the probe. Response variables record their lowered ceiling, and
+reapplying a substitution reproduces any required lowering on caller inputs.
+A committed ceiling decrease is a semantic variable update: it advances the
+relevant revision and wakes obligations whose canonical identity/accessibility
+depends on that input. A discarded decrease publishes neither revision nor
+wake.
+
+The same accessibility validator gates streaming bound writes. Although a
+`Bound` contains no inference variables, its concrete type may contain a rigid
+placeholder; `set_bound(?X@U0, AtLeast/Exactly(P@U1))` is rejected before
+publication. Equality, substitution application, and bound tightening cannot
+use separate leak rules.
+
+Extraction projects each egraph class into a deterministic response normal
+form before allocating response variables:
+
+- a class containing only flexible variables and one or more existential query
+  inputs uses the lowest canonical input as its representative;
+  candidate-local variables fold to that input, and only the other query inputs
+  need equality entries;
+- a class containing a rigid placeholder, concrete type, or structured type
+  uses its fully substituted, canonically ordered rigid/structural form, so an
+  equality such as
+  `?Input = Vec<?Local>` retains the meaningful `Vec` constructor;
+- a class containing only proof-local variables and no query input gets one
+  response existential if it is reachable from the substitution or residual.
+
+The same projection folds `subst` and `modulo`, then prunes and renumbers unused
+response variables. Thus `exists<T>. ?X = T` extracts no binding, two inputs
+equated through the same candidate variable extract a deterministic
+input-to-input equality, and `exists<T>. ?X = T && T: Bound` rewrites the
+residual to `?X: Bound` instead of leaking a vacuous response alias. This
+normalization must be independent of union-find root choice and candidate
+execution order.
+
+## Inference transactions and explicit versions
+
+Every `ProofCtx` names an explicit egraph `Version`; no solver operation relies
+on one mutable global `current` version. A candidate gets a child version of
+its parent, and concurrent candidate futures retain independent version
+handles. All reads, writes, variable allocation, rebuilds, and wake
+registrations are performed against that explicit handle.
+
+Per-version mutation is leaf-only. Once a version has a live child, its
+inherited state is frozen until all children are discarded or its sole child is
+atomically collapsed. Sparse ancestry lookup otherwise would let a later parent
+write change the snapshot observed by every existing child. Frozen parents use
+read-only lookup; path compression, variable allocation, equality/bound writes,
+rebuild/revision changes, and inference-wake publication target child leaves.
+Append-only global stash allocation remains safe because it does not alter an
+existing version's inference facts.
+
+Inference-variable IDs are globally unique within the egraph and record their
+owning version. A version may access variables owned by itself or its
+ancestors, never a sibling. Consequently, a `Ty::InferVar` allocated by one
+candidate cannot be reinterpreted as a different variable in another
+candidate. Version identities are stable for the egraph lifetime or carry a
+generation when storage slots are reused.
+
+The egraph therefore needs these operations before concurrent alternatives can
+be implemented:
+
+- branch from a specified parent version;
+- perform all inference operations against a specified version;
+- collapse a successful child into its parent atomically;
+- discard a failed/cancelled child and its descendants;
+- buffer version-local inference wakeups, publishing them only on collapse;
+- cancel tasks tied to a discarded version before recycling it.
+
+Collapsing has a strict safety precondition: the child being collapsed is the
+only live child of its parent. The MVP uses this simple rule so committing a
+probe cannot change inference state underneath a live sibling. Concurrent
+candidate siblings therefore never collapse into their common parent; they
+only extract responses and discard their versions after joining.
+
+Structural unification and response application use a nested child as a
+transactional probe:
+
+1. create a child of the context version;
+2. apply every recursive equality or substitution entry in that child;
+3. reject recursive types with an occurs check;
+4. reject universe leaks;
+5. preserve the inference engine's `Ty::Error` recovery behavior;
+6. rebuild congruence and validate the complete result;
+7. collapse the child on success, or discard it on any failure.
+
+This makes a multi-entry substitution atomic and prevents a failed recursive
+unification from leaving partial bindings. It also ensures inference-bound
+wakeups become visible only for committed state. Variables created in a
+committed probe keep their globally unique IDs and are atomically re-owned by
+the parent; variables from discarded descendants cannot appear in parent
+state.
+
+Candidate versions themselves are not collapsed into the common parent:
+different alternatives may make incompatible choices. Each candidate extracts
+a canonical response from its child and then discards that child. Applying the
+chosen aggregate response to a caller is a separate transactional operation.
 
 ## Internal architecture
 
 ### The whiteboard
 
-The internal proof machinery coordinates via a **whiteboard** — a shared table of in-progress atomic goal proofs. Each entry is a write-once future: it is resolved when the atomic goal's proof completes, and not before.
+The whiteboard is an active proof tree. An atomic frame is keyed by its
+canonical atom/environment/depth **and its parent frame**. Exact duplicates
+under the same parent share a future; equal goals reached through different
+parents remain separate frames. Parent links are also used for cycle detection.
 
-```rust
-struct Whiteboard<'db> {
-    entries: RefCell<FxHashMap<WhiteboardKey<'db>, WhiteboardEntry<'db>>>,
-}
+Frame production is requester-independent. Each query execution creates an
+immutable producer-arena root plus a separate top-level request version. A new
+frame imports its canonical key into a fresh frame-owned branch directly under
+that arena root and runs in a query-owned producer scope. It never inherits the
+first requester's candidate version, and it never collapses into the arena
+root. After extracting and stashing its response, the producer joins all nested
+work and discards its frame branch before publishing the result.
 
-struct WhiteboardKey<'db> {
-    /// Canonical form of the atomic goal (in its own stash).
-    query: Stashed<GoalQueryData<'db, Atom<'db>>>,
-    /// Recursion depth — ensures termination.
-    depth: u32,
-}
+Each returned frame future owns a subscription allocated at lookup time.
+Polling an incomplete frame updates that subscription with `cx.waker()`, and
+dropping the future removes it. A creator's cancellation therefore cannot stop
+a producer while another subscriber remains. If the last subscriber to an
+incomplete frame disappears, the whiteboard removes the key, requests producer
+cancellation, joins its nested work, and discards its frame branch; a later
+lookup starts a new frame rather than waiting on the cancelled one. Completion
+takes and wakes every remaining subscriber. See the
+[whiteboard implementation sketch](./impl-sketches/whiteboard.md).
 
-struct WhiteboardEntry<'db> {
-    /// Write-once: None while in progress, Some when complete.
-    result: Option<Stashed<QueryResult<'db>>>,
-    /// Wakers of tasks blocked waiting for completion.
-    wakers: Vec<Waker>,
-}
-```
+For an atomic request at depth `D`:
 
-Each whiteboard entry produces its result in a **distinct stash** (the `Stashed` wrapper). This isolation gives clean canonical boundaries and will enable global caching later.
+1. If `D >= 64`, return `Maybe` without creating a frame.
+2. Walk the parent-frame chain. If the same canonical atom and environment
+   appears in an ancestor (depth is ignored for this comparison), return `No`.
+3. Reuse or create the exact parent-keyed frame.
+4. If newly created, start its canonical frame context in the query-owned
+   producer scope; otherwise await its future. The producer is not a child of
+   the requesting candidate's scope or egraph version.
+5. Instantiate the completed response transactionally in the requesting
+   context.
 
-### Proving an atomic goal
+The query-owned scope cannot exit until every frame producer has completed or
+has been cancelled and drained. Cancellation always stops and joins tasks that
+can access a frame version before discarding that version. This lets a losing
+candidate discard its own branch immediately after dropping its subscriptions,
+without invalidating a shared producer still needed by a surviving candidate.
 
-**Insta-flounder:** Before doing any work, check if the atom is too underspecified to make progress:
-- `TraitImpl(trait, [?X, ...])` where the self-type is a bare inference variable → flounder (return `Maybe`). We can't do candidate assembly without knowing the self-type.
+The MVP is inductive, so a cycle is never treated as success. Structural auto
+trait recursion is deferred with auto traits rather than simulated by injecting
+self-assumptions.
 
-These will be retried by the conjunction's flounder loop once a sibling pins the variable.
+### Structural goals
 
-When a task needs to prove an atomic goal (that didn't insta-flounder):
+`prove_goal` decomposes non-atomic structure:
 
-1. **Canonicalize** the goal from the current egraph → produces a `WhiteboardKey` + a reverse mapping.
-2. **Look up** the whiteboard:
-   - **Entry exists, complete:** read the result immediately.
-   - **Entry exists, in progress and not on the current dependency stack:** subscribe to the entry and await completion.
-   - **Entry exists, in progress and already on the current dependency stack:** this is a proof cycle → return `No`.
-   - **No entry:** create one, spawn an async task to prove it.
-3. When the spawned task completes, it writes the result into the entry and wakes all waiting tasks.
-4. **Instantiate** the result back into the caller's stash/egraph via the reverse mapping.
+- `Atom` uses the whiteboard.
+- `All` runs the sequential conjunction fixpoint.
+- `Exists` allocates fresh inference variables in the current explicit version
+  and current universe, then proves its body. The existing `Binder` carries
+  generic identities, not separate universe metadata.
+- `Implies` extends the environment for the inner proof. If the inner proof
+  returns residual `R`, the outer result stores
+  `Implies(original_assumptions, R)` so retrying it cannot lose the environment
+  on which it depended.
+- `Maybe` returns `Maybe`.
 
-This gives natural **goal deduplication** — if multiple parts of the proof tree need the same atomic goal at the same depth, the second one waits for the first to finish.
+### Atomic dispatch and candidates
 
-**Cycles:** Finding an in-progress entry on the current dependency stack means you've recursed into yourself. The result is `No` (unprovable). The whiteboard therefore needs a task-local proof stack or equivalent dependency tracking; `result: None` alone does not distinguish a cycle from an independent duplicate request. For coinductive cases (auto traits), the caller should add an explicit assumption to the environment before recursing, rather than relying on cycle-as-success.
+Atomic orchestration dispatches by atom kind. `Equals(lhs, rhs)` directly runs
+transactional structural unification; it does not attempt trait candidate
+assembly. `TraitImpl { self_ty, trait_ref }` assembles alternatives in this
+order:
 
-### Recursion and termination
+1. flattened environment assumptions whose heads can match the atom;
+2. positive impls found by linearly scanning
+   `local_impls(db, GoalQueryData::local_crate)` from the Trait System.
 
-**Cycles are disallowed.** Finding the same in-progress goal on the current dependency stack is always `No`. There is no coinductive cycle-as-success mechanism in the solver itself.
+Before assembly, a trait atom whose self type or trait arguments contain
+`Ty::Error` returns an empty-substitution, trivial-residual recovery `Yes`.
+The original diagnostic is already represented by the error sentinel; emitting
+`No` here would create a misleading secondary trait failure. This recovery
+answer adds no inference fact other than terminating the obligation.
 
-**Auto traits (Send, Sync, etc.)** are handled by adding an explicit assumption before recursing into fields. For example, when proving `Foo<?T>: Send`, we add `Foo<?T>: Send` to the environment before proving each field is `Send`. If a field has type `Foo<?T>`, it matches the assumption (just another alternative that unifies against the goal). The assumption may contain inference variables — that's fine, they get canonicalized normally (becoming universals in the canonical form, meaning "this holds for any value of this variable").
+When `self_ty` is a bare flexible variable, step 1 still runs: an explicit
+environment assumption may prove the goal without guessing a receiver type.
+The MVP then skips the impl scan and records that omitted search as an
+unconstrained possible alternative. If no environment clause proves the goal
+unconditionally, the result is `Maybe`, not `No`, and the retained obligation's
+existential inputs provide its conservative retry set.
 
-**Recursion depth** is part of the whiteboard key. When a task spawns a sub-goal at depth D, the sub-goal's entry is keyed at depth D+1. When the maximum depth is reached, the result is forced to `Maybe`.
+An incomplete source parameter environment follows the same rule. Known direct
+assumptions remain usable and an unconditional proof still wins, but failure of
+the represented subset cannot produce `No`; omitted unsupported facts
+contribute an unconstrained possible alternative and therefore `Maybe`.
 
-This means the same canonical goal at different depths can yield different results (one might be fully proven, the other forced to ambiguity at the depth limit). This is not ideal but ensures termination. We can explore better strategies later (e.g., type size limits).
+Each generic clause binder is opened with fresh variables in its own candidate
+version. Head unification and the complete clause body are proved there. A
+failed candidate is discarded with no parent mutation.
 
-### Structural goal decomposition
+An impl clause is exposed only when both `ImplSignatureData` and its referenced
+local `TraitSignatureData` are `SolverEligibility::Eligible`. A potentially
+relevant `Unsupported` signature is an incomplete candidate source, not an
+irrelevant impl: it contributes `Maybe` unless an environment or other
+unconditional candidate already proves the goal. This prevents a diagnosed,
+unrepresented lifetime/const binder or predicate from becoming either an empty
+unconditional clause or a false exhaustive `No`.
 
-The async function `prove_goal` handles non-atomic goal structure:
+For an external trait, the MVP may still prove a goal directly from an
+environment assumption. Otherwise its impl sources and defining predicates are
+not exhaustive, so failure of the known environment candidates yields
+`Maybe`/unsupported rather than definitive `No`. `No` is returned only when
+the enabled candidate sources are complete for that atom.
 
-```rust
-async fn prove_goal<'db>(
-    goal: &Goal<'db>,
-    ctx: &ProofCtx<'db>,  // owns egraph version, stash, env, depth
-) -> GoalResult<'db>;
-```
+### Alternatives
 
-Decomposition rules:
-- **`Goal::Atom(atom)`** → check whiteboard, subscribe or spawn.
-- **`Goal::All(goals)`** → prove conjunctively (flounder loop, shared egraph version). Sub-goals are processed sequentially for now (see open question 7).
-- **`Goal::Exists(binder)`** → open the binder by allocating fresh inference variables in the egraph, then prove the inner goal.
-- **`Goal::ForAll(binder)`** → deferred (see future work). Not needed for MVP.
-- **`Goal::Implies(assumptions, goal)`** → extend the environment with the assumptions, then prove the inner goal.
-- **`Goal::Maybe`** → return `Maybe` immediately.
+Applicable candidates run concurrently in separate child versions. The runtime
+must provide scoped tasks which may borrow the solver state, a join point, and
+cancellation. Returning from an atomic proof is forbidden while a sibling
+future can still access its version. If an unconditional answer wins early,
+the scope cancels and drains every sibling before their versions are discarded.
+The current detached `'static` spawning API and no-op wakers are therefore
+prerequisites to replace, not sufficient implementation machinery.
 
-### Alternatives (disjunction)
+Merging retains every `Yes` answer until all alternatives finish, then computes
+the non-dominated set from the complete answer relation. This avoids making a
+conservative, not-necessarily-transitively-recognized subsumption check depend
+on arrival order. A directional check may remove a `Yes` only when another
+answer is proven at least as general. `Maybe` is tracked separately and is
+never treated as `No`.
 
-When proving an atomic goal, we assemble all candidate clauses whose head could unify with the goal. Each candidate is an **alternative**:
+Every non-`No` result also contributes a binder-aware hint input containing
+both its response variables and its substitution. The accumulator represents
+these as an optional nonempty collection: absence means no possible answer has
+been seen, whereas a collection containing an empty substitution is a real,
+maximally weak hint. At finalization, the collection is alpha-renamed,
+canonically ordered, and anti-unified as one n-ary operation.
 
-1. **Fork the egraph** (cheap — new version node with empty sparse diffs).
-2. **Unify** the clause head with the goal in that fork.
-3. If unification succeeds, **prove the clause body** as a conjunction in that fork.
-4. Report the result back to the parent.
+Each fresh witness introduced at a divergent hint occurrence receives the
+relative universe of that occurrence's substitution key. Because shallow
+anti-unification does not share such witnesses across keys, this is the most
+general universe which remains bindable by that input. The merged value is
+then leak-checked against the key; an inaccessible rigid placeholder cannot be
+hidden behind a newly chosen witness universe.
 
-Alternatives run as **scoped async tasks**. The parent starts with `No` and incorporates results as they arrive:
+Hint anti-unification is an intersection over substitution keys: a key absent
+from any still-possible answer is unconstrained and is removed from the hard
+hint. For keys present in every answer, their values are structurally
+anti-unified. This is what makes the result a necessary condition rather than
+a union of candidate-specific near-misses. Tautological bare fresh witnesses
+are removed; useful shared outer structure such as `Vec<?A>` is retained.
 
-- **First `Yes`** → becomes the current answer.
-- **Another `Yes` with compatible residuals** (one answer's conditions subsume the other) → keep the more general one.
-- **Another `Yes` with incompatible residuals** → retract to `Maybe`.
-- **`No`** → ignored (doesn't change the current answer).
-- **All alternatives complete** → the current answer is final.
+After all alternatives complete:
 
-**Early termination:** If any alternative yields `Yes { subst: [], modulo: All([]) }` (fully proven, no residuals, and no bindings for caller variables), it's a clear winner — drop sibling futures immediately. If the proof learns bindings such as `?X = u32`, sibling alternatives must still run because another candidate may learn an incompatible binding such as `?X = i32`.
+- an unconditional `Yes { subst: [], modulo: All([]) }` proves the proposition
+  regardless of any `Maybe` and wins;
+- no `Yes` and no `Maybe` means `No`;
+- exactly one non-dominated `Yes` and no `Maybe` means that `Yes`;
+- otherwise, any `Maybe` or multiple incomparable `Yes` answers means `Maybe`
+  with the anti-unification of every still-possible answer's
+  hints/substitution.
 
-The implementation sketch defines the conservative MVP subsumption check used by "compatible residuals": substitutions and proof values are compared with egraph-backed type equality, and residual implications are recognized when one conjunction is a subset of the other (`X && Y => X`). Full solver-backed implication is a later refinement.
+Only `Yes { subst: [], modulo: All([]) }` may return before all alternatives
+finish. Even an empty-hint `Maybe` must wait because an unconditional `Yes` may
+still arrive. See the [solving implementation sketch](./impl-sketches/solving.md).
 
-### Conjunctions (the flounder loop)
+### Directional subsumption
 
-When proving a conjunction (`Goal::All` or a clause body), sub-goals share the same egraph version and communicate through it:
+`A.subsumes(B)` asks whether `Cond(B) => Cond(A)`. The MVP check is
+directional:
 
-```
-loop {
-    for each pending sub-goal:
-        fully substitute known values from the egraph
-        if the goal changed from last iteration:
-            re-attempt proving it (recursive prove_goal call)
-        match result:
-            Yes { modulo: All([]) } → remove from pending (fully proven)
-            Yes { modulo: residuals } → replace with residuals
-            No → the whole conjunction fails, return No
-            Maybe → keep the substituted goal in pending (floundered)
+- variables and caller bindings established by antecedent `B` are frozen
+  rigid placeholders;
+- only response-local existential witnesses belonging to consequent `A` may
+  be bound;
+- response variables use their lowered universe ceilings, and consequent
+  witnesses may not cross a frozen antecedent's accessibility boundary;
+- proof-condition equalities and residual matching may not refine the
+  antecedent.
 
-    if nothing changed this iteration:
-        break — remaining pending goals are residuals
-}
-```
+Thus an unconditional answer subsumes `?X = u32`, but `?X = u32` does not
+subsume an unconditional answer by binding the antecedent's `?X`. Residual
+conjunctions use a conservative canonical subset check, recognizing
+`X && Y => X`; cases requiring trait implication remain incomparable and yield
+`Maybe`.
 
-**Termination:** fixpoint — when no sub-goal's substituted form changes between iterations. Remaining floundered goals become the conjunction's residuals. If an atomic sub-goal returns `Maybe`, any hints have already been applied to the shared egraph by `prove_atom`; the conjunction keeps the substituted goal as a residual and retries it only if later substitution changes it.
+### Conjunction fixpoint
 
-**Communication between siblings:** Because conjuncts share an egraph version, proving one sub-goal may unify variables that appear in another. On the next loop iteration, the second sub-goal's substituted form changes, triggering a retry. This is how `?X: Clone` gets resolved after a sibling pins `?X = u32`.
+The whole conjunction runs in an exclusive child version. A `No` result
+discards that child, rolling back equalities committed by earlier conjuncts; a
+possible or successful result collapses it only after all nested work has
+joined and the child is again exclusive. Within that child, conjuncts run
+sequentially. Each pending goal records the last pair of
+`(fully substituted goal, semantic egraph
+revision)` attempted. It is retried only when that pair changes. A partial
+`Yes` replaces the pending goal with its normalized residual and records that
+residual as already attempted at the post-proof revision. Thus even a rule
+which produces a different, ever-growing residual on each proof attempt cannot
+spin at one parent depth. A sibling's later semantic update changes the pair
+and permits one useful retry.
 
-### Associated types (normalization)
+Fully proven conjuncts are removed, `No` fails the conjunction, and remaining
+stable goals become `All(residuals)`. Hints applied by one conjunct can advance
+the semantic revision or change a sibling's substituted form, causing exactly
+the required retry.
 
-`Atom::Normalize(alias, args)` goals are planned, but not part of the solver MVP. Associated type normalization needs a follow-up data-model decision in the trait-system RFD: projection representation, impl associated type definitions, and associated type equality constraints such as `Iterator<Item = u32>`.
+## Type-checker integration and obligation lifecycle
 
-The MVP solver handles trait impl, equality, and outlives goals. Projection normalization should be added once the trait-system data model can represent the inputs and outputs precisely.
+The body checker owns an obligation set. Each entry contains the canonical
+goal, its canonical-to-caller mapping, the caller variables on which it is
+stalled, and diagnostic provenance (originating span and reason).
 
-See [Solving implementation sketch](./impl-sketches/solving.md) for the full pseudo-code walkthrough of the algorithm.
+The MVP derives a conservative wake set from every `ExistentialInput` occurring
+in the retained goal and environment. Solver-reported fine-grained stall
+reasons may narrow that set later, but correctness does not depend on that
+optimization.
 
-## Integration with the type checker
+Obligation producers use the same path. Besides explicit trait checks, the call
+checker instantiates every positive type predicate in an ordinary callee's
+`CheckedParameterEnv`; the method checker does the same for the selected method
+inside its selected-method transaction; and ADT construction/use instantiates
+the ADT environment as well-formedness obligations. Each represented
+`WherePredicate` lowers to a fixed `TraitImpl` goal. An ineligible environment
+is diagnosed/retained as unsupported rather than treated as an empty set.
 
-The type checker creates goals and submits them:
+1. Canonicalize a requested goal and call `GoalQuery::prove`.
+2. Apply a `Yes` substitution transactionally. Remove the obligation only when
+   `modulo` is trivially true; otherwise register the residual. An `Implies`
+   residual already contains the environment it needs. Record the residual as
+   attempted at the current dependency revision so it is not immediately
+   re-proved into an unbounded residual chain without new caller information.
+3. Apply hard `Maybe` hints transactionally. Because they are necessary across
+   every still-possible alternative, a conflict disproves the original goal;
+   otherwise retain the original goal as an obligation. Heuristic near-misses
+   are not applied here.
+4. Deduplicate equivalent obligations and wake them only after a relevant
+   caller variable receives a committed semantic update.
+5. Re-canonicalize and re-prove a woken obligation. If neither its canonical
+   form nor its dependency revision changed, do not busy-loop.
+6. Body completion uses a quiescence loop while the root runtime scope remains
+   open. Drain runnable expression/constraint tasks, publish committed wakes,
+   and process ready obligations together until none makes semantic progress.
+   A suspended expression task is not required to finish before this point; it
+   may be waiting for exactly the inference or obligation update being driven.
+7. At stable quiescence, finalize the still-unresolved inference variables
+   (`AtLeast` to its final bound, otherwise `Ty::Error` recovery), publish those
+   wakes, and return to step 6. Tasks resumed by recovery may visit more source,
+   create more variables, or submit more obligations, so quiescence and
+   finalization repeat.
+8. If all inference variables are final but stable obligations or method-lookup
+   waits remain, re-prove them once and complete them with a diagnostic/error
+   outcome for `No`, `Maybe`, or a non-trivial residual. Wake their waiting
+   expression tasks and return to step 6; a no-variable unsupported obligation
+   must not deadlock the root task which is awaiting it.
+9. Completion requires the root expression and every scoped task to join and
+   every obligation to be terminal. Pending tasks with no variable or
+   obligation wait are an internal runtime deadlock, not successful
+   quiescence. No task, waiter, branch, or obligation may be silently dropped.
 
-1. **Canonicalize** the goal from the type checker's inference context (mapping inference variables + generic params to `AlphaEquivParam` indices, allocating into a fresh stash).
-2. Call `GoalQuery::prove(db)` at the salsa boundary.
-3. **Instantiate** the `Stashed<QueryResult>` back into the type checker's stash/egraph via the reverse mapping.
-4. If the result has residuals, hold them as deferred obligations. As inference progresses, re-canonicalize and re-prove (salsa may cache the previous result if inputs haven't changed).
+Method resolution is not part of this integration step. The
+[Method Resolution RFD](../method-resolution/README.md) owns trait/method
+candidate enumeration and submits a fixed post-deref `LookupSelfTy: Trait` goal to this
+truth-valued solver. The solver does not need to return selected impl evidence
+for that contract.
 
-For method resolution specifically: submit `ReceiverTy: Trait`, and once `Yes` comes back, the method is resolved. The `modulo` residuals become background obligations.
+## Deferred work
 
-## Deferred
-
-- **Sophisticated caching** — currently each `GoalQuery::prove` recomputes. Later: exploit salsa memoization, cross-query deduplication beyond the whiteboard.
-- **Cycles (coinductive)** — auto traits. Currently cycles → `No`. Coinductive cases are handled by explicit assumptions in the environment.
-- **ForAll goals** — requires universe checking, egraph child versions with collapse/propagation back to parent, and handling aliases that reference higher-universe variables. Complex interaction with conjunction concurrency. Separate RFD.
-- **Associated type normalization** — requires projection representation, impl associated type definitions, and associated type equality constraints in the trait-system data model.
-- **Higher-ranked lifetimes** — `for<'a> &'a T: Trait`. Defer.
-- **Coherence / overlap** — separate concern.
-- **Specialization** — selecting more specific impls.
-- **Streaming / incremental updates** — the current model runs each `GoalQuery::prove` to completion. If needed later, we could add generation-based streaming for intra-solver communication.
-
-## Open questions
-
-1. **Scoped task semantics** — alternatives need structured concurrency (all must complete or be cancelled before the parent proceeds). Does the runtime need explicit scope support?
-
-2. **Whiteboard lifetime** — one whiteboard per `GoalQuery::prove` invocation? Or shared across the type-checking session for cross-function deduplication?
-
-3. **Environment representation** — currently threaded through the `GoalQueryData`. Should assumptions also be interned/canonicalized for better sharing?
-
-4. **Ambiguity policy** — when the type checker gets `Maybe`, does it wait (hoping inference will narrow things), or proceed optimistically? Probably context-dependent.
-
-5. **Recursion depth default** — what's a reasonable cap? Rust code rarely needs deep recursion in trait solving. 64? 128?
-
-6. **Stash for results** — each whiteboard entry produces its result in its own stash. Is there value in sharing a stash across entries within a single `prove` invocation? Probably not — isolation is more important than the small allocation savings.
-
-7. **Conjunction concurrency** — currently `Goal::All` processes sub-goals sequentially (the flounder loop runs them one at a time). A future RFD could explore concurrent conjunction solving. For now, sequential is correct and simple.
+- lifetime and outlives proving;
+- hypothetical equality assumptions and scoped equality environments;
+- goal-level universals and higher-ranked bounds;
+- projection representation and associated-type normalization;
+- auto/builtin traits and coinductive search;
+- external impl discovery through compiler metadata;
+- negative reasoning, coherence, overlap, and specialization;
+- solver-backed implication for precise answer subsumption;
+- impl indexing beyond the MVP linear local scan;
+- cross-execution in-progress deduplication beyond Salsa's completed-result
+  memoization;
+- method-resolution enumeration and integration, owned by the
+  [Method Resolution RFD](../method-resolution/README.md).

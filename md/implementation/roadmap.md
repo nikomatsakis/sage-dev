@@ -24,15 +24,18 @@ one or more RFDs. Status is one of:
 
 | Group | RFDs | Notes |
 |---|---|---|
-| Async type checker | [async-type-checker] | Split BodyCheck, async check_expr |
+| Async type checker | [async-type-checker] | Phases A-D landed; solver-ready scoped runtime and body-completion gate remains |
 | Stash hardening | [stash-safety], [stash-faster-collision-chains] | |
 | Signatures & resolution | [symbol-signatures], [resolve-at-position] | |
 | Numeric types | [numeric-inference-variables] | |
-| Trait system | [trait-system] | Early design phase |
+| Trait system | [trait-system] | Checked local trait/impl data plus function/ADT predicate environments; no implementation steps landed |
 
 ## Planned
 
-<!-- Add groups here as design solidifies -->
+| Group | RFDs | Notes |
+|---|---|---|
+| Trait solving | [trait-solving] | Depends on the [trait-system] signatures and impl enumeration; no solver code landed |
+| Method resolution | [method-resolution] | Inherent lookup follows [trait-system]; trait methods additionally depend on [trait-solving]; no method-resolution code landed |
 
 [initial-setup]: ../rfds/initial-setup/README.md
 [parse]: ../rfds/parse/README.md
@@ -60,3 +63,5 @@ one or more RFDs. Status is one of:
 [resolve-at-position]: ../rfds/resolve-at-position/README.md
 [numeric-inference-variables]: ../rfds/numeric-inference-variables/README.md
 [trait-system]: ../rfds/trait-system/README.md
+[trait-solving]: ../rfds/trait-solving/README.md
+[method-resolution]: ../rfds/method-resolution/README.md
