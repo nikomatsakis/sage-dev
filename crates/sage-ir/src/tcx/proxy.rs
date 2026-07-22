@@ -3,7 +3,9 @@ use std::sync::{Arc, Mutex};
 
 use crate::symbol::{CrateNum, DefIndex};
 
-use super::{ExternalDefPath, RawChild, TcxDb};
+use super::{
+    ExternalDefPath, RawAssociatedItems, RawChild, RawFnSignature, RawTraitSignature, TcxDb,
+};
 
 /// Request from the salsa thread to the TyCtxt thread.
 /// Each variant carries a oneshot sender for its typed response.
@@ -41,6 +43,26 @@ pub enum TcxRequest {
         crate_num: CrateNum,
         def_index: DefIndex,
         reply: mpsc::Sender<Option<ExternalDefPath>>,
+    },
+    TraitSignature {
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        reply: mpsc::Sender<Option<RawTraitSignature>>,
+    },
+    AssociatedItems {
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        reply: mpsc::Sender<Option<RawAssociatedItems>>,
+    },
+    FnSignature {
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        reply: mpsc::Sender<Option<RawFnSignature>>,
+    },
+    AdtIsAlwaysSized {
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        reply: mpsc::Sender<Option<bool>>,
     },
     ExpandDerive {
         crate_num: CrateNum,
@@ -177,6 +199,78 @@ impl TcxDb for ProxyTcxDb {
         let (reply, rx) = mpsc::channel();
         self.tx
             .send(TcxRequest::StructuredDefPath {
+                crate_num,
+                def_index,
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn trait_signature(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+    ) -> Option<RawTraitSignature> {
+        self.log.lock().unwrap().push(format!(
+            "tcx::trait_signature({}, {})",
+            crate_num.0, def_index.0
+        ));
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::TraitSignature {
+                crate_num,
+                def_index,
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn associated_items(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+    ) -> Option<RawAssociatedItems> {
+        self.log.lock().unwrap().push(format!(
+            "tcx::associated_items({}, {})",
+            crate_num.0, def_index.0
+        ));
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::AssociatedItems {
+                crate_num,
+                def_index,
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn fn_signature(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<RawFnSignature> {
+        self.log.lock().unwrap().push(format!(
+            "tcx::fn_signature({}, {})",
+            crate_num.0, def_index.0
+        ));
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::FnSignature {
+                crate_num,
+                def_index,
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn adt_is_always_sized(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<bool> {
+        self.log.lock().unwrap().push(format!(
+            "tcx::adt_is_always_sized({}, {})",
+            crate_num.0, def_index.0
+        ));
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::AdtIsAlwaysSized {
                 crate_num,
                 def_index,
                 reply,

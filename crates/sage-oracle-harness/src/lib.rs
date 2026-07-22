@@ -152,6 +152,7 @@ fn collect_rs_recursive(dir: &Path, files: &mut Vec<PathBuf>) {
 // Comparison
 // ═══════════════════════════════════════════════════════════════════════════
 
+// ANCHOR: example_exact_oracle_comparison
 pub fn assert_crates_eq(
     fixture_name: &str,
     lhs: &Crate<NormalizedDef>,
@@ -191,6 +192,7 @@ fn assert_serialized_text_eq(
         )),
     }
 }
+// ANCHOR_END: example_exact_oracle_comparison
 
 #[cfg(test)]
 mod comparison_tests {

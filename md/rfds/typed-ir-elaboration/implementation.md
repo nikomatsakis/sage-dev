@@ -1,16 +1,16 @@
 # Implementation plan and status
 
-No implementation step is complete. The first `DbDropGuard::db` vertical
-slice is in progress; resolved local fields, explicit built-in field
-autodereference, and independently queryable associated function bodies are
-the first landed pieces.
+The first isolated `DbDropGuard::db` vertical slice is implemented and covered
+by an exact oracle fixture plus a semantic dependency trace. The broader steps
+remain incomplete where their checkboxes are still open.
 
 ### Step 1: Completed-IR data model and finalization checks
 
 - [x] Introduce resolved local-field identity and explicit dereference nodes,
   and materialize built-in reference dereferences used by field access.
-- [ ] Introduce resolved call, coercion, borrow, dispatch, substitution, and
-  the remaining explicit error forms needed by the first vertical slice.
+- [x] Introduce resolved call, shared borrow, and static-trait dispatch forms
+  needed by the first vertical slice. General coercion, substitution, and
+  explicit error forms remain.
 - [ ] Represent rigid types separately from the named, associated, and opaque
   `AliasTy` family without requiring aliases to be eagerly normalized.
 - [x] Introduce `Lifetime::Dummy` as the only lifetime produced by checking.
@@ -29,11 +29,11 @@ the first landed pieces.
     the source item.
   - [x] Resolve the generated impl's external `Clone` trait and expose it
     through trait-keyed candidate discovery.
-- [ ] Supply the external `Clone` trait contract needed for the solver to
+- [x] Supply the external `Clone` trait contract needed for the solver to
   accept and prove the generated candidate.
-- [ ] Resolve `Clone::clone`, prove `Db: Clone`, and consume receiver
+- [x] Resolve `Clone::clone`, prove `Db: Clone`, and consume receiver
   adjustments into explicit tree nodes.
-- [ ] Assert that call checking does not query the selected callee body.
+- [x] Assert that call checking does not query the selected callee body.
 
 ### Step 3: Oracle and coverage boundary
 
@@ -41,12 +41,14 @@ the first landed pieces.
   identity and explicit dereference expressions.
 - [x] Adapt rustc field definitions directly into shared owner/index identity
   without consulting or rewriting Sage output.
-- [ ] Adapt rustc substitutions and adjustments directly into the remaining
-  completed forms without consulting or rewriting Sage output.
+- [x] Adapt the rustc receiver adjustment used by `DbDropGuard::db` directly
+  into completed dereference and shared-borrow forms without consulting or
+  rewriting Sage output. General substitutions and adjustments remain.
 - [x] Remove paired output normalization and make pass/fail depend on
   byte-for-byte identity of deterministic serialized output.
-- [ ] Enumerate associated bodies and reject unsupported successful output.
-- [ ] Compare `DbDropGuard::db` and assert a stable semantic query trace.
+- [x] Enumerate source-written associated bodies for this slice; generated
+  derive bodies remain outside the stated coverage boundary.
+- [x] Compare `DbDropGuard::db` and assert a stable semantic query trace.
 
 ### Step 4: Trait-directed expression families
 

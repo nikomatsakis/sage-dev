@@ -220,16 +220,7 @@ impl<'a, 'db> Parser<'a, 'db> {
             start: node.start_byte() as u32 - item_start,
             end: node.end_byte() as u32 - item_start,
         };
-        let func = node
-            .child_by_field_name("function")
-            .map(|n| self.parse_expr(stash, n, item_start))
-            .unwrap_or_else(|| {
-                stash.alloc(ExprCst {
-                    kind: ExprCstKind::Missing,
-                    span,
-                })
-            });
-
+        let function_node = node.child_by_field_name("function");
         let mut args = Vec::new();
         if let Some(arg_list) = node.child_by_field_name("arguments") {
             let mut cursor = arg_list.walk();
@@ -240,6 +231,38 @@ impl<'a, 'db> Parser<'a, 'db> {
                 }
             }
         }
+
+        // The currently pinned tree-sitter grammar represents `value.name()`
+        // as a call whose callee is a field expression. Preserve its semantic
+        // distinction from a callable-value call at the CST boundary.
+        if let Some(function) = function_node
+            && function.kind() == "field_expression"
+        {
+            let obj = function
+                .child_by_field_name("value")
+                .map(|value| self.parse_expr(stash, value, item_start))
+                .unwrap_or_else(|| {
+                    stash.alloc(ExprCst {
+                        kind: ExprCstKind::Missing,
+                        span,
+                    })
+                });
+            let method = function
+                .child_by_field_name("field")
+                .map(|field| Name::new(self.db, self.text[field.byte_range()].to_owned()))
+                .unwrap_or_else(|| Name::new(self.db, "_".to_owned()));
+            return ExprCstKind::MethodCall(obj, method, stash.alloc_slice(&args));
+        }
+
+        let func = function_node
+            .map(|n| self.parse_expr(stash, n, item_start))
+            .unwrap_or_else(|| {
+                stash.alloc(ExprCst {
+                    kind: ExprCstKind::Missing,
+                    span,
+                })
+            });
+
         ExprCstKind::Call(func, stash.alloc_slice(&args))
     }
 

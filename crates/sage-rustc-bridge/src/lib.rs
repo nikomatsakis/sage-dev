@@ -2,6 +2,7 @@
 #![feature(proc_macro_internals)]
 #![allow(internal_features)]
 
+extern crate rustc_abi;
 extern crate rustc_driver;
 extern crate rustc_expand;
 extern crate rustc_hir;
@@ -84,17 +85,42 @@ pub fn serve_tcx_requests(tcx: TyCtxt<'_>, req_rx: mpsc::Receiver<TcxRequest>) {
             } => {
                 let _ = reply.send(tcx_db.structured_def_path(crate_num, def_index));
             }
+            TcxRequest::TraitSignature {
+                crate_num,
+                def_index,
+                reply,
+            } => {
+                let _ = reply.send(tcx_db.trait_signature(crate_num, def_index));
+            }
+            TcxRequest::AssociatedItems {
+                crate_num,
+                def_index,
+                reply,
+            } => {
+                let _ = reply.send(tcx_db.associated_items(crate_num, def_index));
+            }
+            TcxRequest::FnSignature {
+                crate_num,
+                def_index,
+                reply,
+            } => {
+                let _ = reply.send(tcx_db.fn_signature(crate_num, def_index));
+            }
+            TcxRequest::AdtIsAlwaysSized {
+                crate_num,
+                def_index,
+                reply,
+            } => {
+                let _ = reply.send(tcx_db.adt_is_always_sized(crate_num, def_index));
+            }
             TcxRequest::ExpandDerive {
                 crate_num,
                 def_index,
                 item_source,
                 reply,
             } => {
-                let _ = reply.send(tcx_db.expand_proc_macro_derive(
-                    crate_num,
-                    def_index,
-                    &item_source,
-                ));
+                let _ =
+                    reply.send(tcx_db.expand_proc_macro_derive(crate_num, def_index, &item_source));
             }
             TcxRequest::ExpandBang {
                 crate_num,
@@ -102,11 +128,8 @@ pub fn serve_tcx_requests(tcx: TyCtxt<'_>, req_rx: mpsc::Receiver<TcxRequest>) {
                 input_tokens,
                 reply,
             } => {
-                let _ = reply.send(tcx_db.expand_proc_macro_bang(
-                    crate_num,
-                    def_index,
-                    &input_tokens,
-                ));
+                let _ =
+                    reply.send(tcx_db.expand_proc_macro_bang(crate_num, def_index, &input_tokens));
             }
             TcxRequest::ExpandAttr {
                 crate_num,

@@ -62,12 +62,28 @@ The query trace is compared as a normalized set or multiset unless order is
 the behavior under test. Scheduler completion order is not part of this
 milestone.
 
-Current implementation checkpoint: `#[derive(Debug, Clone)]` preserves `Db`
-and appends an ordinary parsed `impl Clone for Db` with generated-source
-provenance. The generated impl's hygienic external `Clone` identity resolves
-and is visible through trait-keyed local discovery. The complete external
-`Clone` trait contract needed for proof, method selection, call elaboration,
-and the final exact oracle fixture remain.
+Current implementation checkpoint: the isolated `DbDropGuard::db` fixture
+meets this slice's semantic and dependency criteria. `#[derive(Clone)]`
+preserves `Db` and appends an ordinary parsed `impl Clone for Db` with
+generated-source provenance. The external `Clone` and `Sized` contracts cross
+the typed metadata boundary; lookup discovers `Clone::clone`, proves the fixed
+`Db: Clone` goal, and consumes the dereference and shared borrow into completed
+IR. The source-associated body is emitted on both sides and compares by exact
+serialized identity. A focused trace also proves that checking reads the
+represented trait/item/function metadata but no callee body, and that the
+unchanged second body query is reused.
+
+This does not complete general method resolution or global impl discovery.
+Lookup currently covers current-module traits and candidates from every
+standard prelude, treating only traits common to all supported editions as
+definitely in scope. It accepts only the represented Self-only external method
+generic shape, and treats unenumerated imports, macros, attributes, inherent
+providers, explicit-bound providers, and metadata as uncertainty. External relevant-impl enumeration,
+explicit/glob import enumeration, inherent selection, and unrelated-trait
+invalidation isolation remain later work. The fixture isolates the source
+shape; loading the pinned crate with its declared Cargo target configuration
+and Rust 2018 prelude is still required before this body counts toward
+package-wide conformance.
 
 ## Slice 2: `Parse::next`
 

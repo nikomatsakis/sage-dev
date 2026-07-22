@@ -23,6 +23,8 @@
     - [Macro-generated struct](./design/examples/macro-generated-struct.md)
     - [A direct trait obligation](./design/examples/direct-trait-obligation.md)
     - [A nested trait proof](./design/examples/nested-trait-proof.md)
+    - [An external trait method call](./design/examples/external-trait-method.md)
+    - [An oracle-checked method body](./design/examples/oracle-checked-method.md)
   - [Architecture Decisions](./design/decisions.md)
 - [Research](./design/research/README.md)
   - [tree-sitter-rust Grammar Reference](./design/research/tree-sitter-rust-grammar.md)

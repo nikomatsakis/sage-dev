@@ -83,6 +83,7 @@ impl<'db> LocalTraitSym<'db> {
                 self_param,
                 where_clauses,
                 solver_eligibility,
+                semantics: crate::ty::TraitSemantics::Ordinary,
             },
             generics,
         ))

@@ -109,11 +109,34 @@ dereferences, and coercions. Sage's internal method-candidate or adjustment
 representation is not part of the oracle contract. This per-emitter projection
 into a shared schema is not a license for a later pairwise normalization pass.
 
-Exact textual equality is paired with coverage accounting. Each side reports
-the items and bodies in scope, including associated and macro-generated items.
-A successful comparison rejects unsupported expression placeholders and
-debug-formatted fallback types. Two emitters omitting the same body or
-collapsing the same expression to `?unsupported` is not conformance.
+The destination contract pairs exact textual equality with coverage
+accounting. Each side reports the items and bodies in scope, including
+associated and macro-generated items, and a successful comparison rejects
+unsupported expression placeholders and debug-formatted fallback types. Two
+emitters omitting the same body or collapsing the same expression to
+`?unsupported` is not conformance. Until the general coverage validator lands,
+each vertical slice must add structural checks proving that its in-scope body
+is present, successfully checked, and contains no source-shaped or unsupported
+nodes; textual equality alone is never accepted as evidence of coverage.
+
+Source-written impl methods are part of that item/body scope. Each emitter
+pre-registers them and projects them as function items in the shared flat
+schema. Methods emitted by source bang/procedural macros remain in scope.
+Compiler-generated derive methods are excluded independently by native
+provenance (`ParseSource::Derive` in Sage and derive expansion identity in
+rustc), because the current milestone validates the source-associated body and
+the generated impl evidence, not derive implementation bodies. This exclusion
+is a stated coverage boundary, not a comparison-time rewrite. A separate macro
+impl fixture prevents the rustc adapter from broadening that exclusion to all
+expanded methods.
+
+The `mini_redis/db_drop_guard.rs` fixture exercises the rule directly: rustc
+projects its receiver adjustments into explicit dereference, field, and shared
+borrow nodes; Sage emits its already elaborated body; and the harness decides
+the result using the serialized bytes alone. Before comparison, fixture-specific
+checks independently require that each side contains the source-written body
+and its resolved call/borrow/field/dereference shape; these checks establish
+coverage and do not rewrite either output.
 
 The current `rust-ref` model and emitters cover a smaller source-shaped subset;
 expanding them to this boundary is planned by the [Typed IR Elaboration

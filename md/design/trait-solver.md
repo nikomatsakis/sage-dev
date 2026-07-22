@@ -260,11 +260,17 @@ A uniquely resolved item macro with successfully parsed output remains
 complete. Failed, ambiguous, or depth-limited expansion is omitted from
 definite candidates and makes the source incomplete. The scan still depends on
 the whole expanded module vector, so the required unrelated-trait invalidation
-isolation is explicitly not built yet. External impl signatures, defining
-trait predicates, trait-partitioned
-source dependencies with query-trace coverage, and a self-type index are
-planned in the
+isolation is explicitly not built yet. External trait defining predicates are
+available through the typed `TcxDb` boundary, so eligible local impls of
+represented external traits can be proved. External impl signatures and
+enumeration, trait-partitioned source dependencies, their unrelated-edit
+query-trace coverage, and a self-type index are planned in the
 [Trait Impl Candidate Discovery RFD](../rfds/trait-impl-candidate-discovery/README.md).
+Until external relevant-impl enumeration exists, every ordinary external-trait
+candidate source remains incomplete: the represented local candidates can
+prove `Yes`, but their absence cannot produce a ground `No`. Local traits may
+still use exhaustive local negative reasoning because upstream crates cannot
+implement a downstream trait.
 
 Incremental conformance is verified with query traces. Tests distinguish:
 
@@ -366,8 +372,9 @@ ready-queue ordering and assert an identical `Stashed<QueryResult>`.
 | Order-independent completed-answer reduction | Built |
 | Final hard substitution hints | Built |
 | Trait-keyed local impl discovery with conservative expansion/header completeness | Built, provisional linear scan |
+| External trait signatures and represented local impls | Built |
 | Unrelated-trait invalidation isolation and query-trace proof | Planned |
-| Global trait-keyed impl discovery | Planned (external metadata missing) |
+| Global trait-keyed impl discovery | Planned (external impl metadata missing) |
 | Conservative simplified-self-type index | Planned |
 | Parent-chain inductive cycle cutoff and depth limit | Built, provisional |
 | Groundness-sensitive result causes | Planned |

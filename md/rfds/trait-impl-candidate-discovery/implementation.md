@@ -27,9 +27,11 @@ which has landed together with tests and documentation.
 
 - [ ] Index local impl signatures by trait without reading unrelated trait
   impls during lookup.
-- [ ] Import external trait and impl signatures through `TcxDb`.
-- [ ] Expose local impls of external traits once defining predicates are
-  complete.
+- [x] Import represented external trait signatures through `TcxDb`; external
+  impl signatures and enumeration remain open.
+- [x] Expose local impls of external traits once defining predicates are
+  complete, while retaining source incompleteness until external relevant-impl
+  enumeration exists.
 - [ ] Add simplified-self-type filtering with no false negatives.
 - [ ] Replace the solver's direct `local_impls` scan with the accepted
   candidate API.

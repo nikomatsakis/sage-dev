@@ -21,7 +21,9 @@ use crate::local_syms::intrinsic_types::IntrinsicTypeSym;
 use crate::name::Name;
 use crate::scope::ScopeSymbol;
 use crate::symbol::intrinsic::Intrinsic;
-use crate::symbol::{DefIndex, ModSymbol, SymExt, SymExtKind, Symbol, SymbolData, UseSymbol};
+use crate::symbol::{
+    DefIndex, ModSymbol, SymExt, SymExtKind, Symbol, SymbolData, TraitSymbol, UseSymbol,
+};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub enum MacroKind {
@@ -111,6 +113,10 @@ impl<'db> Resolver<'db> {
         self.scope.module(self.db).into()
     }
 
+    pub(crate) fn local_crate(&self) -> crate::scope::LocalCrateSymbol<'db> {
+        self.scope.local_crate(self.db)
+    }
+
     pub fn resolve_path(
         &mut self,
         stash: &Stash,
@@ -166,6 +172,119 @@ impl<'db> Resolver<'db> {
             .map(Resolution::Sym)
             .collect()
     }
+
+    // ANCHOR: example_traits_in_method_scope
+    /// Enumerate the trait definitions directly available for method lookup.
+    ///
+    /// This first implementation covers traits defined in the current module
+    /// and traits re-exported by the standard prelude. The boolean is false
+    /// when an import or unresolved macro could contribute another trait;
+    /// callers must not interpret that subset as an exhaustive negative.
+    pub(crate) fn traits_in_method_scope(&mut self) -> (Vec<(TraitSymbol<'db>, bool)>, bool) {
+        let mut traits = Vec::new();
+        let mut complete = match self.module() {
+            ModSymbol::Local(module) => {
+                crate::local_syms::mods::module_expansion_complete_for_method_providers(
+                    self.db, module,
+                )
+            }
+            ModSymbol::Ext(_) => false,
+        };
+        let mut push_module_traits =
+            |module: ModSymbol<'db>, definitely_in_scope: bool, audit_completeness: bool| {
+                for symbol in module.expanded_module_items(self.db) {
+                    match symbol.data(self.db) {
+                        SymbolData::TraitSymbol(trait_sym) => {
+                            if let Some((_, definite)) = traits
+                                .iter_mut()
+                                .find(|(candidate, _)| *candidate == trait_sym)
+                            {
+                                *definite |= definitely_in_scope;
+                            } else {
+                                traits.push((trait_sym, definitely_in_scope));
+                            }
+                        }
+                        SymbolData::UseSymbol(_) | SymbolData::MacroInvocationSymbol(_)
+                            if audit_completeness =>
+                        {
+                            complete = false;
+                        }
+                        _ => {}
+                    }
+                }
+            };
+
+        push_module_traits(self.module(), true, true);
+
+        let std_name = Name::new(self.db, "std".to_owned());
+        if let Some(std_module) = lookup_extern_prelude(self.db, std_name, Namespace::Type)
+            .and_then(|symbol| symbol.module(self.db))
+        {
+            let prelude_name = Name::new(self.db, "prelude".to_owned());
+            let prelude_modules: Vec<_> = self
+                .resolve_name_from_module(std_module, prelude_name, Namespace::Type)
+                .into_iter()
+                .filter_map(|symbol| symbol.module(self.db))
+                .collect();
+            if prelude_modules.len() != 1 {
+                complete = false;
+            }
+            let mut prelude_traits: Vec<(TraitSymbol<'db>, usize)> = Vec::new();
+            for edition in ["rust_2015", "rust_2018", "rust_2021", "rust_2024"] {
+                let mut edition_modules = Vec::new();
+                for module in &prelude_modules {
+                    edition_modules.extend(
+                        self.resolve_name_from_module(
+                            *module,
+                            Name::new(self.db, edition.to_owned()),
+                            Namespace::Type,
+                        )
+                        .into_iter()
+                        .filter_map(|edition_module| edition_module.module(self.db)),
+                    );
+                }
+                if edition_modules.len() != 1 {
+                    complete = false;
+                }
+                let mut module_traits = Vec::new();
+                for edition_module in edition_modules {
+                    for symbol in edition_module.expanded_module_items(self.db) {
+                        if let SymbolData::TraitSymbol(trait_sym) = symbol.data(self.db)
+                            && !module_traits.contains(&trait_sym)
+                        {
+                            module_traits.push(trait_sym);
+                        }
+                    }
+                }
+                for trait_sym in module_traits {
+                    if let Some((_, count)) = prelude_traits
+                        .iter_mut()
+                        .find(|(candidate, _)| *candidate == trait_sym)
+                    {
+                        *count += 1;
+                    } else {
+                        prelude_traits.push((trait_sym, 1));
+                    }
+                }
+            }
+            for (trait_sym, edition_count) in prelude_traits {
+                let definitely_in_scope = edition_count == 4;
+                if let Some((_, definite)) = traits
+                    .iter_mut()
+                    .find(|(candidate, _)| *candidate == trait_sym)
+                {
+                    *definite |= definitely_in_scope;
+                } else {
+                    traits.push((trait_sym, definitely_in_scope));
+                }
+            }
+        } else {
+            complete = false;
+        }
+
+        (traits, complete)
+    }
+    // ANCHOR_END: example_traits_in_method_scope
 
     // -----------------------------------------------------------------------
     // Internal

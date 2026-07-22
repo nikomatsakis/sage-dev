@@ -76,9 +76,78 @@ impl<'db> ExprCst<'db> {
                 for a in cx.source_stash[*args].iter() {
                     rargs.push(a.check_with(cx, scope).await);
                 }
-                let args_slice = cx.stash_mut().alloc_slice(&rargs);
-                let ty = cx.fresh_ty_var();
-                (TyExprData::MethodCall(ro, *name, args_slice), ty)
+                let receiver_ty = cx.await_concrete(cx.stash()[ro].ty).await;
+                if let Some(error) = cx.error_in_ty(receiver_ty) {
+                    let ty = cx.alloc_ty(Ty::Error(error));
+                    (TyExprData::Error(error), ty)
+                } else {
+                    match super::method::resolve_trait_method(cx, scope, receiver_ty, *name, span) {
+                        // ANCHOR: example_elaborate_trait_method_call
+                        Ok(method) => {
+                            let checked_receiver = method
+                                .signature
+                                .receiver
+                                .expect("resolved dot-call method must have a receiver");
+                            cx.require_eq(receiver_ty, checked_receiver.owner_self_ty, span)
+                                .record_err(cx);
+                            let receiver = match checked_receiver.form {
+                                crate::ty::MethodReceiver::Value { .. } => ro,
+                                crate::ty::MethodReceiver::Ref { mutability } => {
+                                    let reference_ty = cx.alloc_ty(Ty::Ref(
+                                        receiver_ty,
+                                        mutability,
+                                        crate::ty::Lifetime::Dummy,
+                                    ));
+                                    cx.alloc_expr(
+                                        TyExprData::Ref(ro, mutability),
+                                        reference_ty,
+                                        span,
+                                    )
+                                }
+                            };
+
+                            let params = cx.stash()[method.signature.params].to_vec();
+                            if params.len() != rargs.len() {
+                                cx.record(Diagnostic::error(
+                                    cx.span(span),
+                                    "method argument count does not match its signature",
+                                ));
+                            }
+                            for (index, (param, argument)) in
+                                params.into_iter().zip(rargs.iter().copied()).enumerate()
+                            {
+                                let argument_ty = cx.stash()[argument].ty;
+                                let argument_span = cx.stash()[argument].span;
+                                cx.require_eq(argument_ty, param, argument_span)
+                                    .map_err(|error| {
+                                        error.with_context(ErrorContext::Argument {
+                                            index,
+                                            call_span: span,
+                                        })
+                                    })
+                                    .record_err(cx);
+                            }
+                            cx.submit_parameter_env(
+                                method.signature.parameter_env,
+                                span,
+                                crate::check::infer::obligations::ObligationReason::FunctionCall,
+                            );
+                            let mut call_args = Vec::with_capacity(rargs.len() + 1);
+                            call_args.push(receiver);
+                            call_args.extend(rargs);
+                            let call_args = cx.stash_mut().alloc_slice(&call_args);
+                            (
+                                TyExprData::ResolvedCall(method.target, call_args),
+                                method.signature.ret,
+                            )
+                        }
+                        // ANCHOR_END: example_elaborate_trait_method_call
+                        Err(error) => {
+                            let ty = cx.alloc_ty(Ty::Error(error));
+                            (TyExprData::Error(error), ty)
+                        }
+                    }
+                }
             }
             // ANCHOR: example_check_field_expression
             ExprCstKind::Field(obj, name) => {

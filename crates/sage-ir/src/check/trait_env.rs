@@ -105,20 +105,11 @@ pub(crate) fn trait_ref_eligibility(
     db: &dyn crate::Db,
     trait_ref: TraitRef<'_>,
 ) -> SolverEligibility {
-    match trait_ref.trait_sym {
-        TraitSymbol::Local(local) => {
-            let (stash, cst) = local.cst(db).open_deref();
-            if source_generics_supported(stash, cst.generics).is_eligible()
-                && stash[cst.supertraits].is_empty()
-                && !cst.is_auto
-            {
-                SolverEligibility::Eligible
-            } else {
-                SolverEligibility::Unsupported
-            }
-        }
-        TraitSymbol::Ext(_) => SolverEligibility::Unsupported,
-    }
+    trait_ref
+        .trait_sym
+        .sig(db)
+        .map(|signature| signature.root().value.solver_eligibility)
+        .unwrap_or(SolverEligibility::Unsupported)
 }
 
 pub(crate) fn lower_trait_ref<'db>(

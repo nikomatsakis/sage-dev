@@ -259,6 +259,13 @@ pub struct TraitSignatureData<'db> {
     pub self_param: GenericParam<'db>,
     pub where_clauses: Slice<WherePredicate<'db>>,
     pub solver_eligibility: SolverEligibility,
+    pub semantics: TraitSemantics,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub enum TraitSemantics {
+    Ordinary,
+    Sized,
 }
 
 pub type ImplSignature<'db> = Binder<'db, ImplSignatureData<'db>>;

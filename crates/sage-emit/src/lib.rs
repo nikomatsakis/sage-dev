@@ -2,8 +2,11 @@ use sage_ir::Db;
 use sage_ir::cst::Mutability;
 use sage_ir::cst::expr::{BinaryOp as SageBinaryOp, Literal as SageLiteral};
 use sage_ir::local_syms::enums::{LocalEnumSym, enum_variants};
-use sage_ir::symbol::{EnumSymbol, FnSymbol, ModSymbol, StructSymbol, Symbol, SymbolData};
-use sage_ir::ty::{self, Ty};
+use sage_ir::span::ParseSource;
+use sage_ir::symbol::{
+    EnumSymbol, FnSymbol, ImplSymbol, ModSymbol, StructSymbol, Symbol, SymbolData,
+};
+use sage_ir::ty::{self, TraitItemDef, Ty};
 use sage_ir::tytree::{PathResolution, TyBody, TyExprData, TyFieldInit, TyStmt, TyStmtKind};
 use sage_stash::Stash;
 
@@ -72,6 +75,11 @@ impl<'db> Emitter<'db> {
                 SymbolData::ModSymbol(ModSymbol::Local(local_module)) => {
                     self.pre_register_mod(ModSymbol::Local(local_module));
                 }
+                SymbolData::ImplSymbol(ImplSymbol::Local(local_impl)) => {
+                    for function in self.source_impl_functions(local_impl) {
+                        self.register_local_def(function.into());
+                    }
+                }
                 SymbolData::FnSymbol(FnSymbol::Ext(_))
                 | SymbolData::StructSymbol(StructSymbol::Ext(_))
                 | SymbolData::EnumSymbol(EnumSymbol::Ext(_))
@@ -82,7 +90,7 @@ impl<'db> Emitter<'db> {
                 | SymbolData::TypeAliasSymbol(_)
                 | SymbolData::ConstSymbol(_)
                 | SymbolData::StaticSymbol(_)
-                | SymbolData::ImplSymbol(_)
+                | SymbolData::ImplSymbol(ImplSymbol::Ext(_))
                 | SymbolData::MacroDefSymbol(_)
                 | SymbolData::UseSymbol(_)
                 | SymbolData::IntrinsicTypeSymbol(_)
@@ -190,6 +198,12 @@ impl<'db> Emitter<'db> {
         let mut items = Vec::new();
 
         for &item_sym in expanded {
+            if let SymbolData::ImplSymbol(ImplSymbol::Local(local_impl)) = item_sym.data(self.db) {
+                for function in self.source_impl_functions(local_impl) {
+                    items.push(Item::Fn(self.emit_fn(function.into(), function)));
+                }
+                continue;
+            }
             if let Some(ref_item) = self.emit_item(item_sym) {
                 items.push(ref_item);
             }
@@ -201,6 +215,29 @@ impl<'db> Emitter<'db> {
             items,
         }
     }
+
+    // ANCHOR: example_sage_source_impl_functions
+    fn source_impl_functions(
+        &self,
+        local_impl: sage_ir::local_syms::impls::LocalImplSym<'db>,
+    ) -> Vec<sage_ir::local_syms::fns::LocalFnSym<'db>> {
+        let items = local_impl.items(self.db);
+        items.stash()[items.root().value]
+            .iter()
+            .filter_map(|item| match *item {
+                TraitItemDef::Function(FnSymbol::Local(function))
+                    if !matches!(function.span(self.db).source, ParseSource::Derive(_)) =>
+                {
+                    Some(function)
+                }
+                TraitItemDef::Function(FnSymbol::Local(_))
+                | TraitItemDef::Function(FnSymbol::Ext(_))
+                | TraitItemDef::Type(_)
+                | TraitItemDef::Const(_) => None,
+            })
+            .collect()
+    }
+    // ANCHOR_END: example_sage_source_impl_functions
 
     fn emit_item(&mut self, sym: Symbol<'db>) -> Option<Item<NormalizedDef>> {
         match sym.data(self.db) {
@@ -268,25 +305,41 @@ impl<'db> Emitter<'db> {
         let cst_params = &cst_stash[cst.params];
         let sig_params = &sig_stash[fn_sig.params];
 
-        sig_params
-            .iter()
-            .enumerate()
-            .map(|(i, &ty_ptr)| {
-                let param_name = if i < cst_params.len() {
-                    cst_params[i]
-                        .name
-                        .map(|n| n.text(self.db).to_string())
-                        .unwrap_or_else(|| "_".to_string())
-                } else {
-                    "_".to_string()
-                };
-                let ty = self.emit_ty(sig_stash, sig_stash[ty_ptr]);
-                Param {
-                    name: param_name,
-                    ty,
-                }
-            })
-            .collect()
+        let mut params = Vec::new();
+        if let Some(receiver) = fn_sig.receiver {
+            let owner_ty = self.emit_ty(sig_stash, sig_stash[receiver.owner_self_ty]);
+            let ty = match receiver.form {
+                ty::MethodReceiver::Value { .. } => owner_ty,
+                ty::MethodReceiver::Ref { mutability } => Type::Ref {
+                    mutable: matches!(mutability, Mutability::Mut),
+                    ty: Box::new(owner_ty),
+                },
+            };
+            let name = cst_params
+                .first()
+                .and_then(|parameter| parameter.name)
+                .map(|name| name.text(self.db).to_string())
+                .unwrap_or_else(|| "self".to_string());
+            params.push(Param { name, ty });
+        }
+
+        let cst_offset = usize::from(fn_sig.receiver.is_some());
+        params.extend(sig_params.iter().enumerate().map(|(i, &ty_ptr)| {
+            let param_name = if i + cst_offset < cst_params.len() {
+                cst_params[i + cst_offset]
+                    .name
+                    .map(|n| n.text(self.db).to_string())
+                    .unwrap_or_else(|| "_".to_string())
+            } else {
+                "_".to_string()
+            };
+            let ty = self.emit_ty(sig_stash, sig_stash[ty_ptr]);
+            Param {
+                name: param_name,
+                ty,
+            }
+        }));
+        params
     }
 
     fn emit_struct(
@@ -518,6 +571,17 @@ impl<'db> Emitter<'db> {
                             ty: expr_ty,
                         }
                     }
+                }
+            }
+            TyExprData::ResolvedCall(target, args_slice) => {
+                let args = stash[*args_slice]
+                    .iter()
+                    .map(|&argument| self.emit_expr(stash, &stash[argument], locals))
+                    .collect();
+                Expr::Call {
+                    target: self.normalize_def(target.function.into()),
+                    args,
+                    ty: expr_ty,
                 }
             }
             TyExprData::StructLit(res, fields_slice) => {

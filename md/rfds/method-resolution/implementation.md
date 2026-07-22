@@ -1,7 +1,16 @@
 # Implementation plan and status
 
-No step below is complete yet. Trait-method integration starts only after the fixed-trait
-solver interface and obligation store are available.
+The general RFD remains incomplete. The `DbDropGuard::db` vertical slice has a
+deliberately conservative external trait-method path: current-module and
+all-supported-edition standard-prelude trait enumeration (with only the
+intersection treated as definitely in scope), name-based
+associated-item discovery, a read-only fixed-trait proof, Self-only signature
+instantiation, and explicit shared-reference receiver elaboration. A source
+completeness audit and a local-ADT inherent-provider scan prevent this partial
+tier from selecting when omitted work could take priority or compete. Missing
+metadata, imports, macros, attributes, inherent providers, additional method
+type parameters, and competing possible candidates remain unknown rather than
+being discarded. The checklist below still describes the complete design.
 
 ### Step 1: Method candidate and result types
 
@@ -199,9 +208,10 @@ solver interface and obligation store are available.
   external incompleteness, argument/result mismatch rollback, and exclusion of
   receiver-taking functions until full UFCS.
 
-### Deferred beyond the MVP
+### Deferred beyond the vertical slice
 
-- [ ] External and builtin method providers.
+- [ ] General external and builtin method providers beyond represented trait
+  items and structural `Sized`.
 - [ ] Lifetime/const-generic method candidates.
 - [ ] Complete trait visibility and prelude behavior.
 - [ ] Custom `Deref` and associated type normalization.

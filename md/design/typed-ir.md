@@ -4,7 +4,10 @@ This page defines the destination representation produced by body checking. The
 current `TyExprData` is still partly source-shaped; the transition to this
 representation is tracked by the [Typed IR Elaboration
 RFD](../rfds/typed-ir-elaboration/README.md) and the [Build-Out
-Roadmap](../implementation/roadmap.md).
+Roadmap](../implementation/roadmap.md). The first completed path is the
+`DbDropGuard::db` slice: its field identity, reference dereference, shared
+`Dummy` borrow, static trait dispatch, and selected `Clone::clone` definition
+are all explicit. Other expression families remain at the statuses below.
 
 ## Role
 
@@ -95,12 +98,12 @@ represented by the implementation.
 | field access | Resolved field definition, not a field name |
 | closure | Typed nested body, explicit parameters and captures (planned) |
 | async block or async function body | Typed nested coroutine body; no state-machine lowering (planned) |
-| `x.method(a)` | Resolved call with receiver operations materialized (planned) |
+| `x.method(a)` | Resolved call with receiver operations materialized (built for the conservative external trait-method slice; general lookup planned) |
 | overloaded operator | Resolved trait call (planned) |
 | primitive operator | Typed intrinsic operation |
 | `x[i]` | Resolved `Index` or `IndexMut` call (planned) |
 | callable `f(a)` | Direct, pointer, dynamic, or `Fn*` call as resolved (planned) |
-| implicit coercion | Explicit coercion, borrow, dereference, or unsizing node (planned) |
+| implicit coercion | Explicit coercion, borrow, dereference, or unsizing node (shared borrow and built-in dereference represented; general coercions planned) |
 | `if let`, `while let`, and `let` chains | Structured match/control-flow form (planned) |
 | `for` | `IntoIterator` call plus structured loop and match (planned) |
 | `expr?` | `Try::branch`, `ControlFlow` match, and `FromResidual` call (planned) |

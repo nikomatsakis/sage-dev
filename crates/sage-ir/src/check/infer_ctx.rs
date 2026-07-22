@@ -28,6 +28,13 @@ use super::infer::version::{Universe, Version};
 
 struct MainTaskWake(AtomicBool);
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum TraitGoalCertainty {
+    Yes,
+    Maybe,
+    No,
+}
+
 impl Wake for MainTaskWake {
     fn wake(self: Arc<Self>) {
         self.0.store(true, Ordering::Release);
@@ -244,6 +251,48 @@ impl<'check, 'db> InferCtx<'check, 'db> {
 
     pub fn has_errors(&self) -> bool {
         !self.diagnostics.borrow().is_empty()
+    }
+
+    /// Find an error embedded anywhere in a type so later checking does not
+    /// emit diagnostics derived from an already-reported failure.
+    pub(crate) fn error_in_ty(&self, ty: Ptr<Ty<'db>>) -> Option<ErrorReported> {
+        fn visit<'db>(
+            stash: &Stash,
+            egraph: &VersionedEGraph<'db>,
+            ty: Ptr<Ty<'db>>,
+            visited: &mut FxHashSet<Ptr<Ty<'db>>>,
+        ) -> Option<ErrorReported> {
+            let ty = egraph.find(Version::ROOT, ty);
+            if !visited.insert(ty) {
+                return None;
+            }
+            match stash[ty] {
+                Ty::Error(error) => Some(error),
+                Ty::Adt(_, arguments) | Ty::Tuple(arguments) => stash[arguments]
+                    .iter()
+                    .find_map(|argument| visit(stash, egraph, *argument, visited)),
+                Ty::Ref(inner, _, _) | Ty::Slice(inner) | Ty::Array(inner, _) => {
+                    visit(stash, egraph, inner, visited)
+                }
+                Ty::FnPtr(parameters, return_ty) => stash[parameters]
+                    .iter()
+                    .find_map(|parameter| visit(stash, egraph, *parameter, visited))
+                    .or_else(|| visit(stash, egraph, return_ty, visited)),
+                Ty::Bool
+                | Ty::Char
+                | Ty::Int(_)
+                | Ty::Uint(_)
+                | Ty::Float(_)
+                | Ty::Str
+                | Ty::Param(_)
+                | Ty::InferVar(_)
+                | Ty::Never => None,
+            }
+        }
+
+        let stash = self.target_stash.borrow();
+        let egraph = self.egraph.borrow();
+        visit(&stash, &egraph, ty, &mut FxHashSet::default())
     }
 
     fn type_error_to_diagnostic(&self, err: &TypeError<'db>) -> Option<Diagnostic<'db>> {
@@ -755,12 +804,19 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         *self.assumptions_complete.borrow_mut() = assumptions_complete;
     }
 
+    /// Whether the current body may have trait-method providers introduced by
+    /// its parameter environment that the first method-lookup slice does not
+    /// enumerate by name.
+    pub(crate) fn has_unhandled_method_bound_providers(&self) -> bool {
+        !*self.assumptions_complete.borrow()
+            || !self.target_stash.borrow()[*self.solver_assumptions.borrow()].is_empty()
+    }
+
     fn elaborate_solver_predicates(
         &self,
         environment: CheckedParameterEnv<'db>,
     ) -> (Vec<crate::ty::WherePredicate<'db>>, bool) {
         use super::solve::IrCopier;
-        use crate::symbol::TraitSymbol;
         use crate::ty::BinderExt;
 
         let mut complete = environment.solver_eligibility.is_eligible();
@@ -780,11 +836,11 @@ impl<'check, 'db> InferCtx<'check, 'db> {
             }
             output.push(predicate);
 
-            let TraitSymbol::Local(local_trait) = predicate.trait_ref.trait_sym else {
+            let trait_sym = predicate.trait_ref.trait_sym;
+            let Some(signature) = trait_sym.sig(self.db) else {
                 complete = false;
                 continue;
             };
-            let signature = local_trait.sig(self.db);
             let (source, binder) = signature.open();
             if !binder.value.solver_eligibility.is_eligible() {
                 complete = false;
@@ -795,9 +851,9 @@ impl<'check, 'db> InferCtx<'check, 'db> {
             mapping.insert(binder.value.self_param, predicate.self_ty);
             for (generic, argument) in signature
                 .iter_symbols()
-                .skip(1)
                 .filter(|generic| {
-                    generic.kind(self.db) == crate::generic_param::GenericParamKind::Type
+                    *generic != binder.value.self_param
+                        && generic.kind(self.db) == crate::generic_param::GenericParamKind::Type
                 })
                 .zip(self.target_stash.borrow()[predicate.trait_ref.args].to_vec())
             {
@@ -864,6 +920,51 @@ impl<'check, 'db> InferCtx<'check, 'db> {
             ObligationProvenance { span, reason },
         );
     }
+
+    // ANCHOR: example_classify_fixed_trait_goal
+    /// Evaluate a fixed-trait goal without asking the solver to discover a
+    /// trait identity. This read-only classification is used while comparing
+    /// method candidates; the first vertical slice accepts only answers with
+    /// no caller-inference substitution and a trivial residual.
+    pub(crate) fn classify_trait_goal(
+        &self,
+        self_ty: Ptr<Ty<'db>>,
+        trait_ref: crate::ty::TraitRef<'db>,
+    ) -> TraitGoalCertainty {
+        use super::solve::{Atom, Goal, GoalQuery, QueryResultData};
+
+        let local_crate = self
+            .local_crate
+            .expect("trait goals require a local crate context");
+        let assumptions = *self.solver_assumptions.borrow();
+        let assumptions_complete = *self.assumptions_complete.borrow();
+        let (canonical, _) = self.canonicalize_obligation_goal(
+            local_crate,
+            assumptions_complete,
+            assumptions,
+            Goal::Atom(Atom::TraitImpl { self_ty, trait_ref }),
+        );
+        if canonical
+            .mapping
+            .inputs
+            .iter()
+            .any(|input| matches!(input, super::solve::CallerCanonicalVar::Existential(_)))
+        {
+            return TraitGoalCertainty::Maybe;
+        }
+
+        let response = GoalQuery::new(self.db, canonical.data).prove(self.db);
+        match response.root().value {
+            QueryResultData::Yes { modulo, .. } if modulo.is_trivially_true(response.stash()) => {
+                TraitGoalCertainty::Yes
+            }
+            QueryResultData::Yes { .. } | QueryResultData::Maybe { .. } => {
+                TraitGoalCertainty::Maybe
+            }
+            QueryResultData::No => TraitGoalCertainty::No,
+        }
+    }
+    // ANCHOR_END: example_classify_fixed_trait_goal
 
     fn canonicalize_obligation_goal(
         &self,

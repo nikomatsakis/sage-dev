@@ -176,8 +176,11 @@ Tests:
   do not implement proof search or method selection in this RFD.
 - [x] Expose to the MVP solver only impls whose trait signature and defining
   predicates are available and whose impl and trait eligibility markers are
-  both `Eligible`. Keep local impls of external traits out until the external
-  metadata boundary supplies those predicates.
+  both `Eligible`. Represented local impls of external traits use the same gate
+  after the external metadata boundary supplies those predicates.
+- [x] Import represented external trait signatures, associated-item lists, and
+  function signatures as owned `TcxDb` values and lower them through tracked
+  queries without reading external bodies.
 - [x] Treat a relevant `Unsupported` signature as an incomplete candidate
   source, never as an eligible signature with an empty predicate set.
 - [ ] Give method resolution the same eligibility gate for type-only inherent

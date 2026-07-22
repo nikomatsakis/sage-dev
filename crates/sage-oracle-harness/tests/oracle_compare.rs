@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use libtest_mimic::{Arguments, Failed, Trial};
+use rust_ref::{Crate, Expr, Item, Module, NormalizedDef};
 use sage_oracle_harness::{
     Fixture, assert_crates_eq, check_annotations, combined, discover_fixtures, fixtures_dir,
 };
@@ -75,6 +76,60 @@ fn repro_commands(fixture: &Fixture) -> String {
     }
 }
 
+fn assert_db_drop_guard_coverage(side: &str, krate: &Crate<NormalizedDef>) -> Result<(), Failed> {
+    fn find_db_body(module: &Module<NormalizedDef>) -> Option<&Expr<NormalizedDef>> {
+        module.items.iter().find_map(|item| match item {
+            Item::Fn(function) if function.name == "db" => function.body.as_ref(),
+            Item::Mod(module) => find_db_body(module),
+            Item::Fn(_) | Item::Struct(_) | Item::Enum(_) => None,
+        })
+    }
+
+    let Some(Expr::Block {
+        tail: Some(tail), ..
+    }) = find_db_body(&krate.root)
+    else {
+        return Err(format!("{side} omitted the source-written DbDropGuard::db body").into());
+    };
+    let Expr::Call { target, args, .. } = tail.as_ref() else {
+        return Err(format!("{side} did not emit DbDropGuard::db as a resolved call").into());
+    };
+    let NormalizedDef::External(path) = target else {
+        return Err(format!("{side} did not emit an external Clone::clone target").into());
+    };
+    let target_names: Vec<_> = path
+        .segments
+        .iter()
+        .map(|segment| segment.name.as_str())
+        .collect();
+    if path.krate != "core" || target_names != ["clone", "Clone", "clone"] {
+        return Err(format!("{side} emitted the wrong Clone::clone target: {path:?}").into());
+    }
+    let [
+        Expr::Ref {
+            mutable: false,
+            expr,
+            ..
+        },
+    ] = args.as_slice()
+    else {
+        return Err(format!("{side} omitted the explicit shared receiver borrow").into());
+    };
+    let Expr::Field { expr, field, .. } = expr.as_ref() else {
+        return Err(format!("{side} omitted the resolved db field access").into());
+    };
+    if field.index != 0 {
+        return Err(format!("{side} selected the wrong DbDropGuard field").into());
+    }
+    let Expr::Deref { expr, .. } = expr.as_ref() else {
+        return Err(format!("{side} omitted the explicit self dereference").into());
+    };
+    if !matches!(expr.as_ref(), Expr::Local { name, index: 0 } if name == "self") {
+        return Err(format!("{side} emitted the wrong method receiver").into());
+    }
+    Ok(())
+}
+
 fn run_fixture(fixture: &Fixture, out_dir: &Path) -> Result<(), Failed> {
     let source = fixture.source_text();
     let parsed = sage_oracle_harness::annotations::parse_annotations(&source);
@@ -94,8 +149,13 @@ fn run_fixture(fixture: &Fixture, out_dir: &Path) -> Result<(), Failed> {
     let (oracle_path, sage_path) = output_paths(fixture, out_dir);
 
     let (oracle_result, sage) = combined::run_combined(fixture);
-    let oracle = oracle_result
-        .unwrap_or_else(|e| panic!("oracle failed on {}: {}", fixture.name(), e));
+    let oracle =
+        oracle_result.unwrap_or_else(|e| panic!("oracle failed on {}: {}", fixture.name(), e));
+
+    if fixture.name() == "mini_redis/db_drop_guard.rs" {
+        assert_db_drop_guard_coverage("oracle", &oracle)?;
+        assert_db_drop_guard_coverage("sage", &sage)?;
+    }
 
     fs::write(&oracle_path, serde_json::to_string_pretty(&oracle).unwrap()).unwrap();
     fs::write(&sage_path, serde_json::to_string_pretty(&sage).unwrap()).unwrap();

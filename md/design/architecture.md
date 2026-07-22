@@ -135,7 +135,9 @@ single-keyed body query rather than becoming a public incremental boundary.
 ## Trait-system and solver flow
 
 The positive, inductive, type-only solver and its body-obligation integration
-exist. Method resolution, external impl discovery, normalization, higher-ranked
+exist. A conservative trait-method path discovers represented external
+trait items, proves one fixed-trait goal, and elaborates a selected call. Complete
+method resolution, external impl discovery, normalization, higher-ranked
 reasoning, and the other explicitly deferred extensions remain planned; their
 status is tracked in the [Build-Out Roadmap](../implementation/roadmap.md).
 The destination-level soundness, completeness, candidate-discovery, progress,
@@ -168,6 +170,22 @@ trait-partitioned source dependencies and their query-trace test remain required
 Method-name discovery remains in method resolution and submits one fixed-trait
 goal per candidate trait.
 
+External trait signatures, associated-item lists, function signatures, and
+structural `Sized` facts cross `TcxDb` as owned raw metadata and are lowered by
+separate tracked queries. Name discovery reads associated-item metadata first;
+it does not load every trait signature speculatively. The selected candidate
+then reads only its function and defining-trait signatures. The current lookup
+scope is deliberately narrow: traits in the current module plus candidates
+from every supported standard-prelude edition. Until the crate edition is
+represented, only traits common to every prelude are definitely in scope;
+an applicable edition-specific trait makes lookup uncertain. A completeness audit prevents selection
+when ordinary imports, unresolved/failed macros, active attributes, or a
+matching unhandled inherent provider could contribute another candidate.
+Complete import/glob enumeration, visibility, inherent-method selection,
+explicit-bound provider discovery, edition-specific prelude selection, and generic-method behavior remains in the
+Method Resolution RFD. Missing or unrepresented metadata contributes
+uncertainty rather than a false `NotFound`.
+
 `LocalTraitSym::items` and `LocalImplSym::items` lazily mint stable function,
 type, and const symbols linked to their owner. Associated function signatures
 open the owner binder and reuse its generic identities; their independent body
@@ -181,7 +199,9 @@ well-formedness obligations. Ordinary calls, selected methods, and ADT use
 instantiate their callee/type predicate environments into the body obligation
 store rather than dropping declared bounds after generic substitution.
 Free-function uses and struct/enum construction or explicit type use are wired
-today. Selected-method submission remains owned by the Method Resolution RFD.
+today. The represented external trait-method slice submits the selected
+method's parameter environment. General selected-method submission remains
+owned by the Method Resolution RFD.
 
 Canonicalization preserves the logical role and scope of every input variable:
 

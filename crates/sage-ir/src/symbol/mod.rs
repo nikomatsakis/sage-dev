@@ -380,6 +380,39 @@ impl<'db> EnumSymbol<'db> {
     }
 }
 
+impl<'db> TraitSymbol<'db> {
+    pub fn sig(
+        self,
+        db: &'db dyn Db,
+    ) -> Option<sage_stash::Stashed<crate::ty::TraitSignature<'db>>> {
+        match self {
+            TraitSymbol::Local(local) => Some(local.sig(db)),
+            TraitSymbol::Ext(external) => {
+                crate::external_syms::external_trait_signature(db, external)
+            }
+        }
+    }
+
+    pub fn items(self, db: &'db dyn Db) -> Option<sage_stash::Stashed<crate::ty::TraitItems<'db>>> {
+        match self {
+            TraitSymbol::Local(local) => Some(local.items(db)),
+            TraitSymbol::Ext(external) => crate::external_syms::external_trait_items(db, external),
+        }
+    }
+}
+
+impl<'db> FnSymbol<'db> {
+    pub fn sig(
+        self,
+        db: &'db dyn Db,
+    ) -> Option<sage_stash::Stashed<crate::ty::Binder<'db, crate::ty::FnSig<'db>>>> {
+        match self {
+            FnSymbol::Local(local) => Some(local.sig(db)),
+            FnSymbol::Ext(external) => crate::external_syms::external_fn_signature(db, external),
+        }
+    }
+}
+
 pub struct MacroExpandError;
 
 impl<'db> MacroDefSymbol<'db> {

@@ -264,8 +264,13 @@ contributing an incomplete set of facts.
 
 ### Symbol queries
 
-Queries are keyed by the symbol that owns the checked data. Local queries are the MVP;
-external symbols will use the `TcxDb` metadata boundary later.
+Queries are keyed by the symbol that owns the checked data. Local symbols own
+their tracked lowering directly. Represented external trait and function
+signatures and associated-item lists cross the `TcxDb` metadata boundary as
+owned raw values, then enter the same checked representation through tracked
+lowering queries. External function metadata is eligible only for safe,
+non-variadic Rust-ABI signatures; other calling contracts remain incomplete
+until the checked IR represents their requirements.
 
 ```rust
 impl<'db> LocalTraitSym<'db> {
@@ -350,14 +355,15 @@ consumer which encounters a potentially relevant unsupported trait or impl
 marks its candidate source incomplete (and ultimately reports the earlier
 unsupported-feature diagnostic); it must not expose an unconditional clause or
 conclude `NotFound`/`No` from the remaining subset. Local impls of external
-traits are likewise ineligible until metadata supplies the external trait's
-complete defining predicates.
+traits become eligible only when metadata supplies the external trait's
+complete represented defining predicates. That path is built for the type-only
+contracts used by the first `Clone` slice; unavailable or unsupported external
+contracts remain incomplete.
 
 ## Deferred work
 
-- External trait and impl signatures and per-crate enumeration through `TcxDb`.
-- Exposing local impls of external traits to the solver; this requires the
-  external trait's checked defining predicates rather than assuming none.
+- External impl signatures and per-crate relevant-impl enumeration through
+  `TcxDb`; represented external trait signatures and items are available.
 - Meaningful lifetime/outlives semantics and const predicates.
 - Solver and method-candidate exposure for const-generic trait and impl
   headers; lifetime-generic headers already participate with `Dummy`.

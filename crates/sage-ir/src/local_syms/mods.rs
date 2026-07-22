@@ -507,6 +507,78 @@ pub(crate) fn module_expansion_complete_for_trait<'db>(
     true
 }
 
+/// Whether represented expansion is known not to hide a method provider.
+///
+/// Successful bang-macro output is already part of expanded item discovery.
+/// Compiler built-in derives cannot add traits or inherent impls, so they do
+/// not hide a provider even when Sage does not represent that derive's output.
+/// Proc-macro derives and active attributes remain incomplete because they may
+/// emit arbitrary items.
+pub(crate) fn module_expansion_complete_for_method_providers<'db>(
+    db: &'db dyn Db,
+    module: LocalModSym<'db>,
+) -> bool {
+    for item in module.unexpanded_items(db) {
+        if item_has_unexpanded_active_attribute(db, *item) {
+            return false;
+        }
+        match item {
+            LocalModItemSym::MacroInvocation(invocation)
+                if !bang_macro_expansion_complete(db, module, *invocation, 0) =>
+            {
+                return false;
+            }
+            LocalModItemSym::Error(_) => return false,
+            LocalModItemSym::MacroInvocation(_)
+            | LocalModItemSym::Function(_)
+            | LocalModItemSym::Struct(_)
+            | LocalModItemSym::Enum(_)
+            | LocalModItemSym::Trait(_)
+            | LocalModItemSym::Impl(_)
+            | LocalModItemSym::TypeAlias(_)
+            | LocalModItemSym::Const(_)
+            | LocalModItemSym::Static(_)
+            | LocalModItemSym::Mod(_)
+            | LocalModItemSym::Use(_)
+            | LocalModItemSym::MacroDef(_) => {}
+        }
+    }
+
+    for &symbol in local_expanded_module_items(db, module) {
+        let Some(item) = symbol_local_item(db, symbol) else {
+            continue;
+        };
+        if item_has_unexpanded_active_attribute(db, item) {
+            return false;
+        }
+        if let LocalModItemSym::Mod(child) = item
+            && !module_expansion_complete_for_method_providers(db, child)
+        {
+            return false;
+        }
+        if !matches!(item, LocalModItemSym::Struct(_) | LocalModItemSym::Enum(_)) {
+            continue;
+        }
+        let Some((attrs_stash, attrs)) = item.attrs(db) else {
+            continue;
+        };
+        for attr in attrs {
+            let crate::cst::paths::Path::Relative(first, rest) = attrs_stash[attr.path] else {
+                continue;
+            };
+            if !attrs_stash[rest].is_empty() || first.name.text(db) != "derive" {
+                continue;
+            }
+            for derive_name in parse_derive_names(&attrs_stash[attr.args]) {
+                if resolve_builtin_derive(db, module, derive_name).is_none() {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
 fn derive_complete_for_trait<'db>(
     db: &'db dyn Db,
     module: LocalModSym<'db>,

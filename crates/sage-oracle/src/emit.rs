@@ -3,6 +3,7 @@ use rustc_hir as hir;
 use rustc_hir::def::{DefKind as HirDefKind, Res};
 use rustc_middle::ty::{self, TyCtxt};
 use rustc_span::def_id::{CRATE_DEF_ID, DefId, LocalDefId, LocalModDefId};
+use rustc_span::hygiene::{ExpnKind, MacroKind};
 
 use rust_ref::*;
 
@@ -104,6 +105,13 @@ impl<'tcx> Emitter<'tcx> {
                     }
                 }
                 hir::ItemKind::Mod(..) => self.pre_register_module(item.owner_id.def_id),
+                hir::ItemKind::Impl(impl_block) => {
+                    for impl_item in self.source_impl_functions(impl_block) {
+                        if matches!(impl_item.kind, hir::ImplItemKind::Fn(..)) {
+                            self.register_local_def(impl_item.owner_id.to_def_id());
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -135,6 +143,37 @@ impl<'tcx> Emitter<'tcx> {
                 ref other => {
                     panic!("unsupported field-base adjustment in oracle: {other:?}")
                 }
+            }
+        }
+        emitted
+    }
+
+    fn emit_method_receiver_adjustments(
+        &self,
+        expr: &'tcx hir::Expr<'tcx>,
+        typeck: &'tcx ty::TypeckResults<'tcx>,
+        locals: &mut LocalMap,
+    ) -> Expr<NormalizedDef> {
+        let mut emitted = self.emit_expr_with_locals(expr, typeck, locals);
+        for adjustment in typeck.expr_adjustments(expr) {
+            match adjustment.kind {
+                ty::adjustment::Adjust::Deref(ty::adjustment::DerefAdjustKind::Builtin) => {
+                    emitted = Expr::Deref {
+                        expr: Box::new(emitted),
+                        ty: self.emit_type(adjustment.target),
+                    };
+                }
+                ty::adjustment::Adjust::Borrow(ty::adjustment::AutoBorrow::Ref(mutability)) => {
+                    emitted = Expr::Ref {
+                        mutable: matches!(
+                            mutability,
+                            ty::adjustment::AutoBorrowMutability::Mut { .. }
+                        ),
+                        expr: Box::new(emitted),
+                        ty: self.emit_type(adjustment.target),
+                    };
+                }
+                ref other => panic!("unsupported method receiver adjustment in oracle: {other:?}"),
             }
         }
         emitted
@@ -195,6 +234,18 @@ impl<'tcx> Emitter<'tcx> {
 
         for item_id in hir_mod.free_items() {
             let item = self.tcx.hir_item(item_id);
+            if let hir::ItemKind::Impl(impl_block) = item.kind {
+                for impl_item in self.source_impl_functions(&impl_block) {
+                    if let hir::ImplItemKind::Fn(sig, body) = impl_item.kind {
+                        items.push(Item::Fn(self.emit_fn_item(
+                            impl_item.owner_id.def_id,
+                            &sig,
+                            body,
+                        )));
+                    }
+                }
+                continue;
+            }
             if let Some(ref_item) = self.emit_item(item) {
                 items.push(ref_item);
             }
@@ -206,6 +257,25 @@ impl<'tcx> Emitter<'tcx> {
             items,
         }
     }
+
+    // ANCHOR: example_oracle_source_impl_functions
+    fn source_impl_functions(
+        &self,
+        impl_block: &hir::Impl<'tcx>,
+    ) -> Vec<&'tcx hir::ImplItem<'tcx>> {
+        impl_block
+            .items
+            .iter()
+            .map(|item| self.tcx.hir_impl_item(*item))
+            .filter(|item| {
+                !matches!(
+                    item.span.ctxt().outer_expn_data().kind,
+                    ExpnKind::Macro(MacroKind::Derive, _)
+                )
+            })
+            .collect()
+    }
+    // ANCHOR_END: example_oracle_source_impl_functions
 
     fn emit_item(&mut self, item: &'tcx hir::Item<'tcx>) -> Option<Item<NormalizedDef>> {
         match &item.kind {
@@ -452,6 +522,22 @@ impl<'tcx> Emitter<'tcx> {
                         krate: "?".to_string(),
                         segments: vec![],
                     }),
+                    args: emitted_args,
+                    ty: self.emit_type(expr_ty),
+                }
+            }
+            hir::ExprKind::MethodCall(_, receiver, args, _) => {
+                let target = typeck
+                    .type_dependent_def_id(expr.hir_id)
+                    .expect("type-checked method call must name its selected function");
+                let mut emitted_args = Vec::with_capacity(args.len() + 1);
+                emitted_args.push(self.emit_method_receiver_adjustments(receiver, typeck, locals));
+                emitted_args.extend(
+                    args.iter()
+                        .map(|argument| self.emit_expr_with_locals(argument, typeck, locals)),
+                );
+                Expr::Call {
+                    target: self.normalize_def(target),
                     args: emitted_args,
                     ty: self.emit_type(expr_ty),
                 }

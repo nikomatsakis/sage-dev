@@ -219,10 +219,34 @@ mod derive_expansion_tests {
     use sage_ir::symbol::{CrateNum, DefIndex, ImplSymbol, StructSymbol, SymExtKind, SymbolData};
     use sage_ir::tcx::{ExternalDefPath, RawChild, TcxDb};
 
-    struct BuiltinDeriveTcx;
+    #[derive(Clone, Default)]
+    struct BuiltinDeriveTcx {
+        calls: Option<std::sync::Arc<std::sync::Mutex<Vec<String>>>>,
+        edition_only_clone_trait: bool,
+    }
+
+    impl BuiltinDeriveTcx {
+        fn tracing() -> (Self, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+            let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            (
+                Self {
+                    calls: Some(calls.clone()),
+                    edition_only_clone_trait: false,
+                },
+                calls,
+            )
+        }
+
+        fn record(&self, call: String) {
+            if let Some(calls) = &self.calls {
+                calls.lock().unwrap().push(call);
+            }
+        }
+    }
 
     impl TcxDb for BuiltinDeriveTcx {
         fn extern_crate(&self, name: &str) -> Option<CrateNum> {
+            self.record(format!("extern_crate({name})"));
             match name {
                 "std" => Some(CrateNum(1)),
                 "core" => Some(CrateNum(2)),
@@ -231,6 +255,7 @@ mod derive_expansion_tests {
         }
 
         fn module_children(&self, crate_num: CrateNum, def_index: DefIndex) -> Vec<RawChild> {
+            self.record(format!("module_children({},{})", crate_num.0, def_index.0));
             let child = |name: &str,
                          crate_num: u32,
                          def_index: u32,
@@ -244,65 +269,100 @@ mod derive_expansion_tests {
             };
             match (crate_num.0, def_index.0) {
                 (1, 0) => vec![child("prelude", 1, 1, Namespace::Type, SymExtKind::Mod)],
-                (1, 1) => vec![child("rust_2024", 1, 2, Namespace::Type, SymExtKind::Mod)],
-                (1, 2) => vec![
-                    child("Clone", 2, 2, Namespace::Type, SymExtKind::Trait),
-                    child("Debug", 2, 3, Namespace::Type, SymExtKind::Trait),
-                    child(
-                        "Clone",
-                        1,
-                        3,
-                        Namespace::Macro(MacroKind::Derive),
-                        SymExtKind::MacroDef,
-                    ),
-                    // One DefId can be exported through more than one macro
-                    // sub-namespace. The resolution edge, not SymExt identity,
-                    // selects the requested namespace.
-                    child(
-                        "Clone",
-                        1,
-                        3,
-                        Namespace::Macro(MacroKind::Bang),
-                        SymExtKind::MacroDef,
-                    ),
-                    child(
-                        "Debug",
-                        1,
-                        4,
-                        Namespace::Macro(MacroKind::Derive),
-                        SymExtKind::MacroDef,
-                    ),
+                (1, 1) => vec![
+                    child("rust_2015", 1, 8, Namespace::Type, SymExtKind::Mod),
+                    child("rust_2018", 1, 9, Namespace::Type, SymExtKind::Mod),
+                    child("rust_2021", 1, 10, Namespace::Type, SymExtKind::Mod),
+                    child("rust_2024", 1, 2, Namespace::Type, SymExtKind::Mod),
                 ],
+                (1, edition @ (2 | 8 | 9 | 10)) => {
+                    let mut children = vec![
+                        child("Clone", 2, 2, Namespace::Type, SymExtKind::Trait),
+                        child("Debug", 2, 3, Namespace::Type, SymExtKind::Trait),
+                        child(
+                            "Clone",
+                            1,
+                            3,
+                            Namespace::Macro(MacroKind::Derive),
+                            SymExtKind::MacroDef,
+                        ),
+                        // One DefId can be exported through more than one macro
+                        // sub-namespace. The resolution edge, not SymExt identity,
+                        // selects the requested namespace.
+                        child(
+                            "Clone",
+                            1,
+                            3,
+                            Namespace::Macro(MacroKind::Bang),
+                            SymExtKind::MacroDef,
+                        ),
+                        child(
+                            "Debug",
+                            1,
+                            4,
+                            Namespace::Macro(MacroKind::Derive),
+                            SymExtKind::MacroDef,
+                        ),
+                    ];
+                    if self.edition_only_clone_trait && edition == 2 {
+                        children.push(child(
+                            "EditionClone",
+                            2,
+                            11,
+                            Namespace::Type,
+                            SymExtKind::Trait,
+                        ));
+                    }
+                    children
+                }
                 (2, 0) => vec![
                     child("clone", 2, 1, Namespace::Type, SymExtKind::Mod),
                     child("fmt", 2, 4, Namespace::Type, SymExtKind::Mod),
+                    child("marker", 2, 6, Namespace::Type, SymExtKind::Mod),
                 ],
                 (2, 1) => vec![child("Clone", 2, 2, Namespace::Type, SymExtKind::Trait)],
                 (2, 4) => vec![child("Debug", 2, 3, Namespace::Type, SymExtKind::Trait)],
+                (2, 6) => vec![child("Sized", 2, 5, Namespace::Type, SymExtKind::Trait)],
                 _ => Vec::new(),
             }
         }
 
         fn item_name(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<String> {
+            self.record(format!("item_name({},{})", crate_num.0, def_index.0));
             match (crate_num.0, def_index.0) {
                 (1, 0) => Some("std"),
                 (1, 1) => Some("prelude"),
                 (1, 2) => Some("rust_2024"),
+                (1, 8) => Some("rust_2015"),
+                (1, 9) => Some("rust_2018"),
+                (1, 10) => Some("rust_2021"),
                 (1, 3) | (2, 2) => Some("Clone"),
                 (1, 4) | (2, 3) => Some("Debug"),
+                (2, 5) => Some("Sized"),
+                (2, 7 | 12) => Some("clone"),
+                (2, 11) => Some("EditionClone"),
                 (2, 0) => Some("core"),
                 (2, 1) => Some("clone"),
                 (2, 4) => Some("fmt"),
+                (2, 6) => Some("marker"),
                 _ => None,
             }
             .map(str::to_owned)
         }
 
         fn is_module(&self, crate_num: CrateNum, def_index: DefIndex) -> bool {
-            matches!((crate_num.0, def_index.0), (1, 0 | 1 | 2) | (2, 0 | 1 | 4))
+            self.record(format!("is_module({},{})", crate_num.0, def_index.0));
+            matches!(
+                (crate_num.0, def_index.0),
+                (1, 0 | 1 | 2 | 8 | 9 | 10) | (2, 0 | 1 | 4 | 6)
+            )
         }
 
         fn is_builtin_derive(&self, crate_num: CrateNum, def_index: DefIndex) -> bool {
+            self.record(format!(
+                "is_builtin_derive({},{})",
+                crate_num.0, def_index.0
+            ));
             matches!((crate_num.0, def_index.0), (1, 3 | 4))
         }
 
@@ -316,6 +376,137 @@ mod derive_expansion_tests {
             _def_index: DefIndex,
         ) -> Option<ExternalDefPath> {
             None
+        }
+
+        fn trait_signature(
+            &self,
+            crate_num: CrateNum,
+            def_index: DefIndex,
+        ) -> Option<sage_ir::tcx::RawTraitSignature> {
+            self.record(format!("trait_signature({},{})", crate_num.0, def_index.0));
+            use sage_ir::tcx::{
+                RawDefId, RawGenericParam, RawGenericParamKind, RawTraitPredicate,
+                RawTraitSemantics, RawTraitSignature, RawTy,
+            };
+
+            let self_param = RawGenericParam {
+                index: 0,
+                name: Some("Self".to_owned()),
+                kind: RawGenericParamKind::Type,
+            };
+            match (crate_num.0, def_index.0) {
+                (2, 2) => Some(RawTraitSignature {
+                    generics: vec![self_param],
+                    self_param_index: 0,
+                    predicates: vec![RawTraitPredicate {
+                        self_ty: RawTy::Param(0),
+                        trait_def: RawDefId {
+                            crate_num: CrateNum(2),
+                            def_index: DefIndex(5),
+                            kind: SymExtKind::Trait,
+                        },
+                        args: Vec::new(),
+                    }],
+                    semantics: RawTraitSemantics::Ordinary,
+                    complete: true,
+                }),
+                (2, 5) => Some(RawTraitSignature {
+                    generics: vec![self_param],
+                    self_param_index: 0,
+                    predicates: Vec::new(),
+                    semantics: RawTraitSemantics::Sized,
+                    complete: true,
+                }),
+                (2, 11) => Some(RawTraitSignature {
+                    generics: vec![self_param],
+                    self_param_index: 0,
+                    predicates: Vec::new(),
+                    semantics: RawTraitSemantics::Ordinary,
+                    complete: true,
+                }),
+                _ => None,
+            }
+        }
+
+        fn associated_items(
+            &self,
+            crate_num: CrateNum,
+            def_index: DefIndex,
+        ) -> Option<sage_ir::tcx::RawAssociatedItems> {
+            self.record(format!("associated_items({},{})", crate_num.0, def_index.0));
+            use sage_ir::tcx::{
+                RawAssociatedItem, RawAssociatedItemKind, RawAssociatedItems, RawDefId,
+            };
+
+            match (crate_num.0, def_index.0) {
+                (2, 2) => Some(RawAssociatedItems {
+                    items: vec![RawAssociatedItem {
+                        def: RawDefId {
+                            crate_num: CrateNum(2),
+                            def_index: DefIndex(7),
+                            kind: SymExtKind::Fn,
+                        },
+                        name: "clone".to_owned(),
+                        kind: RawAssociatedItemKind::Function,
+                    }],
+                    complete: true,
+                }),
+                (2, 3) => Some(RawAssociatedItems {
+                    items: Vec::new(),
+                    complete: true,
+                }),
+                (2, 11) => Some(RawAssociatedItems {
+                    items: vec![RawAssociatedItem {
+                        def: RawDefId {
+                            crate_num: CrateNum(2),
+                            def_index: DefIndex(12),
+                            kind: SymExtKind::Fn,
+                        },
+                        name: "clone".to_owned(),
+                        kind: RawAssociatedItemKind::Function,
+                    }],
+                    complete: true,
+                }),
+                _ => None,
+            }
+        }
+
+        fn fn_signature(
+            &self,
+            crate_num: CrateNum,
+            def_index: DefIndex,
+        ) -> Option<sage_ir::tcx::RawFnSignature> {
+            self.record(format!("fn_signature({},{})", crate_num.0, def_index.0));
+            use sage_ir::cst::Mutability;
+            use sage_ir::tcx::{
+                RawDefId, RawFnSignature, RawGenericParam, RawGenericParamKind, RawReceiver,
+                RawTraitPredicate, RawTy,
+            };
+
+            match (crate_num.0, def_index.0) {
+                (2, 7 | 12) => Some(RawFnSignature {
+                    generics: vec![RawGenericParam {
+                        index: 0,
+                        name: Some("Self".to_owned()),
+                        kind: RawGenericParamKind::Type,
+                    }],
+                    owner_trait: Some(RawTraitPredicate {
+                        self_ty: RawTy::Param(0),
+                        trait_def: RawDefId {
+                            crate_num: CrateNum(2),
+                            def_index: DefIndex(if def_index.0 == 7 { 2 } else { 11 }),
+                            kind: SymExtKind::Trait,
+                        },
+                        args: Vec::new(),
+                    }),
+                    receiver: Some(RawReceiver::Ref(Mutability::Shared)),
+                    params: Vec::new(),
+                    ret: RawTy::Param(0),
+                    predicates: Vec::new(),
+                    complete: true,
+                }),
+                _ => None,
+            }
         }
 
         fn expand_proc_macro_derive(
@@ -350,7 +541,7 @@ mod derive_expansion_tests {
     #[test]
     fn clone_derive_appends_an_impl_with_generated_source_provenance() {
         with_test_crate_files_using_db(
-            Database::new(BuiltinDeriveTcx),
+            Database::new(BuiltinDeriveTcx::default()),
             &[(
                 "lib.rs",
                 "#[derive(Debug, Clone)]\nstruct Db { shared: bool }",
@@ -405,9 +596,583 @@ mod derive_expansion_tests {
     }
 
     #[test]
+    fn external_clone_contract_proves_the_derived_impl() {
+        use sage_ir::check::infer::egraph::VersionedEGraph;
+        use sage_ir::check::infer::version::{Universe, Version};
+        use sage_ir::check::solve::{
+            Assumption, Atom, Goal, GoalQuery, QueryResultData, canonicalize_goal,
+        };
+        use sage_ir::scope::ScopeSymbol;
+        use sage_ir::symbol::TraitSymbol;
+        use sage_ir::ty::{TraitRef, Ty};
+
+        with_test_crate_files_using_db(
+            Database::new(BuiltinDeriveTcx::default()),
+            &[("lib.rs", "#[derive(Clone)]\nstruct Db { shared: bool }")],
+            |db, root| {
+                let items = root.expanded_module_items(db);
+                let strukt = items
+                    .iter()
+                    .find_map(|symbol| match symbol.data(db) {
+                        SymbolData::StructSymbol(StructSymbol::Local(strukt)) => Some(strukt),
+                        _ => None,
+                    })
+                    .expect("derived source struct");
+                let clone_trait = items
+                    .iter()
+                    .find_map(|symbol| match symbol.data(db) {
+                        SymbolData::ImplSymbol(ImplSymbol::Local(local_impl)) => {
+                            local_impl.sig(db).root().value.trait_ref
+                        }
+                        _ => None,
+                    })
+                    .map(|trait_ref| trait_ref.trait_sym)
+                    .expect("derived Clone impl");
+                assert!(matches!(clone_trait, TraitSymbol::Ext(_)));
+                let ScopeSymbol::Crate(krate) = strukt.scope(db) else {
+                    panic!("root struct must be crate-scoped")
+                };
+
+                let mut stash = Stash::new();
+                let egraph = VersionedEGraph::new();
+                let args = stash.alloc_slice(&[]);
+                let self_ty = stash.alloc(Ty::Adt(strukt.into(), args));
+                let trait_args = stash.alloc_slice(&[]);
+                let assumptions = stash.alloc_slice::<Assumption>(&[]);
+                let canonical = canonicalize_goal(
+                    db,
+                    &stash,
+                    &egraph,
+                    Version::ROOT,
+                    krate,
+                    Universe::ROOT,
+                    true,
+                    assumptions,
+                    Goal::Atom(Atom::TraitImpl {
+                        self_ty,
+                        trait_ref: TraitRef {
+                            trait_sym: clone_trait,
+                            args: trait_args,
+                        },
+                    }),
+                );
+                let result = GoalQuery::new(db, canonical.data).prove(db);
+                assert!(matches!(result.root().value, QueryResultData::Yes { .. }));
+
+                let mut stash = Stash::new();
+                let egraph = VersionedEGraph::new();
+                let self_ty = stash.alloc(Ty::Bool);
+                let trait_args = stash.alloc_slice(&[]);
+                let assumptions = stash.alloc_slice::<Assumption>(&[]);
+                let canonical = canonicalize_goal(
+                    db,
+                    &stash,
+                    &egraph,
+                    Version::ROOT,
+                    krate,
+                    Universe::ROOT,
+                    true,
+                    assumptions,
+                    Goal::Atom(Atom::TraitImpl {
+                        self_ty,
+                        trait_ref: TraitRef {
+                            trait_sym: clone_trait,
+                            args: trait_args,
+                        },
+                    }),
+                );
+                let result = GoalQuery::new(db, canonical.data).prove(db);
+                assert!(
+                    matches!(result.root().value, QueryResultData::Maybe { .. }),
+                    "missing external impl enumeration cannot prove that bool: Clone is false"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn external_clone_items_and_method_signature_are_typed_metadata() {
+        use sage_ir::symbol::Symbol;
+        use sage_ir::ty::{MethodReceiver, SolverEligibility, TraitItemDef, Ty};
+
+        with_test_crate_files_using_db(
+            Database::new(BuiltinDeriveTcx::default()),
+            &[("lib.rs", "#[derive(Clone)]\nstruct Db { shared: bool }")],
+            |db, root| {
+                let clone_trait = root
+                    .expanded_module_items(db)
+                    .iter()
+                    .find_map(|symbol| match symbol.data(db) {
+                        SymbolData::ImplSymbol(ImplSymbol::Local(local_impl)) => {
+                            local_impl.sig(db).root().value.trait_ref
+                        }
+                        _ => None,
+                    })
+                    .map(|trait_ref| trait_ref.trait_sym)
+                    .expect("derived Clone impl");
+
+                let items = clone_trait.items(db).expect("external Clone items");
+                let [TraitItemDef::Function(clone_fn)] = items.stash()[items.root().value] else {
+                    panic!("Clone must expose exactly one represented function")
+                };
+                assert_eq!(Symbol::from(clone_fn).name(db).unwrap().0.text(db), "clone");
+
+                let signature = clone_fn.sig(db).expect("external clone signature");
+                let value = signature.root().value;
+                assert_eq!(
+                    value.receiver.map(|receiver| receiver.form),
+                    Some(MethodReceiver::Ref {
+                        mutability: sage_ir::cst::Mutability::Shared,
+                    })
+                );
+                assert!(matches!(signature.stash()[value.ret], Ty::Param(_)));
+                assert_eq!(
+                    value.method_candidate_eligibility,
+                    SolverEligibility::Eligible
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn clone_method_call_is_elaborated_to_a_resolved_trait_call() {
+        use sage_ir::symbol::{FnSymbol, Symbol};
+        use sage_ir::ty::{TraitItemDef, Ty};
+        use sage_ir::tytree::{CallDispatch, FieldOwner, PathResolution, TyExprData};
+
+        with_test_crate_files_using_db(
+            Database::new(BuiltinDeriveTcx::default()),
+            &[(
+                "lib.rs",
+                "#[derive(Clone)]\nstruct Db { shared: bool }\nstruct DbDropGuard { db: Db }\nimpl DbDropGuard { fn db(&self) -> Db { self.db.clone() } }",
+            )],
+            |db, root| {
+                let mut db_method = None;
+                for symbol in root.expanded_module_items(db) {
+                    let SymbolData::ImplSymbol(ImplSymbol::Local(local_impl)) = symbol.data(db)
+                    else {
+                        continue;
+                    };
+                    let items = local_impl.items(db);
+                    for item in &items.stash()[items.root().value] {
+                        let TraitItemDef::Function(FnSymbol::Local(function)) = *item else {
+                            continue;
+                        };
+                        if function.name(db).text(db) == "db" {
+                            db_method = Some(function);
+                        }
+                    }
+                }
+                let db_method = db_method.expect("DbDropGuard::db method");
+
+                // ANCHOR: example_assert_elaborated_clone_body
+                let checked = db_method.body(db);
+                assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+                let (stash, body) = checked.body.open_deref();
+                let TyExprData::Block(_, Some(tail)) = stash[body.root].data else {
+                    panic!("expected method body block")
+                };
+                let TyExprData::ResolvedCall(target, arguments) = stash[tail].data else {
+                    panic!("method syntax must be consumed by completed IR")
+                };
+                assert_eq!(
+                    Symbol::from(target.function).name(db).unwrap().0.text(db),
+                    "clone"
+                );
+                let CallDispatch::StaticTrait { self_ty, trait_ref } = target.dispatch else {
+                    panic!("Clone::clone must be statically trait-dispatched")
+                };
+                assert_eq!(
+                    Symbol::from(trait_ref.trait_sym)
+                        .name(db)
+                        .unwrap()
+                        .0
+                        .text(db),
+                    "Clone"
+                );
+                let Ty::Adt(_, _) = stash[self_ty] else {
+                    panic!("Clone Self must be Db")
+                };
+
+                let [receiver] = &stash[arguments] else {
+                    panic!("Clone::clone must receive one elaborated receiver")
+                };
+                let TyExprData::Ref(field, sage_ir::cst::Mutability::Shared) =
+                    stash[*receiver].data
+                else {
+                    panic!("&self adjustment must be an explicit shared reference")
+                };
+                let Ty::Ref(_, _, sage_ir::ty::Lifetime::Dummy) = stash[stash[*receiver].ty] else {
+                    panic!("synthesized reference must use Lifetime::Dummy")
+                };
+                let TyExprData::Field(base, resolved_field) = stash[field].data else {
+                    panic!("receiver must contain a resolved field")
+                };
+                assert_eq!(stash[field].ty, self_ty);
+                let FieldOwner::Struct(field_owner) = resolved_field.owner else {
+                    panic!("Db field must be owned by a struct")
+                };
+                assert_eq!(
+                    Symbol::from(field_owner).name(db).unwrap().0.text(db),
+                    "DbDropGuard"
+                );
+                let TyExprData::Deref(local) = stash[base].data else {
+                    panic!("field receiver must contain explicit dereference")
+                };
+                assert!(matches!(
+                    stash[local].data,
+                    TyExprData::Path(PathResolution::Local(_))
+                ));
+                // ANCHOR_END: example_assert_elaborated_clone_body
+            },
+        );
+    }
+
+    #[test]
+    fn unenumerated_trait_import_prevents_definitive_method_selection() {
+        with_test_crate_files_using_db(
+            Database::new(BuiltinDeriveTcx::default()),
+            &[(
+                "lib.rs",
+                "use core::fmt::Debug;\n#[derive(Clone)]\nstruct Db { shared: bool }\nstruct DbDropGuard { db: Db }\nimpl DbDropGuard { fn db(&self) -> Db { self.db.clone() } }",
+            )],
+            |db, root| {
+                let checked = root
+                    .expanded_module_items(db)
+                    .iter()
+                    .find_map(|symbol| {
+                        let SymbolData::ImplSymbol(ImplSymbol::Local(local_impl)) = symbol.data(db)
+                        else {
+                            return None;
+                        };
+                        let items = local_impl.items(db);
+                        items.stash()[items.root().value].iter().find_map(|item| {
+                            let sage_ir::ty::TraitItemDef::Function(FnSymbol::Local(function)) =
+                                *item
+                            else {
+                                return None;
+                            };
+                            (function.name(db).text(db) == "db").then(|| function.body(db))
+                        })
+                    })
+                    .expect("DbDropGuard::db method");
+                assert!(checked.diagnostics.iter().any(|diagnostic| {
+                    diagnostic
+                        .message
+                        .contains("incomplete candidate information")
+                }));
+            },
+        );
+    }
+
+    #[test]
+    fn unhandled_inherent_provider_prevents_trait_method_selection() {
+        with_test_crate_files_using_db(
+            Database::new(BuiltinDeriveTcx::default()),
+            &[(
+                "lib.rs",
+                "#[derive(Clone)]\nstruct Db { shared: bool }\nimpl Db { fn clone(&self) -> Db { Db { shared: self.shared } } }\nstruct DbDropGuard { db: Db }\nimpl DbDropGuard { fn db(&self) -> Db { self.db.clone() } }",
+            )],
+            |db, root| {
+                let checked = root
+                    .expanded_module_items(db)
+                    .iter()
+                    .filter_map(|symbol| {
+                        let SymbolData::ImplSymbol(ImplSymbol::Local(local_impl)) = symbol.data(db)
+                        else {
+                            return None;
+                        };
+                        Some(local_impl.items(db))
+                    })
+                    .flat_map(|items| {
+                        items.stash()[items.root().value]
+                            .iter()
+                            .copied()
+                            .collect::<Vec<_>>()
+                    })
+                    .find_map(|item| {
+                        let sage_ir::ty::TraitItemDef::Function(FnSymbol::Local(function)) = item
+                        else {
+                            return None;
+                        };
+                        (function.name(db).text(db) == "db").then(|| function.body(db))
+                    })
+                    .expect("DbDropGuard::db method");
+                assert!(checked.diagnostics.iter().any(|diagnostic| {
+                    diagnostic
+                        .message
+                        .contains("incomplete candidate information")
+                }));
+            },
+        );
+    }
+
+    #[test]
+    fn unresolved_item_macro_keeps_method_scope_incomplete() {
+        with_test_crate_files_using_db(
+            Database::new(BuiltinDeriveTcx::default()),
+            &[(
+                "lib.rs",
+                "unknown_items!();\n#[derive(Clone)]\nstruct Db { shared: bool }\nstruct DbDropGuard { db: Db }\nimpl DbDropGuard { fn db(&self) -> Db { self.db.clone() } }",
+            )],
+            |db, root| {
+                let checked = root
+                    .expanded_module_items(db)
+                    .iter()
+                    .filter_map(|symbol| {
+                        let SymbolData::ImplSymbol(ImplSymbol::Local(local_impl)) = symbol.data(db)
+                        else {
+                            return None;
+                        };
+                        Some(local_impl.items(db))
+                    })
+                    .flat_map(|items| {
+                        items.stash()[items.root().value]
+                            .iter()
+                            .copied()
+                            .collect::<Vec<_>>()
+                    })
+                    .find_map(|item| {
+                        let sage_ir::ty::TraitItemDef::Function(FnSymbol::Local(function)) = item
+                        else {
+                            return None;
+                        };
+                        (function.name(db).text(db) == "db").then(|| function.body(db))
+                    })
+                    .expect("DbDropGuard::db method");
+                assert!(checked.diagnostics.iter().any(|diagnostic| {
+                    diagnostic
+                        .message
+                        .contains("incomplete candidate information")
+                }));
+            },
+        );
+    }
+
+    #[test]
+    fn explicit_bound_provider_keeps_method_scope_incomplete() {
+        with_test_crate_files_using_db(
+            Database::new(BuiltinDeriveTcx::default()),
+            &[(
+                "lib.rs",
+                "mod hidden { trait Ext { fn clone(&self) -> super::Db; } }\n#[derive(Clone)]\nstruct Db { shared: bool }\nstruct DbDropGuard { db: Db }\nimpl DbDropGuard { fn db(&self) -> Db where Db: hidden::Ext { self.db.clone() } }",
+            )],
+            |db, root| {
+                let checked = root
+                    .expanded_module_items(db)
+                    .iter()
+                    .filter_map(|symbol| {
+                        let SymbolData::ImplSymbol(ImplSymbol::Local(local_impl)) = symbol.data(db)
+                        else {
+                            return None;
+                        };
+                        Some(local_impl.items(db))
+                    })
+                    .flat_map(|items| {
+                        items.stash()[items.root().value]
+                            .iter()
+                            .copied()
+                            .collect::<Vec<_>>()
+                    })
+                    .find_map(|item| {
+                        let sage_ir::ty::TraitItemDef::Function(FnSymbol::Local(function)) = item
+                        else {
+                            return None;
+                        };
+                        (function.name(db).text(db) == "db").then(|| function.body(db))
+                    })
+                    .expect("DbDropGuard::db method");
+                assert!(checked.diagnostics.iter().any(|diagnostic| {
+                    diagnostic
+                        .message
+                        .contains("incomplete candidate information")
+                }));
+            },
+        );
+    }
+
+    #[test]
+    fn edition_dependent_prelude_provider_is_not_definite() {
+        with_test_crate_files_using_db(
+            Database::new(BuiltinDeriveTcx {
+                edition_only_clone_trait: true,
+                ..BuiltinDeriveTcx::default()
+            }),
+            &[(
+                "lib.rs",
+                "#[derive(Clone)]\nstruct Db { shared: bool }\nimpl std::prelude::rust_2024::EditionClone for Db {}\nstruct DbDropGuard { db: Db }\nimpl DbDropGuard { fn db(&self) -> Db { self.db.clone() } }",
+            )],
+            |db, root| {
+                let checked = root
+                    .expanded_module_items(db)
+                    .iter()
+                    .filter_map(|symbol| {
+                        let SymbolData::ImplSymbol(ImplSymbol::Local(local_impl)) = symbol.data(db)
+                        else {
+                            return None;
+                        };
+                        Some(local_impl.items(db))
+                    })
+                    .flat_map(|items| {
+                        items.stash()[items.root().value]
+                            .iter()
+                            .copied()
+                            .collect::<Vec<_>>()
+                    })
+                    .find_map(|item| {
+                        let sage_ir::ty::TraitItemDef::Function(FnSymbol::Local(function)) = item
+                        else {
+                            return None;
+                        };
+                        (function.name(db).text(db) == "db").then(|| function.body(db))
+                    })
+                    .expect("DbDropGuard::db method");
+                assert!(checked.diagnostics.iter().any(|diagnostic| {
+                    diagnostic
+                        .message
+                        .contains("incomplete candidate information")
+                }));
+                assert!(
+                    checked
+                        .diagnostics
+                        .iter()
+                        .all(|diagnostic| !diagnostic.message.contains("ambiguous"))
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn erroneous_method_receiver_does_not_report_lookup_error() {
+        assert_receiver_error_has_no_secondary_lookup("fn f() { missing.clone(); }");
+    }
+
+    #[test]
+    fn reference_wrapped_receiver_error_does_not_report_lookup_error() {
+        assert_receiver_error_has_no_secondary_lookup("fn f() { (&missing).clone(); }");
+    }
+
+    #[test]
+    fn composite_receiver_error_does_not_report_lookup_error() {
+        assert_receiver_error_has_no_secondary_lookup("fn f() { (missing,).clone(); }");
+    }
+
+    #[test]
+    fn inference_bound_receiver_error_does_not_report_lookup_error() {
+        assert_receiver_error_has_no_secondary_lookup(
+            "fn f() { let x = (missing,); let y = (x,); y.clone(); }",
+        );
+    }
+
+    fn assert_receiver_error_has_no_secondary_lookup(source: &str) {
+        with_test_crate_files_using_db(
+            Database::new(BuiltinDeriveTcx::default()),
+            &[("lib.rs", source)],
+            |db, root| {
+                let checked = root
+                    .expanded_module_items(db)
+                    .iter()
+                    .find_map(|symbol| match symbol.data(db) {
+                        SymbolData::FnSymbol(FnSymbol::Local(function)) => Some(function.body(db)),
+                        _ => None,
+                    })
+                    .expect("f body");
+                assert_eq!(checked.diagnostics.len(), 1, "{:?}", checked.diagnostics);
+                assert!(checked.diagnostics.iter().all(|diagnostic| {
+                    !diagnostic.message.contains("method lookup")
+                        && !diagnostic.message.contains("candidate information")
+                }));
+            },
+        );
+    }
+
+    #[test]
+    fn clone_method_body_has_a_narrow_reusable_semantic_query_trace() {
+        use sage_ir::symbol::FnSymbol;
+        use sage_ir::ty::TraitItemDef;
+
+        fn force_db_method(db: &dyn Db, source_file: SourceFile) {
+            let (_, root) = setup_root_module(db, source_file);
+            for symbol in root.expanded_module_items(db) {
+                let SymbolData::ImplSymbol(ImplSymbol::Local(local_impl)) = symbol.data(db) else {
+                    continue;
+                };
+                let items = local_impl.items(db);
+                for item in &items.stash()[items.root().value] {
+                    let TraitItemDef::Function(FnSymbol::Local(function)) = *item else {
+                        continue;
+                    };
+                    if function.name(db).text(db) == "db" {
+                        let checked = function.body(db);
+                        assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+                        return;
+                    }
+                }
+            }
+            panic!("DbDropGuard::db method not found");
+        }
+
+        let (tcx, tcx_calls) = BuiltinDeriveTcx::tracing();
+        let mut database = Database::new(tcx);
+        let source_file = database.add_source_file(
+            "lib.rs".to_owned(),
+            "#[derive(Clone)]\nstruct Db { shared: bool }\nstruct DbDropGuard { db: Db }\nimpl DbDropGuard { fn db(&self) -> Db { self.db.clone() } }"
+                .to_owned(),
+        );
+
+        database.attach(|db| force_db_method(db, source_file));
+        let first_salsa_trace = database.take_query_log();
+        let first_tcx_trace = std::mem::take(&mut *tcx_calls.lock().unwrap());
+        let mut semantic_calls: Vec<_> = first_tcx_trace
+            .iter()
+            .filter(|call| {
+                call.starts_with("associated_items")
+                    || call.starts_with("trait_signature")
+                    || call.starts_with("fn_signature")
+            })
+            .cloned()
+            .collect();
+        semantic_calls.sort();
+        assert_eq!(
+            semantic_calls,
+            [
+                "associated_items(2,2)",
+                "associated_items(2,3)",
+                "fn_signature(2,7)",
+                "trait_signature(2,2)",
+                "trait_signature(2,5)",
+            ]
+        );
+        assert!(
+            first_tcx_trace.iter().all(|call| !call.contains("body")),
+            "callee bodies must not be metadata dependencies: {first_tcx_trace:?}"
+        );
+        assert!(
+            first_tcx_trace.iter().any(|call| call == "item_name(2,7)"),
+            "external associated-item names are currently separate metadata dependencies: {first_tcx_trace:?}"
+        );
+        assert!(
+            first_salsa_trace.contains("LocalFnSym < 'db >::body_"),
+            "the requested body query must execute: {first_salsa_trace}"
+        );
+
+        database.attach(|db| force_db_method(db, source_file));
+        let second_salsa_trace = database.take_query_log();
+        let second_tcx_trace = std::mem::take(&mut *tcx_calls.lock().unwrap());
+        assert!(
+            second_tcx_trace.is_empty(),
+            "unchanged body reuse must not reread metadata: {second_tcx_trace:?}"
+        );
+        assert!(
+            !second_salsa_trace.contains("LocalFnSym < 'db >::body_"),
+            "unchanged body query must be reused: {second_salsa_trace}"
+        );
+    }
+
+    #[test]
     fn unsupported_tuple_clone_derive_does_not_append_invalid_impl_source() {
         with_test_crate_files_using_db(
-            Database::new(BuiltinDeriveTcx),
+            Database::new(BuiltinDeriveTcx::default()),
             &[("lib.rs", "#[derive(Clone)]\nstruct Pair(bool, bool);")],
             |db, root| {
                 assert!(root.expanded_module_items(db).iter().all(|symbol| {
@@ -427,7 +1192,7 @@ mod derive_expansion_tests {
         use sage_ir::symbol::{ModSymbol, SymExt, TraitSymbol};
 
         with_test_crate_files_using_db(
-            Database::new(BuiltinDeriveTcx),
+            Database::new(BuiltinDeriveTcx::default()),
             &[(
                 "lib.rs",
                 "#[cfg(any())]\n#[derive(Clone)]\nstruct Db { shared: bool }",
@@ -458,7 +1223,7 @@ mod derive_expansion_tests {
     #[test]
     fn duplicate_derive_occurrences_have_distinct_generated_source_identity() {
         with_test_crate_files_using_db(
-            Database::new(BuiltinDeriveTcx),
+            Database::new(BuiltinDeriveTcx::default()),
             &[(
                 "lib.rs",
                 "#[derive(Clone, Clone)]\nstruct Db { shared: bool }",
@@ -546,7 +1311,7 @@ mod derive_expansion_tests {
         use salsa::Setter as _;
         use salsa::plumbing::AsId as _;
 
-        let mut db = Database::new(BuiltinDeriveTcx);
+        let mut db = Database::new(BuiltinDeriveTcx::default());
         let source = "#[derive(Clone)]\nstruct Db { shared: bool }";
         let file = db.add_source_file("lib.rs".to_owned(), source.to_owned());
         let expansion = |db: &Database| {
