@@ -218,9 +218,30 @@ pub struct StructSig<'db> {
     pub parameter_env: CheckedParameterEnv<'db>,
 }
 
+/// The declaration data needed to form an external nominal type. Defaults are
+/// aligned with `Binder::generics`; only type parameters can contain a value.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub struct ExternalAdtSignatureData<'db> {
+    pub defaults: Slice<GenericDefault<'db>>,
+    pub parameter_env: CheckedParameterEnv<'db>,
+    pub ordinary_complete: bool,
+    pub deferred_complete: bool,
+}
+
+pub type ExternalAdtSignature<'db> = Binder<'db, ExternalAdtSignatureData<'db>>;
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub enum GenericDefault<'db> {
+    Absent,
+    Type(Ptr<Ty<'db>>),
+    Unsupported,
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct StructFields<'db> {
     pub fields: Slice<FieldSig<'db>>,
+    /// Well-formedness predicates introduced by the declared field types.
+    pub parameter_env: CheckedParameterEnv<'db>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]

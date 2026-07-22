@@ -106,6 +106,13 @@ pub fn serve_tcx_requests(tcx: TyCtxt<'_>, req_rx: mpsc::Receiver<TcxRequest>) {
             } => {
                 let _ = reply.send(tcx_db.fn_signature(crate_num, def_index));
             }
+            TcxRequest::AdtSignature {
+                crate_num,
+                def_index,
+                reply,
+            } => {
+                let _ = reply.send(tcx_db.adt_signature(crate_num, def_index));
+            }
             TcxRequest::AdtIsAlwaysSized {
                 crate_num,
                 def_index,

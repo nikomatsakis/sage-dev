@@ -156,6 +156,61 @@ fn assert_db_drop_guard_snapshot(side: &str, krate: &Crate<NormalizedDef>) -> Re
 }
 // ANCHOR_END: example_exact_db_drop_guard_snapshot
 
+fn assert_external_adt_default_coverage(
+    side: &str,
+    krate: &Crate<NormalizedDef>,
+) -> Result<(), Failed> {
+    let Some(Item::Fn(function)) = krate
+        .root
+        .items
+        .iter()
+        .find(|item| matches!(item, Item::Fn(function) if function.name == "take"))
+    else {
+        return Err(format!("{side} omitted the take function").into());
+    };
+    let [parameter] = function.params.as_slice() else {
+        return Err(format!("{side} emitted the wrong take parameters").into());
+    };
+    let rust_ref::Type::Def { target, type_args } = &parameter.ty else {
+        return Err(format!("{side} did not emit IntoIter as a nominal type").into());
+    };
+    let NormalizedDef::External(target) = target else {
+        return Err(format!("{side} did not resolve IntoIter externally").into());
+    };
+    if target.krate != "alloc"
+        || target
+            .segments
+            .last()
+            .is_none_or(|segment| segment.kind != DefKind::Struct || segment.name != "IntoIter")
+    {
+        return Err(format!("{side} resolved the wrong IntoIter definition: {target:?}").into());
+    }
+    let [
+        rust_ref::Type::Def { target: frame, .. },
+        rust_ref::Type::Def {
+            target: allocator, ..
+        },
+    ] = type_args.as_slice()
+    else {
+        return Err(format!("{side} did not materialize IntoIter's allocator default").into());
+    };
+    if !matches!(frame, NormalizedDef::Local(_)) {
+        return Err(format!("{side} emitted the wrong IntoIter element: {frame:?}").into());
+    }
+    let NormalizedDef::External(allocator) = allocator else {
+        return Err(format!("{side} did not resolve Global externally").into());
+    };
+    if allocator.krate != "alloc"
+        || allocator
+            .segments
+            .last()
+            .is_none_or(|segment| segment.kind != DefKind::Struct || segment.name != "Global")
+    {
+        return Err(format!("{side} emitted the wrong allocator default: {allocator:?}").into());
+    }
+    Ok(())
+}
+
 fn run_fixture(fixture: &Fixture, out_dir: &Path) -> Result<(), Failed> {
     let source = fixture.source_text();
     let parsed = sage_oracle_harness::annotations::parse_annotations(&source);
@@ -186,6 +241,11 @@ fn run_fixture(fixture: &Fixture, out_dir: &Path) -> Result<(), Failed> {
         assert_db_drop_guard_coverage("sage", &sage)?;
         assert_db_drop_guard_snapshot("oracle", &oracle)?;
         assert_db_drop_guard_snapshot("sage", &sage)?;
+    }
+
+    if fixture.name() == "basics/external_adt_default.rs" {
+        assert_external_adt_default_coverage("oracle", &oracle)?;
+        assert_external_adt_default_coverage("sage", &sage)?;
     }
 
     if let Err(msg) = assert_crates_eq(&fixture.name(), &oracle, &sage) {

@@ -173,9 +173,18 @@ trait-partitioned source dependencies and their query-trace test remain required
 Method-name discovery remains in method resolution and submits one fixed-trait
 goal per candidate trait.
 
-External trait signatures, associated-item lists, function signatures, and
-structural `Sized` facts cross `TcxDb` as owned raw metadata and are lowered by
-separate tracked queries. Name discovery reads associated-item metadata first;
+External trait signatures, ADT signatures, associated-item lists, function
+signatures, and structural `Sized` facts cross `TcxDb` as owned raw metadata
+and are lowered by separate tracked queries. The ADT-signature query contains
+only ordered generics, aligned type defaults, represented ordinary predicates,
+and separate ordinary/deferred completeness; it does not read fields,
+associated values, impls, or bodies. Source type lowering applies omitted type
+defaults in declaration order and instantiates the ADT predicate environment.
+Absent and unsupported defaults remain distinct, so an unsupported declaration
+cannot be misdiagnosed as a missing required argument. Predicates introduced by
+local struct field types remain attached to the checked field query and are
+instantiated when the field is constructed or projected.
+Name discovery reads associated-item metadata first;
 it does not load every trait signature speculatively. The selected candidate
 then reads only its function and defining-trait signatures. The current lookup
 scope is deliberately narrow: traits in the current module plus candidates
@@ -208,9 +217,12 @@ well-formedness obligations. Ordinary calls, selected methods, and ADT use
 instantiate their callee/type predicate environments into the body obligation
 store rather than dropping declared bounds after generic substitution.
 Free-function uses and struct/enum construction or explicit type use are wired
-today. The represented external trait-method slice submits the selected
-method's parameter environment. General selected-method submission remains
-owned by the Method Resolution RFD.
+today. External nominal type use also imports declared defaults and ordinary
+predicates through `external_syms::external_adt_signature`; a missing required
+type argument is an arity error rather than a fresh inference variable. The
+represented external trait-method slice submits the selected method's
+parameter environment. General selected-method submission remains owned by the
+Method Resolution RFD.
 
 Canonicalization preserves the logical role and scope of every input variable:
 

@@ -439,6 +439,105 @@ impl<'tcx> RustcTcxDb<'tcx> {
         })
     }
 
+    pub fn adt_signature(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+    ) -> Option<sage_ir::tcx::RawAdtSignature> {
+        use sage_ir::tcx::{
+            RawAdtSignature, RawGenericDefault, RawGenericParam, RawGenericParamKind,
+            RawTraitPredicate,
+        };
+
+        let def_id = rustc_def_id(crate_num, def_index);
+        if !matches!(
+            self.tcx.def_kind(def_id),
+            DefKind::Struct | DefKind::Enum | DefKind::Union
+        ) {
+            return None;
+        }
+
+        let generics = self.tcx.generics_of(def_id);
+        let mut raw_generics = Vec::with_capacity(generics.count());
+        let mut defaults = Vec::with_capacity(generics.count());
+        let mut ordinary_complete = true;
+        let mut deferred_complete = true;
+        for index in 0..generics.count() {
+            let param = generics.param_at(index, self.tcx);
+            let (kind, default) = match param.kind {
+                ty::GenericParamDefKind::Type { has_default, .. } => {
+                    let default = if has_default {
+                        match raw_ty(
+                            self.tcx,
+                            self.tcx.type_of(param.def_id).instantiate_identity(),
+                        ) {
+                            Some(default) => RawGenericDefault::Type(default),
+                            None => RawGenericDefault::Unsupported,
+                        }
+                    } else {
+                        RawGenericDefault::Absent
+                    };
+                    (RawGenericParamKind::Type, default)
+                }
+                ty::GenericParamDefKind::Lifetime => {
+                    (RawGenericParamKind::Lifetime, RawGenericDefault::Absent)
+                }
+                ty::GenericParamDefKind::Const { .. } => {
+                    ordinary_complete = false;
+                    deferred_complete = false;
+                    (RawGenericParamKind::Const, RawGenericDefault::Absent)
+                }
+            };
+            raw_generics.push(RawGenericParam {
+                index: param.index,
+                name: Some(param.name.as_str().to_owned()),
+                kind,
+            });
+            defaults.push(default);
+        }
+
+        let instantiated = self
+            .tcx
+            .predicates_of(def_id)
+            .instantiate_identity(self.tcx);
+        let mut predicates: Vec<RawTraitPredicate> = Vec::new();
+        for clause in instantiated.predicates {
+            if !clause.kind().bound_vars().is_empty() {
+                ordinary_complete = false;
+                deferred_complete = false;
+                continue;
+            }
+            match clause.kind().skip_binder() {
+                ty::ClauseKind::Trait(predicate) => {
+                    let Some(predicate) = raw_trait_predicate(self.tcx, predicate.trait_ref) else {
+                        ordinary_complete = false;
+                        deferred_complete = false;
+                        continue;
+                    };
+                    predicates.push(predicate);
+                }
+                ty::ClauseKind::RegionOutlives(_) | ty::ClauseKind::TypeOutlives(_) => {}
+                ty::ClauseKind::HostEffect(_) => deferred_complete = false,
+                ty::ClauseKind::Projection(_)
+                | ty::ClauseKind::ConstArgHasType(..)
+                | ty::ClauseKind::WellFormed(_)
+                | ty::ClauseKind::ConstEvaluatable(_)
+                | ty::ClauseKind::UnstableFeature(_) => {
+                    ordinary_complete = false;
+                    deferred_complete = false;
+                }
+            }
+        }
+
+        Some(RawAdtSignature {
+            generics: raw_generics,
+            defaults,
+            predicates,
+            ordinary_complete,
+            deferred_complete,
+        })
+    }
+
     pub fn adt_is_always_sized(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<bool> {
         let def_id = rustc_def_id(crate_num, def_index);
         if !matches!(self.tcx.def_kind(def_id), DefKind::Struct | DefKind::Union) {

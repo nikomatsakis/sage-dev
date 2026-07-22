@@ -71,13 +71,14 @@ impl<'db> LocalImplSym<'db> {
         if cst.is_negative || cst.is_const || cst.is_default {
             solver_eligibility = SolverEligibility::Unsupported;
         }
+        let parameter_env = cx.complete_parameter_env(where_clauses, solver_eligibility);
 
         cx.finish(Binder::new(
             ImplSignatureData {
                 trait_ref,
                 self_ty,
-                where_clauses,
-                solver_eligibility,
+                where_clauses: parameter_env.where_clauses,
+                solver_eligibility: parameter_env.solver_eligibility,
             },
             generics,
         ))

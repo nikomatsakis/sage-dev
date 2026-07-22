@@ -17,14 +17,14 @@ keeps unsupported behavior conservative.
 
 ## Step 2: External ADT signatures and generic defaults
 
-- [ ] Add owned `TcxDb` data and tracked lowering for external ADT generics,
+- [x] Add owned `TcxDb` data and tracked lowering for external ADT generics,
   trailing type defaults, ordinary predicates, and explicit completeness.
-- [ ] Apply defaults in declaration order during source type lowering.
-- [ ] Instantiate represented external ADT predicates through the ordinary
+- [x] Apply defaults in declaration order during source type lowering.
+- [x] Instantiate represented external ADT predicates through the ordinary
   obligation path.
-- [ ] Test `IntoIter<Frame>` becoming `IntoIter<Frame, Global>` and test a
+- [x] Test `IntoIter<Frame>` becoming `IntoIter<Frame, Global>` and test a
   default which references an earlier parameter.
-- [ ] Add semantic trace assertions for the narrow ADT-signature dependency.
+- [x] Add semantic trace assertions for the narrow ADT-signature dependency.
 
 ## Step 3: External relevant impls and headers
 

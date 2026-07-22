@@ -43,7 +43,7 @@ impl<'db> LocalEnumSym<'db> {
         use crate::check::Check;
         use crate::cst::generics::CheckGenerics;
         use crate::resolve::Resolver;
-        use crate::ty::{CheckedParameterEnv, FieldSig, VariantSig};
+        use crate::ty::{FieldSig, VariantSig};
 
         let (source, cst) = self.cst(db).open_deref();
         let mut cx = Check::new(db, source, Resolver::new(db, self.scope(db)));
@@ -77,13 +77,11 @@ impl<'db> LocalEnumSym<'db> {
             generics,
             cst.where_clauses,
         );
+        let parameter_env = cx.complete_parameter_env(where_clauses, solver_eligibility);
         cx.finish(Binder::new(
             EnumSig {
                 variants,
-                parameter_env: CheckedParameterEnv {
-                    where_clauses,
-                    solver_eligibility,
-                },
+                parameter_env,
             },
             generics,
         ))

@@ -734,9 +734,42 @@ impl<'db> TypeCst<'db> {
                                 args: type_args,
                             }))
                         }
-                        SymbolData::StructSymbol(crate::symbol::StructSymbol::Ext(_))
-                        | SymbolData::EnumSymbol(crate::symbol::EnumSymbol::Ext(_))
-                        | SymbolData::TraitSymbol(_) => Ty::Adt(sym, type_args),
+                        SymbolData::StructSymbol(crate::symbol::StructSymbol::Ext(external))
+                        | SymbolData::EnumSymbol(crate::symbol::EnumSymbol::Ext(external)) => {
+                            let applied = {
+                                let mut stash = cx.stash_mut();
+                                crate::external_syms::apply_external_adt_signature(
+                                    cx.db,
+                                    &mut stash,
+                                    external,
+                                    &type_arguments,
+                                )
+                            };
+                            match applied {
+                                Ok(applied) => {
+                                    cx.submit_parameter_env(
+                                        applied.parameter_env,
+                                        self.span,
+                                        crate::check::infer::obligations::ObligationReason::AdtWellFormedness,
+                                    );
+                                    Ty::Adt(sym, applied.args)
+                                }
+                                Err(error) => {
+                                    let message = match error {
+                                        crate::external_syms::ApplyExternalAdtError::MetadataUnavailable => {
+                                            "external type declaration metadata is unavailable"
+                                        }
+                                        crate::external_syms::ApplyExternalAdtError::IncorrectTypeArgumentCount => {
+                                            "incorrect number of type arguments"
+                                        }
+                                    };
+                                    Ty::Error(
+                                        cx.record(Diagnostic::error(cx.span(self.span), message)),
+                                    )
+                                }
+                            }
+                        }
+                        SymbolData::TraitSymbol(_) => Ty::Adt(sym, type_args),
                         SymbolData::FnSymbol(_)
                         | SymbolData::VariantSymbol(_)
                         | SymbolData::VariantCtorSymbol(_)
@@ -1157,7 +1190,7 @@ fn check_struct_lit_fields<'db>(
     fields: Slice<TyFieldInit<'db>>,
 ) {
     use crate::ty::BinderExt;
-    use crate::ty_fold::{SubstTarget, Substitute, TyFolder};
+    use crate::ty_fold::{SubstTarget, Substitute, TyFolder, fold_parameter_env};
     use rustc_hash::FxHashMap;
 
     let sig = local.sig(cx.db);
@@ -1178,6 +1211,25 @@ fn check_struct_lit_fields<'db>(
     let field_sigs = &fields_stash[struct_fields.fields];
 
     let init_fields: Vec<_> = cx.stash()[fields].to_vec();
+    let parameter_env = if subst.is_empty() {
+        use sage_stash::StashCopy;
+        let mut stash = cx.stash_mut();
+        struct_fields
+            .parameter_env
+            .stash_copy(fields_stash, &mut *stash)
+    } else {
+        let mut stash = cx.stash_mut();
+        let mut folder = Substitute::new(fields_stash, &mut *stash, subst.clone());
+        fold_parameter_env(&mut folder, struct_fields.parameter_env)
+    };
+    let obligation_span = init_fields
+        .first()
+        .map_or(RelativeSpan { start: 0, end: 0 }, |field| field.span);
+    cx.submit_parameter_env(
+        parameter_env,
+        obligation_span,
+        crate::check::infer::obligations::ObligationReason::AdtWellFormedness,
+    );
     for field_init in &init_fields {
         for field_sig in field_sigs {
             if field_sig.name == field_init.name {
@@ -1236,7 +1288,7 @@ fn lookup_field<'db>(
 ) -> Result<(crate::tytree::ResolvedField<'db>, Ptr<Ty<'db>>), crate::diagnostic::ErrorReported> {
     use crate::symbol::SymbolData;
     use crate::ty::BinderExt;
-    use crate::ty_fold::{SubstTarget, Substitute, TyFolder};
+    use crate::ty_fold::{SubstTarget, Substitute, TyFolder, fold_parameter_env};
     use rustc_hash::FxHashMap;
 
     let obj_ty = cx.stash()[obj_ty_ptr];
@@ -1290,9 +1342,17 @@ fn lookup_field<'db>(
                     }
                     let mut stash = cx.stash_mut();
                     let mut folder = Substitute::new(fields_stash, &mut *stash, subst);
+                    let parameter_env =
+                        fold_parameter_env(&mut folder, struct_fields.parameter_env);
                     let field_ty_data = folder.fold_ty(fields_stash[field_sig.ty]);
                     drop(folder);
                     let ty = stash.alloc(field_ty_data);
+                    drop(stash);
+                    cx.submit_parameter_env(
+                        parameter_env,
+                        span,
+                        crate::check::infer::obligations::ObligationReason::AdtWellFormedness,
+                    );
                     return Ok((
                         crate::tytree::ResolvedField {
                             owner: crate::tytree::FieldOwner::Struct(

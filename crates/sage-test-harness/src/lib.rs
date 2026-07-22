@@ -268,7 +268,10 @@ mod derive_expansion_tests {
                 kind,
             };
             match (crate_num.0, def_index.0) {
-                (1, 0) => vec![child("prelude", 1, 1, Namespace::Type, SymExtKind::Mod)],
+                (1, 0) => vec![
+                    child("prelude", 1, 1, Namespace::Type, SymExtKind::Mod),
+                    child("Pair", 1, 20, Namespace::Type, SymExtKind::Struct),
+                ],
                 (1, 1) => vec![
                     child("rust_2015", 1, 8, Namespace::Type, SymExtKind::Mod),
                     child("rust_2018", 1, 9, Namespace::Type, SymExtKind::Mod),
@@ -336,6 +339,7 @@ mod derive_expansion_tests {
                 (1, 8) => Some("rust_2015"),
                 (1, 9) => Some("rust_2018"),
                 (1, 10) => Some("rust_2021"),
+                (1, 20) => Some("Pair"),
                 (1, 3) | (2, 2) => Some("Clone"),
                 (1, 4) | (2, 3) => Some("Debug"),
                 (2, 5) => Some("Sized"),
@@ -504,6 +508,98 @@ mod derive_expansion_tests {
                     ret: RawTy::Param(0),
                     predicates: Vec::new(),
                     complete: true,
+                }),
+                _ => None,
+            }
+        }
+
+        fn adt_signature(
+            &self,
+            crate_num: CrateNum,
+            def_index: DefIndex,
+        ) -> Option<sage_ir::tcx::RawAdtSignature> {
+            self.record(format!("adt_signature({},{})", crate_num.0, def_index.0));
+            use sage_ir::tcx::{
+                RawAdtSignature, RawDefId, RawGenericDefault, RawGenericParam, RawGenericParamKind,
+                RawTraitPredicate, RawTy,
+            };
+
+            match (crate_num.0, def_index.0) {
+                (1, 20) => Some(RawAdtSignature {
+                    generics: vec![
+                        RawGenericParam {
+                            index: 0,
+                            name: Some("T".to_owned()),
+                            kind: RawGenericParamKind::Type,
+                        },
+                        RawGenericParam {
+                            index: 1,
+                            name: Some("U".to_owned()),
+                            kind: RawGenericParamKind::Type,
+                        },
+                    ],
+                    defaults: vec![
+                        RawGenericDefault::Absent,
+                        RawGenericDefault::Type(RawTy::Param(0)),
+                    ],
+                    predicates: vec![RawTraitPredicate {
+                        self_ty: RawTy::Param(1),
+                        trait_def: RawDefId {
+                            crate_num: CrateNum(2),
+                            def_index: DefIndex(2),
+                            kind: SymExtKind::Trait,
+                        },
+                        args: Vec::new(),
+                    }],
+                    ordinary_complete: true,
+                    deferred_complete: false,
+                }),
+                (1, 21) => Some(RawAdtSignature {
+                    generics: vec![
+                        RawGenericParam {
+                            index: 0,
+                            name: Some("T".to_owned()),
+                            kind: RawGenericParamKind::Type,
+                        },
+                        RawGenericParam {
+                            index: 1,
+                            name: Some("U".to_owned()),
+                            kind: RawGenericParamKind::Type,
+                        },
+                    ],
+                    defaults: vec![RawGenericDefault::Absent, RawGenericDefault::Absent],
+                    predicates: Vec::new(),
+                    ordinary_complete: true,
+                    deferred_complete: true,
+                }),
+                (1, 22) => Some(RawAdtSignature {
+                    generics: vec![
+                        RawGenericParam {
+                            index: 0,
+                            name: Some("T".to_owned()),
+                            kind: RawGenericParamKind::Type,
+                        },
+                        RawGenericParam {
+                            index: 1,
+                            name: Some("N".to_owned()),
+                            kind: RawGenericParamKind::Const,
+                        },
+                    ],
+                    defaults: vec![RawGenericDefault::Absent, RawGenericDefault::Absent],
+                    predicates: Vec::new(),
+                    ordinary_complete: false,
+                    deferred_complete: false,
+                }),
+                (1, 23) => Some(RawAdtSignature {
+                    generics: vec![RawGenericParam {
+                        index: 0,
+                        name: Some("T".to_owned()),
+                        kind: RawGenericParamKind::Type,
+                    }],
+                    defaults: vec![RawGenericDefault::Unsupported],
+                    predicates: Vec::new(),
+                    ordinary_complete: true,
+                    deferred_complete: true,
                 }),
                 _ => None,
             }
@@ -1167,6 +1263,231 @@ mod derive_expansion_tests {
             !second_salsa_trace.contains("LocalFnSym < 'db >::body_"),
             "unchanged body query must be reused: {second_salsa_trace}"
         );
+    }
+
+    #[test]
+    fn external_adt_default_and_predicate_have_one_narrow_reusable_dependency() {
+        use sage_ir::generic_param::GenericParamKind;
+        use sage_ir::ty::{BinderExt, SolverEligibility, TraitRef, Ty};
+
+        fn force_pair_signature(db: &dyn Db, source_file: SourceFile) {
+            let (_, root) = setup_root_module(db, source_file);
+            let function = root
+                .expanded_module_items(db)
+                .iter()
+                .find_map(|symbol| match symbol.data(db) {
+                    SymbolData::FnSymbol(FnSymbol::Local(function))
+                        if function.name(db).text(db) == "use_pair" =>
+                    {
+                        Some(function)
+                    }
+                    SymbolData::FnSymbol(FnSymbol::Local(_))
+                    | SymbolData::FnSymbol(FnSymbol::Ext(_))
+                    | SymbolData::StructSymbol(_)
+                    | SymbolData::EnumSymbol(_)
+                    | SymbolData::VariantSymbol(_)
+                    | SymbolData::VariantCtorSymbol(_)
+                    | SymbolData::TraitSymbol(_)
+                    | SymbolData::TypeAliasSymbol(_)
+                    | SymbolData::ConstSymbol(_)
+                    | SymbolData::StaticSymbol(_)
+                    | SymbolData::ImplSymbol(_)
+                    | SymbolData::ModSymbol(_)
+                    | SymbolData::MacroDefSymbol(_)
+                    | SymbolData::UseSymbol(_)
+                    | SymbolData::IntrinsicTypeSymbol(_)
+                    | SymbolData::MacroInvocationSymbol(_) => None,
+                })
+                .expect("use_pair function");
+            let signature = function.sig(db);
+            assert!(
+                signature
+                    .iter_symbols()
+                    .all(|generic| generic.kind(db) != GenericParamKind::Const)
+            );
+            let (stash, binder) = signature.open();
+            let [parameter] = &stash[binder.value.params] else {
+                panic!("expected one parameter")
+            };
+            let Ty::Adt(_, arguments) = stash[*parameter] else {
+                panic!("expected external Pair")
+            };
+            let [first, second] = &stash[arguments] else {
+                panic!("defaulted Pair should have two arguments")
+            };
+            assert_eq!(stash[*first], Ty::Bool);
+            assert_eq!(stash[*second], Ty::Bool);
+
+            assert_eq!(
+                binder.value.parameter_env.solver_eligibility,
+                SolverEligibility::Eligible
+            );
+            let [predicate] = &stash[binder.value.parameter_env.where_clauses] else {
+                panic!("Pair's ordinary predicate should enter the function contract")
+            };
+            assert_eq!(stash[predicate.self_ty], Ty::Bool);
+            let TraitRef { trait_sym, args } = predicate.trait_ref;
+            assert!(stash[args].is_empty());
+            assert!(matches!(trait_sym, sage_ir::symbol::TraitSymbol::Ext(_)));
+        }
+
+        let (tcx, calls) = BuiltinDeriveTcx::tracing();
+        let mut database = Database::new(tcx);
+        let source_file = database.add_source_file(
+            "lib.rs".to_owned(),
+            "fn use_pair(value: std::Pair<bool>) { let _ = value; }".to_owned(),
+        );
+
+        database.attach(|db| force_pair_signature(db, source_file));
+        let first_calls = std::mem::take(&mut *calls.lock().unwrap());
+        let semantic_calls: Vec<_> = first_calls
+            .iter()
+            .filter(|call| {
+                call.starts_with("adt_signature")
+                    || call.starts_with("associated_items")
+                    || call.starts_with("fn_signature")
+                    || call.starts_with("trait_signature")
+            })
+            .cloned()
+            .collect();
+        assert_eq!(semantic_calls, ["adt_signature(1,20)"]);
+
+        database.attach(|db| force_pair_signature(db, source_file));
+        let second_calls = std::mem::take(&mut *calls.lock().unwrap());
+        assert!(
+            second_calls.is_empty(),
+            "warm signature reuse reread metadata: {second_calls:?}"
+        );
+    }
+
+    #[test]
+    fn external_adt_missing_required_argument_is_not_inferred() {
+        use sage_ir::external_syms::{ApplyExternalAdtError, apply_external_adt_signature};
+        use sage_ir::symbol::SymExt;
+        use sage_ir::ty::Ty;
+
+        let database = Database::new(BuiltinDeriveTcx::default());
+        database.attach(|db| {
+            let required = SymExt::new(db, CrateNum(1), DefIndex(21), SymExtKind::Struct);
+            let mut stash = Stash::new();
+            let supplied = stash.alloc(Ty::Bool);
+            assert!(matches!(
+                apply_external_adt_signature(db, &mut stash, required, &[supplied]),
+                Err(ApplyExternalAdtError::IncorrectTypeArgumentCount)
+            ));
+        });
+    }
+
+    #[test]
+    fn external_adt_keeps_ordinary_and_deferred_completeness_separate() {
+        use sage_ir::external_syms::external_adt_signature;
+        use sage_ir::symbol::SymExt;
+        use sage_ir::ty::SolverEligibility;
+
+        let database = Database::new(BuiltinDeriveTcx::default());
+        database.attach(|db| {
+            let pair = SymExt::new(db, CrateNum(1), DefIndex(20), SymExtKind::Struct);
+            let signature = external_adt_signature(db, pair).expect("Pair signature metadata");
+            let (_, binder) = signature.open();
+            assert!(binder.value.ordinary_complete);
+            assert!(!binder.value.deferred_complete);
+            assert_eq!(
+                binder.value.parameter_env.solver_eligibility,
+                SolverEligibility::Eligible
+            );
+        });
+    }
+
+    #[test]
+    fn external_adt_predicates_in_struct_fields_are_retained() {
+        use sage_ir::ty::{SolverEligibility, Ty};
+
+        let mut database = Database::new(BuiltinDeriveTcx::default());
+        let source_file = database.add_source_file(
+            "lib.rs".to_owned(),
+            "struct Holder { pair: std::Pair<bool> }".to_owned(),
+        );
+        database.attach(|db| {
+            let (_, root) = setup_root_module(db, source_file);
+            let holder = root
+                .expanded_module_items(db)
+                .iter()
+                .find_map(|symbol| match symbol.data(db) {
+                    SymbolData::StructSymbol(sage_ir::symbol::StructSymbol::Local(local))
+                        if local.name(db).text(db) == "Holder" =>
+                    {
+                        Some(local)
+                    }
+                    SymbolData::StructSymbol(sage_ir::symbol::StructSymbol::Local(_))
+                    | SymbolData::StructSymbol(sage_ir::symbol::StructSymbol::Ext(_))
+                    | SymbolData::FnSymbol(_)
+                    | SymbolData::EnumSymbol(_)
+                    | SymbolData::VariantSymbol(_)
+                    | SymbolData::VariantCtorSymbol(_)
+                    | SymbolData::TraitSymbol(_)
+                    | SymbolData::TypeAliasSymbol(_)
+                    | SymbolData::ConstSymbol(_)
+                    | SymbolData::StaticSymbol(_)
+                    | SymbolData::ImplSymbol(_)
+                    | SymbolData::ModSymbol(_)
+                    | SymbolData::MacroDefSymbol(_)
+                    | SymbolData::UseSymbol(_)
+                    | SymbolData::IntrinsicTypeSymbol(_)
+                    | SymbolData::MacroInvocationSymbol(_) => None,
+                })
+                .expect("Holder struct");
+            let fields = holder.fields(db);
+            let (stash, fields) = fields.open();
+            assert_eq!(
+                fields.parameter_env.solver_eligibility,
+                SolverEligibility::Eligible
+            );
+            let [predicate] = &stash[fields.parameter_env.where_clauses] else {
+                panic!("field type predicate should remain attached to the fields")
+            };
+            assert_eq!(stash[predicate.self_ty], Ty::Bool);
+        });
+    }
+
+    #[test]
+    fn external_adt_with_unrepresented_const_identity_is_not_formed() {
+        use sage_ir::external_syms::{ApplyExternalAdtError, apply_external_adt_signature};
+        use sage_ir::symbol::SymExt;
+        use sage_ir::ty::Ty;
+
+        let database = Database::new(BuiltinDeriveTcx::default());
+        database.attach(|db| {
+            let const_generic = SymExt::new(db, CrateNum(1), DefIndex(22), SymExtKind::Struct);
+            let mut stash = Stash::new();
+            let supplied = stash.alloc(Ty::Bool);
+            assert!(matches!(
+                apply_external_adt_signature(db, &mut stash, const_generic, &[supplied]),
+                Err(ApplyExternalAdtError::MetadataUnavailable)
+            ));
+        });
+    }
+
+    #[test]
+    fn unsupported_external_default_is_metadata_unavailable_not_an_arity_error() {
+        use sage_ir::external_syms::{ApplyExternalAdtError, apply_external_adt_signature};
+        use sage_ir::symbol::SymExt;
+
+        let database = Database::new(BuiltinDeriveTcx::default());
+        database.attach(|db| {
+            let unsupported_default =
+                SymExt::new(db, CrateNum(1), DefIndex(23), SymExtKind::Struct);
+            let mut stash = Stash::new();
+            assert!(matches!(
+                apply_external_adt_signature(db, &mut stash, unsupported_default, &[]),
+                Err(ApplyExternalAdtError::MetadataUnavailable)
+            ));
+            let supplied = stash.alloc(sage_ir::ty::Ty::Bool);
+            assert!(
+                apply_external_adt_signature(db, &mut stash, unsupported_default, &[supplied])
+                    .is_ok(),
+                "an explicit argument does not need the unsupported default"
+            );
+        });
     }
 
     #[test]

@@ -121,7 +121,7 @@ impl<'db> LocalFnSym<'db> {
         use crate::cst::generics::CheckGenerics;
         use crate::resolve::{Namespace, Resolution, Resolver};
         use crate::symbol::Symbol;
-        use crate::ty::{CheckedParameterEnv, CheckedReceiver, MethodReceiver, SolverEligibility};
+        use crate::ty::{CheckedReceiver, MethodReceiver, SolverEligibility};
 
         let (src, cst) = self.cst(db).open_deref();
         let mut cx = Check::new(db, src, Resolver::new(db, self.scope(db)));
@@ -204,8 +204,9 @@ impl<'db> LocalFnSym<'db> {
         where_clauses.extend_from_slice(&cx.target_stash[method_where_clauses]);
         let where_clauses = cx.target_stash.alloc_slice(&where_clauses);
         let solver_eligibility = owner.eligibility.and(method_eligibility);
+        let parameter_env = cx.complete_parameter_env(where_clauses, solver_eligibility);
         let method_candidate_eligibility = if self.owner(db).is_some() && receiver.is_some() {
-            solver_eligibility.and(receiver_eligibility)
+            parameter_env.solver_eligibility.and(receiver_eligibility)
         } else {
             SolverEligibility::Unsupported
         };
@@ -218,10 +219,7 @@ impl<'db> LocalFnSym<'db> {
             receiver,
             params,
             ret,
-            parameter_env: CheckedParameterEnv {
-                where_clauses,
-                solver_eligibility,
-            },
+            parameter_env,
             method_candidate_eligibility,
         };
         let binder = Binder::new(fn_sig, generics);

@@ -140,6 +140,29 @@ pub struct RawFnSignature {
     pub complete: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RawAdtSignature {
+    pub generics: Vec<RawGenericParam>,
+    /// One entry per generic parameter. Lifetime and const parameters have no
+    /// type default and therefore use `Absent`.
+    pub defaults: Vec<RawGenericDefault>,
+    pub predicates: Vec<RawTraitPredicate>,
+    /// Whether ordinary non-const type formation is fully represented.
+    pub ordinary_complete: bool,
+    /// Whether deferred const and higher-ranked parts of the declaration are
+    /// also fully represented.
+    pub deferred_complete: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RawGenericDefault {
+    Absent,
+    Type(RawTy),
+    /// The declaration has a default, but it is outside the owned metadata
+    /// model and therefore cannot be treated as an omitted required argument.
+    Unsupported,
+}
+
 /// External crate metadata interface.
 ///
 /// Returns only owned, `'static` data. The caller is responsible for
@@ -198,6 +221,13 @@ pub trait TcxDb: Send + Sync {
 
     /// Checked signature data for an external function or method.
     fn fn_signature(&self, _crate_num: CrateNum, _def_index: DefIndex) -> Option<RawFnSignature> {
+        None
+    }
+
+    /// Generic parameters, trailing type defaults, and ordinary predicates
+    /// for an external nominal type. This intentionally excludes fields,
+    /// variants, inherent items, and impls.
+    fn adt_signature(&self, _crate_num: CrateNum, _def_index: DefIndex) -> Option<RawAdtSignature> {
         None
     }
 

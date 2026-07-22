@@ -7,11 +7,12 @@ use crate::generic_param::{ExtGenericParam, GenericParam, GenericParamKind};
 use crate::name::Name;
 use crate::symbol::{FnSymbol, SymExt, Symbol, TraitSymbol};
 use crate::tcx::{
-    RawAssociatedItemKind, RawDefId, RawFnSignature, RawGenericParam, RawGenericParamKind,
-    RawReceiver, RawTraitSemantics, RawTraitSignature, RawTy,
+    RawAdtSignature, RawAssociatedItemKind, RawDefId, RawFnSignature, RawGenericDefault,
+    RawGenericParam, RawGenericParamKind, RawReceiver, RawTraitSemantics, RawTraitSignature, RawTy,
 };
 use crate::ty::{
-    Binder, CheckedParameterEnv, CheckedReceiver, Const, FnSig, MethodReceiver, SolverEligibility,
+    Binder, CheckedParameterEnv, CheckedReceiver, Const, ExternalAdtSignature,
+    ExternalAdtSignatureData, FnSig, GenericDefault, MethodReceiver, SolverEligibility,
     TraitItemDef, TraitItems, TraitRef, TraitSemantics, TraitSignature, TraitSignatureData, Ty,
     WherePredicate,
 };
@@ -31,6 +32,98 @@ pub fn external_trait_signature<'db>(
 pub fn external_adt_is_always_sized<'db>(db: &'db dyn crate::Db, adt: SymExt<'db>) -> Option<bool> {
     db.tcx()
         .adt_is_always_sized(adt.crate_num(db), adt.def_index(db))
+}
+
+#[salsa::tracked]
+pub fn external_adt_signature<'db>(
+    db: &'db dyn crate::Db,
+    adt: SymExt<'db>,
+) -> Option<Stashed<ExternalAdtSignature<'db>>> {
+    let raw = db
+        .tcx()
+        .adt_signature(adt.crate_num(db), adt.def_index(db))?;
+    Some(lower_adt_signature(db, adt, raw))
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ApplyExternalAdtError {
+    MetadataUnavailable,
+    IncorrectTypeArgumentCount,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct AppliedExternalAdt<'db> {
+    pub args: sage_stash::Slice<Ptr<Ty<'db>>>,
+    pub parameter_env: CheckedParameterEnv<'db>,
+    pub deferred_complete: bool,
+}
+
+/// Apply explicit source arguments and declaration defaults in order, then
+/// instantiate the declaration's ordinary predicate environment.
+pub fn apply_external_adt_signature<'db>(
+    db: &'db dyn crate::Db,
+    target: &mut Stash,
+    adt: SymExt<'db>,
+    explicit_args: &[Ptr<Ty<'db>>],
+) -> Result<AppliedExternalAdt<'db>, ApplyExternalAdtError> {
+    use crate::ty_fold::{SubstTarget, Substitute, TyFolder, fold_parameter_env};
+
+    let signature =
+        external_adt_signature(db, adt).ok_or(ApplyExternalAdtError::MetadataUnavailable)?;
+    let (source, binder) = signature.open();
+    if !binder.value.ordinary_complete {
+        return Err(ApplyExternalAdtError::MetadataUnavailable);
+    }
+    let generics = source[binder.generics].to_vec();
+    let defaults = source[binder.value.defaults].to_vec();
+    if generics.len() != defaults.len() {
+        return Err(ApplyExternalAdtError::MetadataUnavailable);
+    }
+    let type_parameter_count = generics
+        .iter()
+        .filter(|generic| generic.kind(db) == GenericParamKind::Type)
+        .count();
+    if explicit_args.len() > type_parameter_count {
+        return Err(ApplyExternalAdtError::IncorrectTypeArgumentCount);
+    }
+
+    let mut explicit = explicit_args.iter().copied();
+    let mut applied = Vec::with_capacity(type_parameter_count);
+    let mut substitution = FxHashMap::default();
+    for (generic, default) in generics.into_iter().zip(defaults) {
+        if generic.kind(db) != GenericParamKind::Type {
+            continue;
+        }
+        let argument = if let Some(argument) = explicit.next() {
+            argument
+        } else {
+            let default = match default {
+                GenericDefault::Type(default) => default,
+                GenericDefault::Absent => {
+                    return Err(ApplyExternalAdtError::IncorrectTypeArgumentCount);
+                }
+                GenericDefault::Unsupported => {
+                    return Err(ApplyExternalAdtError::MetadataUnavailable);
+                }
+            };
+            let mut folder = Substitute::new(source, target, substitution.clone());
+            let default = folder.fold_ty(source[default]);
+            target.alloc(default)
+        };
+        substitution.insert(generic, SubstTarget::Ty(target[argument]));
+        applied.push(argument);
+    }
+    if explicit.next().is_some() {
+        return Err(ApplyExternalAdtError::IncorrectTypeArgumentCount);
+    }
+
+    let mut folder = Substitute::new(source, target, substitution);
+    let parameter_env = fold_parameter_env(&mut folder, binder.value.parameter_env);
+    Ok(AppliedExternalAdt {
+        args: target.alloc_slice(&applied),
+        parameter_env,
+        deferred_complete: binder.value.deferred_complete,
+    })
 }
 
 // ANCHOR: example_external_trait_items
@@ -120,6 +213,63 @@ fn lower_trait_signature<'db>(
         generics,
     );
     Stashed::new(stash, signature)
+}
+
+fn lower_adt_signature<'db>(
+    db: &'db dyn crate::Db,
+    adt: SymExt<'db>,
+    raw: RawAdtSignature,
+) -> Stashed<ExternalAdtSignature<'db>> {
+    let parent: Symbol<'db> = adt.into();
+    let (generics, by_index) = lower_generics(db, parent, raw.generics);
+    let mut stash = Stash::new();
+    let mut ordinary_complete = raw.ordinary_complete;
+    let mut defaults = Vec::with_capacity(raw.defaults.len());
+    for default in raw.defaults {
+        match default {
+            RawGenericDefault::Type(default) => {
+                match lower_ty(db, &mut stash, &by_index, default) {
+                    Some(default) => defaults.push(GenericDefault::Type(default)),
+                    None => defaults.push(GenericDefault::Unsupported),
+                }
+            }
+            RawGenericDefault::Absent => defaults.push(GenericDefault::Absent),
+            RawGenericDefault::Unsupported => defaults.push(GenericDefault::Unsupported),
+        }
+    }
+    if defaults.len() != generics.len() {
+        ordinary_complete = false;
+    }
+
+    let mut predicates = Vec::new();
+    for predicate in raw.predicates {
+        match lower_predicate(db, &mut stash, &by_index, predicate) {
+            Some(predicate) => predicates.push(predicate),
+            None => ordinary_complete = false,
+        }
+    }
+    let where_clauses = stash.alloc_slice(&predicates);
+    let defaults = stash.alloc_slice(&defaults);
+    let generics = stash.alloc_slice(&generics);
+    Stashed::new(
+        stash,
+        Binder::new(
+            ExternalAdtSignatureData {
+                defaults,
+                parameter_env: CheckedParameterEnv {
+                    where_clauses,
+                    solver_eligibility: if ordinary_complete {
+                        SolverEligibility::Eligible
+                    } else {
+                        SolverEligibility::Unsupported
+                    },
+                },
+                ordinary_complete,
+                deferred_complete: raw.deferred_complete,
+            },
+            generics,
+        ),
+    )
 }
 
 fn lower_fn_signature<'db>(

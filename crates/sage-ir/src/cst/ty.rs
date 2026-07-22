@@ -106,7 +106,7 @@ impl<'db> TypeCst<'db> {
                 let type_args = path.final_segment(cx).check_type_args(cx);
                 match path.resolve(cx, Namespace::Type) {
                     Some(Resolution::Param(param)) => Ty::Param(param),
-                    Some(Resolution::Sym(sym)) => resolution_to_ty(cx.db, sym, type_args),
+                    Some(Resolution::Sym(sym)) => resolution_to_ty(cx, sym, type_args, self.span),
                     Some(Resolution::SelfTy(ty)) => ty,
                     Some(Resolution::Local(_)) | None => {
                         let e = cx.report(crate::diagnostic::Diagnostic::error(
@@ -169,21 +169,50 @@ impl<'db> TypeCst<'db> {
 }
 
 fn resolution_to_ty<'db>(
-    db: &'db dyn crate::Db,
+    cx: &mut Check<'_, 'db>,
     sym: Symbol<'db>,
     type_args: Slice<Ptr<Ty<'db>>>,
+    span: RelativeSpan,
 ) -> Ty<'db> {
-    match sym.data(db) {
-        SymbolData::IntrinsicTypeSymbol(s) => intrinsic_to_ty(s.intrinsic(db)),
+    match sym.data(cx.db) {
+        SymbolData::IntrinsicTypeSymbol(s) => intrinsic_to_ty(s.intrinsic(cx.db)),
         SymbolData::TypeAliasSymbol(def) => {
             Ty::Alias(crate::ty::AliasTy::Named(crate::ty::NamedAliasTy {
                 def,
                 args: type_args,
             }))
         }
+        SymbolData::StructSymbol(crate::symbol::StructSymbol::Ext(external))
+        | SymbolData::EnumSymbol(crate::symbol::EnumSymbol::Ext(external)) => {
+            let explicit = cx.target_stash[type_args].to_vec();
+            match crate::external_syms::apply_external_adt_signature(
+                cx.db,
+                &mut cx.target_stash,
+                external,
+                &explicit,
+            ) {
+                Ok(applied) => {
+                    cx.record_type_use_parameter_env(applied.parameter_env);
+                    Ty::Adt(sym, applied.args)
+                }
+                Err(error) => {
+                    let message = match error {
+                        crate::external_syms::ApplyExternalAdtError::MetadataUnavailable => {
+                            "external type declaration metadata is unavailable"
+                        }
+                        crate::external_syms::ApplyExternalAdtError::IncorrectTypeArgumentCount => {
+                            "incorrect number of type arguments"
+                        }
+                    };
+                    Ty::Error(
+                        cx.report(crate::diagnostic::Diagnostic::error(cx.span(span), message)),
+                    )
+                }
+            }
+        }
         SymbolData::FnSymbol(_)
-        | SymbolData::StructSymbol(_)
-        | SymbolData::EnumSymbol(_)
+        | SymbolData::StructSymbol(crate::symbol::StructSymbol::Local(_))
+        | SymbolData::EnumSymbol(crate::symbol::EnumSymbol::Local(_))
         | SymbolData::VariantSymbol(_)
         | SymbolData::VariantCtorSymbol(_)
         | SymbolData::TraitSymbol(_)

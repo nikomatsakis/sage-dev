@@ -4,7 +4,8 @@ use std::sync::{Arc, Mutex};
 use crate::symbol::{CrateNum, DefIndex};
 
 use super::{
-    ExternalDefPath, RawAssociatedItems, RawChild, RawFnSignature, RawTraitSignature, TcxDb,
+    ExternalDefPath, RawAdtSignature, RawAssociatedItems, RawChild, RawFnSignature,
+    RawTraitSignature, TcxDb,
 };
 
 /// Request from the salsa thread to the TyCtxt thread.
@@ -58,6 +59,11 @@ pub enum TcxRequest {
         crate_num: CrateNum,
         def_index: DefIndex,
         reply: mpsc::Sender<Option<RawFnSignature>>,
+    },
+    AdtSignature {
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        reply: mpsc::Sender<Option<RawAdtSignature>>,
     },
     AdtIsAlwaysSized {
         crate_num: CrateNum,
@@ -255,6 +261,22 @@ impl TcxDb for ProxyTcxDb {
         let (reply, rx) = mpsc::channel();
         self.tx
             .send(TcxRequest::FnSignature {
+                crate_num,
+                def_index,
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn adt_signature(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<RawAdtSignature> {
+        self.log.lock().unwrap().push(format!(
+            "tcx::adt_signature({}, {})",
+            crate_num.0, def_index.0
+        ));
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::AdtSignature {
                 crate_num,
                 def_index,
                 reply,
