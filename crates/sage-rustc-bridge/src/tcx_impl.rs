@@ -5,7 +5,7 @@ use std::sync::Arc;
 use rustc_expand::proc_macro::DeriveProcMacro;
 use rustc_hir::def::DefKind;
 use rustc_hir::def::MacroKinds;
-use rustc_hir::def_id::{CrateNum as RustcCrateNum, DefId};
+use rustc_hir::def_id::{CRATE_DEF_INDEX, CrateNum as RustcCrateNum, DefId};
 use rustc_hir::find_attr;
 use rustc_metadata::creader::CStore;
 use rustc_middle::ty::{self, TyCtxt};
@@ -139,30 +139,30 @@ impl<'tcx> RustcTcxDb<'tcx> {
         crate_num: CrateNum,
         def_index: DefIndex,
     ) -> Option<sage_ir::tcx::ExternalDefPath> {
-        use sage_ir::tcx::{DefPathNs, ExternalDefPath, ExternalDefPathSegment};
+        use sage_ir::tcx::{ExternalDefPath, ExternalDefPathSegment};
 
         let def_id = DefId {
             krate: RustcCrateNum::from_u32(crate_num.0),
             index: rustc_hir::def_id::DefIndex::from_u32(def_index.0),
         };
         let crate_name = self.tcx.crate_name(def_id.krate).to_string();
-        let def_path = self.tcx.def_path(def_id);
-        let segments = def_path
-            .data
-            .iter()
-            .filter_map(|elem| {
-                let name = elem.data.get_opt_name()?;
-                let ns = match &elem.data {
-                    rustc_hir::definitions::DefPathData::TypeNs(_) => DefPathNs::Type,
-                    rustc_hir::definitions::DefPathData::ValueNs(_) => DefPathNs::Value,
-                    _ => return None,
-                };
-                Some(ExternalDefPathSegment {
+        let mut segments = Vec::new();
+        let mut current = def_id.index;
+        while current != CRATE_DEF_INDEX {
+            let segment_def_id = DefId {
+                krate: def_id.krate,
+                index: current,
+            };
+            let key = self.tcx.def_key(segment_def_id);
+            if let Some(name) = key.disambiguated_data.data.get_opt_name() {
+                segments.push(ExternalDefPathSegment {
                     name: name.to_string(),
-                    ns,
-                })
-            })
-            .collect();
+                    kind: sym_ext_kind_for_def_kind(self.tcx.def_kind(segment_def_id)),
+                });
+            }
+            current = key.parent?;
+        }
+        segments.reverse();
         Some(ExternalDefPath {
             krate: crate_name,
             segments,

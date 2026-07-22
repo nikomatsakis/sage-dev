@@ -31,11 +31,10 @@ was consumed. It then walks the semantic result: a statically dispatched
 whose base explicitly dereferences the local `self` binding.
 
 This test establishes the checker and elaborator path, but it does not read the
-oracle fixture or Sage's normalized output. The current comparison therefore
-still lacks a fixture-specific assertion that `DbDropGuard::db` was emitted.
-Both emitters could omit that method and nevertheless compare equal. The
-general oracle coverage validator—or a focused assertion over this fixture's
-Sage projection—remains required to close that gap.
+oracle fixture or Sage's normalized output. The fixture therefore separately
+checks both projections for the source-written body and the resolved
+call/borrow/field/dereference shape. Both emitters omitting the same method does
+not count as conformance.
 
 ## 2. Select the same source item independently
 
@@ -72,6 +71,17 @@ both must produce the same definition identities, static trait dispatch, types,
 and explicit operations. The projection is per-emitter adaptation; there is no
 comparison-side rewrite which can erase a disagreement.
 
+Definition-path segment kinds are part of that identity. The fixture requires
+the `Clone::clone` target to contain the exact native hierarchy:
+
+```{anchor}
+example_exact_external_def_path
+```
+
+The `clone` module and `Clone` trait both occupy Rust's type namespace, but that
+does not make them the same kind. Each adapter obtains the kind for each
+definition rather than applying the leaf function kind to its ancestors.
+
 ## 4. Let deterministic text decide
 
 The harness serializes the two `Crate<NormalizedDef>` values independently and
@@ -85,18 +95,27 @@ If the strings differ, the JSON-tree comparison only explains where. It cannot
 turn structurally equal but differently ordered output—or semantically unequal
 output—into a pass.
 
+For this vertical slice, each serialized output must also equal the same
+checked-in, reviewable JSON snapshot byte for byte:
+
+```{anchor}
+example_exact_db_drop_guard_snapshot
+```
+
+This catches a coordinated adapter mistake even when rustc and Sage happen to
+emit the same wrong shared value. It does not adapt either output.
+
 The complete validation chain for this example is therefore:
 
 ```text
 Rust fixture
-├─ Sage parse/check/elaborate ── structural coverage assertion ── Sage projection
-└─ rustc type checking ───────────────────────────────────────── rustc projection
-                                                                    │
-                                  deterministic serialized identity ┘
+├─ Sage parse/check/elaborate ── structural coverage ── Sage projection ── exact snapshot
+└─ rustc type checking ──────────────────────────────── rustc projection ─ exact snapshot
+                                                                      │
+                                    deterministic serialized identity ┘
 ```
 
 The semantic unit test catches regressions in Sage's elaborated body, while
-exact comparison checks the output each emitter currently includes. It does not
-yet fully establish the fixture's coverage boundary; that is the gap identified
-above. The broader destination contract is specified in [Oracle Test
-Harness](../oracle-test-harness.md).
+the structural checks, exact snapshot, and exact cross-emitter comparison
+establish this fixture's current coverage and representation boundary. The
+broader destination contract is specified in [Oracle Test Harness](../oracle-test-harness.md).

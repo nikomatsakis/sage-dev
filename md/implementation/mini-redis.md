@@ -69,7 +69,9 @@ generated-source provenance. The external `Clone` and `Sized` contracts cross
 the typed metadata boundary; lookup discovers `Clone::clone`, proves the fixed
 `Db: Clone` goal, and consumes the dereference and shared borrow into completed
 IR. The source-associated body is emitted on both sides and compares by exact
-serialized identity. A focused trace also proves that checking reads the
+serialized identity. Each side must also match a checked-in exact JSON
+snapshot, whose external `Clone::clone` identity records the native
+`Mod("clone") → Trait("Clone") → Fn("clone")` path kinds. A focused trace also proves that checking reads the
 represented trait/item/function metadata but no callee body, and that the
 unchanged second body query is reused.
 

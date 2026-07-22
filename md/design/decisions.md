@@ -34,7 +34,9 @@ the shared schema. The comparator does not normalize a pair of outputs, erase
 known differences, reorder values, strip bodies, or otherwise attempt semantic
 equivalence. Validation may reject incomplete output before comparison, and a
 diagnostic diff may explain an exact mismatch afterward, but neither changes
-the equality rule. The detailed contract is [Oracle Test
+the equality rule. Stable external identity includes the actual definition kind
+of every path segment; an adapter may not reconstruct ancestor kinds from the
+leaf kind or from namespace alone. The detailed contract is [Oracle Test
 Harness](./oracle-test-harness.md#thin-adapters-and-exact-comparison).
 
 ## D5: Symbols as the uniform IR unit

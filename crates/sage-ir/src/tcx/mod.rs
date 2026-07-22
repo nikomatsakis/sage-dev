@@ -28,13 +28,8 @@ pub struct ExternalDefPath {
 #[derive(Clone, Debug)]
 pub struct ExternalDefPathSegment {
     pub name: String,
-    pub ns: DefPathNs,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum DefPathNs {
-    Type,
-    Value,
+    /// The actual definition kind of this segment, not merely its namespace.
+    pub kind: SymExtKind,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

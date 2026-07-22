@@ -186,6 +186,12 @@ explicit-bound provider discovery, edition-specific prelude selection, and gener
 Method Resolution RFD. Missing or unrepresented metadata contributes
 uncertainty rather than a false `NotFound`.
 
+Structured external definition paths also cross `TcxDb` as owned metadata.
+Every named segment retains its actual `SymExtKind`; type/value namespace alone
+is insufficient because modules, traits, and types share the type namespace.
+The Sage emitter maps each segment kind independently into the shared reference
+IR instead of deriving ancestor kinds from the leaf definition.
+
 `LocalTraitSym::items` and `LocalImplSym::items` lazily mint stable function,
 type, and const symbols linked to their owner. Associated function signatures
 open the owner binder and reuse its generic identities; their independent body

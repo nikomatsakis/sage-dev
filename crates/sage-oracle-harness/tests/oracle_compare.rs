@@ -5,10 +5,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use libtest_mimic::{Arguments, Failed, Trial};
-use rust_ref::{Crate, Expr, Item, Module, NormalizedDef};
+use rust_ref::{Crate, DefKind, DefPathSegment, Expr, Item, Module, NormalizedDef};
 use sage_oracle_harness::{
     Fixture, assert_crates_eq, check_annotations, combined, discover_fixtures, fixtures_dir,
 };
+
+const DB_DROP_GUARD_SNAPSHOT: &str = include_str!("snapshots/db_drop_guard.json");
 
 fn output_dir() -> PathBuf {
     let base = std::env::temp_dir().join("sage-oracle-output");
@@ -97,14 +99,25 @@ fn assert_db_drop_guard_coverage(side: &str, krate: &Crate<NormalizedDef>) -> Re
     let NormalizedDef::External(path) = target else {
         return Err(format!("{side} did not emit an external Clone::clone target").into());
     };
-    let target_names: Vec<_> = path
-        .segments
-        .iter()
-        .map(|segment| segment.name.as_str())
-        .collect();
-    if path.krate != "core" || target_names != ["clone", "Clone", "clone"] {
+    // ANCHOR: example_exact_external_def_path
+    let expected_segments = [
+        DefPathSegment {
+            kind: DefKind::Mod,
+            name: "clone".to_owned(),
+        },
+        DefPathSegment {
+            kind: DefKind::Trait,
+            name: "Clone".to_owned(),
+        },
+        DefPathSegment {
+            kind: DefKind::Fn,
+            name: "clone".to_owned(),
+        },
+    ];
+    if path.krate != "core" || path.segments != expected_segments {
         return Err(format!("{side} emitted the wrong Clone::clone target: {path:?}").into());
     }
+    // ANCHOR_END: example_exact_external_def_path
     let [
         Expr::Ref {
             mutable: false,
@@ -130,6 +143,19 @@ fn assert_db_drop_guard_coverage(side: &str, krate: &Crate<NormalizedDef>) -> Re
     Ok(())
 }
 
+// ANCHOR: example_exact_db_drop_guard_snapshot
+fn assert_db_drop_guard_snapshot(side: &str, krate: &Crate<NormalizedDef>) -> Result<(), Failed> {
+    let actual = format!("{}\n", serde_json::to_string_pretty(krate).unwrap());
+    if actual.as_bytes() != DB_DROP_GUARD_SNAPSHOT.as_bytes() {
+        return Err(format!(
+            "{side} DbDropGuard output differs from the checked-in exact JSON snapshot"
+        )
+        .into());
+    }
+    Ok(())
+}
+// ANCHOR_END: example_exact_db_drop_guard_snapshot
+
 fn run_fixture(fixture: &Fixture, out_dir: &Path) -> Result<(), Failed> {
     let source = fixture.source_text();
     let parsed = sage_oracle_harness::annotations::parse_annotations(&source);
@@ -152,13 +178,15 @@ fn run_fixture(fixture: &Fixture, out_dir: &Path) -> Result<(), Failed> {
     let oracle =
         oracle_result.unwrap_or_else(|e| panic!("oracle failed on {}: {}", fixture.name(), e));
 
+    fs::write(&oracle_path, serde_json::to_string_pretty(&oracle).unwrap()).unwrap();
+    fs::write(&sage_path, serde_json::to_string_pretty(&sage).unwrap()).unwrap();
+
     if fixture.name() == "mini_redis/db_drop_guard.rs" {
         assert_db_drop_guard_coverage("oracle", &oracle)?;
         assert_db_drop_guard_coverage("sage", &sage)?;
+        assert_db_drop_guard_snapshot("oracle", &oracle)?;
+        assert_db_drop_guard_snapshot("sage", &sage)?;
     }
-
-    fs::write(&oracle_path, serde_json::to_string_pretty(&oracle).unwrap()).unwrap();
-    fs::write(&sage_path, serde_json::to_string_pretty(&sage).unwrap()).unwrap();
 
     if let Err(msg) = assert_crates_eq(&fixture.name(), &oracle, &sage) {
         return Err(format!(

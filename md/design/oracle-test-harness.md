@@ -74,6 +74,11 @@ into the shared schema. Examples include:
 These adaptations are specified without consulting the other emitter's
 output. When the shared model cannot represent a required distinction, extend
 the model and both emitters; do not erase the distinction from both sides.
+An external path segment carries its native definition kind as well as its
+name. Type/value namespace is not a substitute: for example,
+`core::clone::Clone::clone` is `Mod("clone")`, `Trait("Clone")`, then
+`Fn("clone")`. The rustc oracle and the rustc metadata bridge independently
+walk the definition-parent chain to obtain those facts.
 
 The harness must not:
 
@@ -137,6 +142,14 @@ the result using the serialized bytes alone. Before comparison, fixture-specific
 checks independently require that each side contains the source-written body
 and its resolved call/borrow/field/dereference shape; these checks establish
 coverage and do not rewrite either output.
+
+The fixture also has a checked-in exact JSON snapshot. The harness requires
+the independently serialized rustc output and the independently serialized
+Sage output to each equal those bytes before comparing them to one another.
+The snapshot is a reviewable record of the shared IR, not a normalization
+input: no output is rewritten to match it. Its structural coverage assertion
+also requires the external call path to be exactly `Mod → Trait → Fn`, so two
+adapters cannot pass merely by repeating the same lossy kind inference.
 
 The current `rust-ref` model and emitters cover a smaller source-shaped subset;
 expanding them to this boundary is planned by the [Typed IR Elaboration
@@ -243,6 +256,12 @@ native compiler handle has been mapped to the stable identity required by the
 shared schema; it does not mean that the comparison layer normalizes typed IR:
 - `NormalizedDef::Local(u32)` — a definition within this crate, identified by sequential numbering (source order)
 - `NormalizedDef::External(DefPath)` — a definition from another crate (e.g., std), identified by crate name + path segments
+
+Every external path segment records its own `DefKind`; it is not labeled with
+the leaf definition's kind. A type such as
+`Type::Def { target: NormalizedDef::Local(2), type_args: [] }` refers to the
+item whose normalized definition is `Local(2)`. The empty type-argument list is
+omitted from JSON.
 
 ## Common divergence patterns
 

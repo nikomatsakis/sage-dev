@@ -138,9 +138,6 @@ impl<'db> Emitter<'db> {
     }
 
     fn ext_to_def_path(&self, ext: sage_ir::symbol::SymExt<'db>) -> NormalizedDef {
-        use sage_ir::symbol::SymExtKind;
-        use sage_ir::tcx::DefPathNs;
-
         let Some(sdp) = self
             .db
             .tcx()
@@ -152,26 +149,16 @@ impl<'db> Emitter<'db> {
             });
         };
 
-        let leaf_kind = match ext.kind(self.db) {
-            SymExtKind::Fn => DefKind::Fn,
-            SymExtKind::Struct | SymExtKind::TupleStructCtor => DefKind::Struct,
-            SymExtKind::Enum | SymExtKind::Variant | SymExtKind::VariantCtor => DefKind::Enum,
-            SymExtKind::Trait => DefKind::Trait,
-            SymExtKind::Mod => DefKind::Mod,
-            SymExtKind::TypeAlias => DefKind::TypeAlias,
-            SymExtKind::Const => DefKind::Const,
-            SymExtKind::Static => DefKind::Static,
-            _ => DefKind::Struct,
-        };
-
         let segments = sdp
             .segments
             .into_iter()
             .map(|seg| {
-                let kind = match seg.ns {
-                    DefPathNs::Type => leaf_kind.clone(),
-                    DefPathNs::Value => DefKind::Fn,
-                };
+                let kind = reference_def_kind(seg.kind).unwrap_or_else(|| {
+                    panic!(
+                        "Sage cannot represent external path segment kind {:?} for {}",
+                        seg.kind, seg.name
+                    )
+                });
                 DefPathSegment {
                     kind,
                     name: seg.name,
@@ -730,4 +717,22 @@ impl<'db> Emitter<'db> {
             SageBinaryOp::Shr => BinOp::Shr,
         }
     }
+}
+
+fn reference_def_kind(kind: sage_ir::symbol::SymExtKind) -> Option<DefKind> {
+    use sage_ir::symbol::SymExtKind;
+
+    Some(match kind {
+        SymExtKind::Fn => DefKind::Fn,
+        SymExtKind::Struct | SymExtKind::TupleStructCtor => DefKind::Struct,
+        SymExtKind::Enum => DefKind::Enum,
+        SymExtKind::Variant | SymExtKind::VariantCtor => DefKind::Variant,
+        SymExtKind::Trait => DefKind::Trait,
+        SymExtKind::Impl => DefKind::Impl,
+        SymExtKind::Mod => DefKind::Mod,
+        SymExtKind::TypeAlias => DefKind::TypeAlias,
+        SymExtKind::Const => DefKind::Const,
+        SymExtKind::Static => DefKind::Static,
+        SymExtKind::MacroDef | SymExtKind::Use | SymExtKind::Other => return None,
+    })
 }

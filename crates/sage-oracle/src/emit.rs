@@ -2,7 +2,7 @@ use rustc_ast::LitKind as AstLitKind;
 use rustc_hir as hir;
 use rustc_hir::def::{DefKind as HirDefKind, Res};
 use rustc_middle::ty::{self, TyCtxt};
-use rustc_span::def_id::{CRATE_DEF_ID, DefId, LocalDefId, LocalModDefId};
+use rustc_span::def_id::{CRATE_DEF_ID, CRATE_DEF_INDEX, DefId, LocalDefId, LocalModDefId};
 use rustc_span::hygiene::{ExpnKind, MacroKind};
 
 use rust_ref::*;
@@ -181,37 +181,33 @@ impl<'tcx> Emitter<'tcx> {
 
     fn def_path_for(&self, def_id: DefId) -> DefPath {
         let crate_name = self.tcx.crate_name(def_id.krate).to_string();
-        let def_path = self.tcx.def_path(def_id);
-
-        let leaf_kind = match self.tcx.def_kind(def_id) {
-            HirDefKind::Fn | HirDefKind::AssocFn => rust_ref::DefKind::Fn,
-            HirDefKind::Struct => rust_ref::DefKind::Struct,
-            HirDefKind::Enum => rust_ref::DefKind::Enum,
-            HirDefKind::Variant | HirDefKind::Ctor(..) => rust_ref::DefKind::Enum,
-            HirDefKind::Trait | HirDefKind::TraitAlias => rust_ref::DefKind::Trait,
-            HirDefKind::TyAlias | HirDefKind::AssocTy => rust_ref::DefKind::TypeAlias,
-            HirDefKind::Mod => rust_ref::DefKind::Mod,
-            HirDefKind::Const { .. } | HirDefKind::AssocConst { .. } => rust_ref::DefKind::Const,
-            HirDefKind::Static { .. } => rust_ref::DefKind::Static,
-            _ => rust_ref::DefKind::Struct,
-        };
-
-        let segments = def_path
-            .data
-            .iter()
-            .filter_map(|elem| {
-                let name = elem.data.get_opt_name()?;
-                let kind = match &elem.data {
-                    rustc_hir::definitions::DefPathData::TypeNs(_) => leaf_kind.clone(),
-                    rustc_hir::definitions::DefPathData::ValueNs(_) => rust_ref::DefKind::Fn,
-                    _ => return None,
-                };
-                Some(DefPathSegment {
+        let mut segments = Vec::new();
+        let mut current = def_id.index;
+        while current != CRATE_DEF_INDEX {
+            let segment_def_id = DefId {
+                krate: def_id.krate,
+                index: current,
+            };
+            let key = self.tcx.def_key(segment_def_id);
+            if let Some(name) = key.disambiguated_data.data.get_opt_name() {
+                let kind =
+                    oracle_def_kind(self.tcx.def_kind(segment_def_id)).unwrap_or_else(|| {
+                        panic!(
+                            "oracle cannot represent definition kind {:?} in external path {}",
+                            self.tcx.def_kind(segment_def_id),
+                            self.tcx.def_path_str(def_id)
+                        )
+                    });
+                segments.push(DefPathSegment {
                     kind,
                     name: name.to_string(),
-                })
-            })
-            .collect();
+                });
+            }
+            current = key
+                .parent
+                .expect("non-root definition path segment must have a parent");
+        }
+        segments.reverse();
         DefPath {
             krate: crate_name,
             segments,
@@ -685,6 +681,24 @@ impl<'tcx> Emitter<'tcx> {
             hir::BinOpKind::Shr => BinOp::Shr,
         }
     }
+}
+
+fn oracle_def_kind(kind: HirDefKind) -> Option<rust_ref::DefKind> {
+    use rustc_hir::def::CtorOf;
+
+    Some(match kind {
+        HirDefKind::Fn | HirDefKind::AssocFn => rust_ref::DefKind::Fn,
+        HirDefKind::Struct | HirDefKind::Ctor(CtorOf::Struct, _) => rust_ref::DefKind::Struct,
+        HirDefKind::Enum => rust_ref::DefKind::Enum,
+        HirDefKind::Variant | HirDefKind::Ctor(CtorOf::Variant, _) => rust_ref::DefKind::Variant,
+        HirDefKind::Trait | HirDefKind::TraitAlias => rust_ref::DefKind::Trait,
+        HirDefKind::Impl { .. } => rust_ref::DefKind::Impl,
+        HirDefKind::TyAlias | HirDefKind::AssocTy => rust_ref::DefKind::TypeAlias,
+        HirDefKind::Mod => rust_ref::DefKind::Mod,
+        HirDefKind::Const { .. } | HirDefKind::AssocConst { .. } => rust_ref::DefKind::Const,
+        HirDefKind::Static { .. } => rust_ref::DefKind::Static,
+        _ => return None,
+    })
 }
 
 pub fn emit_crate(tcx: TyCtxt<'_>) -> Result<Crate<NormalizedDef>, OracleError> {
