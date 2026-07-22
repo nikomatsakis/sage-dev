@@ -77,6 +77,9 @@ impl<'db> SymExt<'db> {
             SymExtKind::TypeAlias => Namespace::Type,
             SymExtKind::Const => Namespace::Value,
             SymExtKind::Static => Namespace::Value,
+            // External name resolution uses `named_children`, which retains
+            // the namespace on the metadata edge. This fallback is only for
+            // callers holding a bare macro definition without that edge.
             SymExtKind::MacroDef => Namespace::Macro(MacroKind::Bang),
             SymExtKind::Use => Namespace::Type,
             SymExtKind::Other => return None,
@@ -95,6 +98,25 @@ impl<'db> SymExt<'db> {
             .map(|raw_child| {
                 SymExt::new(db, raw_child.crate_num, raw_child.def_index, raw_child.kind).into()
             })
+            .collect()
+    }
+
+    /// Look up exported children while retaining the namespace on the
+    /// metadata edge. Namespace is not part of canonical definition identity.
+    #[salsa::tracked(returns(ref))]
+    pub fn named_children(
+        self,
+        db: &'db dyn Db,
+        name: Name<'db>,
+        namespace: Namespace,
+    ) -> Vec<Symbol<'db>> {
+        db.tcx()
+            .module_children(self.crate_num(db), self.def_index(db))
+            .into_iter()
+            .filter(|child| {
+                child.name.as_str() == name.text(db).as_str() && child.namespace == namespace
+            })
+            .map(|child| SymExt::new(db, child.crate_num, child.def_index, child.kind).into())
             .collect()
     }
 }

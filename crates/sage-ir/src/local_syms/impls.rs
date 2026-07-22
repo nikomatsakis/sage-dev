@@ -143,3 +143,92 @@ pub fn local_impls<'db>(
     visit(db, krate.root_mod(db), &mut impls);
     impls
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, salsa::Update)]
+pub struct LocalImplCandidates<'db> {
+    pub impls: Vec<LocalImplSym<'db>>,
+    pub complete: bool,
+}
+
+/// Local impls for one fixed trait, together with conservative expansion
+/// completeness. This is the trait-keyed solver boundary; the current source
+/// index still scans module impls internally.
+#[salsa::tracked(returns(ref))]
+pub fn local_impl_candidates<'db>(
+    db: &'db dyn crate::Db,
+    krate: crate::scope::LocalCrateSymbol<'db>,
+    target_trait: crate::symbol::TraitSymbol<'db>,
+) -> LocalImplCandidates<'db> {
+    use crate::symbol::SymbolData;
+
+    fn visit<'db>(
+        db: &'db dyn crate::Db,
+        module: crate::local_syms::mods::LocalModSym<'db>,
+        target_trait: crate::symbol::TraitSymbol<'db>,
+        output: &mut Vec<LocalImplSym<'db>>,
+        complete: &mut bool,
+    ) {
+        *complete &=
+            crate::local_syms::mods::module_expansion_complete_for_trait(db, module, target_trait);
+        for symbol in crate::local_syms::mods::local_expanded_module_items(db, module) {
+            match symbol.data(db) {
+                SymbolData::ImplSymbol(crate::symbol::ImplSymbol::Local(local)) => {
+                    if crate::local_syms::mods::item_has_unexpanded_active_attribute(
+                        db,
+                        crate::local_syms::LocalModItemSym::Impl(local),
+                    ) {
+                        *complete = false;
+                        continue;
+                    }
+
+                    let (_, cst) = local.cst(db).open_deref();
+                    let signature = local.sig(db);
+                    match signature.root().value.trait_ref {
+                        Some(trait_ref) if trait_ref.trait_sym == target_trait => {
+                            output.push(local)
+                        }
+                        Some(_) => {}
+                        None if cst.trait_path.is_none() => {}
+                        None => *complete = false,
+                    }
+                }
+                SymbolData::ModSymbol(crate::symbol::ModSymbol::Local(child)) => {
+                    if crate::local_syms::mods::item_has_unexpanded_active_attribute(
+                        db,
+                        crate::local_syms::LocalModItemSym::Mod(child),
+                    ) {
+                        *complete = false;
+                    } else {
+                        visit(db, child, target_trait, output, complete)
+                    }
+                }
+                SymbolData::ImplSymbol(crate::symbol::ImplSymbol::Ext(_))
+                | SymbolData::ModSymbol(crate::symbol::ModSymbol::Ext(_))
+                | SymbolData::FnSymbol(_)
+                | SymbolData::StructSymbol(_)
+                | SymbolData::EnumSymbol(_)
+                | SymbolData::VariantSymbol(_)
+                | SymbolData::VariantCtorSymbol(_)
+                | SymbolData::TraitSymbol(_)
+                | SymbolData::TypeAliasSymbol(_)
+                | SymbolData::ConstSymbol(_)
+                | SymbolData::StaticSymbol(_)
+                | SymbolData::MacroDefSymbol(_)
+                | SymbolData::IntrinsicTypeSymbol(_)
+                | SymbolData::MacroInvocationSymbol(_)
+                | SymbolData::UseSymbol(_) => {}
+            }
+        }
+    }
+
+    let mut impls = Vec::new();
+    let mut complete = true;
+    visit(
+        db,
+        krate.root_mod(db),
+        target_trait,
+        &mut impls,
+        &mut complete,
+    );
+    LocalImplCandidates { impls, complete }
+}

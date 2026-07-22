@@ -138,8 +138,16 @@ exhaustive discovery have identical solver meaning. The trait key, and
 eventually compatible self-type partitions, also form the incremental
 invalidation boundary so unrelated impl changes do not reexecute the query.
 
-The current `local_impls(LocalCrateSymbol)` scan is an MVP source. The
-destination and required conformance tests live in
+The current `local_impl_candidates(LocalCrateSymbol, TraitSymbol)` query is a
+trait-keyed local source backed by a provisional linear module-tree scan. Its
+result carries conservative expansion/header completeness, and it excludes
+impls with unrepresented active attribute transformations from definite
+candidates. Because the backing scan still reads every expanded local impl,
+the destination incremental-isolation contract is not yet met: an unrelated
+trait impl edit can reexecute the query despite the trait key. Global
+external-crate coverage, trait-partitioned source dependencies, their
+query-trace conformance test, and conservative self-type partitioning remain
+outstanding. The destination and required conformance tests live in
 [Trait Solver Design](./trait-solver.md) and the
 [Trait Impl Candidate Discovery RFD](../rfds/trait-impl-candidate-discovery/README.md).
 

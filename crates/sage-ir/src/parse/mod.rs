@@ -57,6 +57,11 @@ impl<'a, 'db> Parser<'a, 'db> {
                 "attribute_item" => {
                     pending_attrs.push(child);
                 }
+                "inner_attribute_item" if self.inner_attr_is_known_inert(child) => {
+                    // Lint-only module attributes do not affect expansion or
+                    // candidate completeness. Other inner attributes remain
+                    // explicit errors until module attributes are represented.
+                }
                 "function_item" | "function_signature_item" => {
                     items.push(self.parse_fn(child, &pending_attrs));
                     pending_attrs.clear();
@@ -104,6 +109,8 @@ impl<'a, 'db> Parser<'a, 'db> {
                 "expression_statement" => {
                     if let Some(item) = self.try_parse_macro_invocation(child, &pending_attrs) {
                         items.push(item);
+                    } else {
+                        items.push(self.error_item(child, &pending_attrs));
                     }
                     pending_attrs.clear();
                 }
@@ -111,15 +118,35 @@ impl<'a, 'db> Parser<'a, 'db> {
                     items.push(self.parse_macro_invocation_node(child, &pending_attrs));
                     pending_attrs.clear();
                 }
-                "line_comment" | "block_comment" | "{" | "}" | ";" | "ERROR" => {
-                    // Skip comments, delimiters, and error nodes.
-                    // If ERROR, we could emit LocalModItemSym::Error but for now skip.
+                "line_comment" | "block_comment" | "{" | "}" | ";" => {
+                    // Comments and delimiters do not consume pending attrs.
+                }
+                "ERROR" => {
+                    items.push(self.error_item(child, &pending_attrs));
+                    pending_attrs.clear();
                 }
                 _ => {
+                    items.push(self.error_item(child, &pending_attrs));
                     pending_attrs.clear();
                 }
             }
         }
+        if let (Some(first), Some(last)) = (pending_attrs.first(), pending_attrs.last()) {
+            items.push(LocalModItemSym::Error(crate::span::AbsoluteSpan {
+                source: self.source,
+                start: first.start_byte() as u32,
+                end: last.end_byte() as u32,
+            }));
+        }
         items
+    }
+
+    fn error_item(
+        &self,
+        node: tree_sitter::Node<'a>,
+        pending_attrs: &[tree_sitter::Node<'a>],
+    ) -> LocalModItemSym<'db> {
+        let start = util::item_start(node, pending_attrs);
+        LocalModItemSym::Error(util::absolute_span(self.source, node, start))
     }
 }

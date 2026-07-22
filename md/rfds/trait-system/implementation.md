@@ -162,6 +162,9 @@ Tests:
 - [ ] Add tests for nested modules, multiple impls for one trait, inherent impls, and
   macro-expanded impls.
 - [x] Keep consumer filtering as a linear scan for the MVP.
+- [ ] Partition the candidate source dependency by trait and add a query-trace
+  regression proving that an unrelated-trait impl edit does not reexecute the
+  queried trait's candidate discovery.
 
 ### Step 7: Consumer boundaries
 

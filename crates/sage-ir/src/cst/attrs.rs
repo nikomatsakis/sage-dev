@@ -20,6 +20,20 @@ pub enum AttrCstKind {
     DocComment,
 }
 
+/// Attributes whose presence does not transform an item before type checking.
+pub(crate) fn is_known_inert_item_attribute(name: &str) -> bool {
+    matches!(
+        name,
+        "inline" | "repr" | "allow" | "deny" | "warn" | "forbid"
+    )
+}
+
+/// Inner attributes that affect linting only and can therefore be ignored by
+/// the current module and trait-candidate pipelines.
+pub(crate) fn is_known_inert_inner_attribute(name: &str) -> bool {
+    matches!(name, "allow" | "deny" | "warn" | "forbid")
+}
+
 // ---------------------------------------------------------------------------
 // ToTokens
 // ---------------------------------------------------------------------------

@@ -11,8 +11,9 @@ be lifted as sage matures.
 
 **What:** Sage does not support workspace crates with `proc-macro = true` in
 their `[lib]` target. Proc-macro crates from external dependencies (e.g.,
-`serde_derive`, `tokio_macros`, `clap_derive`) are fully supported — sage calls
-them via `proc_macro::bridge` like any other consumer.
+`serde_derive`, `tokio_macros`, `clap_derive`) can be loaded by the rustc bridge,
+but their name resolution and output are not yet fully integrated into Sage's
+module expansion pipeline.
 
 **Why:** A workspace-defined proc-macro requires compiling it to a host-side
 dylib before it can be expanded. This means sage would need to invoke rustc (or
@@ -104,15 +105,17 @@ an ambiguous type-checking result.
 
 ## Supported features
 
-Everything not listed above is intended to be supported, including:
+The destination language includes the following. This list is not a statement
+that every path is implemented today; current implementation limitations are
+recorded below and in the build-out roadmap.
 
 - async/await
 - Trait definitions and implementations
 - Generics, lifetime syntax, where clauses (with lifetime semantics deferred)
 - Pattern matching
 - Closures and `impl Fn` / `dyn Fn`
-- Derive macros (from external crates)
-- Proc-macro attributes (from external crates), e.g. `#[tokio::test]`
+- Derive macros (external integration in progress)
+- Proc-macro attributes, e.g. `#[tokio::test]` (external integration in progress)
 - `macro_rules!` definitions and invocations within the workspace
   (module-scoped — see restriction above)
 - Module tree (`mod`, `pub use`, `pub(crate)`)
@@ -153,11 +156,35 @@ Macro paths are resolved to their definition (`<ext tracing::debug>`),
 but the token tree is opaque. Paths inside macro arguments are not
 resolved. `macro_rules!` expansion is the next major feature needed.
 
-**Exception:** Derive macros from external crates ARE expanded. Builtin
-derives (`Debug`, `Clone`, etc.) produce synthetic IR. Proc-macro
-derives (e.g., `Parser`, `Subcommand`) are invoked via
-`proc_macro::bridge` and the expanded source is lowered through
-tree-sitter into `Vec<ItemAst>`. See `derive.rs` and `proc_macro_srv.rs`.
+**Exception:** represented derive expansions produce ordinary sibling items
+with generated-source provenance. The current builtin subset includes
+`Clone` for non-generic named-field structs; other builtin input shapes remain
+unsupported. The rustc bridge contains the proc-macro invocation mechanism,
+but fully integrating proc-macro derive name resolution and output into the
+module expansion pipeline remains work in progress. See `derive.rs`,
+`local_syms/mods.rs`, and `proc_macro_srv.rs`.
+
+Trait candidate discovery treats unresolved item macros and active attribute
+macros conservatively as incomplete. An impl with an active attribute whose
+transformation has not run is excluded from definite candidates, preventing a
+disabled or replaced source impl, containing module, or macro expansion from
+producing a false proof. Derives attached to an item are likewise withheld
+while another active attribute on that item remains unexpanded. A uniquely
+resolved item macro whose output parses
+successfully remains complete. This is a soundness boundary, not a substitute
+for completing macro expansion. Likewise, a `use` with an unrepresented active
+attribute is excluded from name resolution; its pre-expansion target cannot
+steer a definite impl candidate.
+
+Unsupported item kinds (including unions) and malformed item syntax are
+retained as explicit error items. Trait candidate discovery treats their
+module as incomplete, so an attribute or derive attached to an unsupported
+item cannot disappear and justify a ground negative result.
+
+Lint-only inner attributes (`#![allow(...)]`, `warn`, `deny`, and `forbid`) are
+known inert for this pipeline and do not make candidate discovery incomplete.
+Other inner module attributes are conservatively incomplete until Sage
+represents their effects.
 
 ### Type references in bodies pass through
 

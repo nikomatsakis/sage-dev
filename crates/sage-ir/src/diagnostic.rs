@@ -153,7 +153,9 @@ impl<'db> Diagnostic<'db> {
         let abs = self.span.resolve(db);
         let source_file = match abs.source {
             ParseSource::SourceFile(sf) => sf,
-            ParseSource::BangMacro(..) => return self.render_short(db),
+            ParseSource::BangMacro(..) | ParseSource::Derive(..) => {
+                return self.render_short(db);
+            }
         };
 
         let source_text = source_file.text(db);
@@ -207,6 +209,15 @@ impl<'db> Diagnostic<'db> {
 fn same_file(a: ParseSource<'_>, b: ParseSource<'_>) -> bool {
     match (a, b) {
         (ParseSource::SourceFile(a), ParseSource::SourceFile(b)) => a == b,
-        _ => false,
+        (ParseSource::Derive(a), ParseSource::Derive(b)) => a == b,
+        (ParseSource::BangMacro(a_def, a_call), ParseSource::BangMacro(b_def, b_call)) => {
+            a_def == b_def && a_call == b_call
+        }
+        (ParseSource::SourceFile(_), ParseSource::Derive(_))
+        | (ParseSource::SourceFile(_), ParseSource::BangMacro(_, _))
+        | (ParseSource::Derive(_), ParseSource::SourceFile(_))
+        | (ParseSource::Derive(_), ParseSource::BangMacro(_, _))
+        | (ParseSource::BangMacro(_, _), ParseSource::SourceFile(_))
+        | (ParseSource::BangMacro(_, _), ParseSource::Derive(_)) => false,
     }
 }

@@ -21,8 +21,16 @@ the first landed pieces.
 ### Step 2: Associated methods and `DbDropGuard::db`
 
 - [x] Give impl functions independent symbol, signature, and body queries.
-- [ ] Complete the derive/item path needed to represent the local `Db: Clone`
+- [x] Complete the derive/item path needed to represent the local `Db: Clone`
   impl.
+  - [x] Preserve the source item and append a parsed `Clone` impl for the
+    concrete non-generic struct shape used by `Db`.
+  - [x] Give generated derive text a distinct parse-source identity linked to
+    the source item.
+  - [x] Resolve the generated impl's external `Clone` trait and expose it
+    through trait-keyed candidate discovery.
+- [ ] Supply the external `Clone` trait contract needed for the solver to
+  accept and prove the generated candidate.
 - [ ] Resolve `Clone::clone`, prove `Db: Clone`, and consume receiver
   adjustments into explicit tree nodes.
 - [ ] Assert that call checking does not query the selected callee body.

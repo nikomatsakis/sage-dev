@@ -142,11 +142,31 @@ The destination-level soundness, completeness, candidate-discovery, progress,
 scheduling, and resource contract is recorded in
 [Trait Solver Design](./trait-solver.md).
 
-Checked local trait and impl signatures live on their owning symbols. A
-`local_impls(LocalCrateSymbol)` query provides deterministic per-crate enumeration; the
-first solver implementation linearly scans it for impls of a fixed trait. Method-name
-discovery remains in method resolution and submits one fixed-trait goal per candidate
-trait.
+Checked local trait and impl signatures live on their owning symbols.
+`local_impls(LocalCrateSymbol)` remains deterministic per-crate enumeration for
+consumers such as inherent-method discovery. The solver consumes the narrower
+`local_impl_candidates(LocalCrateSymbol, TraitSymbol)` query. Its current
+implementation still scans the expanded local module tree internally, but the
+fixed trait is part of the semantic query key and the result carries whether
+unresolved macros, unsupported derives, active item attributes, or unresolved
+trait impl headers could still change the relevant impl set. Attributed impls
+whose transformation is not represented are excluded from definite candidates.
+The same exclusion applies to an attributed module subtree or macro expansion,
+and an item's attached derives are not published while another active
+attribute on that item remains unexpanded. A uniquely resolved, successfully
+parsed item macro remains complete. Failed,
+ambiguous, or depth-limited expansion is omitted and makes the source
+incomplete. A `use` with an unrepresented active attribute does not participate
+in name resolution. Unsupported or malformed item nodes are retained as error
+items and make discovery incomplete rather than disappearing before the
+completeness audit. Known lint-only inner module attributes (`allow`, `deny`,
+`warn`, and `forbid`) do not affect completeness; other inner attributes remain
+incomplete until module-attribute semantics are represented.
+An incomplete source cannot justify logical `No`. The backing scan still reads
+all expanded local impls, so unrelated-trait edits can reexecute this query;
+trait-partitioned source dependencies and their query-trace test remain required.
+Method-name discovery remains in method resolution and submits one fixed-trait
+goal per candidate trait.
 
 `LocalTraitSym::items` and `LocalImplSym::items` lazily mint stable function,
 type, and const symbols linked to their owner. Associated function signatures

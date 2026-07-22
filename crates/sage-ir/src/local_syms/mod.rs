@@ -89,10 +89,10 @@ impl<'db> LocalModItemSym<'db> {
             LocalModItemSym::Const(s) => Some(s.attrs(db)),
             LocalModItemSym::Static(s) => Some(s.attrs(db)),
             LocalModItemSym::Mod(s) => Some(s.get_attrs(db)),
-            LocalModItemSym::Use(_)
-            | LocalModItemSym::MacroDef(_)
-            | LocalModItemSym::MacroInvocation(_)
-            | LocalModItemSym::Error(_) => None,
+            LocalModItemSym::Use(s) => Some(s.get_attrs(db)),
+            LocalModItemSym::MacroDef(s) => Some(s.get_attrs(db)),
+            LocalModItemSym::MacroInvocation(s) => Some(s.attrs(db)),
+            LocalModItemSym::Error(_) => None,
         }
     }
 }

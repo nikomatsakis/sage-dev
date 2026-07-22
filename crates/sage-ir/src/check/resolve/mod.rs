@@ -346,6 +346,13 @@ impl<'db> Resolver<'db> {
         name: Name<'db>,
         namespace: Namespace,
     ) -> Vec<Symbol<'db>> {
+        if let (ModSymbol::Ext(external), Namespace::Macro(_)) = (module, namespace) {
+            return if filter.named {
+                external.named_children(self.db, name, namespace).to_vec()
+            } else {
+                Vec::new()
+            };
+        }
         let module_expanded_items = module.expanded_module_items(self.db);
 
         let mut results = vec![];
@@ -376,6 +383,12 @@ impl<'db> Resolver<'db> {
 
                 SymbolData::UseSymbol(sym) => match sym {
                     UseSymbol::Local(sym) => {
+                        if crate::local_syms::mods::item_has_unexpanded_active_attribute(
+                            self.db,
+                            crate::local_syms::LocalModItemSym::Use(sym),
+                        ) {
+                            continue;
+                        }
                         let (stash, imports) = sym.imports(self.db).open();
                         for import in &stash[imports] {
                             match import.kind {

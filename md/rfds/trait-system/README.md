@@ -293,8 +293,8 @@ impl signature's binder and binds `Self` to that opening's substituted
 
 ### Per-crate impl enumeration
 
-The solver and method resolver need a complete, deterministic set of local impl symbols.
-The crate, not a `SourceRoot`, is the semantic key:
+The method resolver needs deterministic per-crate impl enumeration, while the
+solver also needs a fixed-trait key and an explicit completeness result:
 
 ```rust
 #[salsa::tracked(returns(ref))]
@@ -302,22 +302,44 @@ pub fn local_impls<'db>(
     db: &'db dyn Db,
     krate: LocalCrateSymbol<'db>,
 ) -> Vec<LocalImplSym<'db>>;
+
+#[salsa::tracked(returns(ref))]
+pub fn local_impl_candidates<'db>(
+    db: &'db dyn Db,
+    krate: LocalCrateSymbol<'db>,
+    target_trait: TraitSymbol<'db>,
+) -> LocalImplCandidates<'db>;
 ```
 
-`local_impls` walks the expanded module tree rooted at `krate.root_mod(db)`, including
-inline modules and macro-produced impls, and returns each impl once in deterministic module
-and item order. The MVP consumers linearly scan this list:
+Both queries walk the expanded module tree rooted at `krate.root_mod(db)`,
+including inline modules and macro-produced impls. `local_impl_candidates`
+filters to the fixed trait and returns `complete: false` when unresolved item
+or attribute macros, ambiguous or unsupported derives, or unresolved trait
+impl headers could still change the relevant impl set. An impl carrying an
+active attribute transformation which Sage has not represented is excluded
+from definite candidates, since the attribute may delete or replace it. This
+also excludes an affected module subtree or macro expansion, and withholds
+derives attached to an item whose other active attributes remain unexpanded. A
+uniquely resolved item macro whose output parses successfully remains complete.
+Failed, ambiguous, or depth-limited expansion is omitted and marks the source
+incomplete.
+The MVP consumers use them as follows:
 
-- the trait solver keeps positive trait impls whose `trait_ref.trait_sym` matches the fixed
-  trait goal, whose impl and referenced local-trait signatures are both
-  `SolverEligibility::Eligible`, then opens each impl binder freshly;
+- the trait solver consumes `local_impl_candidates`, keeps eligible positive
+  impls, and treats an incomplete source as logical uncertainty rather than
+  `No`, then opens each impl binder freshly;
 - inherent method lookup keeps impls with `trait_ref: None`, a matching self-type
   head, and an `Eligible` supported opening;
 - trait method discovery enumerates traits separately and asks the solver a
   fixed post-deref `LookupSelfTy: Trait<Args>` question. The solver does not
   return an impl or discover a trait by method name.
 
-The linear local scan is an MVP source, not the destination query boundary.
+The trait key is part of the query boundary. The linear local scan behind
+it remains an MVP implementation rather than the destination global index. In
+particular, it still reads the complete expanded module vector and every impl
+signature, so an unrelated-trait impl edit may reexecute the query. A
+trait-partitioned source dependency and a query-trace test proving isolation
+are still required.
 The [Trait Impl Candidate Discovery RFD](../trait-impl-candidate-discovery/README.md)
 requires complete local and external discovery keyed first by trait, with an
 eventual conservative self-type-head refinement, without changing the checked

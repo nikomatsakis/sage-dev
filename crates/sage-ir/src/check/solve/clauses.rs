@@ -3,7 +3,7 @@ use sage_stash::Slice;
 
 use crate::check::infer::version::Version;
 use crate::generic_param::GenericParamKind;
-use crate::local_syms::impls::{LocalImplSym, local_impls};
+use crate::local_syms::impls::{LocalImplSym, local_impl_candidates};
 use crate::symbol::TraitSymbol;
 use crate::ty::{SolverEligibility, TraitRef, Ty, WherePredicate};
 
@@ -83,15 +83,11 @@ pub(crate) fn assemble_candidates<'db>(
         return (candidates, true);
     }
 
-    for &local_impl in local_impls(db, state.local_crate) {
+    let local_source = local_impl_candidates(db, state.local_crate, trait_ref.trait_sym);
+    incomplete |= !local_source.complete;
+    for &local_impl in &local_source.impls {
         let signature = local_impl.sig(db);
         let signature_data = signature.root().value;
-        let Some(impl_ref) = signature_data.trait_ref else {
-            continue;
-        };
-        if impl_ref.trait_sym != trait_ref.trait_sym {
-            continue;
-        }
         if signature_data.solver_eligibility == SolverEligibility::Eligible {
             candidates.push(Candidate::LocalImpl(local_impl));
         } else {

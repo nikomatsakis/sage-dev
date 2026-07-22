@@ -7,6 +7,23 @@ use crate::span::RelativeSpan;
 use super::Parser;
 
 impl<'a, 'db> Parser<'a, 'db> {
+    pub(super) fn inner_attr_is_known_inert(&self, node: tree_sitter::Node<'a>) -> bool {
+        debug_assert_eq!(node.kind(), "inner_attribute_item");
+        let attribute = node
+            .named_child(0)
+            .filter(|child| child.kind() == "attribute")
+            .unwrap_or(node);
+        let mut cursor = attribute.walk();
+        let Some(path) = attribute
+            .children(&mut cursor)
+            .find(|child| matches!(child.kind(), "identifier" | "scoped_identifier"))
+        else {
+            return false;
+        };
+        path.kind() == "identifier"
+            && crate::cst::attrs::is_known_inert_inner_attribute(&self.text[path.byte_range()])
+    }
+
     pub(super) fn parse_attr_nodes(
         &self,
         stash: &mut Stash,
@@ -34,21 +51,24 @@ impl<'a, 'db> Parser<'a, 'db> {
             end: node.end_byte() as u32 - item_start,
         };
 
+        // `attribute_item`/`inner_attribute_item` wrap the semantic
+        // `attribute` node which owns the path and `arguments` field.
+        let attribute = node
+            .named_child(0)
+            .filter(|child| child.kind() == "attribute")
+            .unwrap_or(node);
         let mut path_node = None;
-        let mut args_node = None;
-        let mut cursor = node.walk();
+        let mut cursor = attribute.walk();
 
-        for child in node.children(&mut cursor) {
+        for child in attribute.children(&mut cursor) {
             match child.kind() {
                 "identifier" | "scoped_identifier" => {
                     path_node = Some(child);
                 }
-                "token_tree" => {
-                    args_node = Some(child);
-                }
                 _ => {}
             }
         }
+        let args_node = attribute.child_by_field_name("arguments");
 
         let path = match path_node {
             Some(n) => self.parse_path(stash, n, item_start),
@@ -77,7 +97,7 @@ impl<'a, 'db> Parser<'a, 'db> {
             kind: AttrCstKind::Normal,
             path,
             args,
-            is_inner: false,
+            is_inner: node.kind() == "inner_attribute_item",
             span,
         }
     }

@@ -62,6 +62,13 @@ The query trace is compared as a normalized set or multiset unless order is
 the behavior under test. Scheduler completion order is not part of this
 milestone.
 
+Current implementation checkpoint: `#[derive(Debug, Clone)]` preserves `Db`
+and appends an ordinary parsed `impl Clone for Db` with generated-source
+provenance. The generated impl's hygienic external `Clone` identity resolves
+and is visible through trait-keyed local discovery. The complete external
+`Clone` trait contract needed for proof, method selection, call elaboration,
+and the final exact oracle fixture remain.
+
 ## Slice 2: `Parse::next`
 
 The second slice adds:

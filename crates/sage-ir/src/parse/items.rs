@@ -864,6 +864,10 @@ impl<'a, 'db> Parser<'a, 'db> {
         let start = item_start(node, pending_attrs);
         let abs_span = absolute_span(self.source, node, start);
 
+        let mut attr_stash = Stash::new();
+        let attrs = self.parse_attr_nodes(&mut attr_stash, pending_attrs, start);
+        let attrs = Stashed::new(attr_stash, attrs);
+
         let mut stash = Stash::new();
         let mut imports = Vec::new();
 
@@ -878,7 +882,13 @@ impl<'a, 'db> Parser<'a, 'db> {
         let imports_slice = stash.alloc_slice(&imports);
         let use_imports = Stashed::new(stash, imports_slice);
 
-        LocalModItemSym::Use(LocalUseSym::new(self.db, self.scope, use_imports, abs_span))
+        LocalModItemSym::Use(LocalUseSym::new(
+            self.db,
+            self.scope,
+            attrs,
+            use_imports,
+            abs_span,
+        ))
     }
 
     fn collect_use_tree(
@@ -1112,8 +1122,11 @@ impl<'a, 'db> Parser<'a, 'db> {
         node: tree_sitter::Node<'a>,
         pending_attrs: &[tree_sitter::Node<'a>],
     ) -> LocalModItemSym<'db> {
+        let mut stash = Stash::new();
         let start = item_start(node, pending_attrs);
         let name = node_name(self.db, node, self.text);
+        let attrs = self.parse_attr_nodes(&mut stash, pending_attrs, start);
+        let attrs = Stashed::new(stash, attrs);
         let abs_span = absolute_span(self.source, node, start);
         let body_tokens = ts_helpers::extract_macro_body_tokens(node, self.text);
 
@@ -1121,6 +1134,7 @@ impl<'a, 'db> Parser<'a, 'db> {
             self.db,
             name,
             self.scope,
+            attrs,
             body_tokens,
             abs_span,
         ))
@@ -1151,6 +1165,7 @@ impl<'a, 'db> Parser<'a, 'db> {
         let abs_span = absolute_span(self.source, node, start);
 
         let mut stash = Stash::new();
+        let attrs = self.parse_attr_nodes(&mut stash, pending_attrs, start);
         let macro_name_node = node.child_by_field_name("macro").unwrap_or(node);
         let path = self.parse_path(&mut stash, macro_name_node, start);
         let input_text = ts_helpers::extract_macro_invocation_tokens(node, self.text);
@@ -1161,6 +1176,7 @@ impl<'a, 'db> Parser<'a, 'db> {
             end: node.end_byte() as u32 - start,
         };
         let cst_data = crate::cst::macro_invocations::MacroInvocationCstData {
+            attrs,
             path,
             input_tokens,
             span,

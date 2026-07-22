@@ -212,6 +212,368 @@ pub fn setup_root_module<'db>(
 }
 
 #[cfg(test)]
+mod derive_expansion_tests {
+    use super::*;
+    use sage_ir::resolve::{MacroKind, Namespace};
+    use sage_ir::span::ParseSource;
+    use sage_ir::symbol::{CrateNum, DefIndex, ImplSymbol, StructSymbol, SymExtKind, SymbolData};
+    use sage_ir::tcx::{ExternalDefPath, RawChild, TcxDb};
+
+    struct BuiltinDeriveTcx;
+
+    impl TcxDb for BuiltinDeriveTcx {
+        fn extern_crate(&self, name: &str) -> Option<CrateNum> {
+            match name {
+                "std" => Some(CrateNum(1)),
+                "core" => Some(CrateNum(2)),
+                _ => None,
+            }
+        }
+
+        fn module_children(&self, crate_num: CrateNum, def_index: DefIndex) -> Vec<RawChild> {
+            let child = |name: &str,
+                         crate_num: u32,
+                         def_index: u32,
+                         namespace: Namespace,
+                         kind: SymExtKind| RawChild {
+                name: name.to_owned(),
+                crate_num: CrateNum(crate_num),
+                def_index: DefIndex(def_index),
+                namespace,
+                kind,
+            };
+            match (crate_num.0, def_index.0) {
+                (1, 0) => vec![child("prelude", 1, 1, Namespace::Type, SymExtKind::Mod)],
+                (1, 1) => vec![child("rust_2024", 1, 2, Namespace::Type, SymExtKind::Mod)],
+                (1, 2) => vec![
+                    child("Clone", 2, 2, Namespace::Type, SymExtKind::Trait),
+                    child("Debug", 2, 3, Namespace::Type, SymExtKind::Trait),
+                    child(
+                        "Clone",
+                        1,
+                        3,
+                        Namespace::Macro(MacroKind::Derive),
+                        SymExtKind::MacroDef,
+                    ),
+                    // One DefId can be exported through more than one macro
+                    // sub-namespace. The resolution edge, not SymExt identity,
+                    // selects the requested namespace.
+                    child(
+                        "Clone",
+                        1,
+                        3,
+                        Namespace::Macro(MacroKind::Bang),
+                        SymExtKind::MacroDef,
+                    ),
+                    child(
+                        "Debug",
+                        1,
+                        4,
+                        Namespace::Macro(MacroKind::Derive),
+                        SymExtKind::MacroDef,
+                    ),
+                ],
+                (2, 0) => vec![
+                    child("clone", 2, 1, Namespace::Type, SymExtKind::Mod),
+                    child("fmt", 2, 4, Namespace::Type, SymExtKind::Mod),
+                ],
+                (2, 1) => vec![child("Clone", 2, 2, Namespace::Type, SymExtKind::Trait)],
+                (2, 4) => vec![child("Debug", 2, 3, Namespace::Type, SymExtKind::Trait)],
+                _ => Vec::new(),
+            }
+        }
+
+        fn item_name(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<String> {
+            match (crate_num.0, def_index.0) {
+                (1, 0) => Some("std"),
+                (1, 1) => Some("prelude"),
+                (1, 2) => Some("rust_2024"),
+                (1, 3) | (2, 2) => Some("Clone"),
+                (1, 4) | (2, 3) => Some("Debug"),
+                (2, 0) => Some("core"),
+                (2, 1) => Some("clone"),
+                (2, 4) => Some("fmt"),
+                _ => None,
+            }
+            .map(str::to_owned)
+        }
+
+        fn is_module(&self, crate_num: CrateNum, def_index: DefIndex) -> bool {
+            matches!((crate_num.0, def_index.0), (1, 0 | 1 | 2) | (2, 0 | 1 | 4))
+        }
+
+        fn is_builtin_derive(&self, crate_num: CrateNum, def_index: DefIndex) -> bool {
+            matches!((crate_num.0, def_index.0), (1, 3 | 4))
+        }
+
+        fn def_path(&self, _crate_num: CrateNum, _def_index: DefIndex) -> Option<String> {
+            None
+        }
+
+        fn structured_def_path(
+            &self,
+            _crate_num: CrateNum,
+            _def_index: DefIndex,
+        ) -> Option<ExternalDefPath> {
+            None
+        }
+
+        fn expand_proc_macro_derive(
+            &self,
+            _crate_num: CrateNum,
+            _def_index: DefIndex,
+            _item_source: &str,
+        ) -> Option<String> {
+            None
+        }
+
+        fn expand_proc_macro_bang(
+            &self,
+            _crate_num: CrateNum,
+            _def_index: DefIndex,
+            _input_tokens: &str,
+        ) -> Option<String> {
+            None
+        }
+
+        fn expand_proc_macro_attr(
+            &self,
+            _crate_num: CrateNum,
+            _def_index: DefIndex,
+            _attr_args: &str,
+            _item_source: &str,
+        ) -> Option<String> {
+            None
+        }
+    }
+
+    #[test]
+    fn clone_derive_appends_an_impl_with_generated_source_provenance() {
+        with_test_crate_files_using_db(
+            Database::new(BuiltinDeriveTcx),
+            &[(
+                "lib.rs",
+                "#[derive(Debug, Clone)]\nstruct Db { shared: bool }",
+            )],
+            |db, root| {
+                let items = root.expanded_module_items(db);
+                let structs: Vec<_> = items
+                    .iter()
+                    .filter_map(|symbol| match symbol.data(db) {
+                        SymbolData::StructSymbol(StructSymbol::Local(symbol)) => Some(symbol),
+                        _ => None,
+                    })
+                    .collect();
+                let impls: Vec<_> = items
+                    .iter()
+                    .filter_map(|symbol| match symbol.data(db) {
+                        SymbolData::ImplSymbol(ImplSymbol::Local(symbol)) => Some(symbol),
+                        _ => None,
+                    })
+                    .collect();
+
+                let (attr_stash, attrs) = structs[0].attrs(db);
+                let attr_debug: Vec<_> = attrs
+                    .iter()
+                    .map(|attr| String::from_utf8_lossy(&attr_stash[attr.args]).into_owned())
+                    .collect();
+
+                assert_eq!(structs.len(), 1, "derive must preserve the source item");
+                assert_eq!(
+                    impls.len(),
+                    1,
+                    "only represented derives append impls; attrs={attr_debug:?}"
+                );
+                let signature = impls[0].sig(db);
+                let trait_ref = signature.root().value.trait_ref.expect("Clone trait ref");
+                assert!(matches!(
+                    trait_ref.trait_sym,
+                    sage_ir::symbol::TraitSymbol::Ext(_)
+                ));
+                let ParseSource::Derive(expansion) = impls[0].span(db).source else {
+                    panic!("derived impl must retain generated-source provenance");
+                };
+                assert_eq!(expansion.derive_name(db).text(db), "Clone");
+                assert_eq!(expansion.origin(db), structs[0].span(db));
+                assert!(
+                    expansion
+                        .text(db)
+                        .is_some_and(|text| text.starts_with("impl ::core::clone::Clone for Db"))
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn unsupported_tuple_clone_derive_does_not_append_invalid_impl_source() {
+        with_test_crate_files_using_db(
+            Database::new(BuiltinDeriveTcx),
+            &[("lib.rs", "#[derive(Clone)]\nstruct Pair(bool, bool);")],
+            |db, root| {
+                assert!(root.expanded_module_items(db).iter().all(|symbol| {
+                    !matches!(
+                        symbol.data(db),
+                        SymbolData::ImplSymbol(ImplSymbol::Local(_))
+                    )
+                }));
+            },
+        );
+    }
+
+    #[test]
+    fn active_attribute_prevents_derive_from_publishing_a_definite_impl() {
+        use sage_ir::local_syms::impls::local_impl_candidates;
+        use sage_ir::scope::local_crate;
+        use sage_ir::symbol::{ModSymbol, SymExt, TraitSymbol};
+
+        with_test_crate_files_using_db(
+            Database::new(BuiltinDeriveTcx),
+            &[(
+                "lib.rs",
+                "#[cfg(any())]\n#[derive(Clone)]\nstruct Db { shared: bool }",
+            )],
+            |db, root| {
+                assert!(root.expanded_module_items(db).iter().all(|symbol| {
+                    !matches!(
+                        symbol.data(db),
+                        SymbolData::ImplSymbol(ImplSymbol::Local(_))
+                    )
+                }));
+
+                let ModSymbol::Local(root) = root else {
+                    unreachable!()
+                };
+                let clone_trait =
+                    TraitSymbol::Ext(SymExt::new(db, CrateNum(2), DefIndex(2), SymExtKind::Trait));
+                let candidates = local_impl_candidates(db, local_crate(db, root), clone_trait);
+                assert!(candidates.impls.is_empty());
+                assert!(
+                    !candidates.complete,
+                    "the unexpanded active attribute can still change the item set"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn duplicate_derive_occurrences_have_distinct_generated_source_identity() {
+        with_test_crate_files_using_db(
+            Database::new(BuiltinDeriveTcx),
+            &[(
+                "lib.rs",
+                "#[derive(Clone, Clone)]\nstruct Db { shared: bool }",
+            )],
+            |db, root| {
+                let expansions: Vec<_> = root
+                    .expanded_module_items(db)
+                    .iter()
+                    .filter_map(|symbol| match symbol.data(db) {
+                        SymbolData::ImplSymbol(ImplSymbol::Local(impl_sym)) => {
+                            let ParseSource::Derive(expansion) = impl_sym.span(db).source else {
+                                return None;
+                            };
+                            Some(expansion)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(expansions.len(), 2);
+                assert_ne!(expansions[0], expansions[1]);
+                assert_eq!(expansions[0].derive_index(db), 0);
+                assert_eq!(expansions[1].derive_index(db), 1);
+            },
+        );
+    }
+
+    #[test]
+    fn unresolved_derive_keeps_trait_keyed_impl_search_incomplete() {
+        use sage_ir::local_syms::impls::local_impl_candidates;
+        use sage_ir::scope::local_crate;
+        use sage_ir::symbol::{ModSymbol, TraitSymbol};
+
+        with_test_crate(
+            "#[derive(custom::Custom)]\nstruct Db { shared: bool }\ntrait Marker {}",
+            |db, root| {
+                let marker: TraitSymbol<'_> = root
+                    .expanded_module_items(db)
+                    .iter()
+                    .find_map(|symbol| match symbol.data(db) {
+                        SymbolData::TraitSymbol(TraitSymbol::Local(marker)) => Some(marker.into()),
+                        _ => None,
+                    })
+                    .expect("Marker trait");
+                let ModSymbol::Local(root) = root else {
+                    unreachable!()
+                };
+                let candidates = local_impl_candidates(db, local_crate(db, root), marker);
+                assert!(candidates.impls.is_empty());
+                assert!(
+                    !candidates.complete,
+                    "an ignored derive must not make ground impl search exhaustive"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn macro_generated_unresolved_derive_keeps_impl_search_incomplete() {
+        use sage_ir::local_syms::impls::local_impl_candidates;
+        use sage_ir::scope::local_crate;
+        use sage_ir::symbol::{ModSymbol, TraitSymbol};
+
+        with_test_crate(
+            "macro_rules! make { () => { #[derive(Custom)] struct Generated { value: bool } } }\nmake!();\ntrait Marker {}",
+            |db, root| {
+                let marker: TraitSymbol<'_> = root
+                    .expanded_module_items(db)
+                    .iter()
+                    .find_map(|symbol| match symbol.data(db) {
+                        SymbolData::TraitSymbol(TraitSymbol::Local(marker)) => Some(marker.into()),
+                        _ => None,
+                    })
+                    .expect("Marker trait");
+                let ModSymbol::Local(root) = root else {
+                    unreachable!()
+                };
+                let candidates = local_impl_candidates(db, local_crate(db, root), marker);
+                assert!(!candidates.complete);
+            },
+        );
+    }
+
+    #[test]
+    fn moving_source_item_preserves_derive_expansion_identity() {
+        use salsa::Setter as _;
+        use salsa::plumbing::AsId as _;
+
+        let mut db = Database::new(BuiltinDeriveTcx);
+        let source = "#[derive(Clone)]\nstruct Db { shared: bool }";
+        let file = db.add_source_file("lib.rs".to_owned(), source.to_owned());
+        let expansion = |db: &Database| {
+            let (_, root) = setup_root_module(db, file);
+            root.expanded_module_items(db)
+                .iter()
+                .find_map(|symbol| match symbol.data(db) {
+                    SymbolData::ImplSymbol(ImplSymbol::Local(impl_sym)) => {
+                        let ParseSource::Derive(expansion) = impl_sym.span(db).source else {
+                            return None;
+                        };
+                        Some((expansion.as_id(), expansion.origin(db).start))
+                    }
+                    _ => None,
+                })
+                .expect("derived impl")
+        };
+
+        let before = db.attach(expansion);
+        file.set_text(&mut db).to(format!("\n{source}"));
+        let after = db.attach(expansion);
+        assert_eq!(before.0, after.0, "offset changes must preserve identity");
+        assert_ne!(before.1, after.1, "origin coordinates must still update");
+    }
+}
+
+#[cfg(test)]
 mod trait_system_tests {
     use super::*;
     use sage_ir::local_syms::impls::local_impls;
@@ -848,6 +1210,56 @@ mod trait_solver_proof_tests {
         (TraitSymbol::Local(local), krate)
     }
 
+    fn assert_ground_bool_marker_is_maybe<'db>(
+        db: &'db dyn Db,
+        root: sage_ir::symbol::ModSymbol<'db>,
+    ) {
+        assert_ground_bool_marker_result(db, root, true);
+    }
+
+    fn assert_ground_bool_marker_is_no<'db>(
+        db: &'db dyn Db,
+        root: sage_ir::symbol::ModSymbol<'db>,
+    ) {
+        assert_ground_bool_marker_result(db, root, false);
+    }
+
+    fn assert_ground_bool_marker_result<'db>(
+        db: &'db dyn Db,
+        root: sage_ir::symbol::ModSymbol<'db>,
+        expect_maybe: bool,
+    ) {
+        let (marker, krate) = trait_and_crate(db, root, "Marker");
+        let mut stash = Stash::new();
+        let egraph = VersionedEGraph::new();
+        let self_ty = stash.alloc(Ty::Bool);
+        let args = stash.alloc_slice(&[]);
+        let assumptions = stash.alloc_slice::<Assumption>(&[]);
+        let canonical = canonicalize_goal(
+            db,
+            &stash,
+            &egraph,
+            Version::ROOT,
+            krate,
+            Universe::ROOT,
+            true,
+            assumptions,
+            Goal::Atom(Atom::TraitImpl {
+                self_ty,
+                trait_ref: TraitRef {
+                    trait_sym: marker,
+                    args,
+                },
+            }),
+        );
+        let result = GoalQuery::new(db, canonical.data).prove(db);
+        if expect_maybe {
+            assert!(matches!(result.root().value, QueryResultData::Maybe { .. }));
+        } else {
+            assert!(matches!(result.root().value, QueryResultData::No));
+        }
+    }
+
     #[test]
     fn environment_fact_proves_bare_flexible_self() {
         with_test_crate("trait Marker {}", |db, root| {
@@ -953,6 +1365,150 @@ mod trait_solver_proof_tests {
             let result = GoalQuery::new(db, canonical.data).prove(db);
             assert!(matches!(result.root().value, QueryResultData::No));
         });
+    }
+
+    #[test]
+    fn inert_crate_inner_attribute_preserves_complete_ground_search() {
+        with_test_crate(
+            "#![allow(dead_code)]\ntrait Marker {}",
+            assert_ground_bool_marker_is_no,
+        );
+    }
+
+    #[test]
+    fn inert_inline_module_inner_attribute_preserves_complete_ground_search() {
+        with_test_crate(
+            "trait Marker {}\nmod nested { #![warn(dead_code)] }",
+            assert_ground_bool_marker_is_no,
+        );
+    }
+
+    #[test]
+    fn active_inner_attribute_keeps_ground_search_incomplete() {
+        with_test_crate(
+            "#![cfg(feature = \"candidate\")]\ntrait Marker {}",
+            assert_ground_bool_marker_is_maybe,
+        );
+    }
+
+    #[test]
+    fn unresolved_derive_prevents_ground_no() {
+        with_test_crate(
+            "#[derive(Custom)] struct Candidate;\ntrait Marker {}",
+            assert_ground_bool_marker_is_maybe,
+        );
+    }
+
+    #[test]
+    fn derive_on_unsupported_item_prevents_ground_no() {
+        with_test_crate(
+            "#[derive(Custom)] union Candidate { value: bool }\ntrait Marker {}",
+            assert_ground_bool_marker_is_maybe,
+        );
+    }
+
+    #[test]
+    fn unexpanded_attribute_macro_prevents_ground_no() {
+        with_test_crate(
+            "#[external_attr] struct Candidate;\ntrait Marker {}",
+            assert_ground_bool_marker_is_maybe,
+        );
+    }
+
+    #[test]
+    fn unexpanded_attribute_on_use_prevents_ground_no() {
+        with_test_crate(
+            "#[external_attr] use self::Marker;\ntrait Marker {}",
+            assert_ground_bool_marker_is_maybe,
+        );
+    }
+
+    #[test]
+    fn active_attribute_use_cannot_redirect_impl_to_false_yes() {
+        with_test_crate(
+            "trait Marker {}\n#[external_attr] use self::Marker as Target;\nimpl Target for bool {}",
+            assert_ground_bool_marker_is_maybe,
+        );
+    }
+
+    #[test]
+    fn active_attribute_impl_cannot_produce_false_yes() {
+        with_test_crate(
+            "trait Marker {}\n#[cfg(any())] impl Marker for bool {}",
+            assert_ground_bool_marker_is_maybe,
+        );
+    }
+
+    #[test]
+    fn active_attribute_module_cannot_expose_child_impl() {
+        with_test_crate(
+            "trait Marker {}\n#[cfg(any())] mod hidden { impl Marker for bool {} }",
+            assert_ground_bool_marker_is_maybe,
+        );
+    }
+
+    #[test]
+    fn active_attribute_macro_definition_cannot_emit_impl() {
+        with_test_crate(
+            "trait Marker {}\n#[cfg(any())] macro_rules! make { () => { impl Marker for bool {} } }\nmake!();",
+            assert_ground_bool_marker_is_maybe,
+        );
+    }
+
+    #[test]
+    fn active_attribute_macro_invocation_cannot_emit_impl() {
+        with_test_crate(
+            "trait Marker {}\nmacro_rules! make { () => { impl Marker for bool {} } }\n#[cfg(any())] make!();",
+            assert_ground_bool_marker_is_maybe,
+        );
+    }
+
+    #[test]
+    fn successful_item_macro_keeps_ground_negative_search_complete() {
+        with_test_crate(
+            "trait Marker {}\nmacro_rules! make { () => { struct Generated; } }\nmake!();",
+            assert_ground_bool_marker_is_no,
+        );
+    }
+
+    #[test]
+    fn unresolved_item_macro_prevents_ground_no() {
+        with_test_crate(
+            "missing!();\ntrait Marker {}",
+            assert_ground_bool_marker_is_maybe,
+        );
+    }
+
+    #[test]
+    fn failed_resolved_item_macro_prevents_ground_no_without_panicking() {
+        with_test_crate(
+            "macro_rules! make { ($name:ident) => { struct $name; } }\nmake!(Generated);\ntrait Marker {}",
+            assert_ground_bool_marker_is_maybe,
+        );
+    }
+
+    #[test]
+    fn malformed_item_macro_output_prevents_ground_no_without_panicking() {
+        with_test_crate(
+            "macro_rules! bad { () => { impl } }\nbad!();\ntrait Marker {}",
+            assert_ground_bool_marker_is_maybe,
+        );
+    }
+
+    #[test]
+    fn recursive_item_macro_hits_expansion_limit_and_returns_maybe() {
+        with_test_crate(
+            "macro_rules! again { () => { again!(); } }\nagain!();\ntrait Marker {}",
+            assert_ground_bool_marker_is_maybe,
+        );
+    }
+
+    #[test]
+    fn unresolved_trait_impl_head_prevents_ground_no() {
+        with_test_crate(
+            "impl Missing for bool {}\ntrait Marker {}",
+            assert_ground_bool_marker_is_maybe,
+        );
     }
 
     #[test]
