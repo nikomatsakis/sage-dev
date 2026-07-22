@@ -40,6 +40,7 @@ impl<'db> LocalStructSym<'db> {
     ///
     /// Reads the CST's generic parameters, mints `GenericParam` symbols for
     /// each, and returns the checked parameter environment under their binder.
+    // ANCHOR: example_struct_sig
     #[salsa::tracked]
     pub fn sig(self, db: &'db dyn crate::Db) -> Stashed<Binder<'db, StructSig<'db>>> {
         use crate::check::Check;
@@ -69,11 +70,13 @@ impl<'db> LocalStructSym<'db> {
         let binder = Binder::new(struct_sig, generics);
         cx.finish(binder)
     }
+    // ANCHOR_END: example_struct_sig
 
     /// Computes the fields of a struct.
     ///
     /// Calls `sig()` to get the generic parameter symbols, then resolves
     /// each field's type from the CST with those params in scope.
+    // ANCHOR: example_struct_fields
     #[salsa::tracked]
     pub fn fields(self, db: &'db dyn crate::Db) -> Stashed<StructFields<'db>> {
         use crate::check::Check;
@@ -100,4 +103,5 @@ impl<'db> LocalStructSym<'db> {
 
         cx.finish(StructFields { fields })
     }
+    // ANCHOR_END: example_struct_fields
 }

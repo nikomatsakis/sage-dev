@@ -110,6 +110,7 @@ impl<'db> Whiteboard<'db> {
         depth: u32,
     ) -> ProofFuture<'db> {
         let remaining_depth = MAX_PROOF_DEPTH - depth;
+        // ANCHOR: example_whiteboard_lookup
         let mut ancestor = parent;
         while let Some(frame) = ancestor {
             let inner = self.inner.borrow();
@@ -135,6 +136,7 @@ impl<'db> Whiteboard<'db> {
                 }
             }
         }
+        // ANCHOR_END: example_whiteboard_lookup
         let (frame, subscription, start) = {
             let mut inner = self.inner.borrow_mut();
             let frame = if let Some(frame) = inner.entries.get(&key) {
@@ -393,6 +395,7 @@ fn no_query_result<'db>() -> Stashed<QueryResult<'db>> {
     )
 }
 
+// ANCHOR: example_prove_query
 pub(crate) fn prove_query<'db>(
     db: &'db dyn crate::Db,
     query: &Stashed<GoalQueryData<'db>>,
@@ -420,6 +423,7 @@ pub(crate) fn prove_query<'db>(
     );
     extract_query_result(db, &state, result)
 }
+// ANCHOR_END: example_prove_query
 
 fn prove_goal<'a, 'db: 'a>(
     db: &'db dyn crate::Db,
@@ -506,6 +510,7 @@ fn prove_goal<'a, 'db: 'a>(
     })
 }
 
+// ANCHOR: example_prove_atom
 async fn prove_atom<'db>(
     db: &'db dyn crate::Db,
     whiteboard: &Whiteboard<'db>,
@@ -551,6 +556,7 @@ async fn prove_atom<'db>(
         Err(_) => GoalResult::No,
     }
 }
+// ANCHOR_END: example_prove_atom
 
 async fn solve_atomic_frame<'db>(
     db: &'db dyn crate::Db,
@@ -627,6 +633,7 @@ async fn solve_trait_frame<'db>(
         .collect();
     let next_response_param = frame.next_response_param;
     let candidate_count = candidates.len();
+    // ANCHOR: example_run_trait_candidates
     let mut tasks = ScopedTasks::new();
     for candidate_index in 0..candidate_count {
         let query = query.clone();
@@ -686,6 +693,7 @@ async fn solve_trait_frame<'db>(
             break;
         }
     }
+    // ANCHOR_END: example_run_trait_candidates
     merge_candidate_results(
         db,
         next_response_param,
@@ -704,6 +712,7 @@ fn is_unconditional_answer(answer: &Stashed<QueryResult<'_>>) -> bool {
     )
 }
 
+// ANCHOR: example_match_candidate_head
 fn match_candidate_head<'db>(
     state: &mut QueryProofState<'db>,
     version: Version,
@@ -736,7 +745,9 @@ fn match_candidate_head<'db>(
     state.egraph.rebuild(version, &mut state.stash);
     Ok(())
 }
+// ANCHOR_END: example_match_candidate_head
 
+// ANCHOR: example_prove_conjunction
 async fn prove_conjunction<'db>(
     db: &'db dyn crate::Db,
     whiteboard: &Whiteboard<'db>,
@@ -815,6 +826,7 @@ async fn prove_conjunction<'db>(
         }
     }
 }
+// ANCHOR_END: example_prove_conjunction
 
 async fn prove_exists<'db>(
     db: &'db dyn crate::Db,

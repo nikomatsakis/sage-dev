@@ -80,12 +80,14 @@ impl<'db> ExprCst<'db> {
                 let ty = cx.fresh_ty_var();
                 (TyExprData::MethodCall(ro, *name, args_slice), ty)
             }
+            // ANCHOR: example_check_field_expression
             ExprCstKind::Field(obj, name) => {
                 let ro = cx.source_stash[*obj].check_with(cx, scope).await;
                 let obj_ty = cx.find_mut(cx.stash()[ro].ty);
                 let ty = lookup_field_ty(cx, obj_ty, *name, span);
                 (TyExprData::Field(ro, *name), ty)
             }
+            // ANCHOR_END: example_check_field_expression
             ExprCstKind::Binary(lhs, op, rhs) => {
                 let rl = cx.source_stash[*lhs].check_with(cx, scope).await;
                 let rr = cx.source_stash[*rhs].check_with(cx, scope).await;
@@ -788,6 +790,7 @@ fn def_to_ty<'db>(
     use crate::ty::BinderExt;
 
     match sym.data(cx.db) {
+        // ANCHOR: example_instantiate_callee_obligations
         SymbolData::FnSymbol(crate::symbol::FnSymbol::Local(local)) => {
             let sig = local.sig(cx.db);
             let sig_stash = sig.stash();
@@ -814,6 +817,7 @@ fn def_to_ty<'db>(
             );
             cx.alloc_ty(Ty::FnPtr(instantiated.params, instantiated.ret))
         }
+        // ANCHOR_END: example_instantiate_callee_obligations
         SymbolData::VariantSymbol(crate::symbol::VariantSymbol::Local(variant)) => {
             let (enum_sym, type_args, _) =
                 instantiate_local_enum(cx, variant.parent_enum(cx.db), span);
@@ -1142,6 +1146,7 @@ fn check_instantiated_struct_lit_fields<'db>(
     }
 }
 
+// ANCHOR: example_lookup_field_type
 fn lookup_field_ty<'db>(
     cx: &InferCtx<'_, 'db>,
     obj_ty_ptr: Ptr<Ty<'db>>,
@@ -1238,6 +1243,7 @@ fn lookup_field_ty<'db>(
         }
     }
 }
+// ANCHOR_END: example_lookup_field_type
 
 fn check_call_ty<'db>(
     cx: &InferCtx<'_, 'db>,

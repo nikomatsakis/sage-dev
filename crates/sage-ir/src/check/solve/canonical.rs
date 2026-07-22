@@ -54,6 +54,7 @@ struct Canonicalizer<'a, 'db> {
 /// binders occupy the same alpha-parameter index space but never become free
 /// canonical inputs.
 #[allow(clippy::too_many_arguments)]
+// ANCHOR: example_canonicalize_goal
 pub fn canonicalize_goal<'db>(
     db: &'db dyn crate::Db,
     source: &Stash,
@@ -131,6 +132,7 @@ pub fn canonicalize_goal<'db>(
         mapping,
     }
 }
+// ANCHOR_END: example_canonicalize_goal
 
 impl<'db> Canonicalizer<'_, 'db> {
     fn fresh_alpha(&mut self, kind: GenericParamKind) -> AlphaEquivParam<'db> {

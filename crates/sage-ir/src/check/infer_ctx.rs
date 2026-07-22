@@ -803,6 +803,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         (output, complete)
     }
 
+    // ANCHOR: example_publish_parameter_env
     pub fn submit_parameter_env(
         &self,
         environment: CheckedParameterEnv<'db>,
@@ -835,6 +836,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
             }
         }
     }
+    // ANCHOR_END: example_publish_parameter_env
 
     pub fn submit_trait_obligation(
         &self,
@@ -1010,6 +1012,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
             return;
         }
 
+        // ANCHOR: example_run_trait_query
         let response = GoalQuery::new(self.db, canonical_goal.clone()).prove(self.db);
         let applied = {
             let mut stash = self.target_stash.borrow_mut();
@@ -1024,6 +1027,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
                 &response,
             )
         };
+        // ANCHOR_END: example_run_trait_query
         let Ok(applied) = applied else {
             self.fail_obligation(
                 index,

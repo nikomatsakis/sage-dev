@@ -32,6 +32,7 @@ pub enum CanonicalVarRole {
     ExistentialInput,
 }
 
+// ANCHOR: example_solver_goal_ir
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub enum Goal<'db> {
     Exists(Binder<'db, Ptr<Goal<'db>>>),
@@ -80,6 +81,7 @@ pub enum Atom<'db> {
     },
     Equals(Ptr<Ty<'db>>, Ptr<Ty<'db>>),
 }
+// ANCHOR_END: example_solver_goal_ir
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub enum Assumption<'db> {
@@ -315,6 +317,7 @@ fn validate_ty<'db>(
     Ok(())
 }
 
+// ANCHOR: example_goal_query
 #[salsa::tracked]
 impl<'db> InternedGoalQuery<'db> {
     #[salsa::tracked]
@@ -322,6 +325,7 @@ impl<'db> InternedGoalQuery<'db> {
         super::prove_query(db, self.data(db))
     }
 }
+// ANCHOR_END: example_goal_query
 
 #[cfg(test)]
 mod tests {

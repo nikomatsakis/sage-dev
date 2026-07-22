@@ -1,5 +1,10 @@
 # Trait Solver Design
 
+For a code-first introduction, read [A direct trait
+obligation](./examples/direct-trait-obligation.md) and then [A nested trait
+proof](./examples/nested-trait-proof.md). This page specifies the semantic and
+architectural contract those examples illustrate.
+
 This page records the destination-level semantic contract for trait solving.
 The existing positive, type-only implementation is described by the
 [Trait Solving RFD](../rfds/trait-solving/README.md). Search scheduling,

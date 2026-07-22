@@ -7,6 +7,7 @@ use crate::ty::Ty;
 use super::IrCopier;
 use super::{Atom, Goal, QueryResult, QueryResultData, SubstEntry, merge_hints};
 
+// ANCHOR: example_merge_candidates
 pub(crate) fn merge_candidate_results<'db>(
     db: &'db dyn crate::Db,
     next_response_param: u32,
@@ -59,6 +60,7 @@ pub(crate) fn merge_candidate_results<'db>(
         saw_incomplete_source,
     )
 }
+// ANCHOR_END: example_merge_candidates
 
 fn non_dominated_yes<'db>(
     db: &'db dyn crate::Db,

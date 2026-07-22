@@ -277,6 +277,7 @@ pub fn apply_query_response<'db>(
         }
     }
 
+    // ANCHOR: example_apply_response_transaction
     let child = caller_egraph.branch_from(caller_version);
     let application = (|| {
         let mut type_mapping = FxHashMap::default();
@@ -363,6 +364,7 @@ pub fn apply_query_response<'db>(
             Err(error)
         }
     }
+    // ANCHOR_END: example_apply_response_transaction
 }
 
 struct ResponseExtractor<'state, 'target, 'db> {

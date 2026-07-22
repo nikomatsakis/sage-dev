@@ -38,6 +38,7 @@ impl<'db> LocalFnSym<'db> {
 #[salsa::tracked]
 impl<'db> LocalFnSym<'db> {
     /// Computes the signature: generics, parameter types, return type.
+    // ANCHOR: example_fn_sig
     #[salsa::tracked]
     pub fn sig(self, db: &'db dyn crate::Db) -> Stashed<Binder<'db, FnSig<'db>>> {
         use crate::check::Check;
@@ -87,8 +88,10 @@ impl<'db> LocalFnSym<'db> {
         let binder = Binder::new(fn_sig, generics);
         cx.finish(binder)
     }
+    // ANCHOR_END: example_fn_sig
 
     /// Resolves and type-checks the function body in a single walk.
+    // ANCHOR: example_fn_body
     #[salsa::tracked(returns(ref))]
     pub fn body(self, db: &'db dyn crate::Db) -> CheckedBody<'db> {
         use crate::check::infer_ctx::{ErrorContext, InferCtx, Scope};
@@ -149,4 +152,5 @@ impl<'db> LocalFnSym<'db> {
 
         cx.finish(body_expr, cst.span)
     }
+    // ANCHOR_END: example_fn_body
 }

@@ -24,6 +24,7 @@ pub(crate) struct InstantiatedCandidate<'db> {
     pub body: Slice<Goal<'db>>,
 }
 
+// ANCHOR: example_assemble_candidates
 pub(crate) fn assemble_candidates<'db>(
     db: &'db dyn crate::Db,
     state: &QueryProofState<'db>,
@@ -99,6 +100,7 @@ pub(crate) fn assemble_candidates<'db>(
     }
     (candidates, incomplete)
 }
+// ANCHOR_END: example_assemble_candidates
 
 pub(crate) fn instantiate_candidate<'db>(
     db: &'db dyn crate::Db,
@@ -115,6 +117,7 @@ pub(crate) fn instantiate_candidate<'db>(
     }
 }
 
+// ANCHOR: example_instantiate_impl
 fn instantiate_local_impl<'db>(
     db: &'db dyn crate::Db,
     state: &mut QueryProofState<'db>,
@@ -170,6 +173,7 @@ fn instantiate_local_impl<'db>(
         body,
     }
 }
+// ANCHOR_END: example_instantiate_impl
 
 fn predicate_goal<'db>(
     copier: &mut IrCopier<'_, '_, 'db>,
