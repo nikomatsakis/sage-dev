@@ -70,14 +70,15 @@ There are two additional dependencies hidden by the short source:
   `Option` element type and its method generic is the error type inferred from
   `ParseError::EndOfStream`.
 
-The current implementation represents the common alias family and imports
-external ADT generics, ordinary predicates, and declared type defaults through
-narrow metadata queries. It also discovers explicit upstream impls by fixed
-trait and conservative self head, imports their binder-aware headers
-separately, and instantiates local and external candidates through the same
-proof path. It still cannot represent an associated projection in `RawTy`,
-read an impl's associated value, admit projection-bearing external function
-signatures, or select external inherent methods. This RFD defines one vertical
+The current implementation represents the common alias family, imports
+external ADT generics and defaults, and discovers explicit upstream impls by
+fixed trait and conservative self head. It also represents associated
+projections in owned metadata and implements input-only associated-type
+normalization over isolated local, external, and environment-value candidates.
+Canonical type outputs participate in response binding, merging, caching, and
+caller import, while trait proof still returns only `Proven`. Projection-bearing
+external function signatures, retained body normalization obligations, and
+external inherent method selection remain. This RFD defines one vertical
 change which closes those remaining gaps without introducing eager global
 normalization or asking rustc to answer Sage's trait goals.
 

@@ -2129,8 +2129,9 @@ mod trait_solver_boundary_tests {
     use sage_ir::check::infer::unify::{UnifyError, try_unify};
     use sage_ir::check::infer::version::{Universe, Version};
     use sage_ir::check::solve::{
-        AppliedCertainty, Assumption, Atom, CanonicalVarRole, Goal, GoalResult, QueryResultData,
-        apply_query_response, canonicalize_goal, extract_query_result, instantiate_query,
+        AppliedCertainty, Assumption, Atom, CanonicalVarRole, Goal, GoalOutput, GoalResult,
+        QueryResultData, SolverGoal, apply_query_response, canonicalize_goal, extract_query_result,
+        extract_query_result_with_output, instantiate_query,
     };
     use sage_ir::generic_param::{AlphaEquivParam, GenericParam, GenericParamKind};
     use sage_ir::scope::ScopeSymbol;
@@ -2181,7 +2182,7 @@ mod trait_solver_boundary_tests {
             );
 
             let mut proof = instantiate_query(&canonical.data);
-            let Goal::Atom(Atom::Equals(left, right)) = proof.goal else {
+            let SolverGoal::Prove(Goal::Atom(Atom::Equals(left, right))) = proof.goal else {
                 panic!("expected equality goal")
             };
             try_unify(
@@ -2207,6 +2208,37 @@ mod trait_solver_boundary_tests {
 
             assert!(matches!(applied.certainty, AppliedCertainty::Yes { .. }));
             assert_eq!(caller_egraph.find(Version::ROOT, input), integer);
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "solver operation returned an incompatible output kind")]
+    fn canonical_response_rejects_an_output_for_the_wrong_operation() {
+        with_test_crate("trait Marker {}", |db, root| {
+            let krate = crate_from_root_items(db, root);
+            let mut stash = Stash::new();
+            let assumptions = stash.alloc_slice::<Assumption>(&[]);
+            let goal = Goal::true_(&mut stash);
+            let canonical = canonicalize_goal(
+                db,
+                &stash,
+                &VersionedEGraph::new(),
+                Version::ROOT,
+                krate,
+                Universe::ROOT,
+                true,
+                assumptions,
+                goal,
+            );
+            let mut proof = instantiate_query(&canonical.data);
+            let output = proof.stash.alloc(Ty::Bool);
+            let modulo = Goal::true_(&mut proof.stash);
+            let _ = extract_query_result_with_output(
+                db,
+                &proof,
+                GoalOutput::Type(output),
+                GoalResult::Yes { modulo },
+            );
         });
     }
 
@@ -2478,7 +2510,8 @@ mod trait_solver_boundary_tests {
                 Goal::Atom(Atom::Equals(alias, alias)),
             );
             let (canonical_stash, canonical_data) = canonical_alias.data.open();
-            let Goal::Atom(Atom::Equals(canonical_left, canonical_right)) = canonical_data.goal
+            let SolverGoal::Prove(Goal::Atom(Atom::Equals(canonical_left, canonical_right))) =
+                canonical_data.goal
             else {
                 panic!("expected equality")
             };
@@ -2602,11 +2635,12 @@ mod trait_solver_proof_tests {
     use sage_ir::check::infer::egraph::VersionedEGraph;
     use sage_ir::check::infer::version::{Universe, Version};
     use sage_ir::check::solve::{
-        Assumption, Atom, Goal, GoalQuery, QueryResultData, canonicalize_goal,
+        AppliedCertainty, Assumption, Atom, Goal, GoalOutput, GoalQuery, QueryResultData,
+        SolverGoal, apply_query_response, canonicalize_goal, canonicalize_solver_goal,
     };
     use sage_ir::scope::ScopeSymbol;
-    use sage_ir::symbol::{SymbolData, TraitSymbol};
-    use sage_ir::ty::{IntTy, TraitRef, Ty};
+    use sage_ir::symbol::{StructSymbol, SymbolData, TraitSymbol};
+    use sage_ir::ty::{AliasTy, IntTy, ProjectionTy, TraitItemDef, TraitRef, Ty};
 
     fn trait_and_crate<'db>(
         db: &'db dyn Db,
@@ -2629,6 +2663,473 @@ mod trait_solver_proof_tests {
             panic!("root trait should be crate-scoped")
         };
         (TraitSymbol::Local(local), krate)
+    }
+
+    fn first_associated_type<'db>(
+        db: &'db dyn Db,
+        trait_symbol: TraitSymbol<'db>,
+    ) -> sage_ir::symbol::TypeAliasSymbol<'db> {
+        let items = trait_symbol.items(db).unwrap();
+        let (stash, items) = items.open();
+        stash[items.value]
+            .iter()
+            .find_map(|item| match item {
+                TraitItemDef::Type(item) => Some(*item),
+                TraitItemDef::Function(_) | TraitItemDef::Const(_) => None,
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn local_associated_type_normalization_produces_a_type_output() {
+        with_test_crate(
+            "trait Iterable { type Item; }\n\
+             struct Wrap<T> { value: T }\n\
+             impl<T> Iterable for Wrap<T> { type Item = T; }",
+            |db, root| {
+                let (iterable, krate) = trait_and_crate(db, root, "Iterable");
+                let wrap = root
+                    .expanded_module_items(db)
+                    .iter()
+                    .find_map(|symbol| match symbol.data(db) {
+                        SymbolData::StructSymbol(StructSymbol::Local(item))
+                            if item.name(db).text(db) == "Wrap" =>
+                        {
+                            Some(item)
+                        }
+                        SymbolData::StructSymbol(_)
+                        | SymbolData::FnSymbol(_)
+                        | SymbolData::EnumSymbol(_)
+                        | SymbolData::VariantSymbol(_)
+                        | SymbolData::VariantCtorSymbol(_)
+                        | SymbolData::TraitSymbol(_)
+                        | SymbolData::TypeAliasSymbol(_)
+                        | SymbolData::ConstSymbol(_)
+                        | SymbolData::StaticSymbol(_)
+                        | SymbolData::ImplSymbol(_)
+                        | SymbolData::ModSymbol(_)
+                        | SymbolData::MacroDefSymbol(_)
+                        | SymbolData::UseSymbol(_)
+                        | SymbolData::IntrinsicTypeSymbol(_)
+                        | SymbolData::MacroInvocationSymbol(_) => None,
+                    })
+                    .unwrap();
+                let items = iterable.items(db).unwrap();
+                let (item_stash, items) = items.open();
+                let associated_ty = item_stash[items.value]
+                    .iter()
+                    .find_map(|item| match item {
+                        TraitItemDef::Type(item) => Some(*item),
+                        TraitItemDef::Function(_) | TraitItemDef::Const(_) => None,
+                    })
+                    .unwrap();
+
+                let mut stash = Stash::new();
+                let bool_ty = stash.alloc(Ty::Bool);
+                let self_args = stash.alloc_slice(&[bool_ty]);
+                let self_ty = stash.alloc(Ty::Adt(wrap.into(), self_args));
+                let trait_args = stash.alloc_slice(&[]);
+                let projection = AliasTy::Associated(ProjectionTy {
+                    associated_ty,
+                    self_ty,
+                    trait_ref: TraitRef {
+                        trait_sym: iterable,
+                        args: trait_args,
+                    },
+                    args: stash.alloc_slice(&[]),
+                });
+                let assumptions = stash.alloc_slice::<Assumption>(&[]);
+                let egraph = VersionedEGraph::new();
+                let canonical = canonicalize_solver_goal(
+                    db,
+                    &stash,
+                    &egraph,
+                    Version::ROOT,
+                    krate,
+                    Universe::ROOT,
+                    true,
+                    assumptions,
+                    SolverGoal::Normalize(projection),
+                );
+                let result = GoalQuery::new(db, canonical.data).solve(db);
+                let (result_stash, result) = result.open();
+                let QueryResultData::Yes {
+                    output: GoalOutput::Type(output),
+                    subst,
+                    modulo,
+                } = result.value
+                else {
+                    panic!("normalization should produce a type")
+                };
+                assert_eq!(result_stash[output], Ty::Bool);
+                assert!(result_stash[subst].is_empty());
+                assert!(modulo.is_trivially_true(result_stash));
+            },
+        );
+    }
+
+    #[test]
+    fn local_normalization_reads_one_keyed_value_without_impl_item_enumeration() {
+        fn force(db: &dyn Db, source_file: SourceFile) {
+            let (_, root) = setup_root_module(db, source_file);
+            let (iterable, krate) = trait_and_crate(db, root, "Iterable");
+            let associated_ty = first_associated_type(db, iterable);
+            let mut stash = Stash::new();
+            let self_ty = stash.alloc(Ty::Bool);
+            let trait_argument = stash.alloc(Ty::Bool);
+            let projection = AliasTy::Associated(ProjectionTy {
+                associated_ty,
+                self_ty,
+                trait_ref: TraitRef {
+                    trait_sym: iterable,
+                    args: stash.alloc_slice(&[trait_argument]),
+                },
+                args: stash.alloc_slice(&[]),
+            });
+            let assumptions = stash.alloc_slice::<Assumption>(&[]);
+            let canonical = canonicalize_solver_goal(
+                db,
+                &stash,
+                &VersionedEGraph::new(),
+                Version::ROOT,
+                krate,
+                Universe::ROOT,
+                true,
+                assumptions,
+                SolverGoal::Normalize(projection),
+            );
+            assert!(matches!(
+                GoalQuery::new(db, canonical.data).solve(db).root().value,
+                QueryResultData::Yes { .. }
+            ));
+        }
+
+        let mut database = Database::default();
+        let source_file = database.add_source_file(
+            "lib.rs".to_owned(),
+            "trait Iterable<T> { type Item; type Unrelated; }\n\
+             impl Iterable<bool> for bool { type Item = i32; type Unrelated = char; }\n\
+             impl Iterable<char> for bool { type Item = u32; type Unrelated = bool; }"
+                .to_owned(),
+        );
+        database.attach(|db| force(db, source_file));
+        let cold = database.take_query_log();
+        assert!(
+            cold.contains("local_impl_associated_type_value"),
+            "the requested value needs one keyed query:\n{cold}"
+        );
+        assert_eq!(
+            cold.matches("local_impl_associated_type_value").count(),
+            1,
+            "a header-mismatched candidate must not read its value:\n{cold}"
+        );
+        assert!(
+            !cold.contains("LocalImplSym < 'db >::items_"),
+            "normalization must not enumerate or lower sibling impl items:\n{cold}"
+        );
+
+        database.attach(|db| force(db, source_file));
+        let warm = database.take_query_log();
+        assert!(
+            !warm.contains("local_impl_associated_type_value"),
+            "the unchanged value query should be reused:\n{warm}"
+        );
+    }
+
+    #[test]
+    fn normalization_assumptions_are_distinct_from_bare_trait_facts() {
+        with_test_crate("trait Iterable { type Item; }", |db, root| {
+            let (iterable, krate) = trait_and_crate(db, root, "Iterable");
+            let associated_ty = first_associated_type(db, iterable);
+            let normalize = |value_fact: bool, query_bool: bool, fact_bool: bool| {
+                let mut stash = Stash::new();
+                let self_ty = stash.alloc(if query_bool {
+                    Ty::Bool
+                } else {
+                    Ty::Int(IntTy::I32)
+                });
+                let trait_ref = TraitRef {
+                    trait_sym: iterable,
+                    args: stash.alloc_slice(&[]),
+                };
+                let projection = AliasTy::Associated(ProjectionTy {
+                    associated_ty,
+                    self_ty,
+                    trait_ref,
+                    args: stash.alloc_slice(&[]),
+                });
+                let assumptions = if value_fact {
+                    let ty = stash.alloc(Ty::Int(IntTy::I32));
+                    stash.alloc_slice(&[Assumption::NormalizesTo {
+                        alias: projection,
+                        ty,
+                    }])
+                } else {
+                    let assumption_self = stash.alloc(if fact_bool {
+                        Ty::Bool
+                    } else {
+                        Ty::Int(IntTy::I32)
+                    });
+                    stash.alloc_slice(&[Assumption::TraitImpl {
+                        self_ty: assumption_self,
+                        trait_ref,
+                    }])
+                };
+                let egraph = VersionedEGraph::new();
+                let canonical = canonicalize_solver_goal(
+                    db,
+                    &stash,
+                    &egraph,
+                    Version::ROOT,
+                    krate,
+                    Universe::ROOT,
+                    true,
+                    assumptions,
+                    SolverGoal::Normalize(projection),
+                );
+                GoalQuery::new(db, canonical.data).solve(db)
+            };
+
+            assert!(matches!(
+                normalize(false, true, true).root().value,
+                QueryResultData::Maybe { .. }
+            ));
+            assert!(matches!(
+                normalize(false, false, true).root().value,
+                QueryResultData::No
+            ));
+            let result = normalize(true, true, true);
+            let (stash, result) = result.open();
+            let QueryResultData::Yes {
+                output: GoalOutput::Type(output),
+                ..
+            } = result.value
+            else {
+                panic!("an explicit normalization fact should supply its value")
+            };
+            assert_eq!(stash[output], Ty::Int(IntTy::I32));
+        });
+    }
+
+    #[test]
+    fn incompatible_normalization_outputs_are_ambiguous_but_identical_outputs_merge() {
+        let check = |second_value: &str, expect_yes: bool| {
+            with_test_crate(
+                &format!(
+                    "trait Iterable {{ type Item; }}\n\
+                     impl Iterable for bool {{ type Item = bool; }}\n\
+                     impl Iterable for bool {{ type Item = {second_value}; }}"
+                ),
+                |db, root| {
+                    let (iterable, krate) = trait_and_crate(db, root, "Iterable");
+                    let associated_ty = first_associated_type(db, iterable);
+                    let mut stash = Stash::new();
+                    let self_ty = stash.alloc(Ty::Bool);
+                    let projection = AliasTy::Associated(ProjectionTy {
+                        associated_ty,
+                        self_ty,
+                        trait_ref: TraitRef {
+                            trait_sym: iterable,
+                            args: stash.alloc_slice(&[]),
+                        },
+                        args: stash.alloc_slice(&[]),
+                    });
+                    let assumptions = stash.alloc_slice::<Assumption>(&[]);
+                    let egraph = VersionedEGraph::new();
+                    let canonical = canonicalize_solver_goal(
+                        db,
+                        &stash,
+                        &egraph,
+                        Version::ROOT,
+                        krate,
+                        Universe::ROOT,
+                        true,
+                        assumptions,
+                        SolverGoal::Normalize(projection),
+                    );
+                    let result = GoalQuery::new(db, canonical.data).solve(db);
+                    assert_eq!(
+                        matches!(result.root().value, QueryResultData::Yes { .. }),
+                        expect_yes,
+                        "the query has no expected output with which to filter candidates"
+                    );
+                    assert_eq!(
+                        matches!(result.root().value, QueryResultData::Maybe { .. }),
+                        !expect_yes
+                    );
+                },
+            );
+        };
+        check("bool", true);
+        check("i32", false);
+    }
+
+    #[test]
+    fn response_local_type_output_round_trips_with_sharing() {
+        with_test_crate(
+            "trait Iterable { type Item; }\n\
+             impl<T> Iterable for bool { type Item = (T, T); }",
+            |db, root| {
+                let (iterable, krate) = trait_and_crate(db, root, "Iterable");
+                let associated_ty = first_associated_type(db, iterable);
+                let mut stash = Stash::new();
+                let self_ty = stash.alloc(Ty::Bool);
+                let projection = AliasTy::Associated(ProjectionTy {
+                    associated_ty,
+                    self_ty,
+                    trait_ref: TraitRef {
+                        trait_sym: iterable,
+                        args: stash.alloc_slice(&[]),
+                    },
+                    args: stash.alloc_slice(&[]),
+                });
+                let assumptions = stash.alloc_slice::<Assumption>(&[]);
+                let mut egraph = VersionedEGraph::new();
+                let canonical = canonicalize_solver_goal(
+                    db,
+                    &stash,
+                    &egraph,
+                    Version::ROOT,
+                    krate,
+                    Universe::ROOT,
+                    true,
+                    assumptions,
+                    SolverGoal::Normalize(projection),
+                );
+                let response = GoalQuery::new(db, canonical.data.clone()).solve(db);
+                assert_eq!(response.stash()[response.root().bound_vars].len(), 1);
+                let applied = apply_query_response(
+                    db,
+                    &mut stash,
+                    &mut egraph,
+                    Version::ROOT,
+                    &canonical.data,
+                    &canonical.mapping,
+                    &response,
+                )
+                .unwrap();
+                let AppliedCertainty::Yes {
+                    output: GoalOutput::Type(output),
+                    modulo,
+                } = applied.certainty
+                else {
+                    panic!("expected a caller-local type output")
+                };
+                assert!(modulo.is_trivially_true(&stash));
+                let Ty::Tuple(elements) = stash[output] else {
+                    panic!("expected tuple output")
+                };
+                let [left, right] = stash[elements] else {
+                    panic!("expected pair")
+                };
+                let Ty::InferVar(left) = stash[left] else {
+                    panic!("response witness should be imported as an inference variable")
+                };
+                let Ty::InferVar(right) = stash[right] else {
+                    panic!("response witness should be imported as an inference variable")
+                };
+                assert_eq!(
+                    left, right,
+                    "the repeated response witness must retain sharing"
+                );
+                assert_eq!(egraph.current_universe(Version::ROOT, left), Universe::ROOT);
+            },
+        );
+    }
+
+    #[test]
+    fn nested_associated_value_remains_a_normalizable_alias() {
+        with_test_crate(
+            "trait Inner { type Value; }\ntrait Outer { type Item; }",
+            |db, root| {
+                let (inner, _) = trait_and_crate(db, root, "Inner");
+                let (outer, krate) = trait_and_crate(db, root, "Outer");
+                let inner_associated_ty = first_associated_type(db, inner);
+                let outer_associated_ty = first_associated_type(db, outer);
+                let mut stash = Stash::new();
+                let self_ty = stash.alloc(Ty::Bool);
+                let inner_projection = AliasTy::Associated(ProjectionTy {
+                    associated_ty: inner_associated_ty,
+                    self_ty,
+                    trait_ref: TraitRef {
+                        trait_sym: inner,
+                        args: stash.alloc_slice(&[]),
+                    },
+                    args: stash.alloc_slice(&[]),
+                });
+                let outer_projection = AliasTy::Associated(ProjectionTy {
+                    associated_ty: outer_associated_ty,
+                    self_ty,
+                    trait_ref: TraitRef {
+                        trait_sym: outer,
+                        args: stash.alloc_slice(&[]),
+                    },
+                    args: stash.alloc_slice(&[]),
+                });
+                let nested_value = stash.alloc(Ty::Alias(inner_projection));
+                let concrete_value = stash.alloc(Ty::Int(IntTy::I32));
+                let assumptions = stash.alloc_slice(&[
+                    Assumption::NormalizesTo {
+                        alias: outer_projection,
+                        ty: nested_value,
+                    },
+                    Assumption::NormalizesTo {
+                        alias: inner_projection,
+                        ty: concrete_value,
+                    },
+                ]);
+                let egraph = VersionedEGraph::new();
+                let canonical = canonicalize_solver_goal(
+                    db,
+                    &stash,
+                    &egraph,
+                    Version::ROOT,
+                    krate,
+                    Universe::ROOT,
+                    true,
+                    assumptions,
+                    SolverGoal::Normalize(outer_projection),
+                );
+                let outer_result = GoalQuery::new(db, canonical.data).solve(db);
+                let (outer_stash, outer_result) = outer_result.open();
+                let QueryResultData::Yes {
+                    output: GoalOutput::Type(output),
+                    ..
+                } = outer_result.value
+                else {
+                    panic!("Outer::Item should normalize")
+                };
+                let Ty::Alias(nested) = outer_stash[output] else {
+                    panic!("the associated value should retain its nested projection")
+                };
+                let AliasTy::Associated(nested) = nested else {
+                    panic!("expected an associated projection")
+                };
+                assert_eq!(nested.associated_ty, inner_associated_ty);
+
+                let canonical = canonicalize_solver_goal(
+                    db,
+                    &stash,
+                    &VersionedEGraph::new(),
+                    Version::ROOT,
+                    krate,
+                    Universe::ROOT,
+                    true,
+                    assumptions,
+                    SolverGoal::Normalize(inner_projection),
+                );
+                let nested_result = GoalQuery::new(db, canonical.data).solve(db);
+                let (nested_stash, nested_result) = nested_result.open();
+                let QueryResultData::Yes {
+                    output: GoalOutput::Type(output),
+                    ..
+                } = nested_result.value
+                else {
+                    panic!("the nested projection should normalize independently")
+                };
+                assert_eq!(nested_stash[output], Ty::Int(IntTy::I32));
+            },
+        );
     }
 
     fn assert_ground_bool_marker_is_maybe<'db>(
@@ -2709,7 +3210,7 @@ mod trait_solver_proof_tests {
             let query = GoalQuery::new(db, canonical.data);
             let result = query.prove(db);
             let (stash, result) = result.open();
-            let QueryResultData::Yes { subst, modulo } = result.value else {
+            let QueryResultData::Yes { subst, modulo, .. } = result.value else {
                 panic!("environment fact should prove goal")
             };
             assert!(stash[subst].is_empty());
@@ -3206,7 +3707,7 @@ mod trait_solver_proof_tests {
                 next_response_param: 0,
                 assumptions_complete: true,
                 assumptions,
-                goal: Goal::Atom(Atom::Equals(variable, variable)),
+                goal: SolverGoal::Prove(Goal::Atom(Atom::Equals(variable, variable))),
             };
             GoalQuery::new(db, Stashed::new(stash, data)).prove(db);
         });

@@ -575,12 +575,19 @@ impl<'tcx> RustcTcxDb<'tcx> {
         impls.dedup();
         // `all_impls` is exhaustive only for explicit impls. Lang-item traits
         // can also have compiler-built candidates (for example scalar `Copy`
-        // or generator `Iterator`), and auto traits are structural. Sage must
+        // or coroutine `Iterator`), and auto traits are structural. Sage must
         // not turn the absence of an explicit header into `No` until it models
-        // the corresponding built-in source. `Sized` and `MetaSized` bypass
-        // this operation through their dedicated structural candidates.
+        // the corresponding built-in source. A coroutine is not represented
+        // by Sage's rigid ADT self-type head, however, so an `Iterator` query
+        // for a known ADT cannot overlap rustc's coroutine candidate.
+        // `Sized` and `MetaSized` bypass this operation through their dedicated
+        // structural candidates.
+        let rigid_head_excludes_iterator_builtin =
+            matches!(self_head, Some(sage_ir::tcx::RawSelfTypeHead::Adt(_)))
+                && self.tcx.lang_items().iterator_trait() == Some(trait_def_id);
         let explicit_impls_are_exhaustive = !self.tcx.trait_is_auto(trait_def_id)
-            && self.tcx.lang_items().from_def_id(trait_def_id).is_none();
+            && (self.tcx.lang_items().from_def_id(trait_def_id).is_none()
+                || rigid_head_excludes_iterator_builtin);
         Some(RawRelevantImpls {
             impls,
             complete: explicit_impls_are_exhaustive,
@@ -665,6 +672,40 @@ impl<'tcx> RustcTcxDb<'tcx> {
             generics: raw_generics,
             trait_ref,
             predicates,
+            complete,
+        })
+    }
+
+    pub fn associated_type_value(
+        &self,
+        impl_crate_num: CrateNum,
+        impl_def_index: DefIndex,
+        associated_crate_num: CrateNum,
+        associated_def_index: DefIndex,
+    ) -> Option<sage_ir::tcx::RawAssociatedTypeValue> {
+        use sage_ir::tcx::RawAssociatedTypeValue;
+
+        let impl_def_id = rustc_def_id(impl_crate_num, impl_def_index);
+        let associated_def_id = rustc_def_id(associated_crate_num, associated_def_index);
+        if !matches!(
+            self.tcx.def_kind(impl_def_id),
+            DefKind::Impl { of_trait: true }
+        ) || !matches!(self.tcx.def_kind(associated_def_id), DefKind::AssocTy)
+        {
+            return None;
+        }
+        let &impl_item = self
+            .tcx
+            .impl_item_implementor_ids(impl_def_id)
+            .get(&associated_def_id)?;
+        if !matches!(self.tcx.def_kind(impl_item), DefKind::AssocTy) {
+            return None;
+        }
+        let generics = self.tcx.generics_of(impl_item);
+        let complete = generics.own_params.is_empty();
+        let value = self.tcx.type_of(impl_item).instantiate_identity();
+        Some(RawAssociatedTypeValue {
+            value: raw_ty(self.tcx, value)?,
             complete,
         })
     }
@@ -943,6 +984,52 @@ fn raw_ty(tcx: TyCtxt<'_>, source: ty::Ty<'_>) -> Option<sage_ir::tcx::RawTy> {
                 },
                 args,
             )
+        }
+        ty::TyKind::Alias(ty::AliasTyKind::Projection, alias) => {
+            use sage_ir::tcx::RawProjectionTy;
+
+            let associated_ty = alias.def_id;
+            let trait_def = tcx.parent(associated_ty);
+            if !matches!(tcx.def_kind(trait_def), DefKind::Trait) {
+                return None;
+            }
+            let parent_count = tcx.generics_of(associated_ty).parent_count;
+            let mut parent_args = alias.args.iter().take(parent_count);
+            let self_ty = match parent_args.next()?.kind() {
+                ty::GenericArgKind::Type(ty) => raw_ty(tcx, ty)?,
+                ty::GenericArgKind::Lifetime(_) | ty::GenericArgKind::Const(_) => return None,
+            };
+            let mut trait_args = Vec::new();
+            for argument in parent_args {
+                match argument.kind() {
+                    ty::GenericArgKind::Type(ty) => trait_args.push(raw_ty(tcx, ty)?),
+                    ty::GenericArgKind::Lifetime(_) => {}
+                    ty::GenericArgKind::Const(_) => return None,
+                }
+            }
+            let mut args = Vec::new();
+            for argument in alias.args.iter().skip(parent_count) {
+                match argument.kind() {
+                    ty::GenericArgKind::Type(ty) => args.push(raw_ty(tcx, ty)?),
+                    ty::GenericArgKind::Lifetime(_) => {}
+                    ty::GenericArgKind::Const(_) => return None,
+                }
+            }
+            RawTy::Associated(RawProjectionTy {
+                associated_ty: RawDefId {
+                    crate_num: CrateNum(associated_ty.krate.as_u32()),
+                    def_index: DefIndex(associated_ty.index.as_u32()),
+                    kind: SymExtKind::TypeAlias,
+                },
+                self_ty: Box::new(self_ty),
+                trait_def: RawDefId {
+                    crate_num: CrateNum(trait_def.krate.as_u32()),
+                    def_index: DefIndex(trait_def.index.as_u32()),
+                    kind: SymExtKind::Trait,
+                },
+                trait_args,
+                args,
+            })
         }
         ty::TyKind::Ref(_, inner, mutability) => RawTy::Ref(
             Box::new(raw_ty(tcx, *inner)?),

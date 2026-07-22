@@ -28,8 +28,15 @@ pub struct QueryResult<'db> {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub enum GoalOutput<'db> {
+    Proven,
+    Type(Ptr<Ty<'db>>),
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub enum QueryResultData<'db> {
     Yes {
+        output: GoalOutput<'db>,
         subst: Subst<'db>,
         modulo: Goal<'db>,
     },

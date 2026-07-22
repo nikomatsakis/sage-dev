@@ -138,11 +138,15 @@ The positive, inductive, type-only solver and its body-obligation integration
 exist. A conservative trait-method path discovers represented external
 trait items, proves one fixed-trait goal, and elaborates a selected call. The
 common named, associated, and opaque alias type family is represented through
-inference and solver boundaries, but reveal and normalization are not yet
-operational. Complete method resolution, associated-value normalization,
-higher-ranked reasoning, and the other explicitly deferred
-extensions remain planned; their status is tracked in the [Build-Out
-Roadmap](../implementation/roadmap.md).
+inference and solver boundaries. Input-only associated-type normalization is
+operational at the canonical solver boundary: it merges isolated local,
+external, and explicit environment value candidates and returns a type output.
+The caller-side alias relation applies that merged output before relating it to
+an expected type. Projection-bearing method signatures and retained body
+normalization obligations are not yet connected. Complete method resolution,
+named-alias expansion, opaque reveal, higher-ranked reasoning, and the other
+explicitly deferred extensions remain planned; their status is tracked in the
+[Build-Out Roadmap](../implementation/roadmap.md).
 The destination-level soundness, completeness, candidate-discovery, progress,
 scheduling, and resource contract is recorded in
 [Trait Solver Design](./trait-solver.md).
@@ -174,9 +178,10 @@ Method-name discovery remains in method resolution and submits one fixed-trait
 goal per candidate trait.
 
 External trait signatures, ADT signatures, associated-item lists, function
-signatures, trait-keyed relevant-impl identities, impl headers, and structural
-sizedness facts cross `TcxDb` as owned raw metadata and are lowered by separate
-tracked queries. The external candidate operation is keyed by the fixed trait
+signatures, trait-keyed relevant-impl identities, impl headers, requested
+associated-type values, and structural sizedness facts cross `TcxDb` as owned
+raw metadata and are lowered by separate tracked queries. The external
+candidate operation is keyed by the fixed trait
 and an optional conservative rigid self head. It retains blanket and
 unclassifiable impls, returns deterministic identities plus explicit
 completeness, and never loads an associated value or body. Each selected impl
@@ -184,11 +189,15 @@ header is then lowered into the same checked binder representation as a local
 impl and enters the same candidate proof path. Compiler-built-in `Sized` and
 `MetaSized` obligations use structural Sage candidates rather than pretending
 that explicit impls exist; unavailable structure produces uncertainty. The
-ADT-signature query contains
-only ordered generics, aligned type defaults, represented ordinary predicates,
-and separate ordinary/deferred completeness; it does not read fields,
-associated values, impls, or bodies. Source type lowering applies omitted type
-defaults in declaration order and instantiates the ADT predicate environment.
+Trait proof stops after headers. Normalization separately asks
+`external_associated_type_value(impl, associated_type)` only for the requested
+value of a surviving candidate; local normalization has an equivalent tracked
+operation and does not first lower `LocalImplSym::items`. The ADT-signature
+query contains only ordered generics, aligned type defaults, represented
+ordinary predicates, and separate ordinary/deferred completeness; it does not
+read fields, associated values, impls, or bodies. Source type lowering applies
+omitted type defaults in declaration order and instantiates the ADT predicate
+environment.
 Absent and unsupported defaults remain distinct, so an unsupported declaration
 cannot be misdiagnosed as a missing required argument. Predicates introduced by
 local struct field types remain attached to the checked field query and are

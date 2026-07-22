@@ -3,7 +3,7 @@ use sage_stash::{AllocStashData, Ptr, Slice, Stash, Stashed};
 
 use crate::generic_param::{AlphaEquivParam, GenericParam, GenericParamKind};
 use crate::scope::LocalCrateSymbol;
-use crate::ty::{Binder, TraitRef, Ty, WherePredicate};
+use crate::ty::{AliasTy, Binder, TraitRef, Ty, WherePredicate};
 
 pub const MAX_PROOF_DEPTH: u32 = 64;
 
@@ -15,7 +15,7 @@ pub struct GoalQueryData<'db> {
     pub next_response_param: u32,
     pub assumptions_complete: bool,
     pub assumptions: Slice<Assumption<'db>>,
-    pub goal: Goal<'db>,
+    pub goal: SolverGoal<'db>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
@@ -30,6 +30,15 @@ pub struct CanonicalVarInfo<'db> {
 pub enum CanonicalVarRole {
     RigidPlaceholder,
     ExistentialInput,
+}
+
+/// A top-level solver operation. Structural proof goals remain propositions;
+/// value-producing operations are not encoded by adding an output variable to
+/// that proposition language.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub enum SolverGoal<'db> {
+    Prove(Goal<'db>),
+    Normalize(AliasTy<'db>),
 }
 
 // ANCHOR: example_solver_goal_ir
@@ -88,6 +97,12 @@ pub enum Assumption<'db> {
     TraitImpl {
         self_ty: Ptr<Ty<'db>>,
         trait_ref: TraitRef<'db>,
+    },
+    /// A value-bearing normalization fact. Unlike `TraitImpl`, this supplies
+    /// an associated value and can therefore answer `Normalize`.
+    NormalizesTo {
+        alias: AliasTy<'db>,
+        ty: Ptr<Ty<'db>>,
     },
     Implies(Slice<Goal<'db>>, Ptr<WherePredicate<'db>>),
     All(Slice<Assumption<'db>>),
@@ -167,7 +182,20 @@ pub(crate) fn validate_goal_query<'db>(
         &mut visible,
         data.next_response_param,
     )?;
-    validate_goal(db, stash, data.goal, &mut visible, data.next_response_param)
+    validate_solver_goal(db, stash, data.goal, &mut visible, data.next_response_param)
+}
+
+fn validate_solver_goal<'db>(
+    db: &'db dyn crate::Db,
+    stash: &Stash,
+    goal: SolverGoal<'db>,
+    visible: &mut FxHashSet<AlphaEquivParam<'db>>,
+    next_response_param: u32,
+) -> Result<(), &'static str> {
+    match goal {
+        SolverGoal::Prove(goal) => validate_goal(db, stash, goal, visible, next_response_param),
+        SolverGoal::Normalize(alias) => validate_alias(stash, alias, visible),
+    }
 }
 
 fn validate_goal<'db>(
@@ -226,6 +254,10 @@ fn validate_assumptions<'db>(
             Assumption::TraitImpl { self_ty, trait_ref } => {
                 validate_ty(stash, self_ty, visible)?;
                 validate_trait_ref(stash, trait_ref, visible)?;
+            }
+            Assumption::NormalizesTo { alias, ty } => {
+                validate_alias(stash, alias, visible)?;
+                validate_ty(stash, ty, visible)?;
             }
             Assumption::Implies(conditions, consequence) => {
                 for condition in &stash[conditions] {
@@ -310,12 +342,44 @@ fn validate_ty<'db>(
     Ok(())
 }
 
+fn validate_alias<'db>(
+    stash: &Stash,
+    alias: AliasTy<'db>,
+    visible: &FxHashSet<AlphaEquivParam<'db>>,
+) -> Result<(), &'static str> {
+    match alias {
+        AliasTy::Named(alias) => {
+            for ty in &stash[alias.args] {
+                validate_ty(stash, *ty, visible)?;
+            }
+        }
+        AliasTy::Associated(projection) => {
+            validate_ty(stash, projection.self_ty, visible)?;
+            validate_trait_ref(stash, projection.trait_ref, visible)?;
+            for ty in &stash[projection.args] {
+                validate_ty(stash, *ty, visible)?;
+            }
+        }
+        AliasTy::Opaque(alias) => {
+            for ty in &stash[alias.args] {
+                validate_ty(stash, *ty, visible)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 // ANCHOR: example_goal_query
 #[salsa::tracked]
 impl<'db> InternedGoalQuery<'db> {
     #[salsa::tracked]
     pub fn prove(self, db: &'db dyn crate::Db) -> Stashed<super::QueryResult<'db>> {
         super::prove_query(db, self.data(db))
+    }
+
+    #[salsa::tracked]
+    pub fn solve(self, db: &'db dyn crate::Db) -> Stashed<super::QueryResult<'db>> {
+        super::solve_query(db, self.data(db))
     }
 }
 // ANCHOR_END: example_goal_query

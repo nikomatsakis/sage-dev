@@ -943,6 +943,7 @@ dependencies = [
  "sage-ir",
  "sage-oracle",
  "sage-rustc-bridge",
+ "sage-stash",
  "sage-test-harness",
  "serde_json",
 ]

@@ -51,26 +51,31 @@ cases and reports uncertainty when an external unsized tail is unavailable.
 
 ## Step 4: Associated values and normalization operations
 
-- [ ] Extend `RawTy` and checked external signatures with associated
+- [x] Extend `RawTy` and checked external signatures with associated
   projections.
-- [ ] Add local impl-item and external metadata associated-value operations
+- [x] Add local impl-item and external metadata associated-value operations
   keyed by impl and associated type identity, separate from impl headers and
   item enumeration.
-- [ ] Separate value-producing `SolverGoal` operations from residual
+- [x] Separate value-producing `SolverGoal` operations from residual
   `ProofGoal`, and add canonical `GoalOutput::{Proven, Type}` responses.
-- [ ] Add input-only `Normalize(alias) -> Type` and alias-relation operations
+- [x] Add input-only `Normalize(alias) -> Type` and alias-relation operations
   using isolated candidates and output-aware answer merging; no expected type
   or output inference variable participates in normalization candidate
   selection.
-- [ ] Bind, copy, occurs/universe-check, cache, and import response-local
+- [x] Bind, copy, occurs/universe-check, cache, and import response-local
   variables which occur in a goal output.
-- [ ] Represent normalization assumptions distinctly from bare trait facts;
+- [x] Represent normalization assumptions distinctly from bare trait facts;
   the latter never invent an associated value.
-- [ ] Preserve uncertainty, residual goals, and explicit exhaustion without
+- [x] Preserve uncertainty, residual goals, and explicit exhaustion without
   manufacturing `No` from incomplete sources.
-- [ ] Test local and external associated values, `Iterator::Item = Frame`,
+- [x] Test local and external associated values, `Iterator::Item = Frame`,
   nested projections, identical structural aliases, ambiguity independent of
   expected output, and no unrequested associated-value reads.
+
+The caller-side alias relation is transactional: it solves and imports the
+input-only normalization result before relating that result to the expected
+type. Step 5 still owns registering an unresolved relation in the body
+obligation lifecycle and driving it to a terminal result.
 
 ## Step 5: `Iterator::next` elaboration
 

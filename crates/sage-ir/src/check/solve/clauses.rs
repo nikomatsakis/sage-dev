@@ -1,5 +1,5 @@
 use rustc_hash::{FxHashMap, FxHashSet};
-use sage_stash::{Slice, Stash, StashCopy};
+use sage_stash::{Ptr, Slice, Stash, StashCopy};
 
 use crate::check::infer::version::Version;
 use crate::generic_param::GenericParamKind;
@@ -24,6 +24,12 @@ pub(crate) enum Candidate<'db> {
 pub(crate) struct InstantiatedCandidate<'db> {
     pub head: WherePredicate<'db>,
     pub body: Slice<Goal<'db>>,
+}
+
+pub(crate) struct PreparedValueCandidate<'db> {
+    pub instantiated: InstantiatedCandidate<'db>,
+    source: Candidate<'db>,
+    type_mapping: FxHashMap<crate::generic_param::GenericParam<'db>, Ptr<Ty<'db>>>,
 }
 
 // ANCHOR: example_assemble_candidates
@@ -63,7 +69,8 @@ pub(crate) fn assemble_candidates<'db>(
                     });
                 }
             }
-            Assumption::All(_) | Assumption::TraitImpl { .. } => {}
+            Assumption::All(_) | Assumption::TraitImpl { .. } | Assumption::NormalizesTo { .. } => {
+            }
         }
     }
 
@@ -180,6 +187,18 @@ fn instantiate_impl_signature<'db>(
     version: Version,
     signature: &sage_stash::Stashed<ImplSignature<'db>>,
 ) -> InstantiatedCandidate<'db> {
+    instantiate_impl_signature_with_mapping(db, state, version, signature).0
+}
+
+fn instantiate_impl_signature_with_mapping<'db>(
+    db: &'db dyn crate::Db,
+    state: &mut QueryProofState<'db>,
+    version: Version,
+    signature: &sage_stash::Stashed<ImplSignature<'db>>,
+) -> (
+    InstantiatedCandidate<'db>,
+    FxHashMap<crate::generic_param::GenericParam<'db>, Ptr<Ty<'db>>>,
+) {
     let (source, binder) = signature.open();
     let mut mapping = FxHashMap::default();
     for generic in &source[binder.generics] {
@@ -195,6 +214,7 @@ fn instantiate_impl_signature<'db>(
             }
         }
     }
+    let value_mapping = mapping.clone();
     let mut copier = IrCopier::new(source, &mut state.stash, mapping, None);
     let self_ty = copier.copy_ty(binder.value.self_ty);
     let trait_ref = copier.copy_trait_ref(
@@ -231,12 +251,69 @@ fn instantiate_impl_signature<'db>(
     }
     let body = state.stash.alloc_slice(&body);
 
-    InstantiatedCandidate {
-        head: WherePredicate { self_ty, trait_ref },
-        body,
-    }
+    (
+        InstantiatedCandidate {
+            head: WherePredicate { self_ty, trait_ref },
+            body,
+        },
+        value_mapping,
+    )
 }
 // ANCHOR_END: example_instantiate_impl
+
+pub(crate) fn prepare_value_candidate<'db>(
+    db: &'db dyn crate::Db,
+    state: &mut QueryProofState<'db>,
+    version: Version,
+    candidate: Candidate<'db>,
+) -> Option<PreparedValueCandidate<'db>> {
+    let signature = match candidate {
+        Candidate::LocalImpl(local_impl) => local_impl.sig(db),
+        Candidate::ExternalImpl(external_impl) => {
+            crate::external_syms::external_impl_signature(db, external_impl)?
+        }
+        Candidate::Environment { .. } => return None,
+    };
+    let (instantiated, type_mapping) =
+        instantiate_impl_signature_with_mapping(db, state, version, &signature);
+    Some(PreparedValueCandidate {
+        instantiated,
+        source: candidate,
+        type_mapping,
+    })
+}
+
+pub(crate) fn load_prepared_associated_value<'db>(
+    db: &'db dyn crate::Db,
+    state: &mut QueryProofState<'db>,
+    candidate: &PreparedValueCandidate<'db>,
+    associated_ty: crate::symbol::TypeAliasSymbol<'db>,
+) -> Option<Ptr<Ty<'db>>> {
+    let value = match candidate.source {
+        Candidate::LocalImpl(local_impl) => {
+            crate::local_syms::impls::local_impl_associated_type_value(
+                db,
+                local_impl,
+                associated_ty,
+            )?
+        }
+        Candidate::ExternalImpl(external_impl) => {
+            let crate::symbol::TypeAliasSymbol::Ext(associated_ty) = associated_ty else {
+                return None;
+            };
+            crate::external_syms::external_associated_type_value(db, external_impl, associated_ty)?
+        }
+        Candidate::Environment { .. } => return None,
+    };
+    let (source, value) = value.open();
+    let mut copier = IrCopier::new(
+        source,
+        &mut state.stash,
+        candidate.type_mapping.clone(),
+        None,
+    );
+    Some(copier.copy_ty(value.value))
+}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum SizedCertainty {

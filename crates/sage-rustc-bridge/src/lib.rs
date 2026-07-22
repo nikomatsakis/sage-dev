@@ -128,6 +128,20 @@ pub fn serve_tcx_requests(tcx: TyCtxt<'_>, req_rx: mpsc::Receiver<TcxRequest>) {
             } => {
                 let _ = reply.send(tcx_db.impl_signature(crate_num, def_index));
             }
+            TcxRequest::AssociatedTypeValue {
+                impl_crate_num,
+                impl_def_index,
+                associated_crate_num,
+                associated_def_index,
+                reply,
+            } => {
+                let _ = reply.send(tcx_db.associated_type_value(
+                    impl_crate_num,
+                    impl_def_index,
+                    associated_crate_num,
+                    associated_def_index,
+                ));
+            }
             TcxRequest::AdtIsAlwaysSized {
                 crate_num,
                 def_index,

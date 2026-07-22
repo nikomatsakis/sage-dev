@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 use crate::symbol::{CrateNum, DefIndex};
 
 use super::{
-    ExternalDefPath, RawAdtSignature, RawAssociatedItems, RawChild, RawFnSignature,
-    RawImplSignature, RawRelevantImpls, RawSelfTypeHead, RawTraitSignature, TcxDb,
+    ExternalDefPath, RawAdtSignature, RawAssociatedItems, RawAssociatedTypeValue, RawChild,
+    RawFnSignature, RawImplSignature, RawRelevantImpls, RawSelfTypeHead, RawTraitSignature, TcxDb,
 };
 
 /// Request from the salsa thread to the TyCtxt thread.
@@ -75,6 +75,13 @@ pub enum TcxRequest {
         crate_num: CrateNum,
         def_index: DefIndex,
         reply: mpsc::Sender<Option<RawImplSignature>>,
+    },
+    AssociatedTypeValue {
+        impl_crate_num: CrateNum,
+        impl_def_index: DefIndex,
+        associated_crate_num: CrateNum,
+        associated_def_index: DefIndex,
+        reply: mpsc::Sender<Option<RawAssociatedTypeValue>>,
     },
     AdtIsAlwaysSized {
         crate_num: CrateNum,
@@ -328,6 +335,30 @@ impl TcxDb for ProxyTcxDb {
             .send(TcxRequest::ImplSignature {
                 crate_num,
                 def_index,
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn associated_type_value(
+        &self,
+        impl_crate_num: CrateNum,
+        impl_def_index: DefIndex,
+        associated_crate_num: CrateNum,
+        associated_def_index: DefIndex,
+    ) -> Option<RawAssociatedTypeValue> {
+        self.log.lock().unwrap().push(format!(
+            "tcx::associated_type_value({}, {}, {}, {})",
+            impl_crate_num.0, impl_def_index.0, associated_crate_num.0, associated_def_index.0,
+        ));
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::AssociatedTypeValue {
+                impl_crate_num,
+                impl_def_index,
+                associated_crate_num,
+                associated_def_index,
                 reply,
             })
             .expect("TyCtxt thread hung up");

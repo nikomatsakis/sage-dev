@@ -63,13 +63,14 @@ types](./typed-ir.md#rigid-and-alias-types). Named type aliases,
 associated-type projections, and opaque types are three variants of the same
 alias concept. They retain definition identity and arguments even when they
 cannot or need not be normalized. That structural representation is built and
-survives inference and canonical solver boundaries; the normalization
-operations described next remain planned.
+survives inference and canonical solver boundaries. Associated projections now
+have an operational normalization path; named-alias expansion and opaque reveal
+remain planned.
 
-The solver's destination operation language includes input-only normalization,
-conceptually `Normalize(alias) -> Type`, and a way to relate aliases without
-first assuming that both can be revealed. Their planned internal decomposition
-and first associated-projection slice are specified by the
+The solver operation language includes input-only normalization,
+`Normalize(alias) -> Type`, and caller-side alias relation without first
+assuming that both aliases can be revealed. The first associated-projection
+slice and the remaining body integration are specified by the
 [Associated Type Normalization
 RFD](../rfds/associated-type-normalization/README.md); the semantic
 requirements are:
@@ -171,11 +172,12 @@ enum GoalOutput<'db> {
 }
 ```
 
-The names are conceptual until the normalization RFD lands. `Prove(P)` returns
-`Proven`; `Normalize(A)` returns `Type(T)`. Keeping structural `ProofGoal`
-separate avoids assigning an arbitrary value to a conjunction containing
-several value-producing operations. A normalization operation may still return
-a `ProofGoal` residual which must hold for its type result to be valid.
+These are the implemented canonical operation and output boundaries.
+`Prove(P)` returns `Proven`; `Normalize(A)` returns `Type(T)`. Keeping
+structural `ProofGoal` separate avoids assigning an arbitrary value to a
+conjunction containing several value-producing operations. A normalization
+operation may still return a `ProofGoal` residual which must hold for its type
+result to be valid.
 
 `GoalOutput` is intentionally extensible. Future operations such as callable
 instance resolution or vtable construction may add purpose-built outputs; they
@@ -331,7 +333,10 @@ heads; blanket and unclassifiable impls remain. A separate
 `external_impl_signature(impl)` query loads only a binder-aware header, lowers
 it into the local impl-signature shape, and feeds the same candidate
 instantiation and proof machinery. Associated values and impl items are not
-part of either operation. Unsupported headers or an incomplete source retain
+part of either proof operation. `Normalize` uses a separate
+`external_associated_type_value(impl, associated_type)` query after header
+matching; its local counterpart reads the requested type value without first
+lowering the impl-item list. Unsupported headers or an incomplete source retain
 uncertainty instead of manufacturing a negative answer. Structural compiler
 traits such as `Sized` and `MetaSized` have explicit Sage candidates because
 they are not enumerable user impls. Rustc supplies their identities and type

@@ -13,7 +13,9 @@ use crate::name::Name;
 use crate::resolve::{Namespace, Resolution, Resolver};
 use crate::scope::LocalCrateSymbol;
 use crate::span::RelativeSpan;
-use crate::ty::{Binder, CheckedParameterEnv, FnSig, InferVarIndex, SolverEligibility, Ty};
+use crate::ty::{
+    AliasTy, Binder, CheckedParameterEnv, FnSig, InferVarIndex, SolverEligibility, Ty,
+};
 use crate::tytree::*;
 
 use super::infer::bound::Bound;
@@ -30,6 +32,13 @@ struct MainTaskWake(AtomicBool);
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum TraitGoalCertainty {
+    Yes,
+    Maybe,
+    No,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum AliasRelationCertainty {
     Yes,
     Maybe,
     No,
@@ -972,6 +981,84 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     }
     // ANCHOR_END: example_classify_fixed_trait_goal
 
+    /// Normalize an alias as an input-only solver operation, then relate its
+    /// merged output to `expected` in one caller-side transaction. The
+    /// expected type is intentionally absent from the canonical query and is
+    /// not visible while normalization candidates are selected or merged.
+    pub(crate) fn relate_alias(
+        &self,
+        alias: AliasTy<'db>,
+        expected: Ptr<Ty<'db>>,
+    ) -> AliasRelationCertainty {
+        use super::solve::{
+            AppliedCertainty, GoalOutput, GoalQuery, SolverGoal, apply_query_response,
+            canonicalize_solver_goal,
+        };
+
+        let local_crate = self
+            .local_crate
+            .expect("alias normalization requires a local crate context");
+        let assumptions = *self.solver_assumptions.borrow();
+        let assumptions_complete = *self.assumptions_complete.borrow();
+        let canonical = canonicalize_solver_goal(
+            self.db,
+            &self.target_stash.borrow(),
+            &self.egraph.borrow(),
+            Version::ROOT,
+            local_crate,
+            Universe(1),
+            assumptions_complete,
+            assumptions,
+            SolverGoal::Normalize(alias),
+        );
+        let response = GoalQuery::new(self.db, canonical.data.clone()).solve(self.db);
+
+        let mut stash = self.target_stash.borrow_mut();
+        let mut egraph = self.egraph.borrow_mut();
+        let transaction = egraph.branch_from(Version::ROOT);
+        let Ok(applied) = apply_query_response(
+            self.db,
+            &mut stash,
+            &mut egraph,
+            transaction,
+            &canonical.data,
+            &canonical.mapping,
+            &response,
+        ) else {
+            egraph.discard(transaction);
+            return AliasRelationCertainty::No;
+        };
+        let AppliedCertainty::Yes {
+            output: GoalOutput::Type(output),
+            modulo,
+        } = applied.certainty
+        else {
+            egraph.discard(transaction);
+            return match applied.certainty {
+                AppliedCertainty::Maybe => AliasRelationCertainty::Maybe,
+                AppliedCertainty::No => AliasRelationCertainty::No,
+                AppliedCertainty::Yes { .. } => {
+                    unreachable!("normalization returned a non-type output")
+                }
+            };
+        };
+        if !modulo.is_trivially_true(&stash)
+            || try_unify(&mut egraph, &mut stash, transaction, output, expected).is_err()
+        {
+            egraph.discard(transaction);
+            return if modulo.is_trivially_true(&stash) {
+                AliasRelationCertainty::No
+            } else {
+                AliasRelationCertainty::Maybe
+            };
+        }
+        let effects = egraph.collapse_into(transaction, Version::ROOT);
+        drop(egraph);
+        drop(stash);
+        self.publish_commit_effects(effects);
+        AliasRelationCertainty::Yes
+    }
+
     fn canonicalize_obligation_goal(
         &self,
         local_crate: crate::scope::LocalCrateSymbol<'db>,
@@ -1183,7 +1270,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
                     ObligationState::Stalled
                 };
             }
-            AppliedCertainty::Yes { modulo } => {
+            AppliedCertainty::Yes { modulo, .. } => {
                 if modulo.is_trivially_true(&self.target_stash.borrow()) {
                     let mut manager = self.obligations.borrow_mut();
                     manager.obligations[index].state = ObligationState::Terminal;
@@ -1492,16 +1579,51 @@ pub fn resolve_path<'db>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sage_stash::Stash;
+    use crate::db::Database;
+    use crate::local_syms::mods::{LocalModSym, ModBodySource};
+    use crate::parse::parse_str_to_cst;
+    use crate::scope::{ScopeSymbol, local_crate};
+    use crate::source::SourceFile;
+    use crate::span::{AbsoluteSpan, ParseSource};
+    use crate::symbol::{ModSymbol, SymbolData, TraitSymbol};
+    use crate::ty::{ProjectionTy, TraitItemDef, TraitRef};
+    use sage_stash::{Stash, Stashed};
+    use salsa::Database as _;
 
     fn make_cx(stash: &Stash) -> InferCtx<'_, 'static> {
         InferCtx::new(leak_db(), stash, None)
     }
 
     fn leak_db() -> &'static dyn crate::Db {
-        use crate::db::Database;
         let db = Box::new(Database::default());
         Box::leak(db)
+    }
+
+    #[salsa::tracked]
+    fn setup_root_module<'db>(
+        db: &'db dyn crate::Db,
+        source_file: SourceFile,
+    ) -> (LocalCrateSymbol<'db>, ModSymbol<'db>) {
+        let mut empty_stash = Stash::new();
+        let empty_attrs = empty_stash.alloc_slice::<crate::cst::attrs::AttrCst>(&[]);
+        let empty_attrs = Stashed::new(empty_stash, empty_attrs);
+        let source = ParseSource::SourceFile(source_file);
+        let root = LocalModSym::new(
+            db,
+            Name::new(db, String::new()),
+            None,
+            ModBodySource::File(source_file),
+            empty_attrs,
+            AbsoluteSpan {
+                source,
+                start: 0,
+                end: source_file.text(db).len() as u32,
+            },
+        );
+        let krate = local_crate(db, root);
+        let items = parse_str_to_cst(db, source, source_file.text(db), ScopeSymbol::Crate(krate));
+        crate::local_syms::mods::unexpanded_items::specify(db, root, items);
+        (krate, ModSymbol::Local(root))
     }
 
     #[test]
@@ -1562,5 +1684,86 @@ mod tests {
 
         // After block_on, pending_wakes are flushed
         assert!(cx.pending_wakes.borrow().is_empty());
+    }
+
+    #[test]
+    fn relate_alias_commits_success_and_rolls_back_partial_mismatch() {
+        let mut database = Database::default();
+        let source_file = database.add_source_file(
+            "lib.rs".to_owned(),
+            "trait Iterable { type Item; }\n\
+             impl Iterable for bool { type Item = (bool, bool); }"
+                .to_owned(),
+        );
+        database.attach(|db| {
+            let (krate, root) = setup_root_module(db, source_file);
+            let iterable = root
+                .expanded_module_items(db)
+                .iter()
+                .find_map(|symbol| match symbol.data(db) {
+                    SymbolData::TraitSymbol(TraitSymbol::Local(trait_sym)) => Some(trait_sym),
+                    SymbolData::TraitSymbol(TraitSymbol::Ext(_))
+                    | SymbolData::StructSymbol(_)
+                    | SymbolData::FnSymbol(_)
+                    | SymbolData::EnumSymbol(_)
+                    | SymbolData::VariantSymbol(_)
+                    | SymbolData::VariantCtorSymbol(_)
+                    | SymbolData::TypeAliasSymbol(_)
+                    | SymbolData::ConstSymbol(_)
+                    | SymbolData::StaticSymbol(_)
+                    | SymbolData::ImplSymbol(_)
+                    | SymbolData::ModSymbol(_)
+                    | SymbolData::MacroDefSymbol(_)
+                    | SymbolData::UseSymbol(_)
+                    | SymbolData::IntrinsicTypeSymbol(_)
+                    | SymbolData::MacroInvocationSymbol(_) => None,
+                })
+                .expect("test trait should exist");
+            let items = iterable.items(db);
+            let (item_stash, items) = items.open();
+            let associated_ty = item_stash[items.value]
+                .iter()
+                .find_map(|item| match item {
+                    TraitItemDef::Type(associated_ty) => Some(*associated_ty),
+                    TraitItemDef::Function(_) | TraitItemDef::Const(_) => None,
+                })
+                .expect("test associated type should exist");
+
+            let source_stash = Stash::new();
+            let mut cx = InferCtx::new(db, &source_stash, None);
+            cx.local_crate = Some(krate);
+            let bool_ty = cx.alloc_ty(Ty::Bool);
+            let char_ty = cx.alloc_ty(Ty::Char);
+            let empty_args = cx.stash_mut().alloc_slice(&[]);
+            let alias = AliasTy::Associated(ProjectionTy {
+                associated_ty,
+                self_ty: bool_ty,
+                trait_ref: TraitRef {
+                    trait_sym: TraitSymbol::Local(iterable),
+                    args: empty_args,
+                },
+                args: empty_args,
+            });
+
+            let caller_var = cx.fresh_ty_var();
+            let mismatch_elements = cx.stash_mut().alloc_slice(&[caller_var, char_ty]);
+            let mismatch = cx.alloc_ty(Ty::Tuple(mismatch_elements));
+            let revision = cx.egraph.borrow().semantic_revision(Version::ROOT);
+            assert_eq!(cx.relate_alias(alias, mismatch), AliasRelationCertainty::No);
+            assert_eq!(cx.get_bound(caller_var), Bound::None);
+            assert_eq!(
+                cx.egraph.borrow().semantic_revision(Version::ROOT),
+                revision,
+                "a failed relation must discard its partial caller binding"
+            );
+
+            let expected_elements = cx.stash_mut().alloc_slice(&[caller_var, bool_ty]);
+            let expected = cx.alloc_ty(Ty::Tuple(expected_elements));
+            assert_eq!(
+                cx.relate_alias(alias, expected),
+                AliasRelationCertainty::Yes
+            );
+            assert_eq!(cx.get_bound(caller_var), Bound::Exactly(bool_ty));
+        });
     }
 }

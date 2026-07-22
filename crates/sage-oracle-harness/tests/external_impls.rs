@@ -2,8 +2,16 @@
 
 use std::path::PathBuf;
 
-use sage_ir::symbol::{FnSymbol, SymbolData};
+use sage_ir::check::infer::egraph::VersionedEGraph;
+use sage_ir::check::infer::version::{Universe, Version};
+use sage_ir::check::solve::{
+    Assumption, GoalOutput, GoalQuery, QueryResultData, SolverGoal, canonicalize_solver_goal,
+};
+use sage_ir::scope::ScopeSymbol;
+use sage_ir::symbol::{FnSymbol, StructSymbol, SymbolData};
+use sage_ir::ty::{AliasTy, ProjectionTy, TraitItemDef, TraitRef, Ty};
 use sage_oracle_harness::{Fixture, combined};
+use sage_stash::{Stash, StashCopy};
 
 #[test]
 fn into_iter_iterator_proof_reads_only_relevant_external_headers() {
@@ -87,5 +95,175 @@ fn into_iter_iterator_proof_reads_only_relevant_external_headers() {
     assert!(
         !warm.contains("tcx::relevant_trait_impls") && !warm.contains("tcx::impl_signature"),
         "unchanged proof must reuse metadata queries:\n{warm}"
+    );
+}
+
+#[test]
+fn into_iter_item_normalization_reads_only_the_requested_associated_value() {
+    let fixture = Fixture::SingleFile(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test-fixtures/solver/external_iterator_impl.rs"),
+    );
+
+    let (_output, cold, warm) = combined::with_proxy_database(&fixture, |database, files| {
+        let refs: Vec<_> = files
+            .iter()
+            .map(|(path, source)| (path.as_str(), source.as_str()))
+            .collect();
+        sage_test_harness::with_test_crate_files_twice_using_db(database, &refs, |db, root| {
+            let function = root
+                .expanded_module_items(db)
+                .iter()
+                .find_map(|symbol| match symbol.data(db) {
+                    SymbolData::FnSymbol(FnSymbol::Local(function))
+                        if function.name(db).text(db) == "check" =>
+                    {
+                        Some(function)
+                    }
+                    SymbolData::FnSymbol(_)
+                    | SymbolData::StructSymbol(_)
+                    | SymbolData::EnumSymbol(_)
+                    | SymbolData::VariantSymbol(_)
+                    | SymbolData::VariantCtorSymbol(_)
+                    | SymbolData::TraitSymbol(_)
+                    | SymbolData::TypeAliasSymbol(_)
+                    | SymbolData::ConstSymbol(_)
+                    | SymbolData::StaticSymbol(_)
+                    | SymbolData::ImplSymbol(_)
+                    | SymbolData::ModSymbol(_)
+                    | SymbolData::MacroDefSymbol(_)
+                    | SymbolData::UseSymbol(_)
+                    | SymbolData::IntrinsicTypeSymbol(_)
+                    | SymbolData::MacroInvocationSymbol(_) => None,
+                })
+                .unwrap();
+            let requires_iterator = root
+                .expanded_module_items(db)
+                .iter()
+                .find_map(|symbol| match symbol.data(db) {
+                    SymbolData::StructSymbol(StructSymbol::Local(item))
+                        if item.name(db).text(db) == "RequiresIterator" =>
+                    {
+                        Some(item)
+                    }
+                    SymbolData::StructSymbol(_)
+                    | SymbolData::FnSymbol(_)
+                    | SymbolData::EnumSymbol(_)
+                    | SymbolData::VariantSymbol(_)
+                    | SymbolData::VariantCtorSymbol(_)
+                    | SymbolData::TraitSymbol(_)
+                    | SymbolData::TypeAliasSymbol(_)
+                    | SymbolData::ConstSymbol(_)
+                    | SymbolData::StaticSymbol(_)
+                    | SymbolData::ImplSymbol(_)
+                    | SymbolData::ModSymbol(_)
+                    | SymbolData::MacroDefSymbol(_)
+                    | SymbolData::UseSymbol(_)
+                    | SymbolData::IntrinsicTypeSymbol(_)
+                    | SymbolData::MacroInvocationSymbol(_) => None,
+                })
+                .unwrap();
+
+            let function_sig = function.sig(db);
+            let (function_stash, function_sig) = function_sig.open();
+            let self_ty = function_stash[function_sig.value.params][0];
+            let Ty::Adt(_, self_args) = function_stash[self_ty] else {
+                panic!("expected IntoIter parameter")
+            };
+            let expected_item = function_stash[self_args][0];
+            let Ty::Adt(expected_symbol, _) = function_stash[expected_item] else {
+                panic!("expected Frame type argument")
+            };
+
+            let struct_sig = requires_iterator.sig(db);
+            let (struct_stash, struct_sig) = struct_sig.open();
+            let [iterator_predicate] = &struct_stash[struct_sig.value.parameter_env.where_clauses]
+            else {
+                panic!("expected Iterator bound")
+            };
+            let iterator = iterator_predicate.trait_ref.trait_sym;
+            let items = iterator.items(db).unwrap();
+            let (items_stash, items) = items.open();
+            let associated_ty = items_stash[items.value]
+                .iter()
+                .find_map(|item| match item {
+                    TraitItemDef::Type(item)
+                        if sage_ir::symbol::Symbol::from(*item)
+                            .name(db)
+                            .is_some_and(|(name, _)| name.text(db) == "Item") =>
+                    {
+                        Some(*item)
+                    }
+                    TraitItemDef::Type(_) | TraitItemDef::Function(_) | TraitItemDef::Const(_) => {
+                        None
+                    }
+                })
+                .unwrap();
+            let ScopeSymbol::Crate(krate) = function.scope(db) else {
+                panic!("check should be crate scoped")
+            };
+
+            let mut stash = Stash::new();
+            let self_ty = self_ty.stash_copy(function_stash, &mut stash);
+            let projection = AliasTy::Associated(ProjectionTy {
+                associated_ty,
+                self_ty,
+                trait_ref: TraitRef {
+                    trait_sym: iterator,
+                    args: stash.alloc_slice(&[]),
+                },
+                args: stash.alloc_slice(&[]),
+            });
+            let assumptions = stash.alloc_slice::<Assumption>(&[]);
+            let egraph = VersionedEGraph::new();
+            let canonical = canonicalize_solver_goal(
+                db,
+                &stash,
+                &egraph,
+                Version::ROOT,
+                krate,
+                Universe::ROOT,
+                true,
+                assumptions,
+                SolverGoal::Normalize(projection),
+            );
+            let result = GoalQuery::new(db, canonical.data).solve(db);
+            let (result_stash, result) = result.open();
+            let QueryResultData::Yes {
+                output: GoalOutput::Type(output),
+                ..
+            } = result.value
+            else {
+                return false;
+            };
+            let Ty::Adt(output_symbol, output_args) = result_stash[output] else {
+                panic!("expected Frame output")
+            };
+            assert_eq!(output_symbol, expected_symbol);
+            assert!(result_stash[output_args].is_empty());
+            true
+        })
+    });
+
+    assert!(_output, "Iterator::Item should normalize:\n{cold}");
+    assert_eq!(
+        cold.matches("tcx::associated_type_value").count(),
+        1,
+        "{cold}"
+    );
+    assert_eq!(
+        cold.matches("tcx::relevant_trait_impls").count(),
+        2,
+        "normalization needs only Iterator and its Allocator condition:\n{cold}"
+    );
+    assert!(
+        !cold.contains("LocalFnSym < 'db >::body_"),
+        "the direct normalization query must not read any function body:\n{cold}"
+    );
+    assert!(
+        !warm.contains("tcx::associated_type_value")
+            && !warm.contains("tcx::relevant_trait_impls")
+            && !warm.contains("tcx::impl_signature"),
+        "the unchanged canonical query should reuse every semantic dependency:\n{warm}"
     );
 }

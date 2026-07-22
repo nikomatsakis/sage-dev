@@ -5,7 +5,7 @@ use crate::generic_param::{AlphaEquivParam, GenericParam};
 use crate::ty::Ty;
 
 use super::IrCopier;
-use super::{Atom, Goal, QueryResult, QueryResultData, SubstEntry, merge_hints};
+use super::{Atom, Goal, GoalOutput, QueryResult, QueryResultData, SubstEntry, merge_hints};
 
 // ANCHOR: example_merge_candidates
 pub(crate) fn merge_candidate_results<'db>(
@@ -22,7 +22,11 @@ pub(crate) fn merge_candidate_results<'db>(
         let (stash, result) = candidate.open();
         matches!(
             result.value,
-            QueryResultData::Yes { subst, modulo }
+            QueryResultData::Yes {
+                output: GoalOutput::Proven,
+                subst,
+                modulo,
+            }
                 if stash[subst].is_empty() && modulo.is_trivially_true(stash)
         )
     }) {
@@ -109,6 +113,25 @@ fn subsumes<'db>(
     let flexible: FxHashSet<_> = consequent.parameter_universes.keys().copied().collect();
     let mut bindings = FxHashMap::default();
 
+    match (consequent.output, antecedent.output) {
+        (GoalOutput::Proven, GoalOutput::Proven) => {}
+        (GoalOutput::Type(required), GoalOutput::Type(known)) => {
+            if !directional_match_ty(
+                &stash,
+                required,
+                known,
+                &flexible,
+                &parameter_universes,
+                &mut bindings,
+            ) {
+                return false;
+            }
+        }
+        (GoalOutput::Proven, GoalOutput::Type(_)) | (GoalOutput::Type(_), GoalOutput::Proven) => {
+            return false;
+        }
+    }
+
     for required in &consequent.substitution {
         let Some(known) = antecedent
             .substitution
@@ -156,6 +179,7 @@ fn subsumes<'db>(
 }
 
 struct AnswerView<'db> {
+    output: GoalOutput<'db>,
     substitution: Vec<SubstEntry<'db>>,
     modulo: Goal<'db>,
     parameter_universes: FxHashMap<AlphaEquivParam<'db>, u32>,
@@ -168,7 +192,12 @@ fn copy_answer_apart<'db>(
     next_param: &mut u32,
 ) -> AnswerView<'db> {
     let (source, result) = answer.open();
-    let QueryResultData::Yes { subst, modulo } = result.value else {
+    let QueryResultData::Yes {
+        output,
+        subst,
+        modulo,
+    } = result.value
+    else {
         unreachable!("subsumption only compares definite answers")
     };
     let mut mapping = FxHashMap::default();
@@ -186,11 +215,13 @@ fn copy_answer_apart<'db>(
         .into_iter()
         .map(|(key, value)| SubstEntry { key, value })
         .collect();
+    let output = copier.copy_output(output);
     let modulo = copier.copy_goal(modulo);
     if let Some(next) = copier.next_fresh_binder() {
         *next_param = next;
     }
     AnswerView {
+        output,
         substitution,
         modulo,
         parameter_universes,
@@ -422,7 +453,11 @@ mod tests {
             stash,
             QueryResult {
                 bound_vars,
-                value: QueryResultData::Yes { subst, modulo },
+                value: QueryResultData::Yes {
+                    output: GoalOutput::Proven,
+                    subst,
+                    modulo,
+                },
             },
         )
     }
@@ -432,6 +467,29 @@ mod tests {
         let db = Database::default();
         let result = merge_candidate_results(&db, 0, &FxHashMap::default(), vec![yes(true)], true);
         assert!(matches!(result.root().value, QueryResultData::Yes { .. }));
+    }
+
+    #[test]
+    fn unconditional_type_output_does_not_hide_an_incomplete_source() {
+        let db = Database::default();
+        let mut stash = Stash::new();
+        let output = stash.alloc(Ty::Bool);
+        let bound_vars = stash.alloc_slice(&[]);
+        let subst = stash.alloc_slice(&[]);
+        let modulo = Goal::true_(&mut stash);
+        let answer = Stashed::new(
+            stash,
+            QueryResult {
+                bound_vars,
+                value: QueryResultData::Yes {
+                    output: GoalOutput::Type(output),
+                    subst,
+                    modulo,
+                },
+            },
+        );
+        let result = merge_candidate_results(&db, 0, &FxHashMap::default(), vec![answer], true);
+        assert!(matches!(result.root().value, QueryResultData::Maybe { .. }));
     }
 
     #[test]
@@ -522,7 +580,11 @@ mod tests {
             stash,
             QueryResult {
                 bound_vars,
-                value: QueryResultData::Yes { subst, modulo },
+                value: QueryResultData::Yes {
+                    output: GoalOutput::Proven,
+                    subst,
+                    modulo,
+                },
             },
         )
     }
@@ -571,7 +633,11 @@ mod tests {
                 stash,
                 QueryResult {
                     bound_vars,
-                    value: QueryResultData::Yes { subst, modulo },
+                    value: QueryResultData::Yes {
+                        output: GoalOutput::Proven,
+                        subst,
+                        modulo,
+                    },
                 },
             )
         }
@@ -614,6 +680,7 @@ mod tests {
             QueryResult {
                 bound_vars,
                 value: QueryResultData::Yes {
+                    output: GoalOutput::Proven,
                     subst,
                     modulo: Goal::Maybe,
                 },
@@ -633,6 +700,7 @@ mod tests {
                 QueryResult {
                     bound_vars,
                     value: QueryResultData::Yes {
+                        output: GoalOutput::Proven,
                         subst,
                         modulo: Goal::Maybe,
                     },
@@ -669,7 +737,11 @@ mod tests {
             stash,
             QueryResult {
                 bound_vars,
-                value: QueryResultData::Yes { subst, modulo },
+                value: QueryResultData::Yes {
+                    output: GoalOutput::Proven,
+                    subst,
+                    modulo,
+                },
             },
         )
     }
@@ -699,7 +771,11 @@ mod tests {
                 stash,
                 QueryResult {
                     bound_vars,
-                    value: QueryResultData::Yes { subst, modulo },
+                    value: QueryResultData::Yes {
+                        output: GoalOutput::Proven,
+                        subst,
+                        modulo,
+                    },
                 },
             )
         }
@@ -735,7 +811,11 @@ mod tests {
                 stash,
                 QueryResult {
                     bound_vars,
-                    value: QueryResultData::Yes { subst, modulo },
+                    value: QueryResultData::Yes {
+                        output: GoalOutput::Proven,
+                        subst,
+                        modulo,
+                    },
                 },
             )
         };

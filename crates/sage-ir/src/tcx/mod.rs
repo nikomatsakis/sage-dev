@@ -89,6 +89,21 @@ pub struct RawImplSignature {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RawAssociatedTypeValue {
+    pub value: RawTy,
+    pub complete: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RawProjectionTy {
+    pub associated_ty: RawDefId,
+    pub self_ty: Box<RawTy>,
+    pub trait_def: RawDefId,
+    pub trait_args: Vec<RawTy>,
+    pub args: Vec<RawTy>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RawTy {
     Bool,
     Char,
@@ -97,6 +112,7 @@ pub enum RawTy {
     Float(FloatTy),
     Str,
     Adt(RawDefId, Vec<RawTy>),
+    Associated(RawProjectionTy),
     Ref(Box<RawTy>, crate::cst::Mutability),
     Tuple(Vec<RawTy>),
     Slice(Box<RawTy>),
@@ -286,6 +302,18 @@ pub trait TcxDb: Send + Sync {
         _crate_num: CrateNum,
         _def_index: DefIndex,
     ) -> Option<RawImplSignature> {
+        None
+    }
+
+    /// Value of one requested associated type in one external impl. This is
+    /// intentionally separate from the impl header and item enumeration.
+    fn associated_type_value(
+        &self,
+        _impl_crate_num: CrateNum,
+        _impl_def_index: DefIndex,
+        _associated_crate_num: CrateNum,
+        _associated_def_index: DefIndex,
+    ) -> Option<RawAssociatedTypeValue> {
         None
     }
 

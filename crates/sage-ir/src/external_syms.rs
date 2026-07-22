@@ -5,11 +5,11 @@ use sage_stash::{Ptr, Stash, Stashed};
 
 use crate::generic_param::{ExtGenericParam, GenericParam, GenericParamKind};
 use crate::name::Name;
-use crate::symbol::{FnSymbol, SymExt, Symbol, TraitSymbol};
+use crate::symbol::{FnSymbol, SymExt, Symbol, TraitSymbol, TypeAliasSymbol};
 use crate::tcx::{
-    RawAdtSignature, RawAssociatedItemKind, RawDefId, RawFnSignature, RawGenericDefault,
-    RawGenericParam, RawGenericParamKind, RawImplSignature, RawReceiver, RawSelfTypeHead,
-    RawTraitSemantics, RawTraitSignature, RawTy,
+    RawAdtSignature, RawAssociatedItemKind, RawAssociatedTypeValue, RawDefId, RawFnSignature,
+    RawGenericDefault, RawGenericParam, RawGenericParamKind, RawImplSignature, RawReceiver,
+    RawSelfTypeHead, RawTraitSemantics, RawTraitSignature, RawTy,
 };
 use crate::ty::{
     Binder, CheckedParameterEnv, CheckedReceiver, Const, ExternalAdtSignature,
@@ -138,6 +138,21 @@ pub fn external_impl_signature<'db>(
         .tcx()
         .impl_signature(impl_sym.crate_num(db), impl_sym.def_index(db))?;
     lower_impl_signature(db, impl_sym, raw)
+}
+
+#[salsa::tracked]
+pub fn external_associated_type_value<'db>(
+    db: &'db dyn crate::Db,
+    impl_sym: SymExt<'db>,
+    associated_ty: SymExt<'db>,
+) -> Option<Stashed<Binder<'db, Ptr<Ty<'db>>>>> {
+    let raw = db.tcx().associated_type_value(
+        impl_sym.crate_num(db),
+        impl_sym.def_index(db),
+        associated_ty.crate_num(db),
+        associated_ty.def_index(db),
+    )?;
+    lower_associated_type_value(db, impl_sym, raw)
 }
 
 pub fn simplify_self_type<'db>(
@@ -450,6 +465,34 @@ fn lower_impl_signature<'db>(
     ))
 }
 
+fn lower_associated_type_value<'db>(
+    db: &'db dyn crate::Db,
+    impl_sym: SymExt<'db>,
+    raw: RawAssociatedTypeValue,
+) -> Option<Stashed<Binder<'db, Ptr<Ty<'db>>>>> {
+    if !raw.complete {
+        return None;
+    }
+    let signature = external_impl_signature(db, impl_sym)?;
+    let (signature_stash, signature) = signature.open();
+    let generics = signature_stash[signature.generics].to_vec();
+    let by_index = generics
+        .iter()
+        .map(|generic| {
+            let index = match generic {
+                GenericParam::Ast(parameter) => parameter.index(db),
+                GenericParam::Ext(parameter) => parameter.index(db),
+                GenericParam::AlphaEquiv(parameter) => parameter.index(db),
+            };
+            (index, *generic)
+        })
+        .collect();
+    let mut stash = Stash::new();
+    let value = lower_ty(db, &mut stash, &by_index, raw.value)?;
+    let generics = stash.alloc_slice(&generics);
+    Some(Stashed::new(stash, Binder::new(value, generics)))
+}
+
 fn lower_fn_signature<'db>(
     db: &'db dyn crate::Db,
     fn_sym: SymExt<'db>,
@@ -617,6 +660,28 @@ fn lower_ty<'db>(
                 .map(|ty| lower_ty(db, stash, generics, ty))
                 .collect();
             Ty::Adt(lower_def(db, def).into(), stash.alloc_slice(&args?))
+        }
+        RawTy::Associated(projection) => {
+            let self_ty = lower_ty(db, stash, generics, *projection.self_ty)?;
+            let trait_args = projection
+                .trait_args
+                .into_iter()
+                .map(|ty| lower_ty(db, stash, generics, ty))
+                .collect::<Option<Vec<_>>>()?;
+            let args = projection
+                .args
+                .into_iter()
+                .map(|ty| lower_ty(db, stash, generics, ty))
+                .collect::<Option<Vec<_>>>()?;
+            Ty::Alias(crate::ty::AliasTy::Associated(crate::ty::ProjectionTy {
+                associated_ty: TypeAliasSymbol::Ext(lower_def(db, projection.associated_ty)),
+                self_ty,
+                trait_ref: TraitRef {
+                    trait_sym: TraitSymbol::Ext(lower_def(db, projection.trait_def)),
+                    args: stash.alloc_slice(&trait_args),
+                },
+                args: stash.alloc_slice(&args),
+            }))
         }
         RawTy::Ref(inner, mutability) => Ty::Ref(
             lower_ty(db, stash, generics, *inner)?,

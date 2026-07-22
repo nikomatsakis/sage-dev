@@ -30,6 +30,50 @@ impl<'db> LocalImplSym<'db> {
     }
 }
 
+/// Lower one requested associated type value without reading function bodies
+/// or the values of sibling associated items. GATs and attributed values are
+/// outside the current normalization slice and remain unavailable.
+#[salsa::tracked]
+pub fn local_impl_associated_type_value<'db>(
+    db: &'db dyn crate::Db,
+    impl_sym: LocalImplSym<'db>,
+    associated_ty: crate::symbol::TypeAliasSymbol<'db>,
+) -> Option<sage_stash::Stashed<crate::ty::Binder<'db, sage_stash::Ptr<crate::ty::Ty<'db>>>>> {
+    use crate::check::Check;
+    use crate::cst::traits::TraitItemCst;
+    use crate::resolve::Resolver;
+    use crate::ty::{Binder, BinderExt, Ty};
+
+    let expected_name = crate::symbol::Symbol::from(associated_ty).name(db)?.0;
+    let (source, impl_cst) = impl_sym.cst(db).open_deref();
+    let item = source[impl_cst.items].iter().find_map(|item| match item {
+        TraitItemCst::Type(item) if source[*item].name == expected_name => Some(source[*item]),
+        TraitItemCst::Type(_) | TraitItemCst::Fn(_) | TraitItemCst::Const(_) => None,
+    })?;
+    if !source[item.generics].is_empty()
+        || !source[item.where_clauses].is_empty()
+        || !source[item.attrs].is_empty()
+    {
+        return None;
+    }
+    let value = item.ty?;
+    let signature = impl_sym.sig(db);
+    let generics: Vec<_> = signature.iter_symbols().collect();
+    let mut resolver = Resolver::new(db, impl_sym.scope(db));
+    resolver
+        .ribs
+        .add_generic_params(db, generics.iter().copied());
+    let mut cx = Check::new(db, source, resolver);
+    cx.current_sym = Some(crate::local_syms::LocalModItemSym::Impl(impl_sym));
+    let value = cx.source_stash[value].check(&mut cx);
+    if matches!(value, Ty::Error(_)) || !cx.diagnostics.is_empty() {
+        return None;
+    }
+    let value = cx.target_stash.alloc(value);
+    let generics = cx.target_stash.alloc_slice(&generics);
+    Some(cx.finish(Binder::new(value, generics)))
+}
+
 #[salsa::tracked]
 impl<'db> LocalImplSym<'db> {
     #[salsa::tracked]
