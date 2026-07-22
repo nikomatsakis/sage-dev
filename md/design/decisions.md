@@ -189,14 +189,43 @@ three semantic variants: `Named` for a user-defined type alias, `Associated`
 for an associated-type projection, and `Opaque` for an opaque type. Every
 alias retains its definition identity and generic arguments.
 
-Normalization is a relation, not an eager erasure pass. Named aliases reveal
-their substituted right-hand sides infallibly. Associated types normalize
+Normalization is a semantic operation, not an eager erasure pass. Named aliases
+reveal their substituted right-hand sides infallibly. Associated types normalize
 through trait matching. Opaques reveal only within their definition boundary
 or in a future code-generation mode. The typing/reveal context is consequently
-part of the normalization query's semantic input.
+part of the normalization query's semantic input. D14 specifies how that
+operation returns its result.
 
 An unrevealed alias is not devoid of facts. Bounds declared on associated and
 opaque types may prove predicates without normalization, and identical alias
 applications may be related structurally. The complete destination contract
 is split between [Typed IR](./typed-ir.md#rigid-and-alias-types) and [Trait
 Solver Design](./trait-solver.md#alias-types-and-normalization).
+
+## D14: Solver operations return goal-specific semantic outputs
+
+The solver distinguishes value-producing operations from the proposition
+language used for assumptions and residual conditions. A proof operation
+returns `GoalOutput::Proven`; normalization takes only an alias as input and
+returns `GoalOutput::Type`. A successful response carries that output alongside
+its substitution and residual proof goal.
+
+Normalization is therefore modeled as `Normalize(alias) -> Type`, not as the
+predicate `NormalizesTo(alias, caller_output)` and not as a convention where a
+fresh output inference variable must be recovered from the response
+substitution. The caller relates the returned type to any expected type only
+after candidate answers have been merged, so its expectation cannot select an
+otherwise ambiguous candidate.
+
+The output is part of the canonical response: its response-local variables are
+bound, copied, occurs-checked, universe-checked, cached, compared, and merged.
+An unconditional `Proven` answer can absorb sibling proofs, but an unconditional
+type result cannot absorb a sibling which may return a different type unless
+candidate priority or output equivalence justifies it.
+
+`GoalOutput` is extensible for future non-type operations such as callable
+instance resolution or vtable construction. Those representations remain
+unsettled; this decision only prevents them from being forced through the type
+variant. Trait implementation proof continues to return `Proven`, never a
+selected impl identity. See [Trait Solver Design](./trait-solver.md#knowledge-returned-by-the-solver)
+and the [Associated Type Normalization RFD](../rfds/associated-type-normalization/README.md).

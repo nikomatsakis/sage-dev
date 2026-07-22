@@ -142,11 +142,14 @@ particular, an opaque outside its reveal boundary remains an opaque alias, and
 an associated type may remain a projection when its normalized value is not
 needed or cannot yet be selected.
 
-Normalization is a semantic relation between an alias and a type, rather than
-an eager syntax-expansion pass. One-step expansion of a named alias is
-infallible, although the resulting type may itself contain aliases. Projection
-normalization participates in trait solving. Opaque normalization consults the
-current reveal boundary; code-generation reveal is explicitly deferred.
+Normalization is an input-only semantic operation which returns a type, rather
+than an eager syntax-expansion pass or a predicate containing a caller-supplied
+output term. One-step expansion of a named alias is infallible, although the
+resulting type may itself contain aliases. Projection normalization participates
+in trait solving. Opaque normalization consults the current reveal boundary;
+code-generation reveal is explicitly deferred. A caller which needs equality
+relates the returned type only after normalization candidate answers have been
+merged.
 
 Aliases can also support proofs without normalization. Declared bounds on an
 opaque apply while its hidden type remains unrevealed. Given the required

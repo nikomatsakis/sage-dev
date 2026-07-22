@@ -141,8 +141,13 @@ enum Assumption<'db> {
 }
 ```
 
-Both MVP atoms prove only truth. Type-valued proof results will be introduced
-with normalization rather than being predeclared with unclear semantics.
+Both MVP atoms prove only propositions, so their successful semantic output is
+unit-like `Proven`. The MVP implementation omits that uniform output from its
+response representation. The destination generalization is introduced with
+normalization: solver operations carry goal-specific outputs, and input-only
+`Normalize(alias)` returns a type. This later design is specified by
+[Trait Solver Design](../../design/trait-solver.md#knowledge-returned-by-the-solver)
+and the [Associated Type Normalization RFD](../associated-type-normalization/README.md).
 `Equals` is goal-only: hypothetical equality environments need a scoped egraph
 model and are deferred, so `Assumption` heads are statically trait-only.
 
@@ -194,6 +199,12 @@ enum GoalResult<'db> {
     No,
 }
 ```
+
+This is the implemented MVP response shape. Its `value` field names the
+`Yes`/`Maybe`/`No` payload; it is not the semantic goal output. The planned
+normalization extension adds a goal-specific output to `Yes`, while retaining
+substitution and `modulo` as separate response knowledge. Variables appearing
+in that output join the response binder and the existing validation boundary.
 
 The result is stashed at every canonical/egraph boundary. Instantiation
 allocates one caller inference variable for each `bound_vars` entry, preserving
@@ -654,16 +665,16 @@ is diagnosed/retained as unsupported rather than treated as an empty set.
 
 Method resolution is not part of this integration step. The
 [Method Resolution RFD](../method-resolution/README.md) owns trait/method
-candidate enumeration and submits a fixed post-deref `LookupSelfTy: Trait` goal to this
-truth-valued solver. The solver does not need to return selected impl evidence
-for that contract.
+candidate enumeration and submits a fixed post-deref `LookupSelfTy: Trait` goal
+to the solver's proof operation. Its successful output is `Proven`; the solver
+does not need to return selected impl evidence for that contract.
 
 ## Deferred work
 
 - lifetime and outlives proving;
 - hypothetical equality assumptions and scoped equality environments;
 - goal-level universals and higher-ranked bounds;
-- projection representation and associated-type normalization;
+- projection representation and value-producing associated-type normalization;
 - auto/builtin traits and coinductive search;
 - external impl discovery through compiler metadata;
 - negative reasoning, coherence, overlap, and specialization;

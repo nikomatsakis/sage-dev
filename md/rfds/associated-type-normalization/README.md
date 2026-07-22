@@ -22,8 +22,10 @@
 - Add the common `AliasTy::{Named, Associated, Opaque}` type family, while
   implementing operational normalization only for the associated projection
   needed by this slice.
-- Add type-valued `NormalizesTo` proof goals and normalization-aware alias
-  relation without making the truth-valued trait goal return a selected impl.
+- Generalize solver responses with goal-specific outputs: proof operations
+  return `Proven`, while input-only `Normalize(alias)` returns a type.
+- Add normalization-aware alias relation without making trait proof return a
+  selected impl or encoding normalization's result as an input variable.
 - Import external ADT generic defaults, relevant impl headers, and selected
   associated type values through narrow, owned `TcxDb` queries.
 - Generalize method checking enough to elaborate external `Iterator::next`
@@ -267,14 +269,49 @@ goal `Global: Allocator`, which must itself use complete external candidate
 discovery. The implementation may not special-case either `IntoIter` or
 `Allocator`.
 
-### 4. Add a type-valued normalization goal
+### 4. Add goal-specific solver outputs
 
-The solver goal language gains an atomic type relation conceptually equivalent
-to:
+The solver boundary distinguishes operations which produce semantic values
+from the proposition language used by assumptions and residual conditions:
+
+```rust,ignore
+enum SolverGoal<'db> {
+    Prove(ProofGoal<'db>),
+    Normalize(AliasTy<'db>),
+}
+
+enum GoalOutput<'db> {
+    Proven,
+    Type(Ptr<Ty<'db>>),
+}
+```
+
+A successful canonical response carries its output beside its substitution and
+residual proof goal:
+
+```rust,ignore
+Yes {
+    output: GoalOutput<'db>,
+    subst: Subst<'db>,
+    modulo: ProofGoal<'db>,
+}
+```
+
+The exact Rust names may change during implementation, but these semantic
+boundaries do not. Structural conjunction, implication, and quantification
+remain in `ProofGoal` and therefore produce `Proven`; a conjunction is not
+asked to combine several unrelated operation values. `GoalOutput` is an
+extensible family, so later callable-instance or vtable operations can receive
+purpose-built outputs instead of being encoded as types.
+
+Normalization is conceptually:
 
 ```text
-NormalizesTo(alias, output)
+Normalize(alias) -> Type
 ```
+
+The alias is the complete operation input. There is no expected output term or
+caller-created output inference variable in the query.
 
 For an associated projection, candidate assembly:
 
@@ -284,7 +321,7 @@ For an associated projection, candidate assembly:
    head;
 4. proves the impl predicates;
 5. reads and instantiates only the requested associated type value; and
-6. relates that value to the candidate's fresh output variable.
+6. publishes that value as the candidate's `Type` output.
 
 An explicit projection-equality assumption is another possible normalization
 candidate. A bare environment fact such as `T: Iterator` proves only the trait;
@@ -294,22 +331,23 @@ projection facts even though lowering associated-type bindings from source
 where-clauses is not required for `Parse::next`.
 
 The expected caller type does not participate in selecting a normalization
-candidate. Each candidate first computes into a fresh unconstrained output;
-the aggregate result is related to the caller's expected type only after
-candidate merging. Otherwise an expected `Frame` could incorrectly filter two
-overlapping normalization candidates and turn ambiguity into a selected
-answer.
+candidate. Each candidate computes its own canonical type output; the aggregate
+result is related to the caller's expected type only after candidate merging.
+Otherwise an expected `Frame` could incorrectly filter two overlapping
+normalization candidates and turn ambiguity into a selected answer.
 
-`NormalizesTo` reuses canonicalization, isolated proof contexts, residual
+`Normalize` reuses canonicalization, isolated proof contexts, residual proof
 goals, answer merging, cycle/resource handling, and transactional response
-application. It is not an eager helper which mutates caller inference while
+application. Response-local variables appearing in its type output participate
+in the response binder, occurs and universe checks, stash copying, caching, and
+caller import. It is not an eager helper which mutates caller inference while
 trying impls.
 
-The existing truth-valued goal `T: Trait` remains truth-valued. It does not
-start returning a selected impl: environment facts and multiple equivalent
-impl proofs can establish truth without supplying one associated value.
-Normalization has its own candidate assembly because its answer includes a
-type.
+The existing proposition `T: Trait` is evaluated through `Prove` and returns
+`Proven`. It does not start returning a selected impl: environment facts and
+multiple equivalent impl proofs can establish truth without supplying one
+associated value. Normalization has its own candidate assembly because its
+answer includes a type.
 
 If no complete candidate can determine the value, the result is uncertainty or
 explicit exhaustion as appropriate, not `No` merely because the represented
@@ -317,27 +355,33 @@ subset had no value. Multiple viable candidates which normalize to the same
 canonical result may merge; incompatible results remain ambiguous until
 future coherence or specialization rules justify a priority.
 
+This changes early cancellation as well as response storage. An unconditional
+`Proven` answer absorbs sibling ways to prove the same proposition. An
+unconditional `Type(A)` answer does not by itself absorb a live candidate which
+may return `Type(B)`; cancellation requires candidate dominance or a sound
+proof that every remaining output agrees.
+
 ### 5. Make type relation normalization-aware
 
 Structural equality remains the fast path for two rigid types. When relation
 reaches an alias, it uses an `AliasRelate`-style operation:
 
 - identical alias applications can relate structurally without revealing;
-- a revealable alias is normalized into a fresh type and that type is related
-  to the other side; and
-- if both sides require normalization, each receives its own fresh output
-  before the outputs are related.
+- a revealable alias is normalized and its returned type is related to the
+  other side; and
+- if both sides require normalization, both returned types are related only
+  after their operations have independently merged candidates.
 
 This matters even though `Iterator::next` returns the projection nested in
 `Option`. `Option<<IntoIter<Frame, Global> as Iterator>::Item>` first relates
 structurally at the rigid `Option` constructor and then normalizes the element
 leaf when it must equal `Frame`.
 
-Body checking registers any unresolved normalization relation with the same
-obligation lifecycle used for trait goals. It retries after relevant inference
-changes and must reach a terminal proof or diagnostic before a successful
-`CheckedBody` is returned. A projection does not get replaced by an error type
-solely to let method lookup continue silently.
+Body checking registers any unresolved normalization operation and its
+resulting relation with the same obligation lifecycle used for trait goals. It
+retries after relevant inference changes and must reach a terminal result or
+diagnostic before a successful `CheckedBody` is returned. A projection does not
+get replaced by an error type solely to let method lookup continue silently.
 
 ### 6. Generalize method signature instantiation
 
@@ -464,6 +508,9 @@ same body with no new metadata requests or body-query execution.
 
 ### Discovery and solver tests
 
+- A successful trait proof returns `Proven`; a successful normalization returns
+  `Type`, and invalid goal/output pairings are rejected at the canonical
+  response boundary.
 - An upstream impl proves `IntoIter<Frame, Global>: Iterator`.
 - Its `A: Allocator` condition produces and discharges the nested external
   `Global: Allocator` goal.
@@ -475,7 +522,11 @@ same body with no new metadata requests or body-query execution.
 - A blanket candidate remains visible through the fallback bucket.
 - Incomplete external enumeration prevents `No`.
 - Two incompatible applicable normalization answers remain ambiguous; an
-  expected output does not select one.
+  expected caller type does not select one.
+- A type output containing a response-local variable round-trips through the
+  response binder and caller import without losing sharing or universe data.
+- An unconditional normalization answer does not cancel a live candidate which
+  can still produce a different type.
 - Indexed and exhaustive candidate enumeration yield identical canonical
   proof and normalization results for a fixture matrix.
 
@@ -542,12 +593,12 @@ oracle. Asking it to solve or normalize would bypass Sage's candidate,
 canonicalization, ambiguity, and incremental contracts and could make exact
 output agree while Sage's solver remained wrong.
 
-### Why does `NormalizesTo` not first call `T: Trait` and inspect its result?
+### Why does `Normalize` not first prove `T: Trait` and inspect its result?
 
-The truth-valued goal intentionally does not return an impl identity. It can be
-proved by an environment fact or by multiple equivalent alternatives.
-Normalization needs a type-valued candidate calculation, so it reuses the same
-relevant impl source and proof machinery under a distinct goal.
+`Prove(T: Trait)` intentionally returns `Proven`, not an impl identity. It can
+succeed from an environment fact or from multiple equivalent alternatives.
+`Normalize` needs a candidate calculation which returns a type, so it reuses
+the same relevant impl source and proof machinery under a distinct operation.
 
 ### Why include all three alias variants now?
 

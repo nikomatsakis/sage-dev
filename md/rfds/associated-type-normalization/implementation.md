@@ -40,15 +40,21 @@ keeps unsupported behavior conservative.
 - [ ] Verify a truth proof reads headers but no associated values or bodies.
 - [ ] Land cold/warm and relevant/unrelated query-trace tests.
 
-## Step 4: Associated values and normalization goals
+## Step 4: Associated values and normalization operations
 
 - [ ] Extend `RawTy` and checked external signatures with associated
   projections.
 - [ ] Add local impl-item and external metadata associated-value operations
   keyed by impl and associated type identity, separate from impl headers and
   item enumeration.
-- [ ] Add canonical `NormalizesTo` and alias-relation operations using fresh
-  output variables, isolated candidates, and ordinary answer merging.
+- [ ] Separate value-producing `SolverGoal` operations from residual
+  `ProofGoal`, and add canonical `GoalOutput::{Proven, Type}` responses.
+- [ ] Add input-only `Normalize(alias) -> Type` and alias-relation operations
+  using isolated candidates and output-aware answer merging; no expected type
+  or output inference variable participates in normalization candidate
+  selection.
+- [ ] Bind, copy, occurs/universe-check, cache, and import response-local
+  variables which occur in a goal output.
 - [ ] Represent normalization assumptions distinctly from bare trait facts;
   the latter never invent an associated value.
 - [ ] Preserve uncertainty, residual goals, and explicit exhaustion without

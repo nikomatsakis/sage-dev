@@ -51,10 +51,14 @@ fixed trait:
 LookupSelfTy: CandidateTrait<TraitArgs...>
 ```
 
-There is no existential `?Trait` solver query. The solver returns proof certainty,
-substitutions, and residual obligations; it does not return an impl or trait identity. The
-method resolver already knows the candidate trait and obtains the function symbol from that
-trait's items. This keeps solver caching and clause selection independent of name lookup.
+There is no existential `?Trait` solver query. The resolver invokes the
+goal-specific proof operation, whose successful semantic output is `Proven`
+alongside substitutions and residual obligations; it does not return an impl or
+trait identity. The method resolver already knows the candidate trait and
+obtains the function symbol from that trait's items. This keeps solver caching
+and clause selection independent of name lookup. Future callable-instance or
+vtable operations may return other output variants, but their representation
+and code-generation role are outside this RFD.
 `LookupSelfTy` is the receiver after the current built-in deref step but before
 the selected method's value/shared/mutable autoref adjustment.
 

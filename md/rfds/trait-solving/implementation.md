@@ -897,7 +897,9 @@ unknown trait symbol nor returns a selected impl.
 ## Deferred beyond MVP
 
 - [ ] Solver-backed subsumption instead of residual-set subset approximation.
-- [ ] Associated type representation, `NormalizesTo`, and alias relation.
+- [ ] Associated type representation, goal-specific solver outputs,
+  input-only `Normalize(alias) -> Type`, and alias relation. This is owned by
+  the Associated Type Normalization RFD.
 - [ ] Hypothetical equality assumptions with a scoped egraph environment.
 - [ ] `ForAll`, higher-ranked lifetimes, and meaningful outlives proving.
 - [ ] Structural auto-trait candidates and coinductive cycle handling.

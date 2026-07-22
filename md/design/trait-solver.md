@@ -26,6 +26,10 @@ extensions with separate draft RFDs.
 - **Answers and progress have dual meanings.** A conditional `Yes` supplies a
   sufficient condition for the goal. A progress envelope supplies a necessary
   condition shared by every result still possible.
+- **Solver operations have semantic outputs.** Proving a proposition produces
+  `Proven`; normalization produces a type. The response representation is
+  extensible to later non-type operations without encoding their outputs as
+  caller-supplied inference variables.
 - **`No` requires exhaustive failure.** Failure to discover a useful
   instantiation is ambiguity, not evidence that no instantiation exists.
 - **Results are schedule-invariant.** For a fixed canonical query, program,
@@ -60,10 +64,10 @@ associated-type projections, and opaque types are three variants of the same
 alias concept. They retain definition identity and arguments even when they
 cannot or need not be normalized.
 
-The solver's destination goal language includes a type-valued normalization
-relation, conceptually `NormalizesTo(alias, ty)`, and a way to relate aliases
-without first assuming that both can be revealed. Their planned internal
-decomposition and first associated-projection slice are specified by the
+The solver's destination operation language includes input-only normalization,
+conceptually `Normalize(alias) -> Type`, and a way to relate aliases without
+first assuming that both can be revealed. Their planned internal decomposition
+and first associated-projection slice are specified by the
 [Associated Type Normalization
 RFD](../rfds/associated-type-normalization/README.md); the semantic
 requirements are:
@@ -149,31 +153,78 @@ configuration participates in the cached query boundary.
 
 ## Knowledge returned by the solver
 
+The destination distinguishes a value-producing solver operation from the
+proposition language used for assumptions, conjunction, implication,
+quantification, and residual conditions:
+
+```rust,ignore
+enum SolverGoal<'db> {
+    Prove(ProofGoal<'db>),
+    Normalize(AliasTy<'db>),
+}
+
+enum GoalOutput<'db> {
+    Proven,
+    Type(Ptr<Ty<'db>>),
+}
+```
+
+The names are conceptual until the normalization RFD lands. `Prove(P)` returns
+`Proven`; `Normalize(A)` returns `Type(T)`. Keeping structural `ProofGoal`
+separate avoids assigning an arbitrary value to a conjunction containing
+several value-producing operations. A normalization operation may still return
+a `ProofGoal` residual which must hold for its type result to be valid.
+
+`GoalOutput` is intentionally extensible. Future operations such as callable
+instance resolution or vtable construction may add purpose-built outputs; they
+need not be forced into the type variant merely because function-item types or
+vtable pointers can be represented in Rust's type system.
+
 Let `Cond(A)` mean the conjunction of a response's substitution and residual
-goal, with its response-local variables existentially bound.
+proof goal, with its response-local variables existentially bound. A successful
+answer also contains a canonicalized `GoalOutput`; response-local variables in
+that output participate in binding, occurs and universe checks, caching, and
+caller import just like variables in substitutions and residuals.
 
 ### Definite answers are sufficient
 
-A conditional answer `A` promises:
+A conditional answer `A` for operation `G` and output `V` promises:
 
 ```text
-Cond(A) => Goal
+Cond(A) => G evaluates to V
 ```
 
-An empty substitution with a trivially true residual is unconditional. For a
-disjunction, an unconditional answer is absorbing: no sibling can change the
-truth of the goal.
+For `Prove(P)`, this reduces to `Cond(A) => P` because the only successful
+output is `Proven`. An empty substitution with a trivially true residual is
+unconditional. Such an answer is absorbing for a proof disjunction: no sibling
+can change the truth of the proposition.
+
+An unconditional value-producing answer is not automatically absorbing. A
+normalization candidate returning `Type(A)` cannot cancel a live candidate
+which may return `Type(B)` unless candidate priority proves the first dominates
+the second or the complete answers are known to agree. Output agreement is part
+of answer merging, not an incidental property of substitutions.
 
 ### Progress envelopes are necessary
 
-A progress envelope `P` promises:
+A progress envelope `P` promises that every final answer still possible
+implies its conditions. For a proof operation this can be written:
 
 ```text
-Goal => Cond(P)
+Prove(Goal) succeeds => Cond(P)
 ```
 
-Equivalently, `P` subsumes every final answer still possible. If each live
-alternative has an envelope `E_i`, an aggregate envelope must be a sound common
+For any operation `G`, including normalization, the general form is:
+
+```text
+G evaluates to any V => Cond(P)
+```
+
+Thus `P` constrains every possible completion without claiming a final output.
+If a future progress channel constrains the output itself, that constraint must
+also be necessary for every value still possible; it is not a successful
+`GoalOutput` until the operation has a definite answer. If each live alternative
+has an envelope `E_i`, an aggregate envelope must be a sound common
 generalization:
 
 ```text
@@ -194,8 +245,9 @@ the unconstrained envelope `true`.
 
 The current `Maybe::hints` value is a restricted, final form of this channel:
 it contains only hard substitution facts necessary across every still-possible
-alternative. Planned incremental publication may expose candidate-local and
-frame-level envelopes before the owning future completes.
+alternative and no semantic goal output. Planned incremental publication may
+expose candidate-local and frame-level envelopes before the owning future
+completes.
 
 ### Subsumption
 
@@ -205,10 +257,14 @@ The directional convention is:
 A subsumes B  iff  Cond(B) => Cond(A)
 ```
 
-Thus `A` is at least as general as `B`. A completed answer can cancel a pending
-alternative only when it is proven to subsume the pending alternative's entire
-envelope. Conservative failure to prove subsumption may retain redundant work;
-a false-positive subsumption result would be unsound.
+Thus `A` is at least as general as `B`. For a value-producing operation,
+subsumption additionally requires output compatibility under those conditions;
+`Proven` is trivially compatible with `Proven`, while two type outputs must be
+provably equal or ordered by an operation-specific candidate rule. A completed
+answer can cancel a pending alternative only when it is proven to subsume the
+pending alternative's entire envelope and possible output. Conservative
+failure to prove subsumption may retain redundant work; a false-positive
+subsumption result would be unsound.
 
 ### Ambiguity and overflow
 
@@ -220,7 +276,7 @@ different diagnostics, retry behavior, and caching implications.
 An absorbing result still wins over an exhausted sibling when logic permits
 it:
 
-- an unconditional `Yes` wins a disjunction;
+- an unconditional `Yes(Proven)` wins a proof disjunction;
 - a definitive `No` wins a conjunction; and
 - otherwise an exhausted branch prevents a result which requires exhausting
   all possibilities.
@@ -290,7 +346,10 @@ order is itself part of the contract.
 Candidate alternatives form disjunctions. Each candidate owns speculative
 inference state and eventually produces a canonical response. The aggregate
 retains non-dominated definite answers and necessary information from every
-still-possible alternative.
+still-possible alternative. Proof candidates all return `Proven`; candidates
+for a value-producing operation also merge their outputs. Incompatible
+normalization types remain ambiguous unless coherence or specialization gives
+one candidate semantic priority.
 
 Conjuncts share a logical inference problem. A definitive `No` is absorbing,
 while sound constraints learned by one conjunct may advance another. Planned
@@ -355,6 +414,7 @@ For fixed semantic inputs and configured limits, scheduling may change only:
 It may not change:
 
 - `Yes`, `Maybe`, or `No`;
+- the successful goal output;
 - substitutions or response-variable numbering;
 - residual goals or hard hints;
 - ambiguity versus overflow; or
@@ -385,6 +445,7 @@ ready-queue ordering and assert an identical `Stashed<QueryResult>`.
 | Concurrent conjunction | Planned |
 | Candidate and frame progress envelopes | Planned |
 | Provisional cycle fixpoints and coinductive paths | Planned |
+| Goal-specific outputs (`Proven` and `Type`) | Planned by Associated Type Normalization RFD |
 
 The planned work is split across the
 [Cycle Semantics](../rfds/trait-solver-cycle-semantics/README.md),
