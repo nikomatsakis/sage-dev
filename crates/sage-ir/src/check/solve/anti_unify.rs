@@ -185,6 +185,7 @@ fn contains_inaccessible_input<'db>(
         | Ty::Float(_)
         | Ty::Str
         | Ty::Adt(_, _)
+        | Ty::Alias(_)
         | Ty::Ref(_, _, _)
         | Ty::Tuple(_)
         | Ty::Slice(_)

@@ -1,8 +1,11 @@
 use crate::cst::Mutability;
 use crate::diagnostic::ErrorReported;
 use crate::generic_param::GenericParam;
-use crate::symbol::Symbol;
-use crate::ty::{Const, FloatTy, InferVarIndex, IntTy, Lifetime, Ty, UintTy};
+use crate::symbol::{Symbol, TraitSymbol, TypeAliasSymbol};
+use crate::ty::{
+    AliasTy, Const, FloatTy, InferVarIndex, IntTy, Lifetime, NamedAliasTy, OpaqueAliasTy,
+    ProjectionTy, TraitRef, Ty, UintTy,
+};
 use sage_stash::{Ptr, Stash};
 use smallvec::SmallVec;
 
@@ -25,6 +28,14 @@ pub enum Skeleton<'db> {
 
     // Compound (1+ children)
     Adt(Symbol<'db>, u32),
+    NamedAlias(TypeAliasSymbol<'db>, u32),
+    AssociatedAlias {
+        associated_ty: TypeAliasSymbol<'db>,
+        trait_sym: TraitSymbol<'db>,
+        trait_arg_count: u32,
+        item_arg_count: u32,
+    },
+    OpaqueAlias(TypeAliasSymbol<'db>, u32),
     Ref(Mutability, Lifetime),
     Tuple(u32),
     Slice,
@@ -58,6 +69,40 @@ pub fn decompose<'db>(stash: &Stash, ty: Ptr<Ty<'db>>) -> Decomposed<'db> {
             let arity = children.len() as u32;
             Decomposed {
                 skeleton: Skeleton::Adt(sym, arity),
+                children,
+            }
+        }
+
+        Ty::Alias(AliasTy::Named(alias)) => {
+            let children: Children<'db> = stash[alias.args].iter().copied().collect();
+            let arity = children.len() as u32;
+            Decomposed {
+                skeleton: Skeleton::NamedAlias(alias.def, arity),
+                children,
+            }
+        }
+
+        Ty::Alias(AliasTy::Associated(projection)) => {
+            let mut children = Children::new();
+            children.push(projection.self_ty);
+            children.extend(stash[projection.trait_ref.args].iter().copied());
+            children.extend(stash[projection.args].iter().copied());
+            Decomposed {
+                skeleton: Skeleton::AssociatedAlias {
+                    associated_ty: projection.associated_ty,
+                    trait_sym: projection.trait_ref.trait_sym,
+                    trait_arg_count: stash[projection.trait_ref.args].len() as u32,
+                    item_arg_count: stash[projection.args].len() as u32,
+                },
+                children,
+            }
+        }
+
+        Ty::Alias(AliasTy::Opaque(alias)) => {
+            let children: Children<'db> = stash[alias.args].iter().copied().collect();
+            let arity = children.len() as u32;
+            Decomposed {
+                skeleton: Skeleton::OpaqueAlias(alias.def, arity),
                 children,
             }
         }
@@ -120,6 +165,35 @@ pub fn recompose<'db>(
             let args = stash.alloc_slice(children);
             Ty::Adt(sym, args)
         }
+
+        Skeleton::NamedAlias(def, _arity) => Ty::Alias(AliasTy::Named(NamedAliasTy {
+            def,
+            args: stash.alloc_slice(children),
+        })),
+
+        Skeleton::AssociatedAlias {
+            associated_ty,
+            trait_sym,
+            trait_arg_count,
+            item_arg_count,
+        } => {
+            let trait_end = 1 + trait_arg_count as usize;
+            let item_end = trait_end + item_arg_count as usize;
+            Ty::Alias(AliasTy::Associated(ProjectionTy {
+                associated_ty,
+                self_ty: children[0],
+                trait_ref: TraitRef {
+                    trait_sym,
+                    args: stash.alloc_slice(&children[1..trait_end]),
+                },
+                args: stash.alloc_slice(&children[trait_end..item_end]),
+            }))
+        }
+
+        Skeleton::OpaqueAlias(def, _arity) => Ty::Alias(AliasTy::Opaque(OpaqueAliasTy {
+            def,
+            args: stash.alloc_slice(children),
+        })),
 
         Skeleton::Ref(m, lt) => Ty::Ref(children[0], m, lt),
 

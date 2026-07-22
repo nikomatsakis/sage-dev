@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 expect-test = "1.5.1"
+rustc-hash = "2.1.2"
 sage-ir = { version = "0.1.0", path = "../sage-ir" }
 sage-stash = { version = "0.1.0", path = "../sage-stash" }
 salsa = "0.26.1"

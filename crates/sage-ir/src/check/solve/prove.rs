@@ -620,6 +620,7 @@ async fn solve_trait_frame<'db>(
                 | Ty::Float(_)
                 | Ty::Str
                 | Ty::Adt(_, _)
+                | Ty::Alias(_)
                 | Ty::Ref(_, _, _)
                 | Ty::Tuple(_)
                 | Ty::Slice(_)
@@ -1063,6 +1064,7 @@ fn contains_error(state: &QueryProofState<'_>, ty: sage_stash::Ptr<Ty<'_>>) -> b
         | Ty::Float(_)
         | Ty::Str
         | Ty::Adt(_, _)
+        | Ty::Alias(_)
         | Ty::Ref(_, _, _)
         | Ty::Tuple(_)
         | Ty::Slice(_)

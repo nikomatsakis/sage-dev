@@ -62,7 +62,9 @@ The type model distinguishes non-normalizable [rigid types from alias
 types](./typed-ir.md#rigid-and-alias-types). Named type aliases,
 associated-type projections, and opaque types are three variants of the same
 alias concept. They retain definition identity and arguments even when they
-cannot or need not be normalized.
+cannot or need not be normalized. That structural representation is built and
+survives inference and canonical solver boundaries; the normalization
+operations described next remain planned.
 
 The solver's destination operation language includes input-only normalization,
 conceptually `Normalize(alias) -> Type`, and a way to relate aliases without

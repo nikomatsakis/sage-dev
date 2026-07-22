@@ -1773,7 +1773,7 @@ mod trait_system_tests {
 mod trait_solver_boundary_tests {
     use super::*;
     use sage_ir::check::infer::egraph::VersionedEGraph;
-    use sage_ir::check::infer::unify::try_unify;
+    use sage_ir::check::infer::unify::{UnifyError, try_unify};
     use sage_ir::check::infer::version::{Universe, Version};
     use sage_ir::check::solve::{
         AppliedCertainty, Assumption, Atom, CanonicalVarRole, Goal, GoalResult, QueryResultData,
@@ -1782,7 +1782,10 @@ mod trait_solver_boundary_tests {
     use sage_ir::generic_param::{AlphaEquivParam, GenericParam, GenericParamKind};
     use sage_ir::scope::ScopeSymbol;
     use sage_ir::symbol::{SymbolData, TraitSymbol};
-    use sage_ir::ty::{IntTy, Ty};
+    use sage_ir::ty::{
+        AliasTy, IntTy, NamedAliasTy, OpaqueAliasTy, ProjectionTy, TraitItemDef, TraitRef, Ty,
+    };
+    use sage_stash::StashCopy;
 
     fn crate_from_root_items<'db>(
         db: &'db dyn Db,
@@ -1855,6 +1858,175 @@ mod trait_solver_boundary_tests {
     }
 
     #[test]
+    fn alias_variants_copy_fold_and_display_without_erasing_identity() {
+        use rustc_hash::FxHashMap;
+        use sage_ir::display::TyDisplay;
+        use sage_ir::ty_fold::{SubstTarget, Substitute, TyFolder};
+
+        with_test_crate(
+            "trait Marker<T> { type Item; }\ntype Named<T> = T;\ntype Hidden<T> = T;",
+            |db, root| {
+                let mut trait_symbol = None;
+                let mut named = None;
+                let mut hidden = None;
+                for symbol in root.expanded_module_items(db) {
+                    match symbol.data(db) {
+                        SymbolData::TraitSymbol(symbol) => trait_symbol = Some(symbol),
+                        SymbolData::TypeAliasSymbol(symbol) => {
+                            let local = match symbol {
+                                sage_ir::symbol::TypeAliasSymbol::Local(local) => local,
+                                sage_ir::symbol::TypeAliasSymbol::Ext(_) => continue,
+                            };
+                            let name = local.name(db).text(db);
+                            if name == "Named" {
+                                named = Some(symbol);
+                            } else if name == "Hidden" {
+                                hidden = Some(symbol);
+                            }
+                        }
+                        SymbolData::FnSymbol(_)
+                        | SymbolData::StructSymbol(_)
+                        | SymbolData::EnumSymbol(_)
+                        | SymbolData::VariantSymbol(_)
+                        | SymbolData::VariantCtorSymbol(_)
+                        | SymbolData::ConstSymbol(_)
+                        | SymbolData::StaticSymbol(_)
+                        | SymbolData::ImplSymbol(_)
+                        | SymbolData::ModSymbol(_)
+                        | SymbolData::MacroDefSymbol(_)
+                        | SymbolData::UseSymbol(_)
+                        | SymbolData::IntrinsicTypeSymbol(_)
+                        | SymbolData::MacroInvocationSymbol(_) => {}
+                    }
+                }
+                let trait_symbol = trait_symbol.unwrap();
+                let items = trait_symbol.items(db).unwrap();
+                let (item_stash, binder) = items.open();
+                let associated = item_stash[binder.value]
+                    .iter()
+                    .find_map(|item| match item {
+                        TraitItemDef::Type(symbol) => Some(*symbol),
+                        TraitItemDef::Function(_) | TraitItemDef::Const(_) => None,
+                    })
+                    .unwrap();
+                let named = named.unwrap();
+                let hidden = hidden.unwrap();
+
+                let parameter =
+                    GenericParam::AlphaEquiv(AlphaEquivParam::new(db, GenericParamKind::Type, 0));
+                let mut source = Stash::new();
+                let parameter_ty = source.alloc(Ty::Param(parameter));
+                let arguments = source.alloc_slice(&[parameter_ty]);
+                let named_ty = source.alloc(Ty::Alias(AliasTy::Named(NamedAliasTy {
+                    def: named,
+                    args: arguments,
+                })));
+                let associated_ty = source.alloc(Ty::Alias(AliasTy::Associated(ProjectionTy {
+                    associated_ty: associated,
+                    self_ty: parameter_ty,
+                    trait_ref: TraitRef {
+                        trait_sym: trait_symbol,
+                        args: arguments,
+                    },
+                    args: arguments,
+                })));
+                let opaque_ty = source.alloc(Ty::Alias(AliasTy::Opaque(OpaqueAliasTy {
+                    def: hidden,
+                    args: arguments,
+                })));
+
+                assert_ne!(source[named_ty], source[associated_ty]);
+                assert_ne!(source[named_ty], source[opaque_ty]);
+                assert_eq!(
+                    TyDisplay::new(db, &source, named_ty).to_string(),
+                    "Named<?>"
+                );
+                assert_eq!(
+                    TyDisplay::new(db, &source, associated_ty).to_string(),
+                    "<? as Marker<?>>::Item<?>"
+                );
+                assert_eq!(
+                    TyDisplay::new(db, &source, opaque_ty).to_string(),
+                    "opaque Hidden<?>"
+                );
+
+                let mut copied = Stash::new();
+                let copied_named = named_ty.stash_copy(&source, &mut copied);
+                let copied_associated = associated_ty.stash_copy(&source, &mut copied);
+                let copied_opaque = opaque_ty.stash_copy(&source, &mut copied);
+                assert!(matches!(copied[copied_named], Ty::Alias(AliasTy::Named(_))));
+                assert!(matches!(
+                    copied[copied_associated],
+                    Ty::Alias(AliasTy::Associated(_))
+                ));
+                assert!(matches!(
+                    copied[copied_opaque],
+                    Ty::Alias(AliasTy::Opaque(_))
+                ));
+
+                let mut substitution = FxHashMap::default();
+                substitution.insert(parameter, SubstTarget::Ty(Ty::Bool));
+                let mut folded = Stash::new();
+                let mut folder = Substitute::new(&source, &mut folded, substitution);
+                let folded_alias = folder.fold_ty(source[associated_ty]);
+                let Ty::Alias(AliasTy::Associated(folded_projection)) = folded_alias else {
+                    panic!("expected associated alias")
+                };
+                assert_eq!(folded[folded_projection.self_ty], Ty::Bool);
+                assert_eq!(
+                    folded[folded_projection.trait_ref.args][0],
+                    folded_projection.self_ty
+                );
+                assert_eq!(folded[folded_projection.args][0], folded_projection.self_ty);
+
+                let mut inference = Stash::new();
+                let mut egraph = VersionedEGraph::new();
+                let recursive_index = egraph.alloc_var(Version::ROOT, Universe::ROOT);
+                let recursive = inference.alloc(Ty::InferVar(recursive_index));
+                let recursive_args = inference.alloc_slice(&[recursive]);
+                let recursive_alias = inference.alloc(Ty::Alias(AliasTy::Named(NamedAliasTy {
+                    def: named,
+                    args: recursive_args,
+                })));
+                assert!(matches!(
+                    try_unify(
+                        &mut egraph,
+                        &mut inference,
+                        Version::ROOT,
+                        recursive,
+                        recursive_alias,
+                    ),
+                    Err(UnifyError::OccursCheck { variable, .. })
+                        if variable == recursive_index
+                ));
+
+                let outer_index = egraph.alloc_var(Version::ROOT, Universe::ROOT);
+                let outer = inference.alloc(Ty::InferVar(outer_index));
+                let inaccessible =
+                    GenericParam::AlphaEquiv(AlphaEquivParam::new(db, GenericParamKind::Type, 1));
+                egraph.register_placeholder(inaccessible, Universe(1));
+                let inaccessible = inference.alloc(Ty::Param(inaccessible));
+                let inaccessible_args = inference.alloc_slice(&[inaccessible]);
+                let inaccessible_alias = inference.alloc(Ty::Alias(AliasTy::Named(NamedAliasTy {
+                    def: named,
+                    args: inaccessible_args,
+                })));
+                assert!(matches!(
+                    try_unify(
+                        &mut egraph,
+                        &mut inference,
+                        Version::ROOT,
+                        outer,
+                        inaccessible_alias,
+                    ),
+                    Err(UnifyError::UniverseLeak { variable, ceiling })
+                        if variable == outer_index && ceiling == Universe::ROOT
+                ));
+            },
+        );
+    }
+
+    #[test]
     fn response_extraction_preserves_repeated_local_variable_sharing() {
         with_test_crate("trait Marker {}", |db, root| {
             let krate = crate_from_root_items(db, root);
@@ -1902,6 +2074,137 @@ mod trait_solver_boundary_tests {
             };
             let elements = &stash[elements];
             assert_eq!(stash[elements[0]], stash[elements[1]]);
+        });
+    }
+
+    #[test]
+    fn aliases_round_trip_through_canonical_query_and_response_stashes() {
+        with_test_crate("trait Marker {}\ntype Named<T> = T;", |db, root| {
+            let krate = crate_from_root_items(db, root);
+            let named = root
+                .expanded_module_items(db)
+                .iter()
+                .find_map(|symbol| match symbol.data(db) {
+                    SymbolData::TypeAliasSymbol(symbol) => Some(symbol),
+                    SymbolData::FnSymbol(_)
+                    | SymbolData::StructSymbol(_)
+                    | SymbolData::EnumSymbol(_)
+                    | SymbolData::VariantSymbol(_)
+                    | SymbolData::VariantCtorSymbol(_)
+                    | SymbolData::TraitSymbol(_)
+                    | SymbolData::ConstSymbol(_)
+                    | SymbolData::StaticSymbol(_)
+                    | SymbolData::ImplSymbol(_)
+                    | SymbolData::ModSymbol(_)
+                    | SymbolData::MacroDefSymbol(_)
+                    | SymbolData::UseSymbol(_)
+                    | SymbolData::IntrinsicTypeSymbol(_)
+                    | SymbolData::MacroInvocationSymbol(_) => None,
+                })
+                .unwrap();
+
+            let mut caller_stash = Stash::new();
+            let mut caller_egraph = VersionedEGraph::new();
+            let input_index = caller_egraph.alloc_var(Version::ROOT, Universe::ROOT);
+            let input = caller_stash.alloc(Ty::InferVar(input_index));
+            let alias_args = caller_stash.alloc_slice(&[input]);
+            let alias = caller_stash.alloc(Ty::Alias(AliasTy::Named(NamedAliasTy {
+                def: named,
+                args: alias_args,
+            })));
+            let assumptions = caller_stash.alloc_slice::<Assumption>(&[]);
+            let canonical_alias = canonicalize_goal(
+                db,
+                &caller_stash,
+                &caller_egraph,
+                Version::ROOT,
+                krate,
+                Universe::ROOT,
+                true,
+                assumptions,
+                Goal::Atom(Atom::Equals(alias, alias)),
+            );
+            let (canonical_stash, canonical_data) = canonical_alias.data.open();
+            let Goal::Atom(Atom::Equals(canonical_left, canonical_right)) = canonical_data.goal
+            else {
+                panic!("expected equality")
+            };
+            assert_eq!(canonical_left, canonical_right);
+            let Ty::Alias(AliasTy::Named(canonical_named)) = canonical_stash[canonical_left] else {
+                panic!("expected named alias")
+            };
+            assert!(matches!(
+                canonical_stash[canonical_stash[canonical_named.args][0]],
+                Ty::Param(GenericParam::AlphaEquiv(_))
+            ));
+
+            let canonical_input = canonicalize_goal(
+                db,
+                &caller_stash,
+                &caller_egraph,
+                Version::ROOT,
+                krate,
+                Universe::ROOT,
+                true,
+                assumptions,
+                Goal::Atom(Atom::Equals(input, input)),
+            );
+            let mut proof = instantiate_query(&canonical_input.data);
+            let local_index = proof.egraph.alloc_var(proof.version, Universe(1));
+            let local = proof.stash.alloc(Ty::InferVar(local_index));
+            let local_args = proof.stash.alloc_slice(&[local]);
+            let local_alias = proof.stash.alloc(Ty::Alias(AliasTy::Named(NamedAliasTy {
+                def: named,
+                args: local_args,
+            })));
+            try_unify(
+                &mut proof.egraph,
+                &mut proof.stash,
+                proof.version,
+                proof.inputs[0].ty,
+                local_alias,
+            )
+            .unwrap();
+            let modulo = Goal::true_(&mut proof.stash);
+            let response = extract_query_result(db, &proof, GoalResult::Yes { modulo });
+            let (response_stash, result) = response.open();
+            assert_eq!(response_stash[result.bound_vars].len(), 1);
+            let QueryResultData::Yes { subst, .. } = result.value else {
+                panic!("expected yes response")
+            };
+            let [entry] = &response_stash[subst] else {
+                panic!("expected alias substitution")
+            };
+            assert!(matches!(
+                response_stash[entry.value],
+                Ty::Alias(AliasTy::Named(_))
+            ));
+
+            apply_query_response(
+                db,
+                &mut caller_stash,
+                &mut caller_egraph,
+                Version::ROOT,
+                &canonical_input.data,
+                &canonical_input.mapping,
+                &response,
+            )
+            .unwrap();
+            let applied = caller_egraph.find(Version::ROOT, input);
+            let Ty::Alias(AliasTy::Named(applied_alias)) = caller_stash[applied] else {
+                panic!("expected imported named alias")
+            };
+            let imported_variable = caller_stash[applied_alias.args][0];
+            let Ty::InferVar(imported_index) = caller_stash[imported_variable] else {
+                panic!("expected imported response variable")
+            };
+            // Unifying this variable beneath the root-universe input lowers it
+            // before response extraction; importing the alias preserves that
+            // universe constraint.
+            assert_eq!(
+                caller_egraph.current_universe(Version::ROOT, imported_index),
+                Universe::ROOT
+            );
         });
     }
 

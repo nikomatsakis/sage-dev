@@ -295,6 +295,7 @@ fn validate_ty<'db>(
         | Ty::Float(_)
         | Ty::Str
         | Ty::Adt(_, _)
+        | Ty::Alias(_)
         | Ty::Ref(_, _, crate::ty::Lifetime::Dummy)
         | Ty::Tuple(_)
         | Ty::Slice(_)

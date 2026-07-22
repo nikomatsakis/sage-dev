@@ -97,12 +97,26 @@ pub enum Type<Def> {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         type_args: Vec<Type<Def>>,
     },
+    Alias {
+        kind: AliasKind,
+        target: Def,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        type_args: Vec<Type<Def>>,
+    },
     Ref {
         mutable: bool,
         ty: Box<Type<Def>>,
     },
     Unit,
     Tuple(Vec<Type<Def>>),
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AliasKind {
+    Named,
+    Associated,
+    Opaque,
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -349,6 +363,15 @@ impl<Def> Type<Def> {
             Type::Def { target, type_args } => Type::Def {
                 target: f(target),
                 type_args: type_args.into_iter().map(|t| t.map(f)).collect(),
+            },
+            Type::Alias {
+                kind,
+                target,
+                type_args,
+            } => Type::Alias {
+                kind,
+                target: f(target),
+                type_args: type_args.into_iter().map(|ty| ty.map(f)).collect(),
             },
             Type::Ref { mutable, ty } => Type::Ref {
                 mutable,

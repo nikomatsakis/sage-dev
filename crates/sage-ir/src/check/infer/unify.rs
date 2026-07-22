@@ -72,6 +72,7 @@ pub fn try_set_bound<'db>(
             | Ty::Float(_)
             | Ty::Str
             | Ty::Adt(_, _)
+            | Ty::Alias(_)
             | Ty::Ref(_, _, _)
             | Ty::Tuple(_)
             | Ty::Slice(_)
@@ -170,6 +171,7 @@ pub(crate) fn unify_in_probe<'db>(
             | Ty::Float(_)
             | Ty::Str
             | Ty::Adt(_, _)
+            | Ty::Alias(_)
             | Ty::Ref(_, _, _)
             | Ty::Tuple(_)
             | Ty::Slice(_)
@@ -274,6 +276,7 @@ fn occurs_in<'db>(
         | Ty::Float(_)
         | Ty::Str
         | Ty::Adt(_, _)
+        | Ty::Alias(_)
         | Ty::Ref(_, _, _)
         | Ty::Tuple(_)
         | Ty::Slice(_)
@@ -343,6 +346,7 @@ fn make_accessible<'db>(
         | Ty::Float(_)
         | Ty::Str
         | Ty::Adt(_, _)
+        | Ty::Alias(_)
         | Ty::Ref(_, _, Lifetime::Dummy)
         | Ty::Tuple(_)
         | Ty::Slice(_)

@@ -268,6 +268,7 @@ impl<'db> VersionedEGraph<'db> {
                 | Ty::Float(_)
                 | Ty::Str
                 | Ty::Adt(_, _)
+                | Ty::Alias(_)
                 | Ty::Ref(_, _, _)
                 | Ty::Tuple(_)
                 | Ty::Slice(_)
@@ -292,6 +293,7 @@ impl<'db> VersionedEGraph<'db> {
             | Ty::Float(_)
             | Ty::Str
             | Ty::Adt(_, _)
+            | Ty::Alias(_)
             | Ty::Ref(_, _, _)
             | Ty::Tuple(_)
             | Ty::Slice(_)

@@ -250,6 +250,7 @@ fn sized_certainty<'db>(
             | SymbolData::MacroInvocationSymbol(_)
             | SymbolData::UseSymbol(_) => SizedCertainty::Maybe,
         },
+        Ty::Alias(_) => SizedCertainty::Maybe,
         Ty::Param(_) | Ty::InferVar(_) | Ty::Error(_) => SizedCertainty::Maybe,
     }
 }

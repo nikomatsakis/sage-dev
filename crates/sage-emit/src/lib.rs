@@ -4,9 +4,10 @@ use sage_ir::cst::expr::{BinaryOp as SageBinaryOp, Literal as SageLiteral};
 use sage_ir::local_syms::enums::{LocalEnumSym, enum_variants};
 use sage_ir::span::ParseSource;
 use sage_ir::symbol::{
-    EnumSymbol, FnSymbol, ImplSymbol, ModSymbol, StructSymbol, Symbol, SymbolData,
+    EnumSymbol, FnSymbol, ImplSymbol, ModSymbol, StructSymbol, Symbol, SymbolData, TraitSymbol,
+    TypeAliasSymbol,
 };
-use sage_ir::ty::{self, TraitItemDef, Ty};
+use sage_ir::ty::{self, AliasTy, TraitItemDef, Ty};
 use sage_ir::tytree::{PathResolution, TyBody, TyExprData, TyFieldInit, TyStmt, TyStmtKind};
 use sage_stash::Stash;
 
@@ -61,7 +62,8 @@ impl<'db> Emitter<'db> {
         for &item in module.expanded_module_items(self.db) {
             match item.data(self.db) {
                 SymbolData::FnSymbol(FnSymbol::Local(_))
-                | SymbolData::StructSymbol(StructSymbol::Local(_)) => {
+                | SymbolData::StructSymbol(StructSymbol::Local(_))
+                | SymbolData::TypeAliasSymbol(sage_ir::symbol::TypeAliasSymbol::Local(_)) => {
                     self.register_local_def(item);
                 }
                 SymbolData::EnumSymbol(EnumSymbol::Local(local_enum)) => {
@@ -80,14 +82,31 @@ impl<'db> Emitter<'db> {
                         self.register_local_def(function.into());
                     }
                 }
+                SymbolData::TraitSymbol(TraitSymbol::Local(local_trait)) => {
+                    let items = local_trait.items(self.db);
+                    let associated_types: Vec<_> = items.stash()[items.root().value]
+                        .iter()
+                        .filter_map(|item| match *item {
+                            TraitItemDef::Type(TypeAliasSymbol::Local(associated_type)) => {
+                                Some(associated_type)
+                            }
+                            TraitItemDef::Type(TypeAliasSymbol::Ext(_))
+                            | TraitItemDef::Function(_)
+                            | TraitItemDef::Const(_) => None,
+                        })
+                        .collect();
+                    for associated_type in associated_types {
+                        self.register_local_def(associated_type.into());
+                    }
+                }
                 SymbolData::FnSymbol(FnSymbol::Ext(_))
                 | SymbolData::StructSymbol(StructSymbol::Ext(_))
                 | SymbolData::EnumSymbol(EnumSymbol::Ext(_))
                 | SymbolData::ModSymbol(ModSymbol::Ext(_))
                 | SymbolData::VariantSymbol(_)
                 | SymbolData::VariantCtorSymbol(_)
-                | SymbolData::TraitSymbol(_)
-                | SymbolData::TypeAliasSymbol(_)
+                | SymbolData::TraitSymbol(TraitSymbol::Ext(_))
+                | SymbolData::TypeAliasSymbol(sage_ir::symbol::TypeAliasSymbol::Ext(_))
                 | SymbolData::ConstSymbol(_)
                 | SymbolData::StaticSymbol(_)
                 | SymbolData::ImplSymbol(ImplSymbol::Ext(_))
@@ -446,6 +465,30 @@ impl<'db> Emitter<'db> {
                     type_args: args,
                 }
             }
+            Ty::Alias(alias) => {
+                let (kind, target, type_args) = match alias {
+                    AliasTy::Named(alias) => {
+                        (AliasKind::Named, alias.def, stash[alias.args].to_vec())
+                    }
+                    AliasTy::Associated(projection) => {
+                        let mut arguments = vec![projection.self_ty];
+                        arguments.extend(stash[projection.trait_ref.args].iter().copied());
+                        arguments.extend(stash[projection.args].iter().copied());
+                        (AliasKind::Associated, projection.associated_ty, arguments)
+                    }
+                    AliasTy::Opaque(alias) => {
+                        (AliasKind::Opaque, alias.def, stash[alias.args].to_vec())
+                    }
+                };
+                Type::Alias {
+                    kind,
+                    target: self.normalize_def(target.into()),
+                    type_args: type_args
+                        .into_iter()
+                        .map(|argument| self.emit_ty(stash, stash[argument]))
+                        .collect(),
+                }
+            }
             Ty::Ref(inner_ptr, mutability, _) => Type::Ref {
                 mutable: matches!(mutability, Mutability::Mut),
                 ty: Box::new(self.emit_ty(stash, stash[inner_ptr])),
@@ -464,7 +507,12 @@ impl<'db> Emitter<'db> {
                 }
             }
             Ty::Never => Type::Primitive("!".to_string()),
-            _ => Type::Primitive(format!("?{:?}", ty)),
+            Ty::Slice(_)
+            | Ty::Array(_, _)
+            | Ty::FnPtr(_, _)
+            | Ty::Param(_)
+            | Ty::InferVar(_)
+            | Ty::Error(_) => Type::Primitive(format!("?{:?}", ty)),
         }
     }
 
@@ -716,6 +764,65 @@ impl<'db> Emitter<'db> {
             SageBinaryOp::Shl => BinOp::Shl,
             SageBinaryOp::Shr => BinOp::Shr,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sage_ir::ty::{ProjectionTy, TraitRef};
+    use sage_test_harness::with_test_crate;
+
+    #[test]
+    fn local_associated_alias_emits_registered_identity_and_ordered_inputs() {
+        with_test_crate("trait Marker<T> { type Item; }", |db, root| {
+            let [symbol] = root.expanded_module_items(db) else {
+                panic!("expected one trait")
+            };
+            let trait_symbol = match symbol.data(db) {
+                SymbolData::TraitSymbol(trait_symbol) => trait_symbol,
+                other => panic!("expected trait, found {other:?}"),
+            };
+            let items = trait_symbol
+                .items(db)
+                .expect("trait items should be complete");
+            let [item] = &items.stash()[items.root().value] else {
+                panic!("expected one associated type")
+            };
+            let associated_ty = match item {
+                TraitItemDef::Type(associated_ty) => *associated_ty,
+                other => panic!("expected associated type, found {other:?}"),
+            };
+
+            let mut emitter = Emitter::new(db);
+            emitter.pre_register_mod(root);
+            let mut stash = Stash::new();
+            let self_ty = stash.alloc(Ty::Uint(ty::UintTy::U8));
+            let trait_argument = stash.alloc(Ty::Bool);
+            let trait_args = stash.alloc_slice(&[trait_argument]);
+            let item_args = stash.alloc_slice(&[]);
+            let projection = Ty::Alias(AliasTy::Associated(ProjectionTy {
+                associated_ty,
+                self_ty,
+                trait_ref: TraitRef {
+                    trait_sym: trait_symbol,
+                    args: trait_args,
+                },
+                args: item_args,
+            }));
+
+            assert_eq!(
+                emitter.emit_ty(&stash, projection),
+                Type::Alias {
+                    kind: AliasKind::Associated,
+                    target: NormalizedDef::Local(1),
+                    type_args: vec![
+                        Type::Primitive("u8".to_owned()),
+                        Type::Primitive("bool".to_owned()),
+                    ],
+                }
+            );
+        });
     }
 }
 

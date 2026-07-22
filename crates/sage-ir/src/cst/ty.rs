@@ -175,13 +175,18 @@ fn resolution_to_ty<'db>(
 ) -> Ty<'db> {
     match sym.data(db) {
         SymbolData::IntrinsicTypeSymbol(s) => intrinsic_to_ty(s.intrinsic(db)),
+        SymbolData::TypeAliasSymbol(def) => {
+            Ty::Alias(crate::ty::AliasTy::Named(crate::ty::NamedAliasTy {
+                def,
+                args: type_args,
+            }))
+        }
         SymbolData::FnSymbol(_)
         | SymbolData::StructSymbol(_)
         | SymbolData::EnumSymbol(_)
         | SymbolData::VariantSymbol(_)
         | SymbolData::VariantCtorSymbol(_)
         | SymbolData::TraitSymbol(_)
-        | SymbolData::TypeAliasSymbol(_)
         | SymbolData::ConstSymbol(_)
         | SymbolData::StaticSymbol(_)
         | SymbolData::ImplSymbol(_)

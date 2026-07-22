@@ -27,6 +27,7 @@ pub enum Ty<'db> {
 
     // --- compound ---
     Adt(Symbol<'db>, Slice<Ptr<Ty<'db>>>),
+    Alias(AliasTy<'db>),
     Ref(Ptr<Ty<'db>>, Mutability, Lifetime),
     Tuple(Slice<Ptr<Ty<'db>>>),
     Slice(Ptr<Ty<'db>>),
@@ -43,6 +44,39 @@ pub enum Ty<'db> {
     // --- other ---
     Never,
     Error(ErrorReported),
+}
+
+// ---------------------------------------------------------------------------
+// Alias types
+// ---------------------------------------------------------------------------
+
+/// A semantic type alias application. Alias identity is retained until a
+/// caller explicitly requests normalization.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub enum AliasTy<'db> {
+    Named(NamedAliasTy<'db>),
+    Associated(ProjectionTy<'db>),
+    Opaque(OpaqueAliasTy<'db>),
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub struct NamedAliasTy<'db> {
+    pub def: TypeAliasSymbol<'db>,
+    pub args: Slice<Ptr<Ty<'db>>>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub struct ProjectionTy<'db> {
+    pub associated_ty: TypeAliasSymbol<'db>,
+    pub self_ty: Ptr<Ty<'db>>,
+    pub trait_ref: TraitRef<'db>,
+    pub args: Slice<Ptr<Ty<'db>>>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub struct OpaqueAliasTy<'db> {
+    pub def: TypeAliasSymbol<'db>,
+    pub args: Slice<Ptr<Ty<'db>>>,
 }
 
 /// Sequential counter for inference variables. Dense, monotonically increasing.

@@ -8,10 +8,10 @@ Roadmap](../implementation/roadmap.md). The first completed path is the
 `DbDropGuard::db` slice: its field identity, reference dereference, shared
 `Dummy` borrow, static trait dispatch, and selected `Clone::clone` definition
 are all explicit. Other expression families remain at the statuses below.
-The planned common alias representation and first operational associated-type
-normalization path are specified by the [Associated Type Normalization
-RFD](../rfds/associated-type-normalization/README.md), using mini-redis
-`Parse::next` as its acceptance target.
+The common alias representation is built. Its first operational
+associated-type normalization path is specified by the [Associated Type
+Normalization RFD](../rfds/associated-type-normalization/README.md), using
+mini-redis `Parse::next` as its acceptance target.
 
 ## Role
 
@@ -128,7 +128,10 @@ it would be useful.
 
 An **alias type** is a distinct semantic type term which may have a normalized
 form. The common family has three variants: `AliasTy::Named`,
-`AliasTy::Associated`, and `AliasTy::Opaque`.
+`AliasTy::Associated`, and `AliasTy::Opaque`. This family is represented
+through inference, canonical query and response boundaries, display, and both
+semantic emitters. Operational reveal and normalization remain staged as
+described below.
 
 | Alias kind | Example | Normalization rule |
 |---|---|---|

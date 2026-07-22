@@ -28,6 +28,7 @@ pub fn default_fold_ty<'db>(folder: &mut impl TyFolder<'db>, ty: Ty<'db>) -> Ty<
             let args = fold_ptr_slice(folder, args);
             Ty::Adt(sym, args)
         }
+        Ty::Alias(alias) => Ty::Alias(fold_alias_ty(folder, alias)),
         Ty::Ref(inner, m, lt) => {
             let inner_ty = folder.fold_ty(folder.source()[inner]);
             let inner = folder.target().alloc(inner_ty);
@@ -63,6 +64,28 @@ pub fn default_fold_ty<'db>(folder: &mut impl TyFolder<'db>, ty: Ty<'db>) -> Ty<
         Ty::InferVar(infer_var_index) => Ty::InferVar(infer_var_index),
         Ty::Never => Ty::Never,
         Ty::Error(e) => Ty::Error(e),
+    }
+}
+
+pub fn fold_alias_ty<'db>(folder: &mut impl TyFolder<'db>, alias: AliasTy<'db>) -> AliasTy<'db> {
+    match alias {
+        AliasTy::Named(alias) => AliasTy::Named(NamedAliasTy {
+            def: alias.def,
+            args: fold_ptr_slice(folder, alias.args),
+        }),
+        AliasTy::Associated(projection) => {
+            let self_ty = folder.fold_ty(folder.source()[projection.self_ty]);
+            AliasTy::Associated(ProjectionTy {
+                associated_ty: projection.associated_ty,
+                self_ty: folder.target().alloc(self_ty),
+                trait_ref: fold_trait_ref(folder, projection.trait_ref),
+                args: fold_ptr_slice(folder, projection.args),
+            })
+        }
+        AliasTy::Opaque(alias) => AliasTy::Opaque(OpaqueAliasTy {
+            def: alias.def,
+            args: fold_ptr_slice(folder, alias.args),
+        }),
     }
 }
 

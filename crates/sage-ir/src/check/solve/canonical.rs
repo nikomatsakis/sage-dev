@@ -5,7 +5,9 @@ use crate::check::infer::egraph::VersionedEGraph;
 use crate::check::infer::version::{Universe, Version};
 use crate::generic_param::{AlphaEquivParam, GenericParam, GenericParamKind};
 use crate::scope::LocalCrateSymbol;
-use crate::ty::{Binder, Const, TraitRef, Ty, WherePredicate};
+use crate::ty::{
+    AliasTy, Binder, Const, NamedAliasTy, OpaqueAliasTy, ProjectionTy, TraitRef, Ty, WherePredicate,
+};
 
 use super::goal::{Assumption, Atom, CanonicalVarInfo, CanonicalVarRole, Goal, GoalQueryData};
 
@@ -282,6 +284,22 @@ impl<'db> Canonicalizer<'_, 'db> {
                     .collect();
                 Ty::Adt(symbol, self.target.alloc_slice(&args))
             }
+            Ty::Alias(alias) => Ty::Alias(match alias {
+                AliasTy::Named(alias) => AliasTy::Named(NamedAliasTy {
+                    def: alias.def,
+                    args: self.fold_ty_slice(alias.args),
+                }),
+                AliasTy::Associated(projection) => AliasTy::Associated(ProjectionTy {
+                    associated_ty: projection.associated_ty,
+                    self_ty: self.fold_ty_ptr(projection.self_ty),
+                    trait_ref: self.fold_trait_ref(projection.trait_ref),
+                    args: self.fold_ty_slice(projection.args),
+                }),
+                AliasTy::Opaque(alias) => AliasTy::Opaque(OpaqueAliasTy {
+                    def: alias.def,
+                    args: self.fold_ty_slice(alias.args),
+                }),
+            }),
             Ty::Ref(inner, mutability, lifetime) => {
                 Ty::Ref(self.fold_ty_ptr(inner), mutability, lifetime)
             }
@@ -311,6 +329,15 @@ impl<'db> Canonicalizer<'_, 'db> {
             leaf => leaf,
         };
         self.target.alloc(folded)
+    }
+
+    fn fold_ty_slice(&mut self, source: Slice<Ptr<Ty<'db>>>) -> Slice<Ptr<Ty<'db>>> {
+        let source = self.source[source].to_vec();
+        let folded: Vec<_> = source
+            .into_iter()
+            .map(|element| self.fold_ty_ptr(element))
+            .collect();
+        self.target.alloc_slice(&folded)
     }
 
     fn fold_const(&mut self, constant: Const<'db>) -> Const<'db> {

@@ -271,6 +271,10 @@ impl<'check, 'db> InferCtx<'check, 'db> {
                 Ty::Adt(_, arguments) | Ty::Tuple(arguments) => stash[arguments]
                     .iter()
                     .find_map(|argument| visit(stash, egraph, *argument, visited)),
+                Ty::Alias(_) => crate::check::infer::skeleton::decompose(stash, ty)
+                    .children
+                    .into_iter()
+                    .find_map(|child| visit(stash, egraph, child, visited)),
                 Ty::Ref(inner, _, _) | Ty::Slice(inner) | Ty::Array(inner, _) => {
                     visit(stash, egraph, inner, visited)
                 }
@@ -509,6 +513,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
                 | Ty::Float(_)
                 | Ty::Str
                 | Ty::Adt(_, _)
+                | Ty::Alias(_)
                 | Ty::Ref(_, _, _)
                 | Ty::Tuple(_)
                 | Ty::Slice(_)
@@ -707,6 +712,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
                 | Ty::Float(_)
                 | Ty::Str
                 | Ty::Adt(_, _)
+                | Ty::Alias(_)
                 | Ty::Ref(_, _, _)
                 | Ty::Tuple(_)
                 | Ty::Slice(_)

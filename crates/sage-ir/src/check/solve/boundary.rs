@@ -6,7 +6,9 @@ use crate::check::infer::unify::{UnifyError, unify_in_probe};
 use crate::check::infer::version::{Universe, Version};
 use crate::generic_param::{AlphaEquivParam, GenericParam, GenericParamKind};
 use crate::scope::LocalCrateSymbol;
-use crate::ty::{Binder, Const, TraitRef, Ty, WherePredicate};
+use crate::ty::{
+    AliasTy, Binder, Const, NamedAliasTy, OpaqueAliasTy, ProjectionTy, TraitRef, Ty, WherePredicate,
+};
 
 use super::canonical::{CallerCanonicalVar, CanonicalMapping};
 use super::goal::{Assumption, Atom, CanonicalVarRole, Goal, GoalQueryData};
@@ -590,6 +592,22 @@ impl<'state, 'target, 'db> ResponseExtractor<'state, 'target, 'db> {
                 let args: Vec<_> = source.into_iter().map(|arg| self.copy_ty(arg)).collect();
                 Ty::Adt(symbol, self.target.alloc_slice(&args))
             }
+            Ty::Alias(alias) => Ty::Alias(match alias {
+                AliasTy::Named(alias) => AliasTy::Named(NamedAliasTy {
+                    def: alias.def,
+                    args: self.copy_ty_slice(alias.args),
+                }),
+                AliasTy::Associated(projection) => AliasTy::Associated(ProjectionTy {
+                    associated_ty: projection.associated_ty,
+                    self_ty: self.copy_ty(projection.self_ty),
+                    trait_ref: self.copy_trait_ref(projection.trait_ref),
+                    args: self.copy_ty_slice(projection.args),
+                }),
+                AliasTy::Opaque(alias) => AliasTy::Opaque(OpaqueAliasTy {
+                    def: alias.def,
+                    args: self.copy_ty_slice(alias.args),
+                }),
+            }),
             Ty::Ref(inner, mutability, lifetime) => {
                 Ty::Ref(self.copy_ty(inner), mutability, lifetime)
             }
@@ -616,6 +634,12 @@ impl<'state, 'target, 'db> ResponseExtractor<'state, 'target, 'db> {
             leaf => leaf,
         };
         self.target.alloc(copied)
+    }
+
+    fn copy_ty_slice(&mut self, source: Slice<Ptr<Ty<'db>>>) -> Slice<Ptr<Ty<'db>>> {
+        let source = self.state.stash[source].to_vec();
+        let copied: Vec<_> = source.into_iter().map(|ty| self.copy_ty(ty)).collect();
+        self.target.alloc_slice(&copied)
     }
 
     fn copy_const(&self, constant: Const<'db>) -> Const<'db> {
@@ -794,6 +818,22 @@ impl<'source, 'target, 'db> IrCopier<'source, 'target, 'db> {
                 let args: Vec<_> = source.into_iter().map(|arg| self.copy_ty(arg)).collect();
                 Ty::Adt(symbol, self.target.alloc_slice(&args))
             }
+            Ty::Alias(alias) => Ty::Alias(match alias {
+                AliasTy::Named(alias) => AliasTy::Named(NamedAliasTy {
+                    def: alias.def,
+                    args: self.copy_ty_slice(alias.args),
+                }),
+                AliasTy::Associated(projection) => AliasTy::Associated(ProjectionTy {
+                    associated_ty: projection.associated_ty,
+                    self_ty: self.copy_ty(projection.self_ty),
+                    trait_ref: self.copy_trait_ref(projection.trait_ref),
+                    args: self.copy_ty_slice(projection.args),
+                }),
+                AliasTy::Opaque(alias) => AliasTy::Opaque(OpaqueAliasTy {
+                    def: alias.def,
+                    args: self.copy_ty_slice(alias.args),
+                }),
+            }),
             Ty::Ref(inner, mutability, lifetime) => {
                 Ty::Ref(self.copy_ty(inner), mutability, lifetime)
             }
@@ -820,6 +860,12 @@ impl<'source, 'target, 'db> IrCopier<'source, 'target, 'db> {
             leaf => leaf,
         };
         self.target.alloc(copied)
+    }
+
+    fn copy_ty_slice(&mut self, source: Slice<Ptr<Ty<'db>>>) -> Slice<Ptr<Ty<'db>>> {
+        let source = self.source[source].to_vec();
+        let copied: Vec<_> = source.into_iter().map(|ty| self.copy_ty(ty)).collect();
+        self.target.alloc_slice(&copied)
     }
 
     fn copy_const(&self, constant: Const<'db>) -> Const<'db> {

@@ -210,3 +210,27 @@ fn get_x(p: Point) -> u32 {
         other => panic!("expected Block for get_x body, got {:?}", other),
     }
 }
+
+#[test]
+fn named_aliases_remain_semantic_types_in_emitted_ir() {
+    let krate = analyze_source(
+        r#"
+type Id<T> = T;
+
+fn keep(value: Id<bool>) -> Id<bool> {
+    value
+}
+"#,
+    );
+
+    let [Item::Fn(keep)] = krate.root.items.as_slice() else {
+        panic!("expected one emitted function")
+    };
+    let expected = Type::Alias {
+        kind: AliasKind::Named,
+        target: NormalizedDef::Local(1),
+        type_args: vec![Type::Primitive("bool".to_string())],
+    };
+    assert_eq!(keep.params[0].ty, expected);
+    assert_eq!(keep.return_ty, expected);
+}

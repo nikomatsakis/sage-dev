@@ -728,10 +728,15 @@ impl<'db> TypeCst<'db> {
                             );
                             Ty::Adt(sym, type_args)
                         }
+                        SymbolData::TypeAliasSymbol(def) => {
+                            Ty::Alias(crate::ty::AliasTy::Named(crate::ty::NamedAliasTy {
+                                def,
+                                args: type_args,
+                            }))
+                        }
                         SymbolData::StructSymbol(crate::symbol::StructSymbol::Ext(_))
                         | SymbolData::EnumSymbol(crate::symbol::EnumSymbol::Ext(_))
-                        | SymbolData::TraitSymbol(_)
-                        | SymbolData::TypeAliasSymbol(_) => Ty::Adt(sym, type_args),
+                        | SymbolData::TraitSymbol(_) => Ty::Adt(sym, type_args),
                         SymbolData::FnSymbol(_)
                         | SymbolData::VariantSymbol(_)
                         | SymbolData::VariantCtorSymbol(_)
@@ -1240,6 +1245,7 @@ fn lookup_field<'db>(
         Ty::Adt(sym, type_args) => (sym, type_args),
         Ty::Error(error) => return Err(error),
         Ty::InferVar(_)
+        | Ty::Alias(_)
         | Ty::Bool
         | Ty::Char
         | Ty::Int(_)
@@ -1358,6 +1364,7 @@ fn check_call_ty<'db>(
         | Ty::Float(_)
         | Ty::Str
         | Ty::Adt(_, _)
+        | Ty::Alias(_)
         | Ty::Ref(_, _, _)
         | Ty::Tuple(_)
         | Ty::Slice(_)

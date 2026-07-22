@@ -136,10 +136,13 @@ single-keyed body query rather than becoming a public incremental boundary.
 
 The positive, inductive, type-only solver and its body-obligation integration
 exist. A conservative trait-method path discovers represented external
-trait items, proves one fixed-trait goal, and elaborates a selected call. Complete
-method resolution, external impl discovery, normalization, higher-ranked
-reasoning, and the other explicitly deferred extensions remain planned; their
-status is tracked in the [Build-Out Roadmap](../implementation/roadmap.md).
+trait items, proves one fixed-trait goal, and elaborates a selected call. The
+common named, associated, and opaque alias type family is represented through
+inference and solver boundaries, but reveal and normalization are not yet
+operational. Complete method resolution, external impl discovery,
+normalization, higher-ranked reasoning, and the other explicitly deferred
+extensions remain planned; their status is tracked in the [Build-Out
+Roadmap](../implementation/roadmap.md).
 The destination-level soundness, completeness, candidate-discovery, progress,
 scheduling, and resource contract is recorded in
 [Trait Solver Design](./trait-solver.md).

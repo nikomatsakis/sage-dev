@@ -6,14 +6,14 @@ keeps unsupported behavior conservative.
 
 ## Step 1: Alias type family
 
-- [ ] Add `AliasTy::{Named, Associated, Opaque}` and `Ty::Alias` with stable
+- [x] Add `AliasTy::{Named, Associated, Opaque}` and `Ty::Alias` with stable
   definition identity and arguments.
-- [ ] Extend stash allocation/copying, folding, substitution, inference
+- [x] Extend stash allocation/copying, folding, substitution, inference
   skeletons, occurs/universe checks, canonicalization, response handling,
   display, and emitters exhaustively.
-- [ ] Keep all alias reveal operations conservative; no variant falls back to
+- [x] Keep all alias reveal operations conservative; no variant falls back to
   `Ty::Adt`, a debug string, or an invented hidden type.
-- [ ] Add structural and round-trip tests for all three identities.
+- [x] Add structural and round-trip tests for all three identities.
 
 ## Step 2: External ADT signatures and generic defaults
 

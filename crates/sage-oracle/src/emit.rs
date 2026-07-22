@@ -95,7 +95,9 @@ impl<'tcx> Emitter<'tcx> {
         for item_id in item_ids {
             let item = self.tcx.hir_item(item_id);
             match &item.kind {
-                hir::ItemKind::Fn { .. } | hir::ItemKind::Struct(..) => {
+                hir::ItemKind::Fn { .. }
+                | hir::ItemKind::Struct(..)
+                | hir::ItemKind::TyAlias(..) => {
                     self.register_local_def(item.owner_id.to_def_id());
                 }
                 hir::ItemKind::Enum(_, _, enum_def) => {
@@ -109,6 +111,14 @@ impl<'tcx> Emitter<'tcx> {
                     for impl_item in self.source_impl_functions(impl_block) {
                         if matches!(impl_item.kind, hir::ImplItemKind::Fn(..)) {
                             self.register_local_def(impl_item.owner_id.to_def_id());
+                        }
+                    }
+                }
+                hir::ItemKind::Trait(.., trait_items) => {
+                    for trait_item_ref in *trait_items {
+                        let trait_item = self.tcx.hir_trait_item(*trait_item_ref);
+                        if matches!(trait_item.kind, hir::TraitItemKind::Type(..)) {
+                            self.register_local_def(trait_item.owner_id.to_def_id());
                         }
                     }
                 }
@@ -419,6 +429,17 @@ impl<'tcx> Emitter<'tcx> {
                 let type_args: Vec<_> = args.types().map(|t| self.emit_type(t)).collect();
                 Type::Def { target, type_args }
             }
+            ty::TyKind::Alias(kind, alias) => Type::Alias {
+                kind: match kind {
+                    ty::AliasTyKind::Projection | ty::AliasTyKind::Inherent => {
+                        AliasKind::Associated
+                    }
+                    ty::AliasTyKind::Opaque => AliasKind::Opaque,
+                    ty::AliasTyKind::Free => AliasKind::Named,
+                },
+                target: self.normalize_def(alias.def_id),
+                type_args: alias.args.types().map(|ty| self.emit_type(ty)).collect(),
+            },
             ty::TyKind::Ref(_, inner_ty, mutability) => Type::Ref {
                 mutable: mutability.is_mut(),
                 ty: Box::new(self.emit_type(*inner_ty)),
