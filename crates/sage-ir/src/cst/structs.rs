@@ -9,6 +9,7 @@ use crate::span::RelativeSpan;
 
 pub type StructCst<'db> = Stashed<Ptr<StructCstData<'db>>>;
 
+// ANCHOR: example_struct_cst
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct StructCstData<'db> {
     pub attrs: Slice<AttrCst<'db>>,
@@ -18,6 +19,7 @@ pub struct StructCstData<'db> {
     pub where_clauses: Slice<WhereClauseCst<'db>>,
     pub span: RelativeSpan,
 }
+// ANCHOR_END: example_struct_cst
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct FieldCst<'db> {

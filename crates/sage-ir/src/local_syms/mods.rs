@@ -83,6 +83,7 @@ pub fn unexpanded_items<'db>(
 ///
 /// Note that this may recursively access the macro-expanded items for `module`,
 /// in which case it relies on salsa's fixed point iteration.
+// ANCHOR: example_expanded_module_query
 #[salsa::tracked(returns(ref), cycle_initial = expanded_module_initial)]
 pub fn local_expanded_module_items<'db>(
     db: &'db dyn Db,
@@ -95,6 +96,7 @@ pub fn local_expanded_module_items<'db>(
 
     entries
 }
+// ANCHOR_END: example_expanded_module_query
 
 /// Cycle recovery initial value.
 fn expanded_module_initial<'db>(
@@ -105,6 +107,7 @@ fn expanded_module_initial<'db>(
     vec![]
 }
 
+// ANCHOR: example_expand_items
 fn expand_unexpanded_items<'db>(
     db: &'db dyn Db,
     module: LocalModSym<'db>,
@@ -134,10 +137,12 @@ fn expand_unexpanded_items<'db>(
         }
     }
 }
+// ANCHOR_END: example_expand_items
 
 /// Maximum nesting depth for macro expansion (same as rustc's default).
 const MAX_EXPANSION_DEPTH: usize = 128;
 
+// ANCHOR: example_expand_macro
 fn expand_macro<'db>(
     db: &'db dyn Db,
     module: LocalModSym<'db>,
@@ -177,6 +182,7 @@ fn expand_macro<'db>(
         }
     }
 }
+// ANCHOR_END: example_expand_macro
 
 const INERT_ATTRIBUTES: &[&str] = &["inline", "repr", "allow", "deny", "warn"];
 

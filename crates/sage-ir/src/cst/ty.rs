@@ -15,7 +15,7 @@ pub struct TypeCst<'db> {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub enum TypeCstKind<'db> {
     Path(Ptr<Path<'db>>),
-    Reference(Ptr<TypeCst<'db>>, Mutability),
+    Reference(Ptr<TypeCst<'db>>, Mutability, LifetimeCst<'db>),
     Slice(Ptr<TypeCst<'db>>),
     Array(Ptr<TypeCst<'db>>),
     Tuple(Slice<TypeCst<'db>>),
@@ -43,8 +43,12 @@ impl<'db> ToTokens<'db> for TypeCst<'db> {
             TypeCstKind::Path(path_ptr) => {
                 ctx.stash[path_ptr].to_tokens(ctx, sink);
             }
-            TypeCstKind::Reference(inner_ptr, mutability) => {
+            TypeCstKind::Reference(inner_ptr, mutability, lifetime) => {
                 sink.punct(Punct::Amp);
+                match lifetime {
+                    LifetimeCst::Named(name) => sink.ident(name.text(ctx.db)),
+                    LifetimeCst::Anonymous => {}
+                }
                 if mutability == Mutability::Mut {
                     sink.ident("mut");
                 }
@@ -113,10 +117,23 @@ impl<'db> TypeCst<'db> {
                     }
                 }
             }
-            TypeCstKind::Reference(inner, m) => {
+            TypeCstKind::Reference(inner, m, lifetime) => {
                 let inner_ty = src[inner].check(cx);
                 let inner = cx.target_stash.alloc(inner_ty);
-                Ty::Ref(inner, m, Lifetime::Erased)
+                let lifetime = match lifetime {
+                    LifetimeCst::Named(name) if name.text(cx.db) == "'static" => Lifetime::Static,
+                    LifetimeCst::Named(name) => {
+                        match cx.resolver.ribs.lookup(name, Namespace::Type) {
+                            Some(Resolution::Param(param)) => Lifetime::Param(param),
+                            Some(
+                                Resolution::Local(_) | Resolution::Sym(_) | Resolution::SelfTy(_),
+                            )
+                            | None => Lifetime::Erased,
+                        }
+                    }
+                    LifetimeCst::Anonymous => Lifetime::Erased,
+                };
+                Ty::Ref(inner, m, lifetime)
             }
             TypeCstKind::Tuple(elems) => {
                 let tys: Vec<_> = src[elems].iter().map(|e| e.check(cx)).collect();
@@ -170,7 +187,20 @@ fn resolution_to_ty<'db>(
 ) -> Ty<'db> {
     match sym.data(db) {
         SymbolData::IntrinsicTypeSymbol(s) => intrinsic_to_ty(s.intrinsic(db)),
-        _ => Ty::Adt(sym, type_args),
+        SymbolData::FnSymbol(_)
+        | SymbolData::StructSymbol(_)
+        | SymbolData::EnumSymbol(_)
+        | SymbolData::VariantSymbol(_)
+        | SymbolData::VariantCtorSymbol(_)
+        | SymbolData::TraitSymbol(_)
+        | SymbolData::TypeAliasSymbol(_)
+        | SymbolData::ConstSymbol(_)
+        | SymbolData::StaticSymbol(_)
+        | SymbolData::ImplSymbol(_)
+        | SymbolData::ModSymbol(_)
+        | SymbolData::MacroDefSymbol(_)
+        | SymbolData::MacroInvocationSymbol(_)
+        | SymbolData::UseSymbol(_) => Ty::Adt(sym, type_args),
     }
 }
 

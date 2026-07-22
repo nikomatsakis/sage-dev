@@ -37,18 +37,23 @@ impl<'a, 'db> Parser<'a, 'db> {
                     params.push(GenericParamCst::Type {
                         name,
                         bounds: stash.alloc_slice(&[]),
+                        default: None,
                         span,
                     });
                 }
                 "constrained_type_parameter" => {
                     params.push(self.parse_constrained_type_param(stash, child, item_start));
                 }
-                "lifetime" => {
-                    let text = &self.text[child.byte_range()];
+                "lifetime" | "lifetime_parameter" => {
+                    let lifetime = child
+                        .children(&mut child.walk())
+                        .find(|nested| nested.kind() == "lifetime")
+                        .unwrap_or(child);
+                    let text = &self.text[lifetime.byte_range()];
                     let name = Name::new(self.db, text.to_owned());
                     let span = RelativeSpan {
-                        start: child.start_byte() as u32 - item_start,
-                        end: child.end_byte() as u32 - item_start,
+                        start: lifetime.start_byte() as u32 - item_start,
+                        end: lifetime.end_byte() as u32 - item_start,
                     };
                     params.push(GenericParamCst::Lifetime { name, span });
                 }
@@ -80,12 +85,17 @@ impl<'a, 'db> Parser<'a, 'db> {
 
         let mut bounds = Vec::new();
         if let Some(bound_node) = node.child_by_field_name("bounds") {
-            self.collect_type_bounds(stash, bound_node, item_start, &mut bounds);
+            self.parse_type_bounds(stash, bound_node, item_start, &mut bounds);
         }
+
+        let default = node
+            .child_by_field_name("default_type")
+            .map(|default| self.parse_type(stash, default, item_start));
 
         GenericParamCst::Type {
             name,
             bounds: stash.alloc_slice(&bounds),
+            default,
             span,
         }
     }
@@ -108,12 +118,13 @@ impl<'a, 'db> Parser<'a, 'db> {
 
         let mut bounds = Vec::new();
         if let Some(bound_node) = node.child_by_field_name("bounds") {
-            self.collect_type_bounds(stash, bound_node, item_start, &mut bounds);
+            self.parse_type_bounds(stash, bound_node, item_start, &mut bounds);
         }
 
         GenericParamCst::Type {
             name,
             bounds: stash.alloc_slice(&bounds),
+            default: None,
             span,
         }
     }
@@ -148,7 +159,7 @@ impl<'a, 'db> Parser<'a, 'db> {
         GenericParamCst::Const { name, ty, span }
     }
 
-    fn collect_type_bounds(
+    pub(super) fn parse_type_bounds(
         &self,
         stash: &mut Stash,
         node: tree_sitter::Node<'a>,
@@ -223,7 +234,7 @@ impl<'a, 'db> Parser<'a, 'db> {
 
         let mut bounds = Vec::new();
         if let Some(bound_node) = node.child_by_field_name("bounds") {
-            self.collect_type_bounds(stash, bound_node, item_start, &mut bounds);
+            self.parse_type_bounds(stash, bound_node, item_start, &mut bounds);
         }
         let bounds_slice = stash.alloc_slice(&bounds);
 

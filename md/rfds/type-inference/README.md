@@ -1,17 +1,17 @@
 # RFD: Type Inference
 
-**Status:** In Progress
+**Status:** Completed
 
 **Depends on:**
-- [Type Signatures](./type-signatures.md) — `Ty`, `Binder`, `TyFolder`, stash-allocated types
-- [Per-kind symbol data](./per-kind-symbol-data.md) — `FnSymbol`, `StructSymbol`, etc.
-- [Generic params as symbols](./generic-params-as-symbols.md) — `GenericParam`, stable identities replacing de Bruijn indices
+- [Type Signatures](../type-signatures/README.md) — `Ty`, `Binder`, `TyFolder`, stash-allocated types
+- [Per-kind symbol data](../per-kind-symbol-data/README.md) — `FnSymbol`, `StructSymbol`, etc.
+- [Generic params as symbols](../generic-params-as-symbols/README.md) — `GenericParam`, stable identities replacing de Bruijn indices
 
 ## Goal
 
 Design the **type elaboration** engine for sage. This covers inference variables, constraint propagation, trait solving, and the versioned data structures that support speculative exploration.
 
-**Elaboration vs. verification:** This RFD covers *elaboration* — fully inferring types, resolving all inference variables, and choosing coercions to produce a fully-typed IR. The goal is to always produce output, even in the presence of ambiguity. Correctness checking (subtyping validity, lifetime soundness, borrow checking) happens in a separate verification pass over the elaborated IR. This split means elaboration can be best-effort and optimistic — if something is ambiguous, pick the most likely option; the verifier will catch mistakes.
+**Elaboration vs. verification:** This RFD covers *elaboration* — fully inferring types, resolving all inference variables, and choosing coercions to produce a fully-typed IR. The goal is to always produce output, including error-recovery nodes when inference remains ambiguous. Correctness checking (subtyping validity, lifetime soundness, borrow checking) happens in a separate verification pass over the elaborated IR. Elaboration may recover after an error, but it must not commit a merely likely trait candidate or heuristic equality and rely on verification to undo that choice.
 
 **Intentionally simplified model.** We are starting with a pure, simplified view of Rust's type system — ignoring or approximating many edge cases (complex coercion chains, higher-ranked trait bounds, auto traits, etc.). The architecture is designed to accommodate the full complexity incrementally as we go, but the initial implementation will handle the common paths and leave exotic corners for later. We expect to iterate on and refine the type rules as we encounter real-world code that needs them.
 
@@ -21,7 +21,10 @@ The system has three major components:
 
 1. **Inference variables with streaming bounds** — each inference variable `?X` carries a bound that tightens over time, modeled as an async stream of `Bound<Ty>` values.
 2. **A versioned union-find** — supports speculative branching during trait resolution (try one impl candidate, backtrack if it fails, try another).
-3. **Trait solving with near-miss feedback** — the solver always works forward from concrete types; when inputs are too vague, it collects "near-misses" that feed backward as constraints.
+3. **Trait solving through canonical obligations** — rigid caller parameters and
+   flexible inference variables cross a cached query boundary with distinct
+   metadata; conditional answers return residual obligations which must later
+   be discharged.
 
 ### Inference variables and index spaces
 
@@ -36,7 +39,10 @@ enum TyData<'db> {
 
 `GenericParam` values (universals from the function's signature) participate in inference as-is — they're already stable, hash-consable, and can appear freely in types at any depth. The `InferVar` variant represents existential unknowns that the inference engine must resolve.
 
-**Instantiating a signature** substitutes each `GenericParam` with either a concrete type or a fresh `InferVar`. No "opening" step is needed — just a `Substitute` fold.
+**Opening/instantiating a signature** creates one coherent `Substitute` mapping
+for its binder, then folds the signature with each `GenericParam` replaced by a
+concrete type, rigid parameter, or fresh `InferVar`. Every component under the
+same binder must reuse that one opening.
 
 #### Newtyped index spaces
 
@@ -50,17 +56,20 @@ struct TyIndex(u32);  // derived from Ptr<Ty>
 /// Indexes into the variable metadata table. Lives inside Ty::InferVar.
 struct InferVarIndex(u32);
 
-/// Version tree node identifier. Dense, recycled on removal.
+/// Version tree node identifier. Stable for the egraph lifetime (or paired
+/// with a generation if storage slots are recycled).
 struct Version(usize);
 ```
 
-#### Variable metadata (per-version, dense)
+#### Variable metadata (globally identified, version-owned)
 
-Variable data is stored *in the version node*, not in a single global table. Each version owns the variables it created:
+Every inference variable has a globally unique `InferVarIndex` within one
+egraph. Its metadata records the version which created it:
 
 ```rust
 struct VarInfo {
-    universe: Universe,    // scope depth (higher = more local, can't escape)
+    owner: Version,                 // branch which created this variable
+    created_universe: Universe,     // immutable allocation scope
     // span, debug name, etc.
 }
 
@@ -71,28 +80,30 @@ struct Universe(u32);
 
 Universal parameters (from function/impl generics) don't need `VarInfo` — they already have identity and scope via `GenericParam`. Only existential inference variables are tracked here.
 
-Each version node stores a `variable_start: InferVarIndex` and a `variables: Vec<VarInfo>`. To look up metadata for `InferVar(i)`, walk up the version tree:
+The egraph stores a single append-only metadata table. A variable is visible
+only from its owning version and descendants:
 
 ```rust
-fn get_variable(tree: &[VersionNode], v: Version, idx: InferVarIndex) -> &VarInfo {
-    let node = &tree[v];
-    if idx.0 >= node.variable_start.0 {
-        &node.variables[(idx.0 - node.variable_start.0) as usize]
-    } else {
-        get_variable(tree, node.parent, idx)
-    }
+fn get_variable(egraph: &VersionedEGraph, v: Version, idx: InferVarIndex) -> &VarInfo {
+    let info = &egraph.variables[idx.0 as usize];
+    assert!(egraph.versions.is_ancestor_of(info.owner, v));
+    info
 }
 ```
 
-**Sibling versions reuse indices.** When two branches fork from the same parent, they both start allocating variables at the same `variable_start` (parent's count of existing variables). So `InferVar(4)` might mean `?a0` in Branch A and `?b0` in Branch B:
+Sibling versions never reuse an index:
 
 ```
-Root:     variable_start=0, variables=[?0, ?1, ?2, ?3]
-Branch A: variable_start=4, variables=[?a0, ?a1]
-Branch B: variable_start=4, variables=[?b0, ?b1, ?b2]
+Root:     variables=[?0, ?1, ?2, ?3]
+Branch A: variables=[?4, ?6]
+Branch B: variables=[?5, ?7, ?8]
 ```
 
-This is fine — all operations are always performed at a specific version, so the lookup is unambiguous. And it's *beneficial*: `Ty::InferVar(InferVarIndex(4))` hash-conses to a single `TyIndex` in the stash, shared across branches. The stash stays compact — different branches reuse the same stash Ptr for their respective variables at the same offset. The version-specific meaning (metadata, bounds, equalities) lives entirely in the per-version data.
+This gives every `Ty::InferVar` an unambiguous identity even if a type pointer
+is accidentally presented to the wrong concurrent branch. Explicit-version
+operations still enforce visibility. The tradeoff is less cross-branch stash
+sharing, which is preferable to allowing one branch's type to be reinterpreted
+as a sibling's variable.
 
 **Setting up a function** (at the root version):
 
@@ -112,7 +123,16 @@ InferVar(1) = ?1, universe=1  (for a method return type)
 InferVar(2) = ?c0, universe=2
 ```
 
-The universe field encodes scope — `InferVar(2)` at universe 2 cannot appear in the bound of `InferVar(0)` at universe 1 (inner can't escape outward). `GenericParam` values from the enclosing signature are effectively at universe 0 — they can appear anywhere.
+The creation universe records origin. A separate versioned current ceiling may
+only move outward: an equality such as `?X@U1 = Vec<?Y@U2>` lowers `?Y`'s
+ceiling to `U1`, preventing a later indirect leak. `GenericParam` values from
+the enclosing signature are rigid placeholders (effectively universe 0 in
+this example), not `VarInfo` entries.
+
+A committed ceiling decrease is a semantic bound change: it advances the
+variable's revision and wakes dependents so canonical queries are rebuilt with
+the narrower ceiling. Speculative lowering remains buffered in its version and
+vanishes without a wake when discarded.
 
 Since each `InferVarIndex` appears inside a distinct `Ty::InferVar(i)`, each gets a distinct `TyIndex` after hash-consing. This is what makes `TyIndex` viable as the egraph key for both variables and concrete types.
 
@@ -134,13 +154,20 @@ A variable's stream produces a sequence:
 None → AtLeast(Foo<'a>) → AtLeast(Foo<'static>) → Exactly(Foo<'static>)
 ```
 
-**Key invariant: bounds never contain inference variables.** Bounds are always concrete types (may contain `GenericParam` universals, but never `InferVar`). This means:
+**Key invariant: bounds never contain inference variables.** Bounds are always concrete types (may contain `GenericParam` universals, but never `InferVar`). This restriction is specific to the streaming-bound lattice: egraph equality classes may still relate an inference variable to a structured type containing other inference variables, subject to occurs and universe checks. For bounds, the invariant means:
 
 - Bounds are always directly printable, comparable, and hashable
 - No transitive closure needed to inspect what a bound resolves to
-- The universe check is enforced naturally: inner inference variables can't appear in outer bounds
+- Bounds cannot directly hide an inner inference variable; egraph equalities
+  separately enforce versioned universe-ceiling lowering for nested flexible
+  variables
 
 **Bounds are versioned** — a speculative branch might set `?X >= Foo` based on a candidate that turns out to be wrong. Discarding the branch rolls back the bound. (See versioned data structure below.)
+
+Every bound write also checks the target variable's current versioned universe
+ceiling. Bounds contain no inference variables, but a concrete bound may still
+contain rigid type/lifetime/const placeholders; one above the ceiling is a leak
+and the `AtLeast`/`Exactly` update is rejected without a wake.
 
 **Relationships between variables** are maintained by two mechanisms:
 1. **Equality** (`?X = ?Y`) — goes into the versioned egraph as a union. Congruence propagates.
@@ -154,7 +181,10 @@ The promotion from `AtLeast` to `Exactly` is a key event: it finalizes the strea
 
 ### The egraph layer
 
-The egraph stores *settled equality facts*. It only grows when we have `=` constraints — never speculative.
+The egraph stores equality facts settled within a particular version. A
+speculative version may grow while a probe or candidate is running, but those
+facts reach an ancestor only through an explicit successful collapse; a
+discarded branch publishes none of them.
 
 Projections like `<T as Trait>::Assoc` are operator applications in the egraph: `Proj(T, Trait, Assoc)`. When the solver definitively resolves `<T as Trait>::Assoc = U`, we union the projection node with `U` in the egraph. Congruence then propagates automatically: if `T = S` is later established, `<T as Trait>::Assoc = <S as Trait>::Assoc` follows for free.
 
@@ -175,6 +205,10 @@ struct VersionedEGraph {
     /// Version nodes, indexed by Version. Each node contains all
     /// per-version state.
     versions: Vec<VersionNode>,
+
+    /// Globally unique inference-variable metadata. Each record names the
+    /// version which owns the variable.
+    variables: Vec<VarInfo>,
 }
 
 struct VersionNode {
@@ -183,13 +217,6 @@ struct VersionNode {
     /// Child versions.
     subversions: Vec<Version>,
     
-    // --- Variable data (dense, owned by this version) ---
-    
-    /// First InferVarIndex belonging to this version.
-    variable_start: InferVarIndex,
-    /// Inference variables created in this version.
-    variables: Vec<VarInfo>,
-    
     // --- Mutable inference state (sparse diffs from ancestry) ---
     
     /// Equality edges (union-find parents), keyed by TyIndex.
@@ -197,6 +224,11 @@ struct VersionNode {
     
     /// Bounds on inference variables, keyed by TyIndex of the InferVar node.
     bounds: FxHashMap<TyIndex, Bound<TyIndex>>,
+
+    /// Current maximum accessible universe for variables whose ceiling was
+    /// lowered in this version. Absent entries inherit from ancestry, falling
+    /// back to `VarInfo::created_universe`.
+    universe_ceilings: FxHashMap<InferVarIndex, Universe>,
     
     /// Dependents for congruence closure: who references this node as an arg.
     dependents: FxHashMap<TyIndex, Set<TyIndex>>,
@@ -208,11 +240,25 @@ struct VersionNode {
 
 **Key insight:** Both equalities AND bounds are versioned (per-node sparse diffs). A speculative branch can freely add equalities, tighten bounds, and allocate new variables; if the branch is discarded, its `VersionNode` is simply dropped — everything rolls back automatically.
 
-The stash is the exception — it is NOT versioned. Types allocated in a discarded branch remain in the stash (harmless unreferenced nodes). This is actually beneficial: sibling branches that allocate the same `InferVar(N)` or build the same `Adt(Vec, [InferVar(N)])` share stash entries thanks to hash-consing.
+The stash and globally unique variable metadata are append-only. Types and
+variable records allocated in a discarded branch remain as harmless,
+inaccessible entries; the mutable inference facts which could affect a parent
+remain versioned.
 
 #### Version tree
 
-A tree of versions where each version inherits from its parent. `branchout(v)` creates a new child version. `remove(v)` discards a version and its subtree, recycling the ID.
+A tree of versions where each version inherits from its parent. `branch_from(v)`
+creates a new child version. `remove(v)` discards a version and its subtree.
+The identity is not reused during the egraph lifetime unless the handle carries
+a generation, because inference-variable metadata retains owning versions.
+
+Sparse inheritance is snapshot-stable because per-version mutation is
+leaf-only. Creating a child freezes its parent against path compression,
+variable allocation, equality or bound writes, rebuild/revision publication,
+and inference wakes until every child is discarded or the sole child is
+collapsed atomically. Otherwise a child's ancestry walk could observe parent
+facts created after the branch. Read-only lookup and append-only global stash
+allocation do not change the snapshot.
 
 #### Sparse diff semantics
 
@@ -240,51 +286,67 @@ The full `find(x)` at version `v` is the standard union-find chase, but each par
 
 #### Variable allocation and versioning
 
-Each version node stores the inference variables it created. Siblings start at the same offset:
+The egraph allocates inference-variable IDs from one monotonic counter and
+records their owner versions:
 
 ```
-Root version:    variable_start=0, variables=[?0, ?1, ?2]
-  ├─ Branch A:  variable_start=3, variables=[?a0, ?a1, ?a2]
-  └─ Branch B:  variable_start=3, variables=[?b0, ?b1]
+Root version: variables=[?0, ?1, ?2]
+  ├─ Branch A: variables=[?3, ?5, ?7]
+  └─ Branch B: variables=[?4, ?6]
 ```
 
-`InferVar(3)` is `?a0` in Branch A's lineage and `?b0` in Branch B's lineage. The stash has one `Ty::InferVar(InferVarIndex(3))` node shared by both — maximizing hash-consing reuse.
+`InferVar(3)` always means Branch A's first variable. Branch B cannot resolve or
+bind it because Branch A is not in Branch B's ancestry. Its own first variable
+is `InferVar(4)` and therefore has a distinct stash node.
 
 Note: universal parameters (`GenericParam` values from the function/impl signature) are not allocated in the version tree at all — they already have stable identities. Only existential inference variables live here.
 
-If Branch B is discarded, its `VersionNode` (including its `variables` vec) is dropped. If Branch A succeeds and we rebase, its variables become part of the flattened ancestry.
+If Branch B is discarded, its mutable version state is dropped and its unique
+variable records become inaccessible. A short-lived transactional child may
+collapse into its direct parent only under the exclusive-child rule; variables
+owned by that child are re-owned by the parent as part of the atomic commit.
 
 #### Branching workflow for trait resolution
 
 1. Encounter a choice point (multiple candidate impls)
-2. `branchout(current_version)` for each candidate — cheap (creates empty maps)
+2. `branch_from(parent_version)` for each candidate — cheap (creates empty maps)
 3. Explore each candidate in its own version (add equalities, tighten bounds, allocate new vars)
-4. If a candidate succeeds, commit its version (potentially `rebase` to flatten ancestry)
-5. If a candidate fails, `remove` its version (drops its sparse maps, recycles the Version ID; dead vars stay in the Vec but are unreferenced)
+4. Extract a canonical response from every still-possible candidate
+5. Discard every candidate branch after its task and descendants finish
+6. Merge the responses outside the branches and transactionally apply only the
+   chosen aggregate response to the caller
 
 #### Stash interaction
 
 The stash is part of the egraph structure — types are allocated into it during inference (e.g., when constructing `Vec<?X>` you allocate `Adt(Vec, [InferVar(3)])` into the stash). The stash is append-only and hash-consing: allocating the same `TyData` twice returns the same `TyIndex`. This is fine — structurally identical types *should* be the same egraph node.
 
-The stash is *not* versioned. Types allocated in a speculative branch that gets discarded remain in the stash (they're harmless — just unreferenced). Only the mutable state (parents, bounds, worklist) is versioned.
+The stash is *not* versioned. Types allocated in a speculative branch that gets
+discarded remain in the stash (they are harmless and inaccessible from valid
+results). Globally unique inference-variable IDs prevent one branch's leftover
+type node from being reinterpreted as a sibling's variable. Only mutable state
+such as parents, bounds, worklists, and buffered wakes is committed or
+discarded with a version.
 
 ### Trait solving (sketch — separate RFD)
 
-The trait solver is a `#[salsa::tracked]` function — it takes concrete inputs and is cached. Its full design is deferred to a separate RFD; this section sketches the interface.
+The accepted [Trait Solving RFD](../trait-solving/README.md) defines the query
+boundary. The caller canonicalizes rigid generic parameters and flexible
+inference variables with distinct roles and relative universes. It does not
+turn an unknown inference variable into a universal placeholder.
 
-**Forward-only.** The solver always works from concrete types. When a bound is still `AtLeast(BOTTOM)`, the inference engine replaces unknowns with fresh `GenericParam` placeholders before querying: e.g., `Option<?X>: Trait` becomes `forall<X> Option<X>: Trait`. The solver attempts to prove this, and comes back with one of:
+The cached solver result is one of:
 
-- **Success** — the impl applies; yields associated type bindings as `=` constraints → fed into the egraph.
-- **Failure with hints** — unprovable, but the solver reports what *would* make it provable: `X = u32`, `X: Bar`, etc. These hints feed back as constraints on the inference variable.
+- **`Yes`** — definite equalities plus residual obligations;
+- **`Maybe`** — proof remains possible, with only hard equalities common to
+  every still-possible alternative;
+- **`No`** — candidate sources were exhaustive and every candidate was
+  definitively disproven.
 
-**Hint policy.** The type checker decides how aggressively to act on hints:
-- One unique hint → strong, potentially promote `?X` to `Exactly`
-- Multiple hints → weaker signal, may narrow the bound or wait
-- Zero hints → genuine type error (or delay)
-
-The policy is context-dependent and tunable independently of the solver machinery.
-
-**Re-running.** As bounds tighten, the solver is re-invoked with updated inputs. Salsa deduplicates: same inputs → cached result. Changed inputs → re-solve, hints may refine, and eventually the query converges.
+Applying a response is transactional. A `Yes` is not final while it has a
+nontrivial residual, and a `Maybe` never authorizes committing a heuristic
+near-miss. The body checker retains and re-runs residual obligations when
+relevant inference state changes; finalization must discharge or diagnose all
+of them.
 
 ### Interaction between bounds and the egraph
 
@@ -299,16 +361,16 @@ The bounds lattice drives exploration; the egraph records conclusions. The trans
 
 ### Handling `BOTTOM` and unbounded variables
 
-When an inference variable has no information yet, its bound is `BOTTOM`. Before querying the trait solver, unknowns are replaced with fresh `GenericParam` placeholders (universals):
+An inference variable with no bound remains a flexible existential input when
+canonicalized. For the MVP, a trait goal whose self type is a bare unbounded
+variable flounders to `Maybe` and records that variable as a retry dependency;
+the solver does not enumerate the crate to guess a receiver type. Structured
+goals such as `Vec<?X>: Trait` may still match impl heads and derive hard
+equalities for `?X`.
 
-```
-?X = BOTTOM
-query: forall<X> <X as Borrow<usize>> → unprovable
-  hint: impl Borrow<usize> for [T] — would succeed if X = [T]
-→ narrows ?X to AtLeast([?T])
-```
-
-No special backward-reasoning machinery in the solver — just forward solving that reports what would make it provable. The type checker extracts constraints from the failure.
+Candidate-specific suggestions such as “this would work if `?X` were `u32`”
+are heuristic near-misses, not proof consequences. They may be exposed later
+for diagnostics or ranking, but are not applied to inference state by the MVP.
 
 ### Congruence closure (the egraph machinery)
 
@@ -374,7 +436,9 @@ When a piece of the type checker needs information from an inference variable th
 
 This replaces the traditional "iterate to fixpoint" approach with a reactive one: work only happens when new information arrives.
 
-Note: inference variables are not just types — they can represent lifetimes, const values, or other unknowns. The `next_bound` interface is generic across all of these.
+The current `InferVarIndex` and solver MVP are type-only. A future generalized
+bound-stream interface may also represent lifetime or const unknowns, but the
+trait plan must not assume those variable kinds exist today.
 
 ### 2. Parallel type checking within a function body
 
@@ -384,7 +448,9 @@ Independent parts of the IR can be type-checked concurrently as separate async t
 - The arms of a match can be checked in parallel (they share the scrutinee type but are otherwise independent)
 - Function arguments can be checked in parallel
 
-The custom executor can schedule these tasks across threads or just interleave them single-threaded — the async structure expresses the *dependency graph*, not the threading model.
+The custom executor interleaves these tasks on one thread. The async structure
+expresses the dependency graph; `RefCell` state and `!Send + !Sync` proof
+contexts deliberately rule out cross-thread scheduling in this design.
 
 When tasks produce type equalities or bound updates, those propagate through the inference variable wakeup mechanism to any other tasks that depend on them.
 
@@ -451,7 +517,7 @@ These are cooperative within a single task's poll. "Parallel" means interleaved 
 for stmt in stmts {
     if let Stmt::Let { pattern, initializer, .. } = stmt {
         ctx.push_bindings(pattern.check(ctx, declared_ty).await);
-        ctx.runtime.spawn(async move { initializer.check(ctx, ...).await; });
+        scope.spawn(async move { initializer.check(ctx, ...).await; });
     }
 }
 ```
@@ -460,16 +526,36 @@ for stmt in stmts {
 
 ### Finalization
 
-Once the IR is fully built (all statements visited, all expressions checked), inference may still have unresolved variables — tasks may be suspended awaiting bounds that will never come.
+The root expression task may suspend before all statements have been visited,
+and inference can still have variables whose bounds will never improve. Body
+completion therefore cannot wait for a fully built IR and only then call a
+one-shot finalizer.
 
 **Finalization protocol:**
 
-1. Walk the completed IR and mark all inference variables and type variables as **fully constrained** — no more external inputs will arrive.
-2. For each variable that remains at `AtLeast(B)` with no further constraints possible, promote to `Exactly(B)` (or `Exactly(Error)` if `B = BOTTOM`).
-3. Wake all remaining suspended tasks so they can observe the finalized state and complete (possibly producing errors).
-4. `drain()` one final time.
+1. Keep the root runtime scope open. Drain runnable expression/constraint
+   tasks, committed wakes, and ready trait obligations together until no
+   component makes semantic progress.
+2. Stable suspension is a quiescence barrier, not success or an immediate
+   deadlock. Promote each still-unresolved variable from `AtLeast(B)` to
+   `Exactly(B)`, or to `Exactly(Error)` from `BOTTOM`, and publish its wakes.
+3. Resume the joint drain. A woken expression task may visit more source,
+   allocate more variables, or submit more obligations, so repeat steps 1 and
+   2.
+4. When all variables are final but stable obligations or lookup waits remain,
+   re-run them once, turn every remaining `Maybe`, `No`, or conditional
+   residual into a diagnostic/error outcome, and wake their waiting expression
+   tasks. Then return to step 1; this handles unsupported obligations with no
+   inference dependency.
+5. Finish only after the root expression and all scoped tasks join and every
+   obligation is terminal. A pending task with no registered variable or
+   obligation wait is an internal runtime deadlock. Assert that no waiter or
+   speculative branch remains.
 
-This is more principled than a blanket "wake everything" — we derive finalization from the structure of the IR itself. A variable is fully constrained because all code paths that could mention it have been visited.
+Finalization is a recovery transition made only at global stable quiescence.
+It deliberately wakes the tasks which could not finish source traversal; those
+tasks are then allowed to produce their remaining constraints before body
+completion is declared.
 
 ### Error representation
 
@@ -524,15 +610,13 @@ fn type_check_body(db: &dyn Db, fn_sym: FnSymbol, body: &ResolvedBody) -> TypeCh
         current_universe: Universe(1),  // fn-level
     };
     
-    // 4. Run the type checker as an async task.
-    let typed_body = ctx.runtime.block_on(async {
+    // 4. Keep the root scope open while jointly driving source tasks,
+    //    inference wakes, obligations, quiescence recovery, and finalization.
+    let typed_body = ctx.drive_body_to_completion(async {
         check_block(&ctx, body.root_block, sig.ret).await
     });
     
-    // 5. Finalize: promote remaining AtLeast bounds to Exactly.
-    ctx.finalize();
-    
-    // 6. Package results — the stash is extracted from the egraph.
+    // 5. Package results only after every scope and obligation is terminal.
     TypeCheckedBody { ir: ctx.egraph.stash.seal(typed_body), diagnostics: ... }
 }
 ```
@@ -546,9 +630,11 @@ impl InferCtx {
     /// Note: &self because InferCtx is shared across concurrent tasks;
     /// internal mutation guarded by RefCell.
     fn fresh_ty_var(&self) -> TyIndex {
-        // Allocates in the current version node's variable list
-        let idx = self.egraph.alloc_var(VarInfo {
-            universe: self.current_universe,
+        // Allocates one globally unique ID owned by the explicit context
+        // version.
+        let idx = self.egraph.alloc_var(self.version, VarInfo {
+            owner: self.version,
+            created_universe: self.current_universe,
         });
         
         // Allocate InferVar(idx) in the stash — unique TyData → unique TyIndex
@@ -704,7 +790,12 @@ Blocks use a moro-style structured concurrency pattern (see `~/dev/moro`). The k
 
 ```rust
 impl Block {
-    async fn check(&self, ctx: &InferCtx, expected_ret: Option<TyIndex>) -> TyIndex {
+    async fn check(
+        &self,
+        ctx: &InferCtx,
+        scope: &TaskScope,
+        expected_ret: Option<TyIndex>,
+    ) -> TyIndex {
         // Process statements — bindings are sequential, checks are spawned
         for stmt in &self.stmts {
             match stmt {
@@ -723,7 +814,7 @@ impl Block {
                     // Spawn initializer check as a concurrent task —
                     // it will equate with declared_ty when it completes
                     if let Some(init) = initializer {
-                        ctx.runtime.spawn(async move {
+                        scope.spawn(async move {
                             let init_ty = init.check(ctx, Some(declared_ty)).await;
                             ctx.require_coerce(init_ty, declared_ty);
                         });
@@ -731,7 +822,7 @@ impl Block {
                 }
                 
                 Stmt::Expr(expr) => {
-                    ctx.runtime.spawn(async move {
+                    scope.spawn(async move {
                         expr.check(ctx, None).await;
                     });
                 }
@@ -751,12 +842,15 @@ The structured concurrency scope ensures all spawned tasks within a block comple
 
 ### Core constraint operations
 
-There are three constraint operations, plus a placeholder for coercions (a non-goal for this pass):
+This is the original pre-solver sketch for the three constraint operations,
+plus a coercion placeholder. It is illustrative rather than the current API
+contract: the Trait Solving RFD replaces direct speculative mutation with
+explicit-version transactions and routes trait predicates through obligations.
 
 ```rust
 impl InferCtx {
-    /// Unconditionally assert equality into the egraph.
-    /// Used for where-clauses and known normalizations.
+    /// Record an equality which has already been proven by a trusted rule.
+    /// Source where-clauses are not unconditional equality facts.
     fn assume_eq(&self, a: Ptr<Ty>, b: Ptr<Ty>) {
         self.egraph.union(a, b);
         // Triggers congruence propagation via the worklist
@@ -858,7 +952,7 @@ impl InferCtx {
 
 | Context | Operation |
 |---------|-----------|
-| Where-clause `T: Foo<Assoc = U>` | `assume_eq` |
+| Trait where-clause | Solver assumption/obligation; associated bindings are deferred |
 | Generic type args (`Vec<T>` vs `Vec<U>`) | `require_eq` |
 | Function argument passing | `require_coerce` |
 | Assignment `let x: T = expr` | `require_coerce` |
@@ -942,60 +1036,86 @@ RExprKind::Closure { params, body } => {
 
 3. **Async appears at method resolution and statement sequencing.** Most expressions check synchronously (if their sub-expressions are concrete). The await points are: (a) waiting for an inference variable to become concrete enough for method resolution, (b) joining parallel sub-expression checks.
 
-4. **No explicit "constraint solving" phase.** Constraints are resolved eagerly by `equate` or lazily by constraint-watcher tasks. There's no separate "solve all constraints" step — finalization just handles the stragglers.
+4. **Ordinary equalities propagate incrementally, but body completion is an
+   explicit phase.** The runtime, committed wakes, and trait obligations are
+   driven jointly to quiescence; stalled variables are then finalized for
+   recovery, tasks resume, and retained obligations receive a mandatory final
+   pass.
 
 ## Implementation status
 
-The `sage-infer` crate implements the infrastructure sections of this RFD. What's done and what's next:
+The inference modules under `crates/sage-ir/src/check/` implement the initial
+infrastructure sections of this RFD. What's done and what's next:
 
-**Done (crates/sage-infer):**
+**Done:**
 - Versioned union-find with sparse per-version diffs (`egraph.rs`)
 - Monotonic bounds: `None` → `AtLeast` → `Exactly` (`bound.rs`)
 - Version tree with branching/discard for speculative exploration (`version.rs`)
 - Skeleton decompose/recompose for generic structural type operations (`skeleton.rs`)
 - Constraint operations: `require_eq`, `require_sub`, `require_coerce` (`infer_ctx.rs`)
-- Universe tracking for closure scope escape prevention
+- Universe metadata scaffolding (`Universe`, `VarInfo`); full leak enforcement is
+  not implemented yet
 - Finalization: promote unresolved → Error, AtLeast → Exactly
 - Async runtime scaffold (`runtime.rs`)
-- Body walker (`check.rs`): walks `ResolvedBody`, checks literals, locals, blocks, binary ops, if/else, return, assign, tuples, refs, struct literals, field access with generic instantiation
-- In-memory test harness (`sage-test-harness` crate) and end-to-end integration tests (`tests/type_check_tests.rs`)
+- Async body checker (`check/expr.rs`) for the currently supported expression
+  forms
+- In-memory test support and integration tests under `crates/sage-ir/tests/`
 
 **Design decisions made during implementation:**
 - `TyData` compound variants store `Slice<Ptr<Ty<'db>>>` (pointer-slices), not `Slice<Ty<'db>>`. This enables zero-copy skeleton decomposition — `decompose` takes `&Stash` (read-only).
-- Congruence closure should use **lazy recanon-on-find** rather than eager propagation with a dependents map. When `find` encounters a compound type, it decomposes, canonicalizes each child, recomposes, and unions if changed. No separate dependents tracking needed.
+- Congruence closure currently uses explicit dependents and a rebuild worklist.
+  A lazy recanon-on-find design was considered but is not the implemented
+  behavior.
 - No `TyIdx` newtype — uses `Ptr<Ty<'db>>` directly throughout.
 - Block tail heuristic: tree-sitter wraps if/else in `expression_statement` even without a semicolon, so the checker treats the last `Expr` statement as the tail when there is no explicit tail expression.
 
-**Next steps (same RFD, not started):**
+**Follow-on work owned by dependent RFDs:**
+- Globally unique inference-variable IDs with owning-version metadata
+- Explicit-version egraph operations and exclusive child-to-parent collapse
+- Transactional unification with occurs and universe-leak checks
+- Scoped runtime tasks, real wakers, joining, and version-aware cancellation
+- Kind-aware folding of lifetime and const parameters embedded in types for
+  canonical query copying (they remain rigid in the solver MVP)
 - Async task spawning for structured concurrency in blocks
 - Surface desugarings (`?`, `for`, `.await`)
 - Function calls (resolving callee signature, instantiating type args)
 - Method resolution on known types
 
-## Open questions
+The first five items are prerequisites in the Trait Solving implementation
+plan; structured body completion is coordinated with the Async Type Checker;
+method lookup belongs to the Method Resolution RFD. They do not reopen this
+completed foundation RFD.
 
-1. **Promotion conditions.** What are the precise conditions for promoting `AtLeast` to `Exactly`? Some cases are clear (only one impl, no variance). Others need a quiescence check ("nothing further can tighten this").
+## Remaining follow-ons
+
+1. **Promotion conditions (MVP rule).** A proven exact equality may promote a
+   variable early. Candidate uniqueness or a heuristic bound may not. The
+   recovery promotion from `AtLeast(B)` to `Exactly(B)` happens only at the
+   global stable-quiescence barrier described above; later refinements can add
+   earlier sound promotion rules without changing solver results.
 
 2. **Variance and subtyping.** How does `>=` interact with variance? `?X >= Foo<'a>` where `Foo` is covariant in its lifetime — does this mean `?X` could be `Foo<'static>`?
 
 3. **Higher-ranked types.** How do `for<'a>` types interact with the bounds/streams model? E.g., `fn(&u32, &u32)` as a higher-ranked function type — can we avoid instantiating the binder eagerly?
 
-4. **Cycles.** In the egraph layer with only `=` constraints, cycles are simpler (either coinductive solution or error). But can cycles arise between the bounds layer and the solver? (Probably not — the solver is forward-only and bounds are monotone.)
+4. **Cycles.** Equality cycles are rejected by transactional occurs checking.
+   The MVP trait solver treats an ancestor proof cycle as inductive failure;
+   coinductive auto-trait cycles are deferred to a later solver design.
 
-5. ~~**Egraph vs. explicit propagation.** Is the congruence closure machinery worth its complexity, or should we propagate structural equalities explicitly in the solver?~~ **Resolved:** Lazy recanon-on-find. No dependents map — just decompose/find-children/recompose when observing a compound type.
+5. ~~**Egraph vs. explicit propagation.** Is the congruence closure machinery
+   worth its complexity, or should structural equalities be propagated only by
+   solver code?~~ **Resolved:** keep congruence in the egraph. The current
+   implementation uses dependents plus an explicit rebuild worklist; changing
+   that representation is independent of the solver contract.
 
 6. **Memory management.** Inference variables and egraph nodes accumulate during type checking of a function body. When is it safe to GC? Version removal handles speculative branches, but the "successful" path grows monotonically.
 
 ## Trait solving
 
-The trait solver design is out of scope for this RFD. It deserves its own deep-dive covering:
-
-- The placeholder approach to near-misses (replacing BOTTOM with fresh `GenericParam` placeholders, e.g., `Option<_1>: Trait` becomes `forall<X> Option<X>: Trait`, which comes back with hints like `X = u32` or `X: Bar`)
-- How to manage lifetime canonicalization for better cache hits (precise lifetimes often don't matter — only their relationships)
-- Coherence, overlap, specialization
-- The `#[salsa::tracked]` caching strategy
-
-For this first type inference pass, we focus on what can be done *without* trait solving.
+Trait solving remains a separate subsystem. Its canonical roles, versioned
+probes, result algebra, residual-obligation lifecycle, and Salsa caching
+boundary are specified in the [Trait Solving RFD](../trait-solving/README.md).
+This RFD supplies the inference state on which that design operates.
 
 ## Target examples
 
@@ -1122,7 +1242,9 @@ Exercises: mutable locals with type narrowing, `for` loops, `as` casts, nested p
 
 For these patterns, the inference engine needs:
 1. **Forward propagation** — struct field types, enum variant payloads, function return types flow into locals.
-2. **Backward propagation (limited)** — `Vec::new()` gets its type parameter from later usage. This is the one case where near-misses or deferred resolution matters even without full trait solving.
+2. **Backward propagation (limited)** — `Vec::new()` gets its type parameter
+   from later usage through ordinary equality/deferred resolution; this does
+   not require committing trait-solver near-misses.
 3. **Match exhaustiveness isn't needed** — just the type-level: all arms produce the same type.
 4. **Method resolution on known types** — `vec.push(x)` where `vec: Vec<T>` is already known. This is inherent impl lookup, not trait dispatch.
 5. **`?` operator** — may need to be stubbed or handled as syntactic sugar for match + `From::from` (which is trait solving). Consider deferring.

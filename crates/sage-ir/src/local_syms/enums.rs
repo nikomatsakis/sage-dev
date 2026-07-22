@@ -1,10 +1,11 @@
-use sage_stash::StashDirect;
+use sage_stash::{StashDirect, Stashed};
 
 use crate::cst::enums::{EnumCst, VariantCst};
 use crate::name::Name;
 use crate::scope::ScopeSymbol;
 use crate::span::AbsoluteSpan;
 use crate::symbol::Symbol;
+use crate::ty::{Binder, EnumSig};
 
 #[salsa::tracked(debug)]
 pub struct LocalEnumSym<'db> {
@@ -30,6 +31,62 @@ impl<'db> LocalEnumSym<'db> {
     ) {
         let (stash, data) = self.cst(db).open_deref();
         (stash, &stash[data.attrs])
+    }
+}
+
+#[salsa::tracked]
+impl<'db> LocalEnumSym<'db> {
+    /// Computes enum generics, variants, and the ADT well-formedness
+    /// environment under one coherent binder.
+    #[salsa::tracked]
+    pub fn sig(self, db: &'db dyn crate::Db) -> Stashed<Binder<'db, EnumSig<'db>>> {
+        use crate::check::Check;
+        use crate::cst::generics::CheckGenerics;
+        use crate::resolve::Resolver;
+        use crate::ty::{CheckedParameterEnv, FieldSig, VariantSig};
+
+        let (source, cst) = self.cst(db).open_deref();
+        let mut cx = Check::new(db, source, Resolver::new(db, self.scope(db)));
+        cx.current_sym = Some(crate::local_syms::LocalModItemSym::Enum(self));
+
+        let parent: Symbol<'db> = self.into();
+        let generics = cst.generics.check(db, &mut cx, parent);
+        let variants: Vec<_> = source[cst.variants]
+            .iter()
+            .map(|variant| {
+                let fields: Vec<_> = source[variant.fields]
+                    .iter()
+                    .map(|field| {
+                        let ty = source[field.ty].check(&mut cx);
+                        FieldSig {
+                            name: field.name,
+                            ty: cx.target_stash.alloc(ty),
+                        }
+                    })
+                    .collect();
+                VariantSig {
+                    name: variant.name,
+                    fields: cx.target_stash.alloc_slice(&fields),
+                }
+            })
+            .collect();
+        let variants = cx.target_stash.alloc_slice(&variants);
+        let (where_clauses, solver_eligibility) = crate::check::trait_env::lower_predicates(
+            &mut cx,
+            cst.generics,
+            generics,
+            cst.where_clauses,
+        );
+        cx.finish(Binder::new(
+            EnumSig {
+                variants,
+                parameter_env: CheckedParameterEnv {
+                    where_clauses,
+                    solver_eligibility,
+                },
+            },
+            generics,
+        ))
     }
 }
 

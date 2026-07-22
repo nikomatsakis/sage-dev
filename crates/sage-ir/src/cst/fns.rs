@@ -26,7 +26,20 @@ pub struct FnCstData<'db> {
 pub struct ParamCst<'db> {
     pub name: Option<Name<'db>>,
     pub ty: Ptr<TypeCst<'db>>,
+    pub receiver: Option<ReceiverCst<'db>>,
     pub span: RelativeSpan,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub enum ReceiverCst<'db> {
+    Value {
+        mutable_binding: bool,
+    },
+    Ref {
+        mutability: crate::cst::Mutability,
+        lifetime: Option<Name<'db>>,
+    },
+    Typed,
 }
 
 // ---------------------------------------------------------------------------
@@ -74,6 +87,30 @@ impl<'db> ToTokens<'db> for FnCstData<'db> {
 
 impl<'db> ToTokens<'db> for ParamCst<'db> {
     fn to_tokens(&self, ctx: &TokenCtx<'_, 'db>, sink: &mut dyn TokenSink) {
+        match self.receiver {
+            Some(ReceiverCst::Value { mutable_binding }) => {
+                if mutable_binding {
+                    sink.ident("mut");
+                }
+                sink.ident("self");
+                return;
+            }
+            Some(ReceiverCst::Ref {
+                mutability,
+                lifetime,
+            }) => {
+                sink.punct(Punct::Amp);
+                if let Some(lifetime) = lifetime {
+                    sink.ident(lifetime.text(ctx.db));
+                }
+                if mutability == crate::cst::Mutability::Mut {
+                    sink.ident("mut");
+                }
+                sink.ident("self");
+                return;
+            }
+            Some(ReceiverCst::Typed) | None => {}
+        }
         if let Some(name) = self.name {
             sink.ident(name.text(ctx.db));
             sink.punct(Punct::Colon);

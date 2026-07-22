@@ -38,6 +38,7 @@ impl<'db> LocalFnSym<'db> {
 #[salsa::tracked]
 impl<'db> LocalFnSym<'db> {
     /// Computes the signature: generics, parameter types, return type.
+    // ANCHOR: example_fn_sig
     #[salsa::tracked]
     pub fn sig(self, db: &'db dyn crate::Db) -> Stashed<Binder<'db, FnSig<'db>>> {
         use crate::check::Check;
@@ -70,12 +71,27 @@ impl<'db> LocalFnSym<'db> {
         };
         let ret = cx.target_stash.alloc(ret_ty);
 
-        let fn_sig = FnSig { params, ret };
+        let (where_clauses, solver_eligibility) = crate::check::trait_env::lower_predicates(
+            &mut cx,
+            cst.generics,
+            generics,
+            cst.where_clauses,
+        );
+        let fn_sig = FnSig {
+            params,
+            ret,
+            parameter_env: crate::ty::CheckedParameterEnv {
+                where_clauses,
+                solver_eligibility,
+            },
+        };
         let binder = Binder::new(fn_sig, generics);
         cx.finish(binder)
     }
+    // ANCHOR_END: example_fn_sig
 
     /// Resolves and type-checks the function body in a single walk.
+    // ANCHOR: example_fn_body
     #[salsa::tracked(returns(ref))]
     pub fn body(self, db: &'db dyn crate::Db) -> CheckedBody<'db> {
         use crate::check::infer_ctx::{ErrorContext, InferCtx, Scope};
@@ -98,6 +114,7 @@ impl<'db> LocalFnSym<'db> {
 
         // Import the signature's param/return types into the body stash.
         let imported = cx.import_fn_sig(&sig);
+        cx.set_solver_environment(imported.parameter_env);
         let ret_span = cst.ret.map(|r| src[r].span);
         cx.set_ret_ty(imported.ret, ret_span);
 
@@ -105,7 +122,7 @@ impl<'db> LocalFnSym<'db> {
         scope.bind_params(&cx, imported.params, cst.params);
 
         // Walk the body CST: resolve names + infer types → TyExpr.
-        let body_expr = cx.block_on(async {
+        let body_expr = cx.block_on_body(async {
             let expr = match cst.body {
                 Some(body_ptr) => src[body_ptr].check_with(&cx, &scope).await,
                 None => {
@@ -135,4 +152,5 @@ impl<'db> LocalFnSym<'db> {
 
         cx.finish(body_expr, cst.span)
     }
+    // ANCHOR_END: example_fn_body
 }

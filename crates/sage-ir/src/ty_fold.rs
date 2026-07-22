@@ -89,15 +89,85 @@ pub fn fold_fn_sig<'db>(folder: &mut impl TyFolder<'db>, sig: FnSig<'db>) -> FnS
     let params = fold_ptr_slice(folder, sig.params);
     let ret_ty = folder.fold_ty(folder.source()[sig.ret]);
     let ret = folder.target().alloc(ret_ty);
-    FnSig { params, ret }
+    let parameter_env = fold_parameter_env(folder, sig.parameter_env);
+    FnSig {
+        params,
+        ret,
+        parameter_env,
+    }
 }
 
 pub fn fold_struct_sig<'db>(
-    _folder: &mut impl TyFolder<'db>,
+    folder: &mut impl TyFolder<'db>,
     sig: StructSig<'db>,
 ) -> StructSig<'db> {
-    let StructSig { dummy } = sig;
-    StructSig { dummy }
+    StructSig {
+        parameter_env: fold_parameter_env(folder, sig.parameter_env),
+    }
+}
+
+pub fn fold_enum_sig<'db>(folder: &mut impl TyFolder<'db>, sig: EnumSig<'db>) -> EnumSig<'db> {
+    let source_variants = folder.source()[sig.variants].to_vec();
+    let variants: Vec<_> = source_variants
+        .into_iter()
+        .map(|variant| {
+            let source_fields = folder.source()[variant.fields].to_vec();
+            let fields: Vec<_> = source_fields
+                .into_iter()
+                .map(|field| {
+                    let ty = folder.fold_ty(folder.source()[field.ty]);
+                    FieldSig {
+                        name: field.name,
+                        ty: folder.target().alloc(ty),
+                    }
+                })
+                .collect();
+            VariantSig {
+                name: variant.name,
+                fields: folder.target().alloc_slice(&fields),
+            }
+        })
+        .collect();
+    EnumSig {
+        variants: folder.target().alloc_slice(&variants),
+        parameter_env: fold_parameter_env(folder, sig.parameter_env),
+    }
+}
+
+pub fn fold_trait_ref<'db>(
+    folder: &mut impl TyFolder<'db>,
+    trait_ref: TraitRef<'db>,
+) -> TraitRef<'db> {
+    TraitRef {
+        trait_sym: trait_ref.trait_sym,
+        args: fold_ptr_slice(folder, trait_ref.args),
+    }
+}
+
+pub fn fold_where_predicate<'db>(
+    folder: &mut impl TyFolder<'db>,
+    predicate: WherePredicate<'db>,
+) -> WherePredicate<'db> {
+    let self_ty = folder.fold_ty(folder.source()[predicate.self_ty]);
+    WherePredicate {
+        self_ty: folder.target().alloc(self_ty),
+        trait_ref: fold_trait_ref(folder, predicate.trait_ref),
+    }
+}
+
+pub fn fold_parameter_env<'db>(
+    folder: &mut impl TyFolder<'db>,
+    env: CheckedParameterEnv<'db>,
+) -> CheckedParameterEnv<'db> {
+    let source = folder.source()[env.where_clauses].to_vec();
+    let predicates: Vec<_> = source
+        .into_iter()
+        .map(|predicate| fold_where_predicate(folder, predicate))
+        .collect();
+    CheckedParameterEnv {
+        where_clauses: folder.target().alloc_slice(&predicates),
+        solver_eligibility: env.solver_eligibility,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -160,35 +230,54 @@ impl<'db> TyFolder<'db> for Substitute<'_, 'db> {
 // ---------------------------------------------------------------------------
 
 pub fn instantiate_fn_sig<'db>(
+    db: &'db dyn crate::Db,
     source: &Stash,
     target: &mut Stash,
     binder: &Binder<'db, FnSig<'db>>,
     args: Vec<Ty<'db>>,
 ) -> FnSig<'db> {
-    let subst = build_subst_map(source, binder.generics, &args);
+    let subst = build_type_subst_map(db, source, binder.generics, &args);
     let mut folder = Substitute::new(source, target, subst);
     fold_fn_sig(&mut folder, binder.value)
 }
 
 pub fn instantiate_struct_sig<'db>(
+    db: &'db dyn crate::Db,
     source: &Stash,
     target: &mut Stash,
     binder: &Binder<'db, StructSig<'db>>,
     args: Vec<Ty<'db>>,
 ) -> StructSig<'db> {
-    let subst = build_subst_map(source, binder.generics, &args);
+    let subst = build_type_subst_map(db, source, binder.generics, &args);
     let mut folder = Substitute::new(source, target, subst);
     fold_struct_sig(&mut folder, binder.value)
 }
 
-fn build_subst_map<'db>(
+pub fn instantiate_enum_sig<'db>(
+    db: &'db dyn crate::Db,
+    source: &Stash,
+    target: &mut Stash,
+    binder: &Binder<'db, EnumSig<'db>>,
+    args: Vec<Ty<'db>>,
+) -> EnumSig<'db> {
+    let subst = build_type_subst_map(db, source, binder.generics, &args);
+    let mut folder = Substitute::new(source, target, subst);
+    fold_enum_sig(&mut folder, binder.value)
+}
+
+fn build_type_subst_map<'db>(
+    db: &'db dyn crate::Db,
     source: &Stash,
     generics: Slice<GenericParam<'db>>,
     args: &[Ty<'db>],
 ) -> FxHashMap<GenericParam<'db>, SubstTarget<'db>> {
     let params = &source[generics];
     let mut subst = FxHashMap::default();
-    for (param, arg) in params.iter().zip(args.iter()) {
+    for (param, arg) in params
+        .iter()
+        .filter(|parameter| parameter.kind(db) == crate::generic_param::GenericParamKind::Type)
+        .zip(args.iter())
+    {
         subst.insert(*param, SubstTarget::Ty(*arg));
     }
     subst

@@ -43,6 +43,7 @@ When one of these happens, update the matching page(s) before you consider the w
 |---|---|
 | We settle (or revise) how part of the system *should* be designed | The relevant [architecture](../design/README.md) page — record the intended destination, marking anything not yet built as planned |
 | We're planning a change (including an architectural one) | Open an **RFD** (`md/rfds/<name>/`) per the [RFD process](../rfds/README.md) to describe and discuss it; track steps in its `implementation.md`. When it lands an architectural change, reflect the end-state in the [architecture](../design/README.md) page |
+| A draft RFD is added | List it under *Draft* in [`SUMMARY.md`](../SUMMARY.md); mark unsettled mechanisms as planned in any destination page |
 | An RFD's implementation step lands | Tick the step in that RFD's `implementation.md` — this is the only place per-step status lives; do **not** touch the roadmap |
 | An RFD is accepted (merged, in progress) | Move it to *Accepted* in [`SUMMARY.md`](../SUMMARY.md) and [`accepted.md`](../rfds/accepted.md); flip its group to **In flight** in the [Build-Out Roadmap](../implementation/roadmap.md) |
 | An RFD completes | Move it to *Completed* in [`SUMMARY.md`](../SUMMARY.md) and [`completed.md`](../rfds/completed.md); update the relevant [architecture](../design/README.md) page; flip its group to **Done** in the [Build-Out Roadmap](../implementation/roadmap.md) |
@@ -63,6 +64,19 @@ When a change touches more than one row, update all of them in the same change.
 - **Ground built claims in the code.** For anything described as existing, tie statements to
   actual modules/files and keep references accurate. Planned design is grounded in the
   design discussion instead, and is labelled as planned.
+- **Include implementation excerpts with ezanchor.** Put matching
+  `// ANCHOR: name` and `// ANCHOR_END: name` comments around the smallest
+  useful source region in one of the `scan-dirs` configured in `book.toml`,
+  then reference it with an ezanchor block:
+
+  ````text
+  ```{anchor}
+  name
+  ```
+  ````
+
+  This emits both the excerpt and its GitHub source link. Do not
+  hand-copy Rust implementation snippets into walkthroughs.
 - **Diagrams use Mermaid** in fenced ` ```mermaid ` blocks.
 - **Style** (inherited from the RFD process): no promotional or dramatic language; be factual
   and brief; lead with concrete concepts, then generalize; include examples.

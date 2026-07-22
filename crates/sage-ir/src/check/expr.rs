@@ -37,7 +37,7 @@ impl<'db> ExprCst<'db> {
             ExprCstKind::Path(path_ptr) => {
                 let path = cx.source_stash[*path_ptr];
                 let res = resolve_path(cx, scope, path, Namespace::Value, span);
-                let ty = res_to_ty(cx, scope, res);
+                let ty = res_to_ty(cx, scope, res, span);
                 (TyExprData::Path(res), ty)
             }
             ExprCstKind::Block(stmts, tail) => {
@@ -80,12 +80,14 @@ impl<'db> ExprCst<'db> {
                 let ty = cx.fresh_ty_var();
                 (TyExprData::MethodCall(ro, *name, args_slice), ty)
             }
+            // ANCHOR: example_check_field_expression
             ExprCstKind::Field(obj, name) => {
                 let ro = cx.source_stash[*obj].check_with(cx, scope).await;
                 let obj_ty = cx.find_mut(cx.stash()[ro].ty);
-                let ty = lookup_field_ty(cx, obj_ty, *name);
+                let ty = lookup_field_ty(cx, obj_ty, *name, span);
                 (TyExprData::Field(ro, *name), ty)
             }
+            // ANCHOR_END: example_check_field_expression
             ExprCstKind::Binary(lhs, op, rhs) => {
                 let rl = cx.source_stash[*lhs].check_with(cx, scope).await;
                 let rr = cx.source_stash[*rhs].check_with(cx, scope).await;
@@ -336,9 +338,15 @@ impl<'db> ExprCst<'db> {
                     });
                 }
                 let fields_slice = cx.stash_mut().alloc_slice(&rfields);
-                let result = struct_lit_ty(cx, res);
-                if let Some(local) = result.local {
-                    check_struct_lit_fields(cx, local, result.type_args, fields_slice);
+                let result = struct_lit_ty(cx, res, span);
+                match result.field_source {
+                    Some(StructLitFieldSource::Struct(local)) => {
+                        check_struct_lit_fields(cx, local, result.type_args, fields_slice);
+                    }
+                    Some(StructLitFieldSource::Instantiated(field_sigs)) => {
+                        check_instantiated_struct_lit_fields(cx, field_sigs, fields_slice);
+                    }
+                    None => {}
                 }
                 (TyExprData::StructLit(res, fields_slice), result.ty)
             }
@@ -543,19 +551,115 @@ impl<'db> TypeCst<'db> {
         match self.kind {
             TypeCstKind::Path(path_ptr) => {
                 let path = cx.source_stash[path_ptr];
+                let final_segment = match path {
+                    crate::cst::paths::Path::Relative(first, rest) => {
+                        cx.source_stash[rest].last().copied().unwrap_or(first)
+                    }
+                    crate::cst::paths::Path::Anchored(_, rest) => *cx.source_stash[rest]
+                        .last()
+                        .expect("anchored type path has no segment"),
+                };
+                let type_arguments: Vec<_> = cx.source_stash[final_segment.type_args]
+                    .iter()
+                    .map(|argument| {
+                        let ty = argument.check_ty(cx, scope);
+                        cx.stash_mut().alloc(ty)
+                    })
+                    .collect();
+                let type_args = cx.stash_mut().alloc_slice(&type_arguments);
                 let mut resolver = scope.resolver.clone();
                 let results = resolver.resolve_path(cx.source_stash, path, Namespace::Type);
                 match results.into_iter().next() {
                     Some(Resolution::Sym(sym)) => match sym.data(cx.db) {
                         SymbolData::IntrinsicTypeSymbol(s) => intrinsic_to_ty(s.intrinsic(cx.db)),
-                        SymbolData::StructSymbol(_)
-                        | SymbolData::EnumSymbol(_)
-                        | SymbolData::TraitSymbol(_)
-                        | SymbolData::TypeAliasSymbol(_) => {
-                            let type_args = cx.stash_mut().alloc_slice(&[]);
+                        SymbolData::StructSymbol(crate::symbol::StructSymbol::Local(local)) => {
+                            use crate::ty::BinderExt;
+
+                            let signature = local.sig(cx.db);
+                            if signature
+                                .iter_symbols()
+                                .filter(|parameter| {
+                                    parameter.kind(cx.db)
+                                        == crate::generic_param::GenericParamKind::Type
+                                })
+                                .count()
+                                != type_arguments.len()
+                            {
+                                let error = cx.record(Diagnostic::error(
+                                    cx.span(self.span),
+                                    "incorrect number of type arguments",
+                                ));
+                                return Ty::Error(error);
+                            }
+                            let arguments = type_arguments
+                                .iter()
+                                .map(|argument| cx.stash()[*argument])
+                                .collect();
+                            let instantiated = crate::ty_fold::instantiate_struct_sig(
+                                cx.db,
+                                signature.stash(),
+                                &mut cx.stash_mut(),
+                                &signature.root(),
+                                arguments,
+                            );
+                            cx.submit_parameter_env(
+                                instantiated.parameter_env,
+                                self.span,
+                                crate::check::infer::obligations::ObligationReason::AdtWellFormedness,
+                            );
                             Ty::Adt(sym, type_args)
                         }
-                        _ => {
+                        SymbolData::EnumSymbol(crate::symbol::EnumSymbol::Local(local)) => {
+                            use crate::ty::BinderExt;
+
+                            let signature = local.sig(cx.db);
+                            if signature
+                                .iter_symbols()
+                                .filter(|parameter| {
+                                    parameter.kind(cx.db)
+                                        == crate::generic_param::GenericParamKind::Type
+                                })
+                                .count()
+                                != type_arguments.len()
+                            {
+                                let error = cx.record(Diagnostic::error(
+                                    cx.span(self.span),
+                                    "incorrect number of type arguments",
+                                ));
+                                return Ty::Error(error);
+                            }
+                            let arguments = type_arguments
+                                .iter()
+                                .map(|argument| cx.stash()[*argument])
+                                .collect();
+                            let instantiated = crate::ty_fold::instantiate_enum_sig(
+                                cx.db,
+                                signature.stash(),
+                                &mut cx.stash_mut(),
+                                &signature.root(),
+                                arguments,
+                            );
+                            cx.submit_parameter_env(
+                                instantiated.parameter_env,
+                                self.span,
+                                crate::check::infer::obligations::ObligationReason::AdtWellFormedness,
+                            );
+                            Ty::Adt(sym, type_args)
+                        }
+                        SymbolData::StructSymbol(crate::symbol::StructSymbol::Ext(_))
+                        | SymbolData::EnumSymbol(crate::symbol::EnumSymbol::Ext(_))
+                        | SymbolData::TraitSymbol(_)
+                        | SymbolData::TypeAliasSymbol(_) => Ty::Adt(sym, type_args),
+                        SymbolData::FnSymbol(_)
+                        | SymbolData::VariantSymbol(_)
+                        | SymbolData::VariantCtorSymbol(_)
+                        | SymbolData::ConstSymbol(_)
+                        | SymbolData::StaticSymbol(_)
+                        | SymbolData::ImplSymbol(_)
+                        | SymbolData::ModSymbol(_)
+                        | SymbolData::MacroDefSymbol(_)
+                        | SymbolData::MacroInvocationSymbol(_)
+                        | SymbolData::UseSymbol(_) => {
                             let e =
                                 cx.record(Diagnostic::error(cx.span(self.span), "expected type"));
                             Ty::Error(e)
@@ -569,10 +673,17 @@ impl<'db> TypeCst<'db> {
                     }
                 }
             }
-            TypeCstKind::Reference(inner, m) => {
+            TypeCstKind::Reference(inner, m, lifetime) => {
                 let inner_ty = cx.source_stash[inner].check_ty(cx, scope);
                 let inner_ptr = cx.stash_mut().alloc(inner_ty);
-                Ty::Ref(inner_ptr, m, Lifetime::Erased)
+                let lifetime = match lifetime {
+                    crate::cst::ty::LifetimeCst::Named(name) if name.text(cx.db) == "'static" => {
+                        Lifetime::Static
+                    }
+                    crate::cst::ty::LifetimeCst::Named(_)
+                    | crate::cst::ty::LifetimeCst::Anonymous => Lifetime::Erased,
+                };
+                Ty::Ref(inner_ptr, m, lifetime)
             }
             TypeCstKind::Tuple(elems) => {
                 let tys: Vec<_> = cx.source_stash[elems]
@@ -657,35 +768,138 @@ fn check_literal_ty<'db>(cx: &InferCtx<'_, 'db>, lit: Literal<'db>) -> Ptr<Ty<'d
     }
 }
 
-fn res_to_ty<'db>(cx: &InferCtx<'_, 'db>, scope: &Scope<'db>, res: Res<'db>) -> Ptr<Ty<'db>> {
+fn res_to_ty<'db>(
+    cx: &InferCtx<'_, 'db>,
+    scope: &Scope<'db>,
+    res: Res<'db>,
+    span: RelativeSpan,
+) -> Ptr<Ty<'db>> {
     match res {
         Res::Local(LocalId(id)) => scope.local_type(id),
-        Res::Def(sym) => def_to_ty(cx, sym),
+        Res::Def(sym) => def_to_ty(cx, sym, span),
         Res::Error(e) => cx.alloc_ty(Ty::Error(e)),
     }
 }
 
-fn def_to_ty<'db>(cx: &InferCtx<'_, 'db>, sym: crate::symbol::Symbol<'db>) -> Ptr<Ty<'db>> {
+fn def_to_ty<'db>(
+    cx: &InferCtx<'_, 'db>,
+    sym: crate::symbol::Symbol<'db>,
+    span: RelativeSpan,
+) -> Ptr<Ty<'db>> {
     use crate::symbol::SymbolData;
     use crate::ty::BinderExt;
 
     match sym.data(cx.db) {
+        // ANCHOR: example_instantiate_callee_obligations
         SymbolData::FnSymbol(crate::symbol::FnSymbol::Local(local)) => {
             let sig = local.sig(cx.db);
             let sig_stash = sig.stash();
 
-            let type_arg_ptrs: Vec<_> = sig.iter_symbols().map(|_| cx.fresh_ty_var()).collect();
+            let type_arg_ptrs: Vec<_> = sig
+                .iter_symbols()
+                .filter(|parameter| {
+                    parameter.kind(cx.db) == crate::generic_param::GenericParamKind::Type
+                })
+                .map(|_| cx.fresh_ty_var())
+                .collect();
             let type_args: Vec<_> = type_arg_ptrs.iter().map(|&ptr| cx.stash()[ptr]).collect();
             let instantiated = crate::ty_fold::instantiate_fn_sig(
+                cx.db,
                 sig_stash,
                 &mut *cx.stash_mut(),
                 &sig.root(),
                 type_args,
             );
+            cx.submit_parameter_env(
+                instantiated.parameter_env,
+                span,
+                crate::check::infer::obligations::ObligationReason::FunctionCall,
+            );
             cx.alloc_ty(Ty::FnPtr(instantiated.params, instantiated.ret))
         }
-        _ => cx.fresh_ty_var(),
+        // ANCHOR_END: example_instantiate_callee_obligations
+        SymbolData::VariantSymbol(crate::symbol::VariantSymbol::Local(variant)) => {
+            let (enum_sym, type_args, _) =
+                instantiate_local_enum(cx, variant.parent_enum(cx.db), span);
+            cx.alloc_ty(Ty::Adt(enum_sym, type_args))
+        }
+        SymbolData::VariantCtorSymbol(crate::symbol::VariantCtorSymbol::Local(constructor)) => {
+            let variant = constructor.variant(cx.db);
+            let (enum_sym, type_args, enum_sig) =
+                instantiate_local_enum(cx, variant.parent_enum(cx.db), span);
+            let variants = cx.stash()[enum_sig.variants].to_vec();
+            let Some(variant_sig) = variants
+                .into_iter()
+                .find(|candidate| candidate.name == variant.name(cx.db))
+            else {
+                let error = cx.record(Diagnostic::error(
+                    cx.span(span),
+                    "variant is missing from its enum signature",
+                ));
+                return cx.alloc_ty(Ty::Error(error));
+            };
+            let fields = cx.stash()[variant_sig.fields].to_vec();
+            let params: Vec<_> = fields.into_iter().map(|field| field.ty).collect();
+            let params = cx.stash_mut().alloc_slice(&params);
+            let ret = cx.alloc_ty(Ty::Adt(enum_sym, type_args));
+            cx.alloc_ty(Ty::FnPtr(params, ret))
+        }
+        SymbolData::FnSymbol(crate::symbol::FnSymbol::Ext(_))
+        | SymbolData::VariantSymbol(crate::symbol::VariantSymbol::Ext(_))
+        | SymbolData::VariantCtorSymbol(crate::symbol::VariantCtorSymbol::Ext(_))
+        | SymbolData::ConstSymbol(_)
+        | SymbolData::StaticSymbol(_) => cx.fresh_ty_var(),
+        SymbolData::StructSymbol(_)
+        | SymbolData::EnumSymbol(_)
+        | SymbolData::TraitSymbol(_)
+        | SymbolData::TypeAliasSymbol(_)
+        | SymbolData::ImplSymbol(_)
+        | SymbolData::ModSymbol(_)
+        | SymbolData::MacroDefSymbol(_)
+        | SymbolData::IntrinsicTypeSymbol(_)
+        | SymbolData::MacroInvocationSymbol(_)
+        | SymbolData::UseSymbol(_) => {
+            let error = cx.record(Diagnostic::error(cx.span(span), "expected a value"));
+            cx.alloc_ty(Ty::Error(error))
+        }
     }
+}
+
+fn instantiate_local_enum<'db>(
+    cx: &InferCtx<'_, 'db>,
+    local_enum: crate::local_syms::enums::LocalEnumSym<'db>,
+    span: RelativeSpan,
+) -> (
+    crate::symbol::Symbol<'db>,
+    Slice<Ptr<Ty<'db>>>,
+    crate::ty::EnumSig<'db>,
+) {
+    use crate::ty::BinderExt;
+
+    let signature = local_enum.sig(cx.db);
+    let type_args: Vec<_> = signature
+        .iter_symbols()
+        .filter(|parameter| parameter.kind(cx.db) == crate::generic_param::GenericParamKind::Type)
+        .map(|_| cx.fresh_ty_var())
+        .collect();
+    let type_args_slice = cx.stash_mut().alloc_slice(&type_args);
+    let type_arg_values = type_args
+        .iter()
+        .map(|argument| cx.stash()[*argument])
+        .collect();
+    let instantiated = crate::ty_fold::instantiate_enum_sig(
+        cx.db,
+        signature.stash(),
+        &mut cx.stash_mut(),
+        &signature.root(),
+        type_arg_values,
+    );
+    cx.submit_parameter_env(
+        instantiated.parameter_env,
+        span,
+        crate::check::infer::obligations::ObligationReason::AdtWellFormedness,
+    );
+    (local_enum.into(), type_args_slice, instantiated)
 }
 
 fn check_binary_op_ty<'db>(
@@ -723,11 +937,20 @@ use sage_stash::Slice;
 
 struct StructLitResult<'db> {
     ty: Ptr<Ty<'db>>,
-    local: Option<crate::local_syms::structs::LocalStructSym<'db>>,
+    field_source: Option<StructLitFieldSource<'db>>,
     type_args: Slice<Ptr<Ty<'db>>>,
 }
 
-fn struct_lit_ty<'db>(cx: &InferCtx<'_, 'db>, res: Res<'db>) -> StructLitResult<'db> {
+enum StructLitFieldSource<'db> {
+    Struct(crate::local_syms::structs::LocalStructSym<'db>),
+    Instantiated(Slice<crate::ty::FieldSig<'db>>),
+}
+
+fn struct_lit_ty<'db>(
+    cx: &InferCtx<'_, 'db>,
+    res: Res<'db>,
+    span: RelativeSpan,
+) -> StructLitResult<'db> {
     use crate::symbol::SymbolData;
     use crate::ty::BinderExt;
 
@@ -737,7 +960,7 @@ fn struct_lit_ty<'db>(cx: &InferCtx<'_, 'db>, res: Res<'db>) -> StructLitResult<
             let empty = cx.stash_mut().alloc_slice(&[]);
             return StructLitResult {
                 ty: cx.alloc_ty(Ty::Error(e)),
-                local: None,
+                field_source: None,
                 type_args: empty,
             };
         }
@@ -749,7 +972,7 @@ fn struct_lit_ty<'db>(cx: &InferCtx<'_, 'db>, res: Res<'db>) -> StructLitResult<
             let empty = cx.stash_mut().alloc_slice(&[]);
             return StructLitResult {
                 ty: cx.alloc_ty(Ty::Error(e)),
-                local: None,
+                field_source: None,
                 type_args: empty,
             };
         }
@@ -758,11 +981,33 @@ fn struct_lit_ty<'db>(cx: &InferCtx<'_, 'db>, res: Res<'db>) -> StructLitResult<
     match sym.data(cx.db) {
         SymbolData::StructSymbol(crate::symbol::StructSymbol::Local(local)) => {
             let sig = local.sig(cx.db);
-            let type_args: Vec<_> = sig.iter_symbols().map(|_| cx.fresh_ty_var()).collect();
+            let type_args: Vec<_> = sig
+                .iter_symbols()
+                .filter(|parameter| {
+                    parameter.kind(cx.db) == crate::generic_param::GenericParamKind::Type
+                })
+                .map(|_| cx.fresh_ty_var())
+                .collect();
             let type_args_slice = cx.stash_mut().alloc_slice(&type_args);
+            let type_arg_values = type_args
+                .iter()
+                .map(|argument| cx.stash()[*argument])
+                .collect();
+            let instantiated = crate::ty_fold::instantiate_struct_sig(
+                cx.db,
+                sig.stash(),
+                &mut cx.stash_mut(),
+                &sig.root(),
+                type_arg_values,
+            );
+            cx.submit_parameter_env(
+                instantiated.parameter_env,
+                span,
+                crate::check::infer::obligations::ObligationReason::AdtWellFormedness,
+            );
             StructLitResult {
                 ty: cx.alloc_ty(Ty::Adt(sym, type_args_slice)),
-                local: Some(local),
+                field_source: Some(StructLitFieldSource::Struct(local)),
                 type_args: type_args_slice,
             }
         }
@@ -770,17 +1015,22 @@ fn struct_lit_ty<'db>(cx: &InferCtx<'_, 'db>, res: Res<'db>) -> StructLitResult<
             let type_args_slice = cx.stash_mut().alloc_slice(&[]);
             StructLitResult {
                 ty: cx.alloc_ty(Ty::Adt(sym, type_args_slice)),
-                local: None,
+                field_source: None,
                 type_args: type_args_slice,
             }
         }
         SymbolData::VariantSymbol(crate::symbol::VariantSymbol::Local(local_variant)) => {
             let parent_enum = local_variant.parent_enum(cx.db);
-            let enum_sym: crate::symbol::Symbol<'db> = parent_enum.into();
-            let type_args_slice = cx.stash_mut().alloc_slice(&[]);
+            let (enum_sym, type_args_slice, enum_sig) =
+                instantiate_local_enum(cx, parent_enum, span);
+            let field_sigs = cx.stash()[enum_sig.variants]
+                .iter()
+                .find(|variant| variant.name == local_variant.name(cx.db))
+                .expect("local variant is missing from its enum signature")
+                .fields;
             StructLitResult {
                 ty: cx.alloc_ty(Ty::Adt(enum_sym, type_args_slice)),
-                local: None,
+                field_source: Some(StructLitFieldSource::Instantiated(field_sigs)),
                 type_args: type_args_slice,
             }
         }
@@ -788,11 +1038,23 @@ fn struct_lit_ty<'db>(cx: &InferCtx<'_, 'db>, res: Res<'db>) -> StructLitResult<
             let type_args_slice = cx.stash_mut().alloc_slice(&[]);
             StructLitResult {
                 ty: cx.alloc_ty(Ty::Adt(sym, type_args_slice)),
-                local: None,
+                field_source: None,
                 type_args: type_args_slice,
             }
         }
-        _ => {
+        SymbolData::FnSymbol(_)
+        | SymbolData::EnumSymbol(_)
+        | SymbolData::VariantCtorSymbol(_)
+        | SymbolData::TraitSymbol(_)
+        | SymbolData::TypeAliasSymbol(_)
+        | SymbolData::ConstSymbol(_)
+        | SymbolData::StaticSymbol(_)
+        | SymbolData::ImplSymbol(_)
+        | SymbolData::ModSymbol(_)
+        | SymbolData::MacroDefSymbol(_)
+        | SymbolData::IntrinsicTypeSymbol(_)
+        | SymbolData::MacroInvocationSymbol(_)
+        | SymbolData::UseSymbol(_) => {
             let e = cx.record(Diagnostic::error(
                 cx.span(RelativeSpan { start: 0, end: 0 }),
                 "expected struct type",
@@ -800,7 +1062,7 @@ fn struct_lit_ty<'db>(cx: &InferCtx<'_, 'db>, res: Res<'db>) -> StructLitResult<
             let empty = cx.stash_mut().alloc_slice(&[]);
             StructLitResult {
                 ty: cx.alloc_ty(Ty::Error(e)),
-                local: None,
+                field_source: None,
                 type_args: empty,
             }
         }
@@ -818,7 +1080,10 @@ fn check_struct_lit_fields<'db>(
     use rustc_hash::FxHashMap;
 
     let sig = local.sig(cx.db);
-    let generic_params: Vec<_> = sig.iter_symbols().collect();
+    let generic_params: Vec<_> = sig
+        .iter_symbols()
+        .filter(|parameter| parameter.kind(cx.db) == crate::generic_param::GenericParamKind::Type)
+        .collect();
     let type_arg_ptrs: Vec<_> = cx.stash()[type_args].to_vec();
 
     let mut subst = FxHashMap::default();
@@ -859,10 +1124,34 @@ fn check_struct_lit_fields<'db>(
     }
 }
 
+fn check_instantiated_struct_lit_fields<'db>(
+    cx: &InferCtx<'_, 'db>,
+    field_sigs: Slice<crate::ty::FieldSig<'db>>,
+    fields: Slice<TyFieldInit<'db>>,
+) {
+    let field_sigs = cx.stash()[field_sigs].to_vec();
+    let init_fields = cx.stash()[fields].to_vec();
+    for field_init in init_fields {
+        if let Some(field_sig) = field_sigs
+            .iter()
+            .find(|field_sig| field_sig.name == field_init.name)
+        {
+            let init_ty = cx.stash()[field_init.value].ty;
+            if let Err(error) = cx.require_coerce(init_ty, field_sig.ty, field_init.span) {
+                cx.catch(error.with_context(ErrorContext::FieldInit {
+                    field_span: field_init.span,
+                }));
+            }
+        }
+    }
+}
+
+// ANCHOR: example_lookup_field_type
 fn lookup_field_ty<'db>(
     cx: &InferCtx<'_, 'db>,
     obj_ty_ptr: Ptr<Ty<'db>>,
     field_name: crate::name::Name<'db>,
+    span: RelativeSpan,
 ) -> Ptr<Ty<'db>> {
     use crate::symbol::SymbolData;
     use crate::ty::BinderExt;
@@ -873,13 +1162,38 @@ fn lookup_field_ty<'db>(
 
     let (sym, type_args) = match obj_ty {
         Ty::Adt(sym, type_args) => (sym, type_args),
-        _ => return cx.fresh_ty_var(),
+        Ty::InferVar(_) => return cx.fresh_ty_var(),
+        Ty::Error(_) => return obj_ty_ptr,
+        Ty::Bool
+        | Ty::Char
+        | Ty::Int(_)
+        | Ty::Uint(_)
+        | Ty::Float(_)
+        | Ty::Str
+        | Ty::Ref(_, _, _)
+        | Ty::Tuple(_)
+        | Ty::Slice(_)
+        | Ty::Array(_, _)
+        | Ty::FnPtr(_, _)
+        | Ty::Param(_)
+        | Ty::Never => {
+            let error = cx.record(Diagnostic::error(
+                cx.span(span),
+                "field access requires a struct value",
+            ));
+            return cx.alloc_ty(Ty::Error(error));
+        }
     };
 
     match sym.data(cx.db) {
         SymbolData::StructSymbol(crate::symbol::StructSymbol::Local(local)) => {
             let sig = local.sig(cx.db);
-            let generic_params: Vec<_> = sig.iter_symbols().collect();
+            let generic_params: Vec<_> = sig
+                .iter_symbols()
+                .filter(|parameter| {
+                    parameter.kind(cx.db) == crate::generic_param::GenericParamKind::Type
+                })
+                .collect();
             let type_arg_ptrs: Vec<_> = cx.stash()[type_args].to_vec();
 
             let fields_stashed = local.fields(cx.db);
@@ -900,11 +1214,36 @@ fn lookup_field_ty<'db>(
                     return stash.alloc(field_ty_data);
                 }
             }
-            cx.fresh_ty_var()
+            let error = cx.record(Diagnostic::error(
+                cx.span(span),
+                format!("unknown field `{}`", field_name.text(cx.db)),
+            ));
+            cx.alloc_ty(Ty::Error(error))
         }
-        _ => cx.fresh_ty_var(),
+        SymbolData::StructSymbol(crate::symbol::StructSymbol::Ext(_)) => cx.fresh_ty_var(),
+        SymbolData::FnSymbol(_)
+        | SymbolData::EnumSymbol(_)
+        | SymbolData::VariantSymbol(_)
+        | SymbolData::VariantCtorSymbol(_)
+        | SymbolData::TraitSymbol(_)
+        | SymbolData::TypeAliasSymbol(_)
+        | SymbolData::ConstSymbol(_)
+        | SymbolData::StaticSymbol(_)
+        | SymbolData::ImplSymbol(_)
+        | SymbolData::ModSymbol(_)
+        | SymbolData::MacroDefSymbol(_)
+        | SymbolData::IntrinsicTypeSymbol(_)
+        | SymbolData::MacroInvocationSymbol(_)
+        | SymbolData::UseSymbol(_) => {
+            let error = cx.record(Diagnostic::error(
+                cx.span(span),
+                "field access requires a struct value",
+            ));
+            cx.alloc_ty(Ty::Error(error))
+        }
     }
 }
+// ANCHOR_END: example_lookup_field_type
 
 fn check_call_ty<'db>(
     cx: &InferCtx<'_, 'db>,
@@ -925,9 +1264,26 @@ fn check_call_ty<'db>(
             }
             ret
         }
-        _ => {
-            let _ = call_span;
-            cx.fresh_ty_var()
+        Ty::InferVar(_) => cx.fresh_ty_var(),
+        Ty::Error(_) => callee_ty_ptr,
+        Ty::Bool
+        | Ty::Char
+        | Ty::Int(_)
+        | Ty::Uint(_)
+        | Ty::Float(_)
+        | Ty::Str
+        | Ty::Adt(_, _)
+        | Ty::Ref(_, _, _)
+        | Ty::Tuple(_)
+        | Ty::Slice(_)
+        | Ty::Array(_, _)
+        | Ty::Param(_)
+        | Ty::Never => {
+            let error = cx.record(Diagnostic::error(
+                cx.span(call_span),
+                "value is not callable",
+            ));
+            cx.alloc_ty(Ty::Error(error))
         }
     }
 }

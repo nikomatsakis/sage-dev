@@ -4,6 +4,11 @@ RFDs are a way of planning out larger changes. They aren't required but they can
 
 The basic idea is that you open a PR adding an RFD based on the [RFD template](./TEMPLATE/README.md) into the `rfds` directory. Each RFD is itself a subdirectory like `rfds/my-rfd/README.md` with a companion `implementation.md` for tracking steps. Be sure to add it to the SUMMARY.md file. RFDs can have subchapters or other accompanying material.
 
+An unsettled proposal is listed under *Draft* in `SUMMARY.md`. Acceptance moves
+it to *Accepted* and makes its implementation plan eligible to begin. Draft
+RFDs may record alternatives and proof obligations, but destination design
+pages must distinguish their planned mechanisms from built behavior.
+
 If the PR is accepted, the RFD will be merged in. At that point you open implementation PRs based on the RFD until it is completed. Each implementation PR should update the RFD's `implementation.md` to reflect its status.
 
 Finally, you move it from *Accepted* to *Completed* in SUMMARY.md (the path stays the same).

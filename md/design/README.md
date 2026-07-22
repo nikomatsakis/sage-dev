@@ -9,10 +9,12 @@ structural overview.
   query design, two-stash data flow, resolution model, incrementality.
 - [Architecture](./architecture.md) — crate layout, module map, data
   flow diagram, salsa layer, symbol system, testing strategy.
-- [Examples](./examples.md) — three progressive walk-throughs: struct
-  signature, function body with field access, macro-generated struct.
+- [Examples](./examples.md) — progressive, source-linked walkthroughs from a
+  struct signature through body checking, macro expansion, and trait solving.
 - [Checking](./checking.md) — detailed design of the CST checking
   layer: contexts, type lowering, body inference.
+- [Trait Solver](./trait-solver.md) — semantic contract, proof-search
+  model, result knowledge, recursion, resource limits, and scheduling.
 - [Stash](./stash.md) — `sage-stash` arena: `Stash`, `Ptr<T>`,
   `Slice<T>`, `Stashed<T>`, alloc vs intern, salsa integration.
 - [Spans](./spans.md) — two-level span model: `AbsoluteSpan` for

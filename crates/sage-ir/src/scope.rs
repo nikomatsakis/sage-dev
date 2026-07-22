@@ -9,6 +9,8 @@ pub struct LocalCrateSymbol<'db> {
     pub root_mod: LocalModSym<'db>,
 }
 
+impl sage_stash::StashDirect for LocalCrateSymbol<'_> {}
+
 /// Create a `LocalCrateSymbol`. Tracked-struct creation requires a
 /// tracked fn context — use this instead of `LocalCrateSymbol::new` directly.
 #[salsa::tracked]
@@ -27,6 +29,21 @@ impl<'db> ScopeSymbol<'db> {
         match self {
             ScopeSymbol::Crate(c) => c.root_mod(db),
             ScopeSymbol::Module(m) => *m,
+        }
+    }
+
+    /// Return the local crate that owns this scope.
+    pub fn local_crate(self, db: &'db dyn Db) -> LocalCrateSymbol<'db> {
+        let mut scope = self;
+        loop {
+            match scope {
+                ScopeSymbol::Crate(local_crate) => return local_crate,
+                ScopeSymbol::Module(module) => {
+                    scope = module
+                        .parent(db)
+                        .expect("a local module must eventually reach its crate scope");
+                }
+            }
         }
     }
 }
