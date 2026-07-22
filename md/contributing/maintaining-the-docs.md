@@ -43,6 +43,7 @@ When one of these happens, update the matching page(s) before you consider the w
 |---|---|
 | We settle (or revise) how part of the system *should* be designed | The relevant [architecture](../design/README.md) page — record the intended destination, marking anything not yet built as planned |
 | We're planning a change (including an architectural one) | Open an **RFD** (`md/rfds/<name>/`) per the [RFD process](../rfds/README.md) to describe and discuss it; track steps in its `implementation.md`. When it lands an architectural change, reflect the end-state in the [architecture](../design/README.md) page |
+| A draft RFD is added | List it under *Draft* in [`SUMMARY.md`](../SUMMARY.md); mark unsettled mechanisms as planned in any destination page |
 | An RFD's implementation step lands | Tick the step in that RFD's `implementation.md` — this is the only place per-step status lives; do **not** touch the roadmap |
 | An RFD is accepted (merged, in progress) | Move it to *Accepted* in [`SUMMARY.md`](../SUMMARY.md) and [`accepted.md`](../rfds/accepted.md); flip its group to **In flight** in the [Build-Out Roadmap](../implementation/roadmap.md) |
 | An RFD completes | Move it to *Completed* in [`SUMMARY.md`](../SUMMARY.md) and [`completed.md`](../rfds/completed.md); update the relevant [architecture](../design/README.md) page; flip its group to **Done** in the [Build-Out Roadmap](../implementation/roadmap.md) |

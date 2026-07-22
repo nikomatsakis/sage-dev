@@ -66,7 +66,8 @@ re-execution.
 
 ## Trait obligations
 
-Trait and type-equality goals are handled by the `check::solve` subsystem. The
+Trait and type-equality goals are handled by the `check::solve` subsystem under
+the [trait-solver semantic contract](./trait-solver.md). The
 body checker keeps an obligation registry rather
 than treating a conditional solver answer as final: substitutions are applied,
 residual goals remain registered, and every residual must either be discharged

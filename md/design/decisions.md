@@ -91,3 +91,40 @@ producer from borrowing a shared mutable egraph and makes requester
 cancellation independent from producer lifetime. Raw inference-variable and
 version identities cannot cross contexts because every published response is
 validated and canonicalized first.
+
+## D9: Trait solving is groundness-sensitive and resource-bounded
+
+A canonical trait query is ground when it has no flexible existential inputs;
+rigid generic placeholders still count as ground. Non-ground queries must
+terminate and publish only sound proofs, substitutions, hard hints, and
+negative results, but they may return ambiguity despite a valid answer. Ground
+queries are sound and complete unless an explicit deterministic resource limit
+is exceeded.
+
+Ambiguity and resource exhaustion are distinct results. Depth, canonical term
+size, logical work, and fixpoint limits never become logical `No`. For fixed
+canonical inputs and configured limits, polling order may change discovery and
+resource use but not the final canonical solver response. Sage therefore aims
+for broad rustc compatibility without requiring exactly the same source type
+annotations in every non-ground inference case.
+
+The detailed contract lives in [Trait Solver Design](./trait-solver.md).
+
+## D10: Trait impl discovery is global and trait-keyed
+
+Trait candidate discovery covers every impl visible in the current compilation
+through local source and reachable external-crate metadata. The fixed trait is
+the mandatory primary query key; the solver does not enumerate impls for every
+trait and filter them only during proof execution.
+
+A simplified self-type key may refine lookup when its rigid outer shape is
+known. Such an index is conservative: it may return extra candidates but never
+omit an applicable specific, blanket, or unclassifiable impl. Indexed and
+exhaustive discovery have identical solver meaning. The trait key, and
+eventually compatible self-type partitions, also form the incremental
+invalidation boundary so unrelated impl changes do not reexecute the query.
+
+The current `local_impls(LocalCrateSymbol)` scan is an MVP source. The
+destination and required conformance tests live in
+[Trait Solver Design](./trait-solver.md) and the
+[Trait Impl Candidate Discovery RFD](../rfds/trait-impl-candidate-discovery/README.md).

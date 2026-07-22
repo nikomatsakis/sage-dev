@@ -127,6 +127,9 @@ The positive, inductive, type-only solver and its body-obligation integration
 exist. Method resolution, external impl discovery, normalization, higher-ranked
 reasoning, and the other explicitly deferred extensions remain planned; their
 status is tracked in the [Build-Out Roadmap](../implementation/roadmap.md).
+The destination-level soundness, completeness, candidate-discovery, progress,
+scheduling, and resource contract is recorded in
+[Trait Solver Design](./trait-solver.md).
 
 Checked local trait and impl signatures live on their owning symbols. A
 `local_impls(LocalCrateSymbol)` query provides deterministic per-crate enumeration; the

@@ -36,6 +36,8 @@ one or more RFDs. Status is one of:
 | Group | RFDs | Notes |
 |---|---|---|
 | Method resolution | [method-resolution] | Inherent lookup follows [trait-system]; trait methods additionally depend on [trait-solving]; no method-resolution code landed |
+| Trait impl candidate discovery | [trait-impl-candidate-discovery] | Draft design for global visible-impl discovery, mandatory trait keys, conservative self-type refinement, and incremental reuse |
+| Trait solver search architecture | [trait-solver-cycle-semantics], [trait-solver-scheduling], [incremental-trait-results] | Draft design for recursive semantics and limits, fair future scheduling, and monotone progress envelopes |
 
 [initial-setup]: ../rfds/initial-setup/README.md
 [parse]: ../rfds/parse/README.md
@@ -65,3 +67,7 @@ one or more RFDs. Status is one of:
 [trait-system]: ../rfds/trait-system/README.md
 [trait-solving]: ../rfds/trait-solving/README.md
 [method-resolution]: ../rfds/method-resolution/README.md
+[trait-impl-candidate-discovery]: ../rfds/trait-impl-candidate-discovery/README.md
+[trait-solver-cycle-semantics]: ../rfds/trait-solver-cycle-semantics/README.md
+[trait-solver-scheduling]: ../rfds/trait-solver-scheduling/README.md
+[incremental-trait-results]: ../rfds/incremental-trait-results/README.md

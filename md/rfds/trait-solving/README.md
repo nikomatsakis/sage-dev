@@ -1,6 +1,6 @@
 # RFD: Trait Solving
 
-**Status:** Draft
+**Status:** Accepted
 
 **Depends on:**
 - [Trait System](../trait-system/README.md) — `TraitRef`, `WherePredicate`,
@@ -17,6 +17,18 @@ whether it follows from the assumptions at the proving site and the positive
 trait impls in the current crate. The solver uses versioned inference state for
 speculation and coordinates repeated atomic sub-proofs through a per-execution
 whiteboard.
+
+This RFD specifies the positive, inductive MVP and records the design used to
+implement it. It is not the destination contract for candidate discovery,
+scheduling, incremental progress, or recursive proof semantics. Those tenets
+live in [Trait Solver Design](../../design/trait-solver.md); planned changes are
+split across the
+[Candidate Discovery](../trait-impl-candidate-discovery/README.md),
+[Cycle Semantics](../trait-solver-cycle-semantics/README.md),
+[Scheduling and Fairness](../trait-solver-scheduling/README.md), and
+[Incremental Results](../incremental-trait-results/README.md) RFDs. The local
+all-impl scan, parent-chain cycle cutoff, and depth-only overflow rule below are
+MVP behavior, not commitments to the final query or search architecture.
 
 ## MVP contract
 

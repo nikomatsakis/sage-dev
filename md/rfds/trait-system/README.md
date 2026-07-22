@@ -314,8 +314,11 @@ and item order. The MVP consumers linearly scan this list:
   fixed post-deref `LookupSelfTy: Trait<Args>` question. The solver does not
   return an impl or discover a trait by method name.
 
-An index by trait and self-type head may replace the scan later without changing the
-checked signature model.
+The linear local scan is an MVP source, not the destination query boundary.
+The [Trait Impl Candidate Discovery RFD](../trait-impl-candidate-discovery/README.md)
+requires complete local and external discovery keyed first by trait, with an
+eventual conservative self-type-head refinement, without changing the checked
+signature model.
 
 An `Unsupported` signature is not equivalent to an empty predicate set. A
 consumer which encounters a potentially relevant unsupported trait or impl
