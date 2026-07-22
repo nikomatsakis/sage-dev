@@ -91,6 +91,11 @@ coverage and forbidden placeholders. Only then are the serialized bytes
 compared. A JSON-path or tree diff is useful diagnostics after inequality has
 already been established; it cannot convert unequal text into a passing test.
 
+Both emitters pre-register emitted local definitions in semantic item order
+before translating any signature or body. Forward references therefore use
+the same local identity as later definitions; no comparison-side renumbering
+repairs an order-dependent emitter.
+
 The comparison path contains no paired normalization for unresolved inference
 variables, literal values, or other known limitations. Such placeholders are
 ordinary mismatches and cannot be normalized away.

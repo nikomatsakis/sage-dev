@@ -5,7 +5,7 @@ use crate::cst::expr::{BinaryOp, Literal, UnaryOp};
 use crate::diagnostic::{Diagnostic, ErrorReported};
 use crate::name::Name;
 use crate::span::RelativeSpan;
-use crate::symbol::Symbol;
+use crate::symbol::{StructSymbol, Symbol, VariantSymbol};
 use crate::ty::Ty;
 use crate::types::TokenTree;
 
@@ -40,6 +40,18 @@ pub struct LocalId(pub u32);
 pub struct LocalVar<'db> {
     pub name: Name<'db>,
     pub span: RelativeSpan,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub enum FieldOwner<'db> {
+    Struct(StructSymbol<'db>),
+    Variant(VariantSymbol<'db>),
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub struct ResolvedField<'db> {
+    pub owner: FieldOwner<'db>,
+    pub index: u32,
 }
 
 // ---------------------------------------------------------------------------
@@ -87,9 +99,10 @@ pub enum TyExprData<'db> {
     Block(Slice<TyStmt<'db>>, Option<Ptr<TyExpr<'db>>>),
     Call(Ptr<TyExpr<'db>>, Slice<Ptr<TyExpr<'db>>>),
     MethodCall(Ptr<TyExpr<'db>>, Name<'db>, Slice<Ptr<TyExpr<'db>>>),
-    Field(Ptr<TyExpr<'db>>, Name<'db>),
+    Field(Ptr<TyExpr<'db>>, ResolvedField<'db>),
     Binary(Ptr<TyExpr<'db>>, BinaryOp, Ptr<TyExpr<'db>>),
     Unary(UnaryOp, Ptr<TyExpr<'db>>),
+    Deref(Ptr<TyExpr<'db>>),
     Ref(Ptr<TyExpr<'db>>, Mutability),
     If(Ptr<TyExpr<'db>>, Ptr<TyExpr<'db>>, Option<Ptr<TyExpr<'db>>>),
     IfLet(

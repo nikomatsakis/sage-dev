@@ -158,6 +158,9 @@ fn hello_rs_bodies() {
     }
 
     // fn get_x(p: Point) -> u32 { p.x }
+    let Item::Struct(point) = &items[2] else {
+        panic!("expected struct");
+    };
     let Item::Fn(get_x) = &items[4] else {
         panic!("expected fn");
     };
@@ -166,12 +169,9 @@ fn hello_rs_bodies() {
         Expr::Block {
             tail: Some(tail), ..
         } => match tail.as_ref() {
-            Expr::Field {
-                expr,
-                field_name,
-                ty,
-            } => {
-                assert_eq!(field_name, "x");
+            Expr::Field { expr, field, ty } => {
+                assert_eq!(field.owner, point.def);
+                assert_eq!(field.index, 0);
                 assert_eq!(*ty, Type::Primitive("u32".to_string()));
                 match expr.as_ref() {
                     Expr::Local { name, index } => {
@@ -349,17 +349,14 @@ fn cross_module_fixture() {
         other => panic!("expected Block for wrap body, got {:?}", other),
     }
 
-    // Verify unwrap body: Block { tail: Field { expr: Local("w"), field_name: "value" } }
+    // Verify unwrap body resolves the `Wrapper::value` field.
     match unwrap_fn.body.as_ref().unwrap() {
         Expr::Block {
             tail: Some(tail), ..
         } => match tail.as_ref() {
-            Expr::Field {
-                expr,
-                field_name,
-                ty,
-            } => {
-                assert_eq!(field_name, "value");
+            Expr::Field { expr, field, ty } => {
+                assert_eq!(field.owner, wrapper.def);
+                assert_eq!(field.index, 0);
                 assert_eq!(*ty, Type::Primitive("u32".to_string()));
                 match expr.as_ref() {
                     Expr::Local { name, index } => {

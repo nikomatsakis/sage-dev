@@ -190,6 +190,9 @@ fn get_x(p: Point) -> u32 {
     }
 
     // fn get_x(p: Point) -> u32 { p.x }
+    let Item::Struct(point) = &items[2] else {
+        panic!("expected struct");
+    };
     let Item::Fn(get_x) = &items[4] else {
         panic!("expected fn");
     };
@@ -198,8 +201,9 @@ fn get_x(p: Point) -> u32 {
         Expr::Block {
             tail: Some(tail), ..
         } => match tail.as_ref() {
-            Expr::Field { field_name, .. } => {
-                assert_eq!(field_name, "x");
+            Expr::Field { field, .. } => {
+                assert_eq!(field.owner, point.def);
+                assert_eq!(field.index, 0);
             }
             other => panic!("expected Field in get_x body, got {:?}", other),
         },

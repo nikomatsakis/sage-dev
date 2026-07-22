@@ -76,6 +76,13 @@ pub struct FieldDef<Def> {
     pub ty: Type<Def>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound(serialize = "Def: Serialize", deserialize = "Def: Deserialize<'de>"))]
+pub struct FieldId<Def> {
+    pub owner: Def,
+    pub index: u32,
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Types
 // ═══════════════════════════════════════════════════════════════════════
@@ -132,7 +139,7 @@ pub enum Expr<Def> {
     },
     Field {
         expr: Box<Expr<Def>>,
-        field_name: String,
+        field: FieldId<Def>,
         ty: Type<Def>,
     },
     Block {
@@ -374,13 +381,12 @@ impl<Def> Expr<Def> {
                 fields: fields.into_iter().map(|fe| fe.map(f)).collect(),
                 ty: ty.map(f),
             },
-            Expr::Field {
-                expr,
-                field_name,
-                ty,
-            } => Expr::Field {
+            Expr::Field { expr, field, ty } => Expr::Field {
                 expr: Box::new((*expr).map(f)),
-                field_name,
+                field: FieldId {
+                    owner: f(field.owner),
+                    index: field.index,
+                },
                 ty: ty.map(f),
             },
             Expr::Block { stmts, tail, ty } => Expr::Block {

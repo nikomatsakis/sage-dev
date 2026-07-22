@@ -702,6 +702,14 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         let binder = sig.root();
         let fn_sig = binder.value;
 
+        let owner_self_ty = fn_sig.owner_self_ty.map(|owner_self_ty| {
+            owner_self_ty.stash_copy(sig_stash, &mut *self.target_stash.borrow_mut())
+        });
+        let receiver = fn_sig.receiver.map(|receiver| crate::ty::CheckedReceiver {
+            owner_self_ty: owner_self_ty.expect("a receiver must have an associated owner type"),
+            form: receiver.form,
+        });
+
         let params: smallvec::SmallVec<[Ptr<Ty<'db>>; 16]> = sig_stash[fn_sig.params]
             .iter()
             .map(|p| p.stash_copy(sig_stash, &mut *self.target_stash.borrow_mut()))
@@ -717,9 +725,12 @@ impl<'check, 'db> InferCtx<'check, 'db> {
             .stash_copy(sig_stash, &mut *self.target_stash.borrow_mut());
 
         FnSig {
+            owner_self_ty,
+            receiver,
             params,
             ret,
             parameter_env,
+            method_candidate_eligibility: fn_sig.method_candidate_eligibility,
         }
     }
 
@@ -785,6 +796,9 @@ impl<'check, 'db> InferCtx<'check, 'db> {
             for (generic, argument) in signature
                 .iter_symbols()
                 .skip(1)
+                .filter(|generic| {
+                    generic.kind(self.db) == crate::generic_param::GenericParamKind::Type
+                })
                 .zip(self.target_stash.borrow()[predicate.trait_ref.args].to_vec())
             {
                 mapping.insert(generic, argument);

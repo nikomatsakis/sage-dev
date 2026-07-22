@@ -460,6 +460,186 @@ mod trait_system_tests {
             },
         );
     }
+
+    #[test]
+    fn associated_items_reuse_owner_generics_and_bodies_resolve_fields() {
+        use sage_ir::local_syms::LocalAssociatedOwner;
+        use sage_ir::symbol::{FnSymbol, StructSymbol};
+        use sage_ir::ty::{MethodReceiver, TraitItemDef};
+        use sage_ir::tytree::{FieldOwner, PathResolution, TyExprData};
+
+        with_test_crate(
+            "struct Wrap<T> { value: T }\nimpl<T> Wrap<T> { fn get(&self) -> T { self.value } }",
+            |db, root| {
+                let [struct_symbol, impl_symbol] = root.expanded_module_items(db) else {
+                    panic!("expected a struct and an impl")
+                };
+                let SymbolData::StructSymbol(StructSymbol::Local(strukt)) = struct_symbol.data(db)
+                else {
+                    panic!("expected a local struct")
+                };
+                let SymbolData::ImplSymbol(sage_ir::symbol::ImplSymbol::Local(local_impl)) =
+                    impl_symbol.data(db)
+                else {
+                    panic!("expected a local impl")
+                };
+
+                let items = local_impl.items(db);
+                let (items_stash, binder) = items.open();
+                let [TraitItemDef::Function(FnSymbol::Local(method))] = &items_stash[binder.value]
+                else {
+                    panic!("expected one local method")
+                };
+                assert_eq!(
+                    method.owner(db),
+                    Some(LocalAssociatedOwner::Impl(local_impl))
+                );
+                let method_symbol = sage_ir::local_syms::LocalModItemSym::Function(*method);
+                assert_eq!(method_symbol.absolute_span(db), method.span(db));
+
+                let signature = method.sig(db);
+                let (sig_stash, signature) = signature.open();
+                assert_eq!(sig_stash[signature.generics].len(), 1);
+                assert!(sig_stash[signature.value.params].is_empty());
+                let receiver = signature.value.receiver.expect("expected receiver");
+                assert_eq!(
+                    receiver.form,
+                    MethodReceiver::Ref {
+                        mutability: sage_ir::cst::Mutability::Shared
+                    }
+                );
+                let Ty::Adt(owner, arguments) = sig_stash[receiver.owner_self_ty] else {
+                    panic!("expected the opened impl self type")
+                };
+                assert_eq!(owner, strukt.into());
+                let [argument] = &sig_stash[arguments] else {
+                    panic!("expected one owner argument")
+                };
+                assert_eq!(sig_stash[*argument], sig_stash[signature.value.ret]);
+
+                let (method_cst_stash, method_cst) = method.cst(db).open_deref();
+                assert_eq!(
+                    sage_ir::diagnostic::Span::Relative(method_symbol, method_cst.span).resolve(db),
+                    method.span(db)
+                );
+                let [receiver_cst] = &method_cst_stash[method_cst.params] else {
+                    panic!("expected one receiver parameter")
+                };
+                assert_eq!(
+                    receiver_cst
+                        .name
+                        .expect("receiver must bind `self`")
+                        .text(db),
+                    "self"
+                );
+
+                let checked = method.body(db);
+                assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+                let (body_stash, body) = checked.body.open_deref();
+                let TyExprData::Block(_, Some(tail)) = body_stash[body.root].data else {
+                    panic!("expected a block with a tail expression")
+                };
+                let TyExprData::Field(base, field) = body_stash[tail].data else {
+                    panic!("expected a resolved field access")
+                };
+                assert_eq!(field.owner, FieldOwner::Struct(StructSymbol::Local(strukt)));
+                assert_eq!(field.index, 0);
+                let TyExprData::Deref(receiver_expr) = body_stash[base].data else {
+                    panic!("expected explicit receiver dereference")
+                };
+                assert!(matches!(
+                    body_stash[receiver_expr].data,
+                    TyExprData::Path(PathResolution::Local(_))
+                ));
+            },
+        );
+    }
+
+    #[test]
+    fn trait_items_have_stable_symbols_and_owner_identity() {
+        use sage_ir::local_syms::LocalAssociatedOwner;
+        use sage_ir::symbol::{ConstSymbol, FnSymbol, TypeAliasSymbol};
+        use sage_ir::ty::{SolverEligibility, TraitItemDef};
+
+        with_test_crate(
+            "trait HasItems { fn method(&self); fn make(); type Output; const VALUE: u32; }",
+            |db, root| {
+                let [symbol] = root.expanded_module_items(db) else {
+                    panic!("expected one trait")
+                };
+                let SymbolData::TraitSymbol(TraitSymbol::Local(local_trait)) = symbol.data(db)
+                else {
+                    panic!("expected a local trait")
+                };
+                let items = local_trait.items(db);
+                let (stash, binder) = items.open();
+                let [
+                    TraitItemDef::Function(FnSymbol::Local(function)),
+                    TraitItemDef::Function(FnSymbol::Local(associated_function)),
+                    TraitItemDef::Type(TypeAliasSymbol::Local(alias)),
+                    TraitItemDef::Const(ConstSymbol::Local(constant)),
+                ] = &stash[binder.value]
+                else {
+                    panic!("expected function, type, and const items")
+                };
+                let owner = Some(LocalAssociatedOwner::Trait(local_trait));
+                assert_eq!(function.owner(db), owner);
+                assert_eq!(alias.owner(db), owner);
+                assert_eq!(constant.owner(db), owner);
+                assert_eq!(stash[binder.generics].len(), 1);
+
+                let method_signature = function.sig(db);
+                let (method_stash, method) = method_signature.open();
+                assert!(method.value.receiver.is_some());
+                assert_eq!(method_stash[method.generics], stash[binder.generics]);
+
+                let associated_signature = associated_function.sig(db);
+                let associated = associated_signature.root();
+                assert!(associated.value.receiver.is_none());
+                assert_eq!(
+                    associated.value.method_candidate_eligibility,
+                    SolverEligibility::Unsupported
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn impl_associated_body_restores_self_without_a_receiver() {
+        use sage_ir::symbol::{FnSymbol, ImplSymbol};
+        use sage_ir::ty::{SolverEligibility, TraitItemDef};
+
+        with_test_crate(
+            "struct Wrap<T> { value: T }\nimpl<T> Wrap<T> { fn keep(value: Self) -> Self { let value: Self = value; value } }",
+            |db, root| {
+                let [_, impl_symbol] = root.expanded_module_items(db) else {
+                    panic!("expected a struct and an impl")
+                };
+                let SymbolData::ImplSymbol(ImplSymbol::Local(local_impl)) = impl_symbol.data(db)
+                else {
+                    panic!("expected a local impl")
+                };
+                let items = local_impl.items(db);
+                let (stash, items) = items.open();
+                let [TraitItemDef::Function(FnSymbol::Local(function))] = &stash[items.value]
+                else {
+                    panic!("expected one associated function")
+                };
+
+                let signature = function.sig(db);
+                let signature = signature.root();
+                assert!(signature.value.owner_self_ty.is_some());
+                assert!(signature.value.receiver.is_none());
+                assert_eq!(
+                    signature.value.method_candidate_eligibility,
+                    SolverEligibility::Unsupported
+                );
+
+                let body = function.body(db);
+                assert!(body.diagnostics.is_empty(), "{:?}", body.diagnostics);
+            },
+        );
+    }
 }
 
 #[cfg(test)]

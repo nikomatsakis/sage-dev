@@ -86,14 +86,25 @@ pub fn fold_ptr_slice<'db>(
 // ---------------------------------------------------------------------------
 
 pub fn fold_fn_sig<'db>(folder: &mut impl TyFolder<'db>, sig: FnSig<'db>) -> FnSig<'db> {
+    let owner_self_ty = sig.owner_self_ty.map(|owner_self_ty| {
+        let ty = folder.fold_ty(folder.source()[owner_self_ty]);
+        folder.target().alloc(ty)
+    });
+    let receiver = sig.receiver.map(|receiver| CheckedReceiver {
+        owner_self_ty: owner_self_ty.expect("a receiver must have an associated owner type"),
+        form: receiver.form,
+    });
     let params = fold_ptr_slice(folder, sig.params);
     let ret_ty = folder.fold_ty(folder.source()[sig.ret]);
     let ret = folder.target().alloc(ret_ty);
     let parameter_env = fold_parameter_env(folder, sig.parameter_env);
     FnSig {
+        owner_self_ty,
+        receiver,
         params,
         ret,
         parameter_env,
+        method_candidate_eligibility: sig.method_candidate_eligibility,
     }
 }
 

@@ -82,6 +82,22 @@ impl<'db> LocalImplSym<'db> {
             generics,
         ))
     }
+
+    #[salsa::tracked]
+    pub fn items(self, db: &'db dyn crate::Db) -> sage_stash::Stashed<crate::ty::ImplItems<'db>> {
+        use crate::ty::BinderExt;
+
+        let (source, cst) = self.cst(db).open_deref();
+        crate::local_syms::associated::lower_items(
+            db,
+            crate::local_syms::LocalAssociatedOwner::Impl(self),
+            self.scope(db),
+            self.span(db),
+            source,
+            cst.items,
+            self.sig(db).iter_symbols(),
+        )
+    }
 }
 
 #[salsa::tracked(returns(ref))]

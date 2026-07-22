@@ -171,9 +171,12 @@ where
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct FnSig<'db> {
+    pub owner_self_ty: Option<Ptr<Ty<'db>>>,
+    pub receiver: Option<CheckedReceiver<'db>>,
     pub params: Slice<Ptr<Ty<'db>>>,
     pub ret: Ptr<Ty<'db>>,
     pub parameter_env: CheckedParameterEnv<'db>,
+    pub method_candidate_eligibility: SolverEligibility,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]

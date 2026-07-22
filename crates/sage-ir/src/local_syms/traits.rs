@@ -87,4 +87,20 @@ impl<'db> LocalTraitSym<'db> {
             generics,
         ))
     }
+
+    #[salsa::tracked]
+    pub fn items(self, db: &'db dyn crate::Db) -> sage_stash::Stashed<crate::ty::TraitItems<'db>> {
+        use crate::ty::BinderExt;
+
+        let (source, cst) = self.cst(db).open_deref();
+        crate::local_syms::associated::lower_items(
+            db,
+            crate::local_syms::LocalAssociatedOwner::Trait(self),
+            self.scope(db),
+            self.span(db),
+            source,
+            cst.items,
+            self.sig(db).iter_symbols(),
+        )
+    }
 }

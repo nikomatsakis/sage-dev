@@ -33,7 +33,7 @@ pub enum Span<'db> {
 impl<'db> Span<'db> {
     pub fn resolve(&self, db: &'db dyn crate::Db) -> AbsoluteSpan<'db> {
         match self {
-            Span::Relative(sym, rel) => sym.absolute_span(db).resolve(*rel),
+            Span::Relative(sym, rel) => sym.relative_span_base(db).resolve(*rel),
             Span::Symbol(sym) => sym.absolute_span(db),
             Span::Absolute(abs) => *abs,
         }

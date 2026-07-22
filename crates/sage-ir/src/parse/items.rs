@@ -96,7 +96,9 @@ impl<'a, 'db> Parser<'a, 'db> {
         let cst = Stashed::new(stash, root);
         let abs_span = absolute_span(self.source, node, start);
 
-        LocalModItemSym::Function(LocalFnSym::new(self.db, name, self.scope, cst, abs_span))
+        LocalModItemSym::Function(LocalFnSym::new(
+            self.db, name, self.scope, None, cst, abs_span, abs_span,
+        ))
     }
 
     fn parse_fn_params(
@@ -760,7 +762,9 @@ impl<'a, 'db> Parser<'a, 'db> {
         let cst: ConstCst = Stashed::new(stash, root);
         let abs_span = absolute_span(self.source, node, start);
 
-        LocalModItemSym::Const(LocalConstSym::new(self.db, name, self.scope, cst, abs_span))
+        LocalModItemSym::Const(LocalConstSym::new(
+            self.db, name, self.scope, None, cst, abs_span, abs_span,
+        ))
     }
 
     // -----------------------------------------------------------------------
@@ -844,7 +848,7 @@ impl<'a, 'db> Parser<'a, 'db> {
         let abs_span = absolute_span(self.source, node, start);
 
         LocalModItemSym::TypeAlias(LocalTypeAliasSym::new(
-            self.db, name, self.scope, cst, abs_span,
+            self.db, name, self.scope, None, cst, abs_span, abs_span,
         ))
     }
 

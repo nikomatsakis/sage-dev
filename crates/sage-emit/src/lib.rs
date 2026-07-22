@@ -11,6 +11,7 @@ use rust_ref::*;
 
 pub fn emit_module<'db>(db: &'db dyn Db, module: ModSymbol<'db>) -> Crate<NormalizedDef> {
     let mut emitter = Emitter::new(db);
+    emitter.pre_register_mod(module);
     let root = emitter.emit_mod(module);
     Crate { root }
 }
@@ -30,11 +31,64 @@ impl<'db> Emitter<'db> {
         }
     }
 
-    fn assign_local_id(&mut self, sym: Symbol<'db>) -> u32 {
+    fn register_local_def(&mut self, sym: Symbol<'db>) {
+        assert!(
+            !self
+                .local_def_map
+                .iter()
+                .any(|(registered, _)| *registered == sym),
+            "local definition registered twice: {sym:?}"
+        );
         let id = self.local_def_counter;
         self.local_def_counter += 1;
         self.local_def_map.push((sym, id));
-        id
+    }
+
+    fn local_id(&self, sym: Symbol<'db>) -> u32 {
+        self.local_def_map
+            .iter()
+            .find_map(|(registered, id)| (*registered == sym).then_some(*id))
+            .expect("emitted local definition must be pre-registered")
+    }
+
+    fn pre_register_mod(&mut self, module: ModSymbol<'db>) {
+        let module_symbol: Symbol<'db> = module.into();
+        self.register_local_def(module_symbol);
+
+        for &item in module.expanded_module_items(self.db) {
+            match item.data(self.db) {
+                SymbolData::FnSymbol(FnSymbol::Local(_))
+                | SymbolData::StructSymbol(StructSymbol::Local(_)) => {
+                    self.register_local_def(item);
+                }
+                SymbolData::EnumSymbol(EnumSymbol::Local(local_enum)) => {
+                    self.register_local_def(item);
+                    for &variant in enum_variants(self.db, local_enum) {
+                        if matches!(variant.data(self.db), SymbolData::VariantSymbol(_)) {
+                            self.register_local_def(variant);
+                        }
+                    }
+                }
+                SymbolData::ModSymbol(ModSymbol::Local(local_module)) => {
+                    self.pre_register_mod(ModSymbol::Local(local_module));
+                }
+                SymbolData::FnSymbol(FnSymbol::Ext(_))
+                | SymbolData::StructSymbol(StructSymbol::Ext(_))
+                | SymbolData::EnumSymbol(EnumSymbol::Ext(_))
+                | SymbolData::ModSymbol(ModSymbol::Ext(_))
+                | SymbolData::VariantSymbol(_)
+                | SymbolData::VariantCtorSymbol(_)
+                | SymbolData::TraitSymbol(_)
+                | SymbolData::TypeAliasSymbol(_)
+                | SymbolData::ConstSymbol(_)
+                | SymbolData::StaticSymbol(_)
+                | SymbolData::ImplSymbol(_)
+                | SymbolData::MacroDefSymbol(_)
+                | SymbolData::UseSymbol(_)
+                | SymbolData::IntrinsicTypeSymbol(_)
+                | SymbolData::MacroInvocationSymbol(_) => {}
+            }
+        }
     }
 
     fn normalize_def(&self, sym: Symbol<'db>) -> NormalizedDef {
@@ -125,7 +179,7 @@ impl<'db> Emitter<'db> {
 
     fn emit_mod(&mut self, module: ModSymbol<'db>) -> Module<NormalizedDef> {
         let sym: Symbol<'db> = module.into();
-        let local_id = self.assign_local_id(sym);
+        let local_id = self.local_id(sym);
 
         let name = sym
             .name(self.db)
@@ -182,7 +236,7 @@ impl<'db> Emitter<'db> {
         sym: Symbol<'db>,
         local_fn: sage_ir::local_syms::fns::LocalFnSym<'db>,
     ) -> FnItem<NormalizedDef> {
-        let local_id = self.assign_local_id(sym);
+        let local_id = self.local_id(sym);
         let name = local_fn.name(self.db).text(self.db).to_string();
 
         let sig = local_fn.sig(self.db);
@@ -240,7 +294,7 @@ impl<'db> Emitter<'db> {
         sym: Symbol<'db>,
         local_struct: sage_ir::local_syms::structs::LocalStructSym<'db>,
     ) -> StructItem<NormalizedDef> {
-        let local_id = self.assign_local_id(sym);
+        let local_id = self.local_id(sym);
         let name = local_struct.name(self.db).text(self.db).to_string();
 
         let fields_stashed = local_struct.fields(self.db);
@@ -271,7 +325,7 @@ impl<'db> Emitter<'db> {
         sym: Symbol<'db>,
         local_enum: LocalEnumSym<'db>,
     ) -> EnumItem<NormalizedDef> {
-        let local_id = self.assign_local_id(sym);
+        let local_id = self.local_id(sym);
         let name = local_enum.name(self.db).text(self.db).to_string();
 
         let variant_syms = enum_variants(self.db, local_enum);
@@ -294,7 +348,7 @@ impl<'db> Emitter<'db> {
     }
 
     fn emit_variant(&mut self, sym: Symbol<'db>) -> VariantDef<NormalizedDef> {
-        let local_id = self.assign_local_id(sym);
+        let local_id = self.local_id(sym);
         let name = sym
             .name(self.db)
             .map(|(n, _)| n.text(self.db).to_string())
@@ -490,11 +544,18 @@ impl<'db> Emitter<'db> {
                     ty: expr_ty,
                 }
             }
-            TyExprData::Field(base_ptr, field_name) => {
+            TyExprData::Field(base_ptr, field) => {
                 let base = &stash[*base_ptr];
+                let owner = match field.owner {
+                    sage_ir::tytree::FieldOwner::Struct(owner) => self.normalize_def(owner.into()),
+                    sage_ir::tytree::FieldOwner::Variant(owner) => self.normalize_def(owner.into()),
+                };
                 Expr::Field {
                     expr: Box::new(self.emit_expr(stash, base, locals)),
-                    field_name: field_name.text(self.db).to_string(),
+                    field: FieldId {
+                        owner,
+                        index: field.index,
+                    },
                     ty: expr_ty,
                 }
             }
@@ -508,7 +569,8 @@ impl<'db> Emitter<'db> {
                     ty: expr_ty,
                 }
             }
-            TyExprData::Unary(sage_ir::cst::expr::UnaryOp::Deref, inner_ptr) => {
+            TyExprData::Unary(sage_ir::cst::expr::UnaryOp::Deref, inner_ptr)
+            | TyExprData::Deref(inner_ptr) => {
                 let inner = &stash[*inner_ptr];
                 Expr::Deref {
                     expr: Box::new(self.emit_expr(stash, inner, locals)),

@@ -39,6 +39,7 @@ crates/sage-ir/src/
     attrs.rs        — AttrCst
 
   local_syms/       — per-kind tracked structs and item queries
+    associated.rs   — stable trait/impl item symbols linked to their owner
     fns.rs          — LocalFnSym (sig, body)
     structs.rs      — LocalStructSym (sig, fields)
     enums.rs        — LocalEnumSym
@@ -89,6 +90,9 @@ flowchart TD
     Resolve --> FnSig[LocalFnSym::sig]
     Resolve --> StructSig[LocalStructSym::sig]
     Resolve --> EnumSig[LocalEnumSym::sig]
+    Resolve --> OwnerItems[LocalTraitSym::items / LocalImplSym::items]
+    OwnerItems --> Associated[owner-linked function, type, and const symbols]
+    Associated --> FnSig
     FnSig --> FnBinder[Stashed Binder of FnSig]
     StructSig --> StructBinder[Stashed Binder of StructSig]
     EnumSig --> EnumBinder[Stashed Binder of EnumSig]
@@ -120,6 +124,7 @@ single-keyed body query rather than becoming a public incremental boundary.
 
 - `LocalFnSym::sig`, `LocalFnSym::body`
 - `LocalStructSym::sig`, `LocalStructSym::fields`
+- `LocalTraitSym::items`, `LocalImplSym::items`
 - `unexpanded_items`, `local_expanded_module_items` (with cycle recovery)
 
 **Interned:**
@@ -142,6 +147,12 @@ Checked local trait and impl signatures live on their owning symbols. A
 first solver implementation linearly scans it for impls of a fixed trait. Method-name
 discovery remains in method resolution and submits one fixed-trait goal per candidate
 trait.
+
+`LocalTraitSym::items` and `LocalImplSym::items` lazily mint stable function,
+type, and const symbols linked to their owner. Associated function signatures
+open the owner binder and reuse its generic identities; their independent body
+queries inherit the same owner predicates and `Self` type without depending on
+another associated body.
 
 Function and ADT signatures use the same checked type-predicate representation.
 A body solver environment opens the function predicates together with any

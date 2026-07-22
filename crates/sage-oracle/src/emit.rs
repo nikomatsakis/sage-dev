@@ -66,11 +66,47 @@ impl<'tcx> Emitter<'tcx> {
         }
     }
 
-    fn assign_local_id(&mut self, def_id: DefId) -> u32 {
+    fn register_local_def(&mut self, def_id: DefId) {
+        assert!(
+            !self
+                .local_def_map
+                .iter()
+                .any(|(registered, _)| *registered == def_id),
+            "local definition registered twice: {def_id:?}"
+        );
         let id = self.local_def_counter;
         self.local_def_counter += 1;
         self.local_def_map.push((def_id, id));
-        id
+    }
+
+    fn local_id(&self, def_id: DefId) -> u32 {
+        self.local_def_map
+            .iter()
+            .find_map(|(registered, id)| (*registered == def_id).then_some(*id))
+            .expect("emitted local definition must be pre-registered")
+    }
+
+    fn pre_register_module(&mut self, module_def_id: LocalDefId) {
+        self.register_local_def(module_def_id.to_def_id());
+
+        let module = LocalModDefId::new_unchecked(module_def_id);
+        let item_ids: Vec<_> = self.tcx.hir_module_items(module).free_items().collect();
+        for item_id in item_ids {
+            let item = self.tcx.hir_item(item_id);
+            match &item.kind {
+                hir::ItemKind::Fn { .. } | hir::ItemKind::Struct(..) => {
+                    self.register_local_def(item.owner_id.to_def_id());
+                }
+                hir::ItemKind::Enum(_, _, enum_def) => {
+                    self.register_local_def(item.owner_id.to_def_id());
+                    for variant in enum_def.variants {
+                        self.register_local_def(variant.def_id.to_def_id());
+                    }
+                }
+                hir::ItemKind::Mod(..) => self.pre_register_module(item.owner_id.def_id),
+                _ => {}
+            }
+        }
     }
 
     fn normalize_def(&self, def_id: DefId) -> NormalizedDef {
@@ -79,6 +115,29 @@ impl<'tcx> Emitter<'tcx> {
         } else {
             NormalizedDef::External(self.def_path_for(def_id))
         }
+    }
+
+    fn emit_builtin_deref_adjustments(
+        &self,
+        expr: &'tcx hir::Expr<'tcx>,
+        typeck: &'tcx ty::TypeckResults<'tcx>,
+        locals: &mut LocalMap,
+    ) -> Expr<NormalizedDef> {
+        let mut emitted = self.emit_expr_with_locals(expr, typeck, locals);
+        for adjustment in typeck.expr_adjustments(expr) {
+            match adjustment.kind {
+                ty::adjustment::Adjust::Deref(ty::adjustment::DerefAdjustKind::Builtin) => {
+                    emitted = Expr::Deref {
+                        expr: Box::new(emitted),
+                        ty: self.emit_type(adjustment.target),
+                    };
+                }
+                ref other => {
+                    panic!("unsupported field-base adjustment in oracle: {other:?}")
+                }
+            }
+        }
+        emitted
     }
 
     fn def_path_for(&self, def_id: DefId) -> DefPath {
@@ -122,7 +181,7 @@ impl<'tcx> Emitter<'tcx> {
 
     fn emit_module(&mut self, module_def_id: LocalDefId) -> Module<NormalizedDef> {
         let def_id = module_def_id.to_def_id();
-        let local_id = self.assign_local_id(def_id);
+        let local_id = self.local_id(def_id);
 
         let name = if module_def_id == CRATE_DEF_ID {
             String::new()
@@ -172,7 +231,7 @@ impl<'tcx> Emitter<'tcx> {
         sig: &hir::FnSig<'tcx>,
         body_id: hir::BodyId,
     ) -> FnItem<NormalizedDef> {
-        let local_id = self.assign_local_id(def_id.to_def_id());
+        let local_id = self.local_id(def_id.to_def_id());
         let name = self.tcx.item_name(def_id.to_def_id()).to_string();
 
         let body = self.tcx.hir_body(body_id);
@@ -228,7 +287,7 @@ impl<'tcx> Emitter<'tcx> {
         def_id: LocalDefId,
         variant: &hir::VariantData<'tcx>,
     ) -> StructItem<NormalizedDef> {
-        let local_id = self.assign_local_id(def_id.to_def_id());
+        let local_id = self.local_id(def_id.to_def_id());
         let name = self.tcx.item_name(def_id.to_def_id()).to_string();
 
         let fields = variant
@@ -256,7 +315,7 @@ impl<'tcx> Emitter<'tcx> {
         def_id: LocalDefId,
         enum_def: &hir::EnumDef<'tcx>,
     ) -> EnumItem<NormalizedDef> {
-        let local_id = self.assign_local_id(def_id.to_def_id());
+        let local_id = self.local_id(def_id.to_def_id());
         let name = self.tcx.item_name(def_id.to_def_id()).to_string();
 
         let variants = enum_def
@@ -264,7 +323,7 @@ impl<'tcx> Emitter<'tcx> {
             .iter()
             .map(|variant| {
                 let variant_def_id = variant.def_id.to_def_id();
-                let variant_local_id = self.assign_local_id(variant_def_id);
+                let variant_local_id = self.local_id(variant_def_id);
                 let variant_name = variant.ident.name.to_string();
                 VariantDef {
                     def: NormalizedDef::Local(variant_local_id),
@@ -425,11 +484,20 @@ impl<'tcx> Emitter<'tcx> {
                     ty: self.emit_type(expr_ty),
                 }
             }
-            hir::ExprKind::Field(base, field) => Expr::Field {
-                expr: Box::new(self.emit_expr_with_locals(base, typeck, locals)),
-                field_name: field.name.to_string(),
-                ty: self.emit_type(expr_ty),
-            },
+            hir::ExprKind::Field(base, _) => {
+                let owner = match typeck.expr_ty_adjusted(base).kind() {
+                    ty::Adt(adt, _) => self.normalize_def(adt.did()),
+                    other => panic!("unsupported field owner type in oracle: {other:?}"),
+                };
+                Expr::Field {
+                    expr: Box::new(self.emit_builtin_deref_adjustments(base, typeck, locals)),
+                    field: FieldId {
+                        owner,
+                        index: typeck.field_index(expr.hir_id).as_u32(),
+                    },
+                    ty: self.emit_type(expr_ty),
+                }
+            }
             hir::ExprKind::Block(block, _) => {
                 let stmts: Vec<_> = block
                     .stmts
@@ -541,6 +609,7 @@ pub fn emit_crate(tcx: TyCtxt<'_>) -> Result<Crate<NormalizedDef>, OracleError> 
     }
 
     let mut emitter = Emitter::new(tcx);
+    emitter.pre_register_module(CRATE_DEF_ID);
     let root = emitter.emit_module(CRATE_DEF_ID);
 
     Ok(Crate { root })

@@ -121,6 +121,16 @@ impl<'db> Resolver<'db> {
         // other paths from the ribs, e.g., `T::Item`. But to do that
         // we will need to integrate with the type checker.
         match path {
+            Path::Anchored(anchor, members)
+                if anchor.kind == crate::cst::paths::PathAnchorKind::Self_
+                    && stash[members].is_empty()
+                    && namespace == Namespace::Value =>
+            {
+                self.ribs
+                    .lookup(Name::new(self.db, "self".to_owned()), namespace)
+                    .into_iter()
+                    .collect()
+            }
             Path::Relative(first, rest) if stash[rest].is_empty() => {
                 // Single-segment unqualified path: check ribs first.
                 if let Some(entry) = self.ribs.lookup(first.name, namespace) {

@@ -161,8 +161,10 @@ pub struct CheckedReceiver<'db> {
 
 The owner binder supplies `owner_self_ty`: the trait `Self` parameter for a
 trait item or the opened impl self type for an impl item. A function signature
-stores `Option<CheckedReceiver>` separately from ordinary parameters, so an
-associated function with no receiver cannot become a dot-call candidate.
+retains that owner self type independently of its receiver, so a receiverless
+associated body can still resolve `Self`. It stores `Option<CheckedReceiver>`
+separately from ordinary parameters, so an associated function with no
+receiver cannot become a dot-call candidate.
 An explicit lifetime on a reference receiver, such as `&'a self`, lowers to
 the same reference receiver form because `'a` becomes `Dummy`. Typed receivers
 such as `self: Box<Self>` remain preserved but unsupported by the method MVP.

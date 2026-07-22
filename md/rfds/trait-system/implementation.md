@@ -120,19 +120,20 @@ Tests:
 
 ### Step 5: Trait and impl items
 
-- [ ] Give local function items a stable owner relation to their trait or impl so signature
+- [x] Give local function items a stable owner relation to their trait or impl so signature
   checking can distinguish owner generics from method-level generics.
-- [ ] Implement `LocalTraitSym::items` and `LocalImplSym::items`.
-- [ ] Open the owner signature's binder and reuse its generic parameters while checking
+- [x] Implement `LocalTraitSym::items` and `LocalImplSym::items`.
+- [x] Open the owner signature's binder and reuse its generic parameters while checking
   function, type, and const item identities.
-- [ ] Bind the trait signature's recorded `Self` parameter while checking trait items.
-- [ ] Bind `Self` to the opened, substituted `ImplSignatureData::self_ty` while
+- [x] Bind the trait signature's recorded `Self` parameter while checking trait items.
+- [x] Bind `Self` to the opened, substituted `ImplSignatureData::self_ty` while
   checking impl items; impl signatures do not have a trait `self_param`.
-- [ ] Lower `self`, `mut self`, `&self`, and `&mut self` to a separate
+- [x] Lower `self`, `mut self`, `&self`, and `&mut self` to a separate
   `CheckedReceiver` using the opened owner `Self` type. Preserve the absence of
-  a receiver for associated functions; erase explicit receiver lifetimes to
-  `Dummy`, and diagnose/defer typed receivers instead of lowering them to
-  `Ty::Infer`.
+  a receiver for associated functions and erase explicit receiver lifetimes to
+  `Dummy`.
+- [ ] Diagnose/defer typed receivers instead of admitting them as method
+  candidates or lowering them to `Ty::Infer`.
 - [ ] Compute `method_candidate_eligibility` for every trait/impl function.
   Require a supported receiver/associated form, type-instantiable method
   generics, a complete function parameter environment, and projection-free

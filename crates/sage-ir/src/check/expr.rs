@@ -82,10 +82,23 @@ impl<'db> ExprCst<'db> {
             }
             // ANCHOR: example_check_field_expression
             ExprCstKind::Field(obj, name) => {
-                let ro = cx.source_stash[*obj].check_with(cx, scope).await;
-                let obj_ty = cx.find_mut(cx.stash()[ro].ty);
-                let ty = lookup_field_ty(cx, obj_ty, *name, span);
-                (TyExprData::Field(ro, *name), ty)
+                let mut base = cx.source_stash[*obj].check_with(cx, scope).await;
+                let base_span = cx.stash()[base].span;
+                let mut obj_ty = cx.await_concrete(cx.stash()[base].ty).await;
+                loop {
+                    let Ty::Ref(inner, _, _) = cx.stash()[obj_ty] else {
+                        break;
+                    };
+                    base = cx.alloc_expr(TyExprData::Deref(base), inner, base_span);
+                    obj_ty = cx.await_concrete(inner).await;
+                }
+                match lookup_field(cx, obj_ty, *name, span) {
+                    Ok((field, ty)) => (TyExprData::Field(base, field), ty),
+                    Err(error) => {
+                        let ty = cx.alloc_ty(Ty::Error(error));
+                        (TyExprData::Error(error), ty)
+                    }
+                }
             }
             // ANCHOR_END: example_check_field_expression
             ExprCstKind::Binary(lhs, op, rhs) => {
@@ -1141,12 +1154,12 @@ fn check_instantiated_struct_lit_fields<'db>(
 }
 
 // ANCHOR: example_lookup_field_type
-fn lookup_field_ty<'db>(
+fn lookup_field<'db>(
     cx: &InferCtx<'_, 'db>,
     obj_ty_ptr: Ptr<Ty<'db>>,
     field_name: crate::name::Name<'db>,
     span: RelativeSpan,
-) -> Ptr<Ty<'db>> {
+) -> Result<(crate::tytree::ResolvedField<'db>, Ptr<Ty<'db>>), crate::diagnostic::ErrorReported> {
     use crate::symbol::SymbolData;
     use crate::ty::BinderExt;
     use crate::ty_fold::{SubstTarget, Substitute, TyFolder};
@@ -1156,9 +1169,9 @@ fn lookup_field_ty<'db>(
 
     let (sym, type_args) = match obj_ty {
         Ty::Adt(sym, type_args) => (sym, type_args),
-        Ty::InferVar(_) => return cx.fresh_ty_var(),
-        Ty::Error(_) => return obj_ty_ptr,
-        Ty::Bool
+        Ty::Error(error) => return Err(error),
+        Ty::InferVar(_)
+        | Ty::Bool
         | Ty::Char
         | Ty::Int(_)
         | Ty::Uint(_)
@@ -1171,11 +1184,10 @@ fn lookup_field_ty<'db>(
         | Ty::FnPtr(_, _)
         | Ty::Param(_)
         | Ty::Never => {
-            let error = cx.record(Diagnostic::error(
+            return Err(cx.record(Diagnostic::error(
                 cx.span(span),
                 "field access requires a struct value",
-            ));
-            return cx.alloc_ty(Ty::Error(error));
+            )));
         }
     };
 
@@ -1195,7 +1207,7 @@ fn lookup_field_ty<'db>(
             let struct_fields = fields_stashed.root();
             let field_sigs = &fields_stash[struct_fields.fields];
 
-            for field_sig in field_sigs {
+            for (index, field_sig) in field_sigs.iter().enumerate() {
                 if field_sig.name == field_name {
                     let mut subst = FxHashMap::default();
                     for (param, &arg_ptr) in generic_params.iter().zip(type_arg_ptrs.iter()) {
@@ -1205,16 +1217,29 @@ fn lookup_field_ty<'db>(
                     let mut folder = Substitute::new(fields_stash, &mut *stash, subst);
                     let field_ty_data = folder.fold_ty(fields_stash[field_sig.ty]);
                     drop(folder);
-                    return stash.alloc(field_ty_data);
+                    let ty = stash.alloc(field_ty_data);
+                    return Ok((
+                        crate::tytree::ResolvedField {
+                            owner: crate::tytree::FieldOwner::Struct(
+                                crate::symbol::StructSymbol::Local(local),
+                            ),
+                            index: u32::try_from(index).expect("field index exceeds u32"),
+                        },
+                        ty,
+                    ));
                 }
             }
-            let error = cx.record(Diagnostic::error(
+            Err(cx.record(Diagnostic::error(
                 cx.span(span),
                 format!("unknown field `{}`", field_name.text(cx.db)),
-            ));
-            cx.alloc_ty(Ty::Error(error))
+            )))
         }
-        SymbolData::StructSymbol(crate::symbol::StructSymbol::Ext(_)) => cx.fresh_ty_var(),
+        SymbolData::StructSymbol(crate::symbol::StructSymbol::Ext(_)) => {
+            Err(cx.record(Diagnostic::error(
+                cx.span(span),
+                "external struct field metadata is unavailable",
+            )))
+        }
         SymbolData::FnSymbol(_)
         | SymbolData::EnumSymbol(_)
         | SymbolData::VariantSymbol(_)
@@ -1228,13 +1253,10 @@ fn lookup_field_ty<'db>(
         | SymbolData::MacroDefSymbol(_)
         | SymbolData::IntrinsicTypeSymbol(_)
         | SymbolData::MacroInvocationSymbol(_)
-        | SymbolData::UseSymbol(_) => {
-            let error = cx.record(Diagnostic::error(
-                cx.span(span),
-                "field access requires a struct value",
-            ));
-            cx.alloc_ty(Ty::Error(error))
-        }
+        | SymbolData::UseSymbol(_) => Err(cx.record(Diagnostic::error(
+            cx.span(span),
+            "field access requires a struct value",
+        ))),
     }
 }
 // ANCHOR_END: example_lookup_field_type

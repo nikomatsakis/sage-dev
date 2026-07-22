@@ -32,16 +32,24 @@ from callers.
 other items need to type-check against this one: generics, parameter types,
 return type, field types. It is the minimal public surface.
 
+**Associated-item identity is a separate narrow boundary.**
+`LocalTraitSym::items` and `LocalImplSym::items` return stable owner-linked
+symbols. A consumer then queries only the selected item's signature; item
+enumeration does not check any associated body.
+
 **Detail queries are lazy.** `body()`, `fields()`, and similar queries compute
 information that is either not needed from other items or only needed some of
 the time. They depend on `sig()` but are not depended on by other items'
 signatures.
 
-**Generic parameters are minted exactly once.** The `sig()` query mints
-`GenericParam` symbols via `cst.generics.check(db, cx, parent)` and stores
-them in a `Binder`. All other queries (`fields`, `body`) open that binder and
-bring the same param symbols into scope via `ribs.add_generic_params`. No
-re-minting, no identity confusion.
+**Symbols and generic parameters are minted exactly once.** An owner `sig()`
+query mints its `GenericParam` symbols via
+`cst.generics.check(db, cx, parent)` and stores them in a `Binder`.
+`LocalTraitSym::items` and `LocalImplSym::items` mint stable owner-linked item
+symbols; an associated function's `sig()` reuses the owner binder before
+minting method-level generics. Detail queries such as `fields()` and `body()`
+open those binders and bring the same parameter symbols and owner `Self` type
+into scope. No query remints an existing identity.
 
 **Sequential layering inside a query.** `body()` calls `sig()` → opens
 binder → resolves names → runs inference → elaborates the completed typed
