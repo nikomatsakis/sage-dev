@@ -25,8 +25,17 @@ us error recovery, incremental re-parsing, and avoids duplicating grammar mainte
 ## D4: Oracle test harness
 
 End-to-end correctness is validated by an "oracle" harness that compiles test programs
-with both sage and rustc, then compares diagnostics. This ensures sage's behavior
-converges with the reference compiler.
+with both Sage and rustc. Each side independently emits the same shared,
+deterministically serialized reference IR. The conformance decision is exact
+textual identity of those outputs.
+
+The per-side adapters perform only representation changes required to reach
+the shared schema. The comparator does not normalize a pair of outputs, erase
+known differences, reorder values, strip bodies, or otherwise attempt semantic
+equivalence. Validation may reject incomplete output before comparison, and a
+diagnostic diff may explain an exact mismatch afterward, but neither changes
+the equality rule. The detailed contract is [Oracle Test
+Harness](./oracle-test-harness.md#thin-adapters-and-exact-comparison).
 
 ## D5: Symbols as the uniform IR unit
 

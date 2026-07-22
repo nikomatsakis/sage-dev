@@ -191,6 +191,12 @@ definitions, substitutions, and adjustments into the same explicit tree form.
 Alias identity is part of that common model: comparison does not globally
 expand named aliases or reveal opaques merely to make the two trees agree.
 
+Each emitter serializes that common form deterministically, and conformance is
+exact textual identity. There is no pairwise normalization or semantic
+comparison after emission. Any permitted adaptation is a fixed part of one
+emitter's projection into the shared schema and cannot consult or compensate
+for the other output.
+
 Conformance also reports coverage. Equality is not meaningful if both sides
 omit an associated body or replace a construct with the same unsupported
 placeholder. A conformance run therefore accounts for every body in scope and

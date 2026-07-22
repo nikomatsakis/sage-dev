@@ -1,6 +1,6 @@
 # RFD: Typed IR Elaboration
 
-**Status:** Draft
+**Status:** Accepted
 
 **Depends on:**
 
@@ -109,12 +109,15 @@ This is a deliberate temporary soundness hole. The dedicated variant makes it
 auditable and mechanically removable when a unified type-and-lifetime
 inference design is accepted.
 
-### Normalize the oracle boundary
+### Emit the shared oracle form
 
-The rustc emitter translates resolved definitions, substitutions, and
-adjustments into Sage's semantic tree rather than exposing rustc's internal
-adjustment representation. The harness rejects successful outputs with
-unsupported placeholders and reports the set of bodies covered by each side.
+The rustc emitter minimally projects resolved definitions, substitutions, and
+adjustments into the shared semantic tree rather than exposing rustc's
+internal adjustment representation. Sage independently emits the same shared
+form. Both sides serialize deterministically, and the harness decides
+conformance using exact textual identity with no pairwise normalization. It
+rejects successful outputs with unsupported placeholders and reports the set
+of bodies covered by each side.
 
 ### Preserve narrow dependencies
 

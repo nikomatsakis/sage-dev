@@ -49,7 +49,8 @@ Completion requires:
 
 - the final body contains no `MethodCall`, unresolved field name, inference
   variable, adjustment list, or unsupported placeholder;
-- the rustc oracle produces the same normalized semantic tree;
+- the rustc and Sage emitters produce byte-identical deterministic text for
+  the shared semantic tree, with no paired comparison normalization;
 - call checking reads the selected signatures and impl data but not the body
   of `Clone::clone` or any unrelated mini-redis body;
 - a semantic query trace names the method/trait lookups and external metadata
@@ -98,7 +99,7 @@ library pass requires:
 - successful output contains no unsupported typed-IR node or debug-formatted
   type;
 - Sage emits no diagnostics for the rustc-clean target;
-- normalized typed IR agrees with the oracle; and
+- deterministic shared typed-IR output is byte-identical to the oracle; and
 - focused incremental tests demonstrate narrow dependencies for signatures,
   external metadata, method lookup, trait candidates, macro expansion, and
   bodies.

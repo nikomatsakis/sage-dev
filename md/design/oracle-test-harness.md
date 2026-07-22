@@ -34,10 +34,12 @@ test-fixtures/oracle/basics/hello.rs
          ▼                        ▼
   Crate<NormalizedDef>    Crate<NormalizedDef>
          │                        │
+         ▼                        ▼
+ deterministic JSON       deterministic JSON
+         │                        │
          └────────┬───────────────┘
                   ▼
-         JSON structural diff
-         (assert-json-diff)
+       exact textual identity
 ```
 
 1. **Discover fixtures** — the harness walks `test-fixtures/oracle/` recursively:
@@ -48,19 +50,64 @@ test-fixtures/oracle/basics/hello.rs
 
 3. **Run sage** (`sage-emit`) — creates a salsa database, registers source files, triggers parsing + macro expansion + type checking, and walks the typed IR to emit the same `Crate<NormalizedDef>`.
 
-4. **Compare** — serialize both to `serde_json::Value` and diff structurally. On mismatch, report the exact JSON path that diverges.
+4. **Compare** — serialize both with the same deterministic renderer and
+   require byte-for-byte textual identity. A secondary diff may explain a
+   mismatch, but it does not decide whether the test passes.
+
+## Thin adapters and exact comparison
+
+The oracle is intentionally asymmetric in authority but symmetric in output:
+rustc supplies the reference semantics, while both emitters must independently
+produce the same shared representation. The comparison layer is deliberately
+dumb.
+
+An emitter may perform only the adaptation needed to cross from its native IR
+into the shared schema. Examples include:
+
+- mapping native definition handles to the schema's stable local IDs or
+  external definition paths;
+- translating rustc receiver adjustments into the explicit operations which
+  the shared typed tree represents; and
+- mapping lifetimes to `Dummy` because the shared Sage architecture explicitly
+  defers lifetime semantics.
+
+These adaptations are specified without consulting the other emitter's
+output. When the shared model cannot represent a required distinction, extend
+the model and both emitters; do not erase the distinction from both sides.
+
+The harness must not:
+
+- perform paired normalization or rewrite one output in response to the other;
+- replace inference variables, literal values, definitions, or unsupported
+  nodes with common placeholders;
+- strip bodies or fields merely to make a conformance test pass;
+- sort or renumber output after emission to hide nondeterministic producers;
+- normalize aliases solely for comparison; or
+- use a semantic-equivalence algorithm in place of textual identity.
+
+Deterministic ordering, stable definition identities, and complete values are
+emitter responsibilities. Each output is also validated independently for
+coverage and forbidden placeholders. Only then are the serialized bytes
+compared. A JSON-path or tree diff is useful diagnostics after inequality has
+already been established; it cannot convert unequal text into a passing test.
+
+The current harness contains historical paired normalization for unresolved
+inference variables and literal values. That is a known architectural
+violation, not an accepted compatibility layer, and must be removed as the
+typed-IR oracle boundary is completed.
 
 ## Semantic and coverage boundary
 
 The destination comparison value is the [elaborated typed
-IR](./typed-ir.md). The rustc side translates its selected definitions,
-substitutions, and adjustment lists into explicit calls, borrows,
+IR](./typed-ir.md). The rustc side minimally projects its selected definitions,
+substitutions, and adjustment lists into the shared calls, borrows,
 dereferences, and coercions. Sage's internal method-candidate or adjustment
-representation is not part of the oracle contract.
+representation is not part of the oracle contract. This per-emitter projection
+into a shared schema is not a license for a later pairwise normalization pass.
 
-Structural equality is paired with coverage accounting. Each side reports the
-items and bodies in scope, including associated and macro-generated items. A
-successful comparison rejects unsupported expression placeholders and
+Exact textual equality is paired with coverage accounting. Each side reports
+the items and bodies in scope, including associated and macro-generated items.
+A successful comparison rejects unsupported expression placeholders and
 debug-formatted fallback types. Two emitters omitting the same body or
 collapsing the same expression to `?unsupported` is not conformance.
 
@@ -164,7 +211,9 @@ Both sides emit the same types. Key structures:
 - **`Expr<Def>`** — `Local` | `Literal` | `BinaryOp` | `Call` | `StructLit` | `Field` | `Block` | `Deref` | `Ref`
 - **`Type<Def>`** — `Primitive(String)` | `Def { target, type_args }` | `Ref` | `Unit` | `Tuple`
 
-`Def` is instantiated as `NormalizedDef`:
+`Def` is instantiated as `NormalizedDef`. Here, “normalized” means only that a
+native compiler handle has been mapped to the stable identity required by the
+shared schema; it does not mean that the comparison layer normalizes typed IR:
 - `NormalizedDef::Local(u32)` — a definition within this crate, identified by sequential numbering (source order)
 - `NormalizedDef::External(DefPath)` — a definition from another crate (e.g., std), identified by crate name + path segments
 
@@ -180,6 +229,11 @@ Both sides emit the same types. Key structures:
 
 ## Design decisions
 
-- **No normalization** — the harness compares raw output. If sage can't resolve a type, the test fails. This ensures every InferVar or missing value is a tracked issue.
+- **Exact serialized equality** — deterministic JSON output must be
+  byte-for-byte identical. If Sage cannot resolve a type or preserve a literal,
+  the test fails.
+- **No paired normalization** — neither output is rewritten based on a known
+  limitation or on the contents of the other output.
 - **Deterministic ordering** — both sides emit items in source order. Defs are numbered sequentially. No hash-map iteration order or pointer addresses.
-- **JSON diff, not string diff** — `assert-json-diff` reports the exact structural path (`.root.items[2].fn.body.block.tail`), not line numbers in a pretty-printed string.
+- **Rich diff is diagnostic only** — after exact comparison fails, a JSON diff
+  may report a precise structural path. It never determines equality.

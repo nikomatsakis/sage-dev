@@ -1,7 +1,7 @@
 # Implementation plan and status
 
-No implementation step is complete. This RFD remains a draft and is not yet
-eligible for implementation.
+No implementation step is complete. The first `DbDropGuard::db` vertical
+slice is in progress.
 
 ### Step 1: Completed-IR data model and finalization checks
 
@@ -26,8 +26,10 @@ eligible for implementation.
 ### Step 3: Oracle and coverage boundary
 
 - [ ] Extend the shared reference model with the completed forms from Step 1.
-- [ ] Normalize rustc definitions, substitutions, and adjustments into those
-  forms.
+- [ ] Adapt rustc definitions, substitutions, and adjustments directly into
+  those forms without consulting or rewriting Sage output.
+- [ ] Remove paired output normalization and make pass/fail depend on
+  byte-for-byte identity of deterministic serialized output.
 - [ ] Enumerate associated bodies and reject unsupported successful output.
 - [ ] Compare `DbDropGuard::db` and assert a stable semantic query trace.
 
@@ -50,5 +52,5 @@ eligible for implementation.
 
 - [ ] Account for every item and body in the default-feature library target.
 - [ ] Reach zero unsupported successful nodes and zero unexpected diagnostics.
-- [ ] Pass normalized oracle comparison and focused incremental-dependency
-  tests.
+- [ ] Produce byte-identical deterministic oracle output and pass focused
+  incremental-dependency tests.

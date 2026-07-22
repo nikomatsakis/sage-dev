@@ -30,12 +30,12 @@ one or more RFDs. Status is one of:
 | Numeric types | [numeric-inference-variables] | |
 | Trait system | [trait-system] | Checked local trait/impl data, deterministic local impl enumeration, and function/struct/enum predicate environments landed; trait/impl item queries remain |
 | Trait solving | [trait-solving] | Positive type-only local solver, active per-query whiteboard, transactional query boundary, and body obligation lifecycle landed; final RFD hardening remains |
+| Typed IR elaboration | [typed-ir-elaboration] | Implementing the `DbDropGuard::db` vertical slice with explicit coercions, `Lifetime::Dummy`, exact oracle output, and dependency traces |
 
 ## Planned
 
 | Group | RFDs | Notes |
 |---|---|---|
-| Typed IR elaboration | [typed-ir-elaboration] | Destination is fully resolved tree IR with explicit coercions and `Lifetime::Dummy`; first review slice is `DbDropGuard::db` in the [mini-redis roadmap] |
 | Method resolution | [method-resolution] | Inherent lookup follows [trait-system]; trait methods additionally depend on [trait-solving]; no method-resolution code landed |
 | Trait impl candidate discovery | [trait-impl-candidate-discovery] | Draft design for global visible-impl discovery, mandatory trait keys, conservative self-type refinement, and incremental reuse |
 | Trait solver search architecture | [trait-solver-cycle-semantics], [trait-solver-scheduling], [incremental-trait-results] | Draft design for recursive semantics and limits, fair future scheduling, and monotone progress envelopes |
