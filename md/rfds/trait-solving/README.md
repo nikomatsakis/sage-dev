@@ -182,7 +182,7 @@ enum QueryResultData<'db> {
 }
 
 /// Keys are always type-kind canonical variables whose role is
-/// `ExistentialInput`. Rigid type/lifetime/const placeholders may occur inside
+/// `ExistentialInput`. Rigid type/const placeholders may occur inside
 /// values but never as keys.
 type Subst<'db> = Slice<(AlphaEquivParam<'db>, Ptr<Ty<'db>>)>;
 
@@ -260,9 +260,9 @@ Canonicalization then proceeds as follows:
 3. Map `Ty::Param` values to `RigidPlaceholder` and inference variables to
    `ExistentialInput`. An inference variable appearing in an assumption stays
    existential; canonicalization never generalizes it into a universal.
-   Lifetime and const parameters embedded in a type are visited and
-   alpha-renamed as rigid placeholders; the MVP has no flexible lifetime or
-   const inference inputs.
+   Const parameters embedded in a type are visited and alpha-renamed as rigid
+   placeholders. Checked lifetimes are already `Dummy`; the MVP has no flexible
+   lifetime or const inference inputs.
 4. On entering `Goal::Exists`, allocate deterministic canonical parameters for
    its declarations in binder order, push a binder mapping, fold the body, and
    pop it. Bound occurrences use that mapping and are excluded from
@@ -499,7 +499,7 @@ local `TraitSignatureData` are `SolverEligibility::Eligible`. A potentially
 relevant `Unsupported` signature is an incomplete candidate source, not an
 irrelevant impl: it contributes `Maybe` unless an environment or other
 unconditional candidate already proves the goal. This prevents a diagnosed,
-unrepresented lifetime/const binder or predicate from becoming either an empty
+unrepresented const binder or predicate from becoming either an empty
 unconditional clause or a false exhaustive `No`.
 
 For an external trait, the MVP may still prove a goal directly from an

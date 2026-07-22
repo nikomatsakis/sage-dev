@@ -27,7 +27,7 @@ pub enum Ty<'db> {
 
     // --- compound ---
     Adt(Symbol<'db>, Slice<Ptr<Ty<'db>>>),
-    Ref(Ptr<Ty<'db>>, Mutability, Lifetime<'db>),
+    Ref(Ptr<Ty<'db>>, Mutability, Lifetime),
     Tuple(Slice<Ptr<Ty<'db>>>),
     Slice(Ptr<Ty<'db>>),
     Array(Ptr<Ty<'db>>, Const<'db>),
@@ -87,11 +87,10 @@ pub enum FloatTy {
 // ---------------------------------------------------------------------------
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
-pub enum Lifetime<'db> {
-    /// Invariant: param.kind() == Lifetime.
-    Param(GenericParam<'db>),
-    Static,
-    Erased,
+pub enum Lifetime {
+    /// Lifetime semantics are intentionally deferred until Sage introduces
+    /// unified type-and-lifetime inference and borrow checking.
+    Dummy,
 }
 
 // ---------------------------------------------------------------------------

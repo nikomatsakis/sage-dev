@@ -177,7 +177,6 @@ pub fn fold_parameter_env<'db>(
 #[derive(Copy, Clone, Debug)]
 pub enum SubstTarget<'db> {
     Ty(Ty<'db>),
-    Lifetime(Lifetime<'db>),
     Const(Const<'db>),
 }
 

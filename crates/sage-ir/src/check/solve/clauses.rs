@@ -128,10 +128,17 @@ fn instantiate_local_impl<'db>(
     let (source, binder) = signature.open();
     let mut mapping = FxHashMap::default();
     for generic in &source[binder.generics] {
-        assert_eq!(generic.kind(db), GenericParamKind::Type);
-        let index = state.egraph.alloc_var(version, state.canonical_universe);
-        let ty = state.stash.alloc(Ty::InferVar(index));
-        mapping.insert(*generic, ty);
+        match generic.kind(db) {
+            GenericParamKind::Type => {
+                let index = state.egraph.alloc_var(version, state.canonical_universe);
+                let ty = state.stash.alloc(Ty::InferVar(index));
+                mapping.insert(*generic, ty);
+            }
+            GenericParamKind::Lifetime => {}
+            GenericParamKind::Const => {
+                unreachable!("const-generic impls are not eligible candidates")
+            }
+        }
     }
     let mut copier = IrCopier::new(source, &mut state.stash, mapping, None);
     let self_ty = copier.copy_ty(binder.value.self_ty);
@@ -158,6 +165,7 @@ fn instantiate_local_impl<'db>(
     trait_mapping.insert(trait_binder.value.self_param, self_ty);
     for (generic, argument) in trait_generics[1..]
         .iter()
+        .filter(|generic| generic.kind(db) == GenericParamKind::Type)
         .zip(state.stash[trait_ref.args].iter())
     {
         trait_mapping.insert(*generic, *argument);

@@ -9,7 +9,7 @@ slice is in progress.
   substitution, and explicit error forms needed by the first vertical slice.
 - [ ] Represent rigid types separately from the named, associated, and opaque
   `AliasTy` family without requiring aliases to be eagerly normalized.
-- [ ] Introduce `Lifetime::Dummy` as the only lifetime produced by checking.
+- [x] Introduce `Lifetime::Dummy` as the only lifetime produced by checking.
 - [ ] Make successful body finalization reject unresolved names, source method
   calls, inference variables, adjustment recipes, and unsupported nodes.
 - [ ] Add focused structural tests for completed-body invariants.
@@ -28,7 +28,7 @@ slice is in progress.
 - [ ] Extend the shared reference model with the completed forms from Step 1.
 - [ ] Adapt rustc definitions, substitutions, and adjustments directly into
   those forms without consulting or rewriting Sage output.
-- [ ] Remove paired output normalization and make pass/fail depend on
+- [x] Remove paired output normalization and make pass/fail depend on
   byte-for-byte identity of deterministic serialized output.
 - [ ] Enumerate associated bodies and reject unsupported successful output.
 - [ ] Compare `DbDropGuard::db` and assert a stable semantic query trace.

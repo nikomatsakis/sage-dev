@@ -649,10 +649,9 @@ Documented after initial implementation:
 ### Implementation deviations (Steps 4-7)
 
 - **No automated file discovery** — the RFD specified recursive directory walking to auto-discover fixtures. The implementation uses manually-written `#[test]` functions per fixture. Reasonable at 4 fixtures; will need a proc-macro or `datatest-stable` at scale.
-- **Paired normalization (architectural violation)** — the implementation
-  erases known Sage limitations (`InferVar` types become `"_"` on both sides;
-  literal values become empty). This can mask Sage bugs and must be removed;
-  it is not an accepted comparison mode.
+- **Exact comparison** — the harness performs no paired normalization for
+  known Sage limitations such as inference variables or literal values.
+  Conformance is exact deterministic serialized text under D4.
 - **Two comparison modes** — the implementation provides
   `compare_signatures_*` and `compare_full_*`. A signatures-only test may be a
   useful focused test, but it cannot count as body conformance. Full

@@ -280,14 +280,6 @@ fn validate_ty<'db>(
         Ty::InferVar(_) => return Err("canonical query contains a caller inference variable"),
         Ty::Param(GenericParam::AlphaEquiv(parameter)) if visible.contains(&parameter) => {}
         Ty::Param(_) => return Err("canonical query contains a noncanonical parameter"),
-        Ty::Ref(_, _, crate::ty::Lifetime::Param(GenericParam::AlphaEquiv(parameter)))
-            if !visible.contains(&parameter) =>
-        {
-            return Err("canonical query contains an unbound lifetime parameter");
-        }
-        Ty::Ref(_, _, crate::ty::Lifetime::Param(_)) => {
-            return Err("canonical query contains a noncanonical lifetime parameter");
-        }
         Ty::Array(_, crate::ty::Const::Param(GenericParam::AlphaEquiv(parameter)))
             if !visible.contains(&parameter) =>
         {
@@ -303,7 +295,7 @@ fn validate_ty<'db>(
         | Ty::Float(_)
         | Ty::Str
         | Ty::Adt(_, _)
-        | Ty::Ref(_, _, crate::ty::Lifetime::Static | crate::ty::Lifetime::Erased)
+        | Ty::Ref(_, _, crate::ty::Lifetime::Dummy)
         | Ty::Tuple(_)
         | Ty::Slice(_)
         | Ty::Array(_, crate::ty::Const::Literal(_) | crate::ty::Const::Other(_))

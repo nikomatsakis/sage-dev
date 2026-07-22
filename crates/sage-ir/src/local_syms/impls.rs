@@ -68,9 +68,6 @@ impl<'db> LocalImplSym<'db> {
                 crate::check::trait_env::trait_ref_eligibility(db, trait_ref),
             );
         }
-        if crate::check::trait_env::contains_erased_lifetime(&cx.target_stash, self_ty) {
-            solver_eligibility = SolverEligibility::Unsupported;
-        }
         if cst.is_negative || cst.is_const || cst.is_default {
             solver_eligibility = SolverEligibility::Unsupported;
         }

@@ -6,7 +6,7 @@ use crate::check::infer::unify::{UnifyError, unify_in_probe};
 use crate::check::infer::version::{Universe, Version};
 use crate::generic_param::{AlphaEquivParam, GenericParam, GenericParamKind};
 use crate::scope::LocalCrateSymbol;
-use crate::ty::{Binder, Const, Lifetime, TraitRef, Ty, WherePredicate};
+use crate::ty::{Binder, Const, TraitRef, Ty, WherePredicate};
 
 use super::canonical::{CallerCanonicalVar, CanonicalMapping};
 use super::goal::{Assumption, Atom, CanonicalVarRole, Goal, GoalQueryData};
@@ -590,11 +590,9 @@ impl<'state, 'target, 'db> ResponseExtractor<'state, 'target, 'db> {
                 let args: Vec<_> = source.into_iter().map(|arg| self.copy_ty(arg)).collect();
                 Ty::Adt(symbol, self.target.alloc_slice(&args))
             }
-            Ty::Ref(inner, mutability, lifetime) => Ty::Ref(
-                self.copy_ty(inner),
-                mutability,
-                self.copy_lifetime(lifetime),
-            ),
+            Ty::Ref(inner, mutability, lifetime) => {
+                Ty::Ref(self.copy_ty(inner), mutability, lifetime)
+            }
             Ty::Tuple(elements) => {
                 let source = self.state.stash[elements].to_vec();
                 let elements: Vec<_> = source
@@ -618,15 +616,6 @@ impl<'state, 'target, 'db> ResponseExtractor<'state, 'target, 'db> {
             leaf => leaf,
         };
         self.target.alloc(copied)
-    }
-
-    fn copy_lifetime(&self, lifetime: Lifetime<'db>) -> Lifetime<'db> {
-        match lifetime {
-            Lifetime::Param(param) => {
-                Lifetime::Param(self.binder_params.get(&param).copied().unwrap_or(param))
-            }
-            other => other,
-        }
     }
 
     fn copy_const(&self, constant: Const<'db>) -> Const<'db> {
@@ -805,11 +794,9 @@ impl<'source, 'target, 'db> IrCopier<'source, 'target, 'db> {
                 let args: Vec<_> = source.into_iter().map(|arg| self.copy_ty(arg)).collect();
                 Ty::Adt(symbol, self.target.alloc_slice(&args))
             }
-            Ty::Ref(inner, mutability, lifetime) => Ty::Ref(
-                self.copy_ty(inner),
-                mutability,
-                self.copy_lifetime(lifetime),
-            ),
+            Ty::Ref(inner, mutability, lifetime) => {
+                Ty::Ref(self.copy_ty(inner), mutability, lifetime)
+            }
             Ty::Tuple(elements) => {
                 let source = self.source[elements].to_vec();
                 let elements: Vec<_> = source
@@ -833,15 +820,6 @@ impl<'source, 'target, 'db> IrCopier<'source, 'target, 'db> {
             leaf => leaf,
         };
         self.target.alloc(copied)
-    }
-
-    fn copy_lifetime(&self, lifetime: Lifetime<'db>) -> Lifetime<'db> {
-        match lifetime {
-            Lifetime::Param(param) => {
-                Lifetime::Param(self.binder_mapping.get(&param).copied().unwrap_or(param))
-            }
-            other => other,
-        }
     }
 
     fn copy_const(&self, constant: Const<'db>) -> Const<'db> {

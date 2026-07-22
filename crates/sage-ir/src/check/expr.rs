@@ -104,7 +104,7 @@ impl<'db> ExprCst<'db> {
             ExprCstKind::Ref(inner, m) => {
                 let ri = cx.source_stash[*inner].check_with(cx, scope).await;
                 let inner_ty = cx.stash()[ri].ty;
-                let ty = cx.alloc_ty(Ty::Ref(inner_ty, *m, crate::ty::Lifetime::Erased));
+                let ty = cx.alloc_ty(Ty::Ref(inner_ty, *m, crate::ty::Lifetime::Dummy));
                 (TyExprData::Ref(ri, *m), ty)
             }
             ExprCstKind::If(cond, then, else_) => {
@@ -676,14 +676,8 @@ impl<'db> TypeCst<'db> {
             TypeCstKind::Reference(inner, m, lifetime) => {
                 let inner_ty = cx.source_stash[inner].check_ty(cx, scope);
                 let inner_ptr = cx.stash_mut().alloc(inner_ty);
-                let lifetime = match lifetime {
-                    crate::cst::ty::LifetimeCst::Named(name) if name.text(cx.db) == "'static" => {
-                        Lifetime::Static
-                    }
-                    crate::cst::ty::LifetimeCst::Named(_)
-                    | crate::cst::ty::LifetimeCst::Anonymous => Lifetime::Erased,
-                };
-                Ty::Ref(inner_ptr, m, lifetime)
+                let _ = lifetime;
+                Ty::Ref(inner_ptr, m, Lifetime::Dummy)
             }
             TypeCstKind::Tuple(elems) => {
                 let tys: Vec<_> = cx.source_stash[elems]
@@ -761,7 +755,7 @@ fn check_literal_ty<'db>(cx: &InferCtx<'_, 'db>, lit: Literal<'db>) -> Ptr<Ty<'d
             cx.alloc_ty(Ty::Ref(
                 str_ty,
                 Mutability::Shared,
-                crate::ty::Lifetime::Static,
+                crate::ty::Lifetime::Dummy,
             ))
         }
         Literal::Char(_) => cx.alloc_ty(Ty::Char),

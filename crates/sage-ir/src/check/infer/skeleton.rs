@@ -25,7 +25,7 @@ pub enum Skeleton<'db> {
 
     // Compound (1+ children)
     Adt(Symbol<'db>, u32),
-    Ref(Mutability, Lifetime<'db>),
+    Ref(Mutability, Lifetime),
     Tuple(u32),
     Slice,
     Array(Const<'db>),

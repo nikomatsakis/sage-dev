@@ -194,8 +194,8 @@ Tests:
   bound or waking consumers; an accessible placeholder succeeds.
 - [ ] A discarded probe neither wakes a parent waiter nor leaves queued rebuild
   work; a committed probe wakes each affected parent waiter once.
-- [x] Lifetime and const skeleton fields continue to compare structurally even
-  though solver substitutions are type-only in the MVP.
+- [x] `Dummy` lifetime and const skeleton fields continue to compare
+  structurally even though solver substitutions are type-only in the MVP.
 - [x] `require_eq` retains its diagnostic and error-type behavior.
 
 ## Step 2: Scoped runtime tasks and interleaved forks
@@ -305,9 +305,10 @@ Implement both directions of the solver boundary before adding proof search.
   declarations and bound occurrences capture-avoidantly, exclude them from
   input metadata/reverse mappings, and reserve their alpha-parameter IDs before
   assigning response IDs.
-- [x] Extend the canonical copying/folding path to visit lifetime and const
-  parameters embedded in a type. Canonicalize them as rigid placeholders;
-  do not introduce lifetime/const inference or substitution keys in the MVP.
+- [x] Extend the canonical copying/folding path to visit const parameters
+  embedded in a type and canonicalize them as rigid placeholders. Checked
+  lifetimes are already `Dummy`; do not introduce lifetime/const inference or
+  substitution keys in the MVP.
 - [x] Map caller generic parameters to `RigidPlaceholder` variables and caller
   inference variables to `ExistentialInput` variables. Inference variables
   appearing only in assumptions remain existential; they are not generalized.
@@ -379,9 +380,9 @@ Tests:
 - [ ] Alpha-equivalent nested `Exists` goals canonicalize identically despite
   different source `GenericParam` identities; shadowed binders neither capture
   free inputs nor collide with response parameters.
-- [ ] Alpha-equivalent lifetime and const parameters embedded in otherwise
-  identical types produce the same canonical query, while distinct parameters
-  remain distinct.
+- [ ] Alpha-equivalent const parameters embedded in otherwise identical types
+  produce the same canonical query, while distinct parameters remain distinct.
+  Checked lifetimes are uniformly `Dummy` before canonicalization.
 - [x] A result for `impl<T> Trait for (T, T)` preserves one repeated response
   variable in both tuple positions; it does not extract `(A, B)`.
 - [x] The same local variable shared between `subst` and `modulo` remains shared
@@ -723,9 +724,10 @@ Tests:
 - [x] Generic impl where-clauses become residuals and later discharge.
 - [x] Local trait-level where-predicates become candidate-body obligations and
   cannot be bypassed by an otherwise matching impl.
-- [x] A relevant unsupported/lifetime/const-generic impl or trait signature
-  cannot be opened with type variables, cannot become an unconditional clause,
-  and prevents definitive `No` from the remaining candidate subset.
+- [x] A relevant unsupported/const-generic impl or trait signature cannot be
+  opened with type variables, cannot become an unconditional clause, and
+  prevents definitive `No` from the remaining candidate subset. Lifetime
+  binders are skipped and their checked occurrences are `Dummy`.
 - [x] A candidate such as `impl<T> Trait for (T, T)` accepts `(u32, u32)`,
   rejects `(u32, i32)`, and returns one shared witness when the caller contains
   inference.

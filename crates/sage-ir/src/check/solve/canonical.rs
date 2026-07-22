@@ -5,7 +5,7 @@ use crate::check::infer::egraph::VersionedEGraph;
 use crate::check::infer::version::{Universe, Version};
 use crate::generic_param::{AlphaEquivParam, GenericParam, GenericParamKind};
 use crate::scope::LocalCrateSymbol;
-use crate::ty::{Binder, Const, Lifetime, TraitRef, Ty, WherePredicate};
+use crate::ty::{Binder, Const, TraitRef, Ty, WherePredicate};
 
 use super::goal::{Assumption, Atom, CanonicalVarInfo, CanonicalVarRole, Goal, GoalQueryData};
 
@@ -282,11 +282,9 @@ impl<'db> Canonicalizer<'_, 'db> {
                     .collect();
                 Ty::Adt(symbol, self.target.alloc_slice(&args))
             }
-            Ty::Ref(inner, mutability, lifetime) => Ty::Ref(
-                self.fold_ty_ptr(inner),
-                mutability,
-                self.fold_lifetime(lifetime),
-            ),
+            Ty::Ref(inner, mutability, lifetime) => {
+                Ty::Ref(self.fold_ty_ptr(inner), mutability, lifetime)
+            }
             Ty::Tuple(elements) => {
                 let source_elements = self.source[elements].to_vec();
                 let elements: Vec<_> = source_elements
@@ -313,13 +311,6 @@ impl<'db> Canonicalizer<'_, 'db> {
             leaf => leaf,
         };
         self.target.alloc(folded)
-    }
-
-    fn fold_lifetime(&mut self, lifetime: Lifetime<'db>) -> Lifetime<'db> {
-        match lifetime {
-            Lifetime::Param(param) => Lifetime::Param(self.fold_generic_param(param)),
-            other => other,
-        }
     }
 
     fn fold_const(&mut self, constant: Const<'db>) -> Const<'db> {

@@ -120,20 +120,8 @@ impl<'db> TypeCst<'db> {
             TypeCstKind::Reference(inner, m, lifetime) => {
                 let inner_ty = src[inner].check(cx);
                 let inner = cx.target_stash.alloc(inner_ty);
-                let lifetime = match lifetime {
-                    LifetimeCst::Named(name) if name.text(cx.db) == "'static" => Lifetime::Static,
-                    LifetimeCst::Named(name) => {
-                        match cx.resolver.ribs.lookup(name, Namespace::Type) {
-                            Some(Resolution::Param(param)) => Lifetime::Param(param),
-                            Some(
-                                Resolution::Local(_) | Resolution::Sym(_) | Resolution::SelfTy(_),
-                            )
-                            | None => Lifetime::Erased,
-                        }
-                    }
-                    LifetimeCst::Anonymous => Lifetime::Erased,
-                };
-                Ty::Ref(inner, m, lifetime)
+                let _ = lifetime;
+                Ty::Ref(inner, m, Lifetime::Dummy)
             }
             TypeCstKind::Tuple(elems) => {
                 let tys: Vec<_> = src[elems].iter().map(|e| e.check(cx)).collect();

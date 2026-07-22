@@ -217,7 +217,7 @@ mod trait_system_tests {
     use sage_ir::local_syms::impls::local_impls;
     use sage_ir::scope::ScopeSymbol;
     use sage_ir::symbol::{SymbolData, TraitSymbol};
-    use sage_ir::ty::{SolverEligibility, Ty};
+    use sage_ir::ty::{Lifetime, SolverEligibility, Ty};
 
     #[test]
     fn trait_and_impl_signatures_share_complete_generic_binders() {
@@ -262,7 +262,7 @@ mod trait_system_tests {
     }
 
     #[test]
-    fn lifetime_generic_impl_is_not_solver_eligible() {
+    fn lifetime_generic_impl_uses_dummy_and_remains_solver_eligible() {
         with_test_crate(
             "trait Bound {}\nimpl<'a, T> Bound for &'a T {}",
             |db, root| {
@@ -280,8 +280,13 @@ mod trait_system_tests {
                 let signature = local_impls(db, krate)[0].sig(db);
                 assert_eq!(
                     signature.root().value.solver_eligibility,
-                    SolverEligibility::Unsupported
+                    SolverEligibility::Eligible
                 );
+                let (stash, binder) = signature.open();
+                assert!(matches!(
+                    stash[binder.value.self_ty],
+                    Ty::Ref(_, _, Lifetime::Dummy)
+                ));
             },
         );
     }
@@ -315,7 +320,7 @@ mod trait_system_tests {
     }
 
     #[test]
-    fn negative_and_elided_reference_impls_are_ineligible_but_static_is_structural() {
+    fn negative_impl_is_ineligible_but_all_reference_lifetimes_are_dummy() {
         with_test_crate(
             "trait Bound {}\nimpl !Bound for bool {}\nimpl Bound for &i32 {}\nimpl Bound for &'static bool {}",
             |db, root| {
@@ -330,7 +335,8 @@ mod trait_system_tests {
                 let ScopeSymbol::Crate(krate) = local_trait.scope(db) else {
                     panic!("root item should be crate-scoped")
                 };
-                let eligibility: Vec<_> = local_impls(db, krate)
+                let impls = local_impls(db, krate);
+                let eligibility: Vec<_> = impls
                     .iter()
                     .map(|local| local.sig(db).root().value.solver_eligibility)
                     .collect();
@@ -338,10 +344,18 @@ mod trait_system_tests {
                     eligibility,
                     [
                         SolverEligibility::Unsupported,
-                        SolverEligibility::Unsupported,
+                        SolverEligibility::Eligible,
                         SolverEligibility::Eligible,
                     ]
                 );
+                for local in &impls[1..] {
+                    let signature = local.sig(db);
+                    let (stash, binder) = signature.open();
+                    assert!(matches!(
+                        stash[binder.value.self_ty],
+                        Ty::Ref(_, _, Lifetime::Dummy)
+                    ));
+                }
             },
         );
     }
@@ -398,6 +412,51 @@ mod trait_system_tests {
                     binder.value.parameter_env.solver_eligibility,
                     SolverEligibility::Eligible
                 );
+            },
+        );
+    }
+
+    #[test]
+    fn explicit_elided_and_static_lifetimes_collapse_to_dummy() {
+        use sage_ir::symbol::FnSymbol;
+
+        with_test_crate(
+            "fn refs<'a, T: 'a>(a: &'a T, b: &T) -> &'static T { a }",
+            |db, root| {
+                let [symbol] = root.expanded_module_items(db) else {
+                    panic!("expected exactly one function")
+                };
+                let function = match symbol.data(db) {
+                    SymbolData::FnSymbol(FnSymbol::Local(local)) => local,
+                    SymbolData::FnSymbol(FnSymbol::Ext(_))
+                    | SymbolData::StructSymbol(_)
+                    | SymbolData::EnumSymbol(_)
+                    | SymbolData::VariantSymbol(_)
+                    | SymbolData::VariantCtorSymbol(_)
+                    | SymbolData::TraitSymbol(_)
+                    | SymbolData::TypeAliasSymbol(_)
+                    | SymbolData::ConstSymbol(_)
+                    | SymbolData::StaticSymbol(_)
+                    | SymbolData::ImplSymbol(_)
+                    | SymbolData::ModSymbol(_)
+                    | SymbolData::MacroDefSymbol(_)
+                    | SymbolData::IntrinsicTypeSymbol(_)
+                    | SymbolData::MacroInvocationSymbol(_)
+                    | SymbolData::UseSymbol(_) => panic!("expected a local function"),
+                };
+                let signature = function.sig(db);
+                let (stash, binder) = signature.open();
+                assert_eq!(
+                    binder.value.parameter_env.solver_eligibility,
+                    SolverEligibility::Eligible
+                );
+                for ty in stash[binder.value.params]
+                    .iter()
+                    .copied()
+                    .chain(std::iter::once(binder.value.ret))
+                {
+                    assert!(matches!(stash[ty], Ty::Ref(_, _, Lifetime::Dummy)));
+                }
             },
         );
     }
@@ -1079,7 +1138,7 @@ mod trait_solver_proof_tests {
     }
 
     #[test]
-    fn relevant_unsupported_impl_keeps_search_incomplete() {
+    fn unused_lifetime_binder_does_not_make_impl_search_incomplete() {
         with_test_crate(
             "trait Marker {}\nimpl<'a> Marker for bool {}",
             |db, root| {
@@ -1107,11 +1166,7 @@ mod trait_solver_proof_tests {
                     }),
                 );
                 let result = GoalQuery::new(db, canonical.data).prove(db);
-                assert!(
-                    matches!(result.root().value, QueryResultData::Maybe { .. }),
-                    "unexpected result: {:?}",
-                    result.root().value
-                );
+                assert!(matches!(result.root().value, QueryResultData::Yes { .. }));
             },
         );
     }
@@ -1249,16 +1304,10 @@ mod trait_obligation_tests {
     }
 
     #[test]
-    fn unsupported_parameter_environment_is_not_treated_as_empty() {
-        let diagnostics = collect_diagnostics(
+    fn lifetime_binder_does_not_make_parameter_environment_incomplete() {
+        TestCrate::in_memory(
             "trait Bound {}\nimpl Bound for bool {}\nfn requires<'a, T: Bound>(value: T) {}\nfn caller() { requires(true); }",
-        );
-        assert!(
-            diagnostics.iter().any(|diagnostic| {
-                diagnostic.line == 4
-                    && diagnostic.message == "trait obligation could not be resolved"
-            }),
-            "unexpected diagnostics: {diagnostics:?}"
-        );
+        )
+        .check_ok();
     }
 }

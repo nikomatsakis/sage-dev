@@ -30,26 +30,27 @@ The MVP provides the checked data consumed by the trait solver and method resolv
 - deterministic enumeration of every local impl in a `LocalCrateSymbol`.
 
 The MVP does not perform proof search, choose a method, or check coherence. It also defers
-lifetime/outlives predicates, const trait arguments, higher-ranked bounds, associated type
+meaningful lifetime/outlives semantics, const trait arguments, higher-ranked bounds, associated type
 bindings and normalization, supertrait elaboration, external and builtin impl discovery,
 auto and negative impls, specialization, and overlap/orphan checking. Unsupported syntax
 must be diagnosed or represented as unsupported; it must not be silently dropped from an
 impl's applicability conditions.
 
-The type-only consumers cannot instantiate lifetime or const candidate
-variables. A trait or impl whose header contains lifetime/const generics, or
-whose applicability depends on any other deferred predicate form, is retained
-for diagnostics and item ownership but marked `Unsupported` for solver and
-method-candidate exposure. Supporting lifetime/const leaves structurally in
-`Ty` does not make those binders inferable.
+The type-only consumers do not instantiate lifetime or const candidate
+variables. Const generics, const predicates, and other deferred applicability
+forms therefore make a trait or impl `Unsupported`. Lifetime syntax is
+different under [D12](../../design/decisions.md#d12-lifetimes-collapse-to-dummy-and-borrow-checking-is-deferred):
+the binder remains in the source model, but every occurrence lowers directly
+to `Lifetime::Dummy`, and lifetime/outlives predicates are trivially true.
+Consumers skip lifetime binders rather than opening inference variables for
+them.
 
-This gate includes implicit lifetime binders. An impl header such as
-`impl<T> Trait for &T` is effectively generic over the reference lifetime and
-is `Unsupported` for candidate matching; an erased lifetime must not be used as
-a wildcard. A fully concrete lifetime such as `'static` may still be compared
-structurally. The special elided borrow in supported `&self`/`&mut self`
-receivers is represented by `MethodReceiver` and does not become an impl-head
-lifetime variable.
+Consequently, reference lifetimes do not gate candidate eligibility. Headers
+such as `impl<T> Trait for &T`, `impl<'a, T> Trait for &'a T`, and a
+`'static` spelling all carry `Lifetime::Dummy` in checked types. `Dummy` is a
+single deliberate lifetime abstraction, not a matching wildcard or a rigid
+`'static` leaf. The same rule applies to the borrow represented by
+`MethodReceiver`.
 
 Eligibility requires source fidelity before checked lowering. The CST/parser
 must preserve every header feature which can change applicability or candidate
@@ -129,7 +130,8 @@ pub struct TraitSignatureData<'db> {
     pub self_param: GenericParam<'db>,
     pub where_clauses: Slice<WherePredicate<'db>>,
     /// `Eligible` only when the complete defining-predicate set was lowered and
-    /// every source generic is a type parameter supported by the MVP.
+    /// every source generic is either a supported type parameter or a
+    /// lifetime binder erased to `Dummy`.
     pub solver_eligibility: SolverEligibility,
 }
 
@@ -161,11 +163,10 @@ The owner binder supplies `owner_self_ty`: the trait `Self` parameter for a
 trait item or the opened impl self type for an impl item. A function signature
 stores `Option<CheckedReceiver>` separately from ordinary parameters, so an
 associated function with no receiver cannot become a dot-call candidate.
-Explicit-lifetime and typed receivers such as `&'a self` or
-`self: Box<Self>` are preserved but marked unsupported by the method MVP; only
-`self`, `mut self`, `&self`, and `&mut self` are lowered to the forms above.
-Region matching for the reference forms is deferred with lifetime inference;
-the receiver form, not a fabricated lifetime variable, drives autoref lookup.
+An explicit lifetime on a reference receiver, such as `&'a self`, lowers to
+the same reference receiver form because `'a` becomes `Dummy`. Typed receivers
+such as `self: Box<Self>` remain preserved but unsupported by the method MVP.
+The receiver form, not a fabricated lifetime variable, drives autoref lookup.
 
 An owner-item function signature also records
 `method_candidate_eligibility: SolverEligibility`. It is `Eligible` only when
@@ -244,7 +245,7 @@ environment as well-formedness obligations. Silently discarding either would
 make a generic call or `Container<T>` appear usable without its declared
 bounds.
 
-An owner with an unsupported lifetime, const, higher-ranked, or projection
+An owner with an unsupported const, higher-ranked, or projection
 predicate is marked unsupported and diagnosed. The MVP may preserve any
 independently represented positive type predicates for diagnostics, but it may
 not finalize that owner as successfully checked while the rest of its
@@ -309,7 +310,7 @@ and item order. The MVP consumers linearly scan this list:
   trait goal, whose impl and referenced local-trait signatures are both
   `SolverEligibility::Eligible`, then opens each impl binder freshly;
 - inherent method lookup keeps impls with `trait_ref: None`, a matching self-type
-  head, and an `Eligible` type-only opening;
+  head, and an `Eligible` supported opening;
 - trait method discovery enumerates traits separately and asks the solver a
   fixed post-deref `LookupSelfTy: Trait<Args>` question. The solver does not
   return an impl or discover a trait by method name.
@@ -333,9 +334,9 @@ complete defining predicates.
 - External trait and impl signatures and per-crate enumeration through `TcxDb`.
 - Exposing local impls of external traits to the solver; this requires the
   external trait's checked defining predicates rather than assuming none.
-- Lifetime/outlives and const predicates.
-- Solver and method-candidate exposure for lifetime/const-generic trait and impl
-  headers.
+- Meaningful lifetime/outlives semantics and const predicates.
+- Solver and method-candidate exposure for const-generic trait and impl
+  headers; lifetime-generic headers already participate with `Dummy`.
 - Associated type bindings, projections, normalization, and associated item values.
 - Higher-ranked bounds and universe-bearing binders.
 - Supertrait elaboration and implied predicates.

@@ -91,10 +91,9 @@ coverage and forbidden placeholders. Only then are the serialized bytes
 compared. A JSON-path or tree diff is useful diagnostics after inequality has
 already been established; it cannot convert unequal text into a passing test.
 
-The current harness contains historical paired normalization for unresolved
-inference variables and literal values. That is a known architectural
-violation, not an accepted compatibility layer, and must be removed as the
-typed-IR oracle boundary is completed.
+The comparison path contains no paired normalization for unresolved inference
+variables, literal values, or other known limitations. Such placeholders are
+ordinary mismatches and cannot be normalized away.
 
 ## Semantic and coverage boundary
 
