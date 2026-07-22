@@ -113,6 +113,21 @@ pub fn serve_tcx_requests(tcx: TyCtxt<'_>, req_rx: mpsc::Receiver<TcxRequest>) {
             } => {
                 let _ = reply.send(tcx_db.adt_signature(crate_num, def_index));
             }
+            TcxRequest::RelevantTraitImpls {
+                crate_num,
+                def_index,
+                self_head,
+                reply,
+            } => {
+                let _ = reply.send(tcx_db.relevant_trait_impls(crate_num, def_index, self_head));
+            }
+            TcxRequest::ImplSignature {
+                crate_num,
+                def_index,
+                reply,
+            } => {
+                let _ = reply.send(tcx_db.impl_signature(crate_num, def_index));
+            }
             TcxRequest::AdtIsAlwaysSized {
                 crate_num,
                 def_index,

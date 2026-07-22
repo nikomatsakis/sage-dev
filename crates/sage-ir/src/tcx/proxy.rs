@@ -5,7 +5,7 @@ use crate::symbol::{CrateNum, DefIndex};
 
 use super::{
     ExternalDefPath, RawAdtSignature, RawAssociatedItems, RawChild, RawFnSignature,
-    RawTraitSignature, TcxDb,
+    RawImplSignature, RawRelevantImpls, RawSelfTypeHead, RawTraitSignature, TcxDb,
 };
 
 /// Request from the salsa thread to the TyCtxt thread.
@@ -64,6 +64,17 @@ pub enum TcxRequest {
         crate_num: CrateNum,
         def_index: DefIndex,
         reply: mpsc::Sender<Option<RawAdtSignature>>,
+    },
+    RelevantTraitImpls {
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        self_head: Option<RawSelfTypeHead>,
+        reply: mpsc::Sender<Option<RawRelevantImpls>>,
+    },
+    ImplSignature {
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        reply: mpsc::Sender<Option<RawImplSignature>>,
     },
     AdtIsAlwaysSized {
         crate_num: CrateNum,
@@ -277,6 +288,44 @@ impl TcxDb for ProxyTcxDb {
         let (reply, rx) = mpsc::channel();
         self.tx
             .send(TcxRequest::AdtSignature {
+                crate_num,
+                def_index,
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn relevant_trait_impls(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        self_head: Option<RawSelfTypeHead>,
+    ) -> Option<RawRelevantImpls> {
+        self.log.lock().unwrap().push(format!(
+            "tcx::relevant_trait_impls({}, {}, {:?})",
+            crate_num.0, def_index.0, self_head
+        ));
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::RelevantTraitImpls {
+                crate_num,
+                def_index,
+                self_head,
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn impl_signature(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<RawImplSignature> {
+        self.log.lock().unwrap().push(format!(
+            "tcx::impl_signature({}, {})",
+            crate_num.0, def_index.0
+        ));
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::ImplSignature {
                 crate_num,
                 def_index,
                 reply,

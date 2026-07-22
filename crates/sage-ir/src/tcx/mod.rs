@@ -46,11 +46,46 @@ pub struct RawGenericParam {
     pub kind: RawGenericParamKind,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct RawDefId {
     pub crate_num: CrateNum,
     pub def_index: DefIndex,
     pub kind: SymExtKind,
+}
+
+/// A conservative rigid outer shape used to refine a trait-keyed impl query.
+/// `None` means that no lossless refinement is available.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum RawSelfTypeHead {
+    Adt(RawDefId),
+    Bool,
+    Char,
+    Int,
+    Uint,
+    Float,
+    Str,
+    Ref,
+    Tuple,
+    Slice,
+    Array,
+    FnPtr,
+    Never,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RawRelevantImpls {
+    pub impls: Vec<RawDefId>,
+    /// Whether every explicit upstream impl relevant to this trait/head is
+    /// represented. Individual headers retain their own completeness.
+    pub complete: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RawImplSignature {
+    pub generics: Vec<RawGenericParam>,
+    pub trait_ref: RawTraitPredicate,
+    pub predicates: Vec<RawTraitPredicate>,
+    pub complete: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -83,6 +118,7 @@ pub struct RawTraitPredicate {
 pub enum RawTraitSemantics {
     Ordinary,
     Sized,
+    MetaSized,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -228,6 +264,28 @@ pub trait TcxDb: Send + Sync {
     /// for an external nominal type. This intentionally excludes fields,
     /// variants, inherent items, and impls.
     fn adt_signature(&self, _crate_num: CrateNum, _def_index: DefIndex) -> Option<RawAdtSignature> {
+        None
+    }
+
+    /// Deterministic explicit upstream impl identities for one fixed trait.
+    /// A supplied self head may remove only provably disjoint rigid headers;
+    /// blanket and unclassifiable headers remain in the result.
+    fn relevant_trait_impls(
+        &self,
+        _crate_num: CrateNum,
+        _def_index: DefIndex,
+        _self_head: Option<RawSelfTypeHead>,
+    ) -> Option<RawRelevantImpls> {
+        None
+    }
+
+    /// Binder-aware header for one external trait impl. Associated values and
+    /// impl items are intentionally separate metadata operations.
+    fn impl_signature(
+        &self,
+        _crate_num: CrateNum,
+        _def_index: DefIndex,
+    ) -> Option<RawImplSignature> {
         None
     }
 

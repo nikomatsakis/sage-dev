@@ -241,6 +241,8 @@ impl<'tcx> RustcTcxDb<'tcx> {
 
         let semantics = if self.tcx.lang_items().sized_trait() == Some(def_id) {
             RawTraitSemantics::Sized
+        } else if self.tcx.lang_items().meta_sized_trait() == Some(def_id) {
+            RawTraitSemantics::MetaSized
         } else {
             RawTraitSemantics::Ordinary
         };
@@ -538,6 +540,135 @@ impl<'tcx> RustcTcxDb<'tcx> {
         })
     }
 
+    pub fn relevant_trait_impls(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        self_head: Option<sage_ir::tcx::RawSelfTypeHead>,
+    ) -> Option<sage_ir::tcx::RawRelevantImpls> {
+        use sage_ir::tcx::{RawDefId, RawRelevantImpls};
+
+        let trait_def_id = rustc_def_id(crate_num, def_index);
+        if !matches!(self.tcx.def_kind(trait_def_id), DefKind::Trait) {
+            return None;
+        }
+
+        let mut impls = Vec::new();
+        for impl_def_id in self.tcx.all_impls(trait_def_id) {
+            if impl_def_id.is_local() {
+                continue;
+            }
+            if let Some(query_head) = self_head {
+                let impl_ty = self.tcx.type_of(impl_def_id).instantiate_identity();
+                if simplify_self_type_head(self.tcx, impl_ty).is_some_and(|head| head != query_head)
+                {
+                    continue;
+                }
+            }
+            impls.push(RawDefId {
+                crate_num: CrateNum(impl_def_id.krate.as_u32()),
+                def_index: DefIndex(impl_def_id.index.as_u32()),
+                kind: SymExtKind::Impl,
+            });
+        }
+        impls.sort_by_key(|impl_def| (impl_def.crate_num.0, impl_def.def_index.0));
+        impls.dedup();
+        // `all_impls` is exhaustive only for explicit impls. Lang-item traits
+        // can also have compiler-built candidates (for example scalar `Copy`
+        // or generator `Iterator`), and auto traits are structural. Sage must
+        // not turn the absence of an explicit header into `No` until it models
+        // the corresponding built-in source. `Sized` and `MetaSized` bypass
+        // this operation through their dedicated structural candidates.
+        let explicit_impls_are_exhaustive = !self.tcx.trait_is_auto(trait_def_id)
+            && self.tcx.lang_items().from_def_id(trait_def_id).is_none();
+        Some(RawRelevantImpls {
+            impls,
+            complete: explicit_impls_are_exhaustive,
+        })
+    }
+
+    pub fn impl_signature(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+    ) -> Option<sage_ir::tcx::RawImplSignature> {
+        use sage_ir::tcx::{
+            RawGenericParam, RawGenericParamKind, RawImplSignature, RawTraitPredicate,
+        };
+
+        let impl_def_id = rustc_def_id(crate_num, def_index);
+        if !matches!(
+            self.tcx.def_kind(impl_def_id),
+            DefKind::Impl { of_trait: true }
+        ) {
+            return None;
+        }
+
+        let generics = self.tcx.generics_of(impl_def_id);
+        let mut raw_generics = Vec::with_capacity(generics.count());
+        let mut complete = true;
+        for index in 0..generics.count() {
+            let param = generics.param_at(index, self.tcx);
+            let kind = match param.kind {
+                ty::GenericParamDefKind::Type { .. } => RawGenericParamKind::Type,
+                ty::GenericParamDefKind::Lifetime => RawGenericParamKind::Lifetime,
+                ty::GenericParamDefKind::Const { .. } => {
+                    complete = false;
+                    RawGenericParamKind::Const
+                }
+            };
+            raw_generics.push(RawGenericParam {
+                index: param.index,
+                name: Some(param.name.as_str().to_owned()),
+                kind,
+            });
+        }
+
+        let trait_ref = self.tcx.impl_trait_ref(impl_def_id).instantiate_identity();
+        let trait_ref = raw_trait_predicate(self.tcx, trait_ref)?;
+        if self.tcx.impl_polarity(impl_def_id) != ty::ImplPolarity::Positive {
+            complete = false;
+        }
+        if self.tcx.defaultness(impl_def_id).is_default() {
+            complete = false;
+        }
+
+        let instantiated = self
+            .tcx
+            .predicates_of(impl_def_id)
+            .instantiate_identity(self.tcx);
+        let mut predicates: Vec<RawTraitPredicate> = Vec::new();
+        for clause in instantiated.predicates {
+            if !clause.kind().bound_vars().is_empty() {
+                complete = false;
+                continue;
+            }
+            match clause.kind().skip_binder() {
+                ty::ClauseKind::Trait(predicate) => {
+                    let Some(predicate) = raw_trait_predicate(self.tcx, predicate.trait_ref) else {
+                        complete = false;
+                        continue;
+                    };
+                    predicates.push(predicate);
+                }
+                ty::ClauseKind::RegionOutlives(_) | ty::ClauseKind::TypeOutlives(_) => {}
+                ty::ClauseKind::Projection(_)
+                | ty::ClauseKind::ConstArgHasType(..)
+                | ty::ClauseKind::WellFormed(_)
+                | ty::ClauseKind::ConstEvaluatable(_)
+                | ty::ClauseKind::HostEffect(_)
+                | ty::ClauseKind::UnstableFeature(_) => complete = false,
+            }
+        }
+
+        Some(RawImplSignature {
+            generics: raw_generics,
+            trait_ref,
+            predicates,
+            complete,
+        })
+    }
+
     pub fn adt_is_always_sized(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<bool> {
         let def_id = rustc_def_id(crate_num, def_index);
         if !matches!(self.tcx.def_kind(def_id), DefKind::Struct | DefKind::Union) {
@@ -680,6 +811,52 @@ impl<'tcx> RustcTcxDb<'tcx> {
             Err(_) => None,
         }
     }
+}
+
+fn simplify_self_type_head(
+    tcx: TyCtxt<'_>,
+    ty: ty::Ty<'_>,
+) -> Option<sage_ir::tcx::RawSelfTypeHead> {
+    use sage_ir::tcx::{RawDefId, RawSelfTypeHead};
+
+    Some(match ty.kind() {
+        ty::TyKind::Adt(def, _) => {
+            let def_id = def.did();
+            RawSelfTypeHead::Adt(RawDefId {
+                crate_num: CrateNum(def_id.krate.as_u32()),
+                def_index: DefIndex(def_id.index.as_u32()),
+                kind: sym_ext_kind_for_def_kind(tcx.def_kind(def_id)),
+            })
+        }
+        ty::TyKind::Bool => RawSelfTypeHead::Bool,
+        ty::TyKind::Char => RawSelfTypeHead::Char,
+        ty::TyKind::Int(_) => RawSelfTypeHead::Int,
+        ty::TyKind::Uint(_) => RawSelfTypeHead::Uint,
+        ty::TyKind::Float(_) => RawSelfTypeHead::Float,
+        ty::TyKind::Str => RawSelfTypeHead::Str,
+        ty::TyKind::Ref(..) => RawSelfTypeHead::Ref,
+        ty::TyKind::Tuple(_) => RawSelfTypeHead::Tuple,
+        ty::TyKind::Slice(_) => RawSelfTypeHead::Slice,
+        ty::TyKind::Array(..) => RawSelfTypeHead::Array,
+        ty::TyKind::FnPtr(..) => RawSelfTypeHead::FnPtr,
+        ty::TyKind::Never => RawSelfTypeHead::Never,
+        ty::TyKind::Param(_)
+        | ty::TyKind::Pat(..)
+        | ty::TyKind::RawPtr(..)
+        | ty::TyKind::Foreign(_)
+        | ty::TyKind::FnDef(..)
+        | ty::TyKind::UnsafeBinder(_)
+        | ty::TyKind::Dynamic(..)
+        | ty::TyKind::Closure(..)
+        | ty::TyKind::CoroutineClosure(..)
+        | ty::TyKind::Coroutine(..)
+        | ty::TyKind::CoroutineWitness(..)
+        | ty::TyKind::Alias(..)
+        | ty::TyKind::Bound(..)
+        | ty::TyKind::Placeholder(_)
+        | ty::TyKind::Infer(_)
+        | ty::TyKind::Error(_) => return None,
+    })
 }
 
 fn rustc_def_id(crate_num: CrateNum, def_index: DefIndex) -> DefId {

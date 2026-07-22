@@ -321,6 +321,7 @@ pub struct TraitSignatureData<'db> {
 pub enum TraitSemantics {
     Ordinary,
     Sized,
+    MetaSized,
 }
 
 pub type ImplSignature<'db> = Binder<'db, ImplSignatureData<'db>>;

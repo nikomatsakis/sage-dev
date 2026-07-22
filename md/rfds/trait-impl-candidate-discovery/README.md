@@ -23,19 +23,23 @@
 
 ## Motivation
 
-The MVP solver calls `local_impls(db, local_crate)` and then reads every local
-impl signature to filter for the queried trait. This has two deliberate but
-non-destination limitations:
+The original MVP solver called `local_impls(db, local_crate)` and then read
+every local impl signature to filter for the queried trait. Its candidate
+source had two deliberate but non-destination limitations:
 
-1. It cannot prove a goal from an impl defined in an upstream crate, even
+1. It could not prove a goal from an impl defined in an upstream crate, even
    though such impls are globally visible to the current Rust compilation.
 2. A change to any local impl invalidates the all-local-impl list and forces
    every trait query to repeat filtering, including queries for unrelated
    traits.
 
-The current `TcxDb` boundary exposes external names and macros but no external
-trait/impl signature or relevant-impl query. The Trait System RFD therefore
-deferred external impls and described the linear list as an MVP source.
+The first limitation is now closed for represented explicit impls. Separate
+owned `TcxDb` operations expose a fixed-trait relevant-impl set, optional
+conservative rigid self-head refinement, and one binder-aware impl header.
+Candidate assembly lowers those headers and uses the same proof path as local
+impls. Associated values remain a separate operation. The local source is
+trait-keyed at its public Salsa boundary but still scans the expanded local
+module tree, so the second invalidation limitation remains.
 
 These limitations must remain explicit in the MVP without becoming accidental
 architecture. Candidate discovery is a semantic completeness boundary and an
@@ -53,9 +57,10 @@ trait_impl_candidates(
 ) -> complete deterministic candidate set
 ```
 
-The exact Rust types and the split between Salsa queries and `TcxDb` callbacks
-remain open. The fixed trait is mandatory. A self-type key is an optimization
-which may return a conservative superset.
+The fixed trait is mandatory. The external half is split into a tracked
+relevant-identity query and a tracked per-header import over owned `TcxDb`
+values. The exact fine-grained local index remains open. A self-type key is an
+optimization which may return a conservative superset.
 
 ## Detailed plans
 
@@ -153,11 +158,12 @@ Sage already constructs `Database` with a Salsa event callback which records
 hook records tracked-function bodies which actually execute; a memoized value
 served without reexecution does not emit `WillExecute`.
 
-No current executable test consumes `take_query_log`; older RFDs only proposed
-query-log snapshots. Before landing the incremental tests below, the test
-harness must expose a recorder or concrete database handle and replace the
-single unstructured string stream with, or normalize it into, three useful
-event classes:
+Executable tests now consume `take_query_log` through caller-provided and live
+proxy databases. The external `IntoIter: Iterator` checkpoint asserts cold and
+warm execution, the exact number and shape of relevant-impl/header requests,
+and the absence of associated-item or callee-body reads. The broader test
+matrix still needs a stable normalization layer over three useful event
+classes:
 
 1. **Salsa execution** — tracked function and stable key whose body executed.
 2. **Semantic lookup** — trait and optional simplified-self-type key requested

@@ -139,8 +139,8 @@ exist. A conservative trait-method path discovers represented external
 trait items, proves one fixed-trait goal, and elaborates a selected call. The
 common named, associated, and opaque alias type family is represented through
 inference and solver boundaries, but reveal and normalization are not yet
-operational. Complete method resolution, external impl discovery,
-normalization, higher-ranked reasoning, and the other explicitly deferred
+operational. Complete method resolution, associated-value normalization,
+higher-ranked reasoning, and the other explicitly deferred
 extensions remain planned; their status is tracked in the [Build-Out
 Roadmap](../implementation/roadmap.md).
 The destination-level soundness, completeness, candidate-discovery, progress,
@@ -174,8 +174,17 @@ Method-name discovery remains in method resolution and submits one fixed-trait
 goal per candidate trait.
 
 External trait signatures, ADT signatures, associated-item lists, function
-signatures, and structural `Sized` facts cross `TcxDb` as owned raw metadata
-and are lowered by separate tracked queries. The ADT-signature query contains
+signatures, trait-keyed relevant-impl identities, impl headers, and structural
+sizedness facts cross `TcxDb` as owned raw metadata and are lowered by separate
+tracked queries. The external candidate operation is keyed by the fixed trait
+and an optional conservative rigid self head. It retains blanket and
+unclassifiable impls, returns deterministic identities plus explicit
+completeness, and never loads an associated value or body. Each selected impl
+header is then lowered into the same checked binder representation as a local
+impl and enters the same candidate proof path. Compiler-built-in `Sized` and
+`MetaSized` obligations use structural Sage candidates rather than pretending
+that explicit impls exist; unavailable structure produces uncertainty. The
+ADT-signature query contains
 only ordered generics, aligned type defaults, represented ordinary predicates,
 and separate ordinary/deferred completeness; it does not read fields,
 associated values, impls, or bodies. Source type lowering applies omitted type

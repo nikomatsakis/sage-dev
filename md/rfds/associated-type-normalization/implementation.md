@@ -28,17 +28,26 @@ keeps unsupported behavior conservative.
 
 ## Step 3: External relevant impls and headers
 
-- [ ] Land the trait-keyed external relevant-impl operation from the Trait Impl
+- [x] Land the trait-keyed external relevant-impl operation from the Trait Impl
   Candidate Discovery RFD, including completeness and conservative self-head
   refinement.
-- [ ] Add a separate owned external impl-signature operation and lower external
+- [x] Add a separate owned external impl-signature operation and lower external
   headers into the same checked binder shape as local impls.
-- [ ] Extend candidate assembly with external impl candidates without a second
+- [x] Extend candidate assembly with external impl candidates without a second
   proof algorithm.
-- [ ] Prove `IntoIter<Frame, Global>: Iterator` and its nested
+- [x] Prove `IntoIter<Frame, Global>: Iterator` and its nested
   `Global: Allocator` condition.
-- [ ] Verify a truth proof reads headers but no associated values or bodies.
-- [ ] Land cold/warm and relevant/unrelated query-trace tests.
+- [x] Verify a truth proof reads headers but no associated values or callee
+  bodies.
+- [x] Land a cold/warm query trace which reads only the relevant external impl
+  headers; relevant-versus-unrelated edit invalidation remains in the broader
+  Trait Impl Candidate Discovery RFD.
+
+The external metadata encountered while proving this checkpoint also carries
+the compiler-built-in `MetaSized` lang-item obligation. It is modeled beside
+the existing structural `Sized` candidate, not as an explicit impl and not as
+a rustc-solved goal. The conservative evaluator proves represented rigid
+cases and reports uncertainty when an external unsized tail is unavailable.
 
 ## Step 4: Associated values and normalization operations
 

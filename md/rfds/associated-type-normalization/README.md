@@ -72,12 +72,14 @@ There are two additional dependencies hidden by the short source:
 
 The current implementation represents the common alias family and imports
 external ADT generics, ordinary predicates, and declared type defaults through
-a narrow metadata query. It still cannot represent an associated projection in
-`RawTy`, enumerate or instantiate upstream impls, admit projection-bearing
-external function signatures, or select external inherent methods. This RFD
-defines one vertical change which closes those remaining gaps without
-introducing eager global normalization or asking rustc to answer Sage's trait
-goals.
+narrow metadata queries. It also discovers explicit upstream impls by fixed
+trait and conservative self head, imports their binder-aware headers
+separately, and instantiates local and external candidates through the same
+proof path. It still cannot represent an associated projection in `RawTy`,
+read an impl's associated value, admit projection-bearing external function
+signatures, or select external inherent methods. This RFD defines one vertical
+change which closes those remaining gaps without introducing eager global
+normalization or asking rustc to answer Sage's trait goals.
 
 ## Change in a nutshell
 

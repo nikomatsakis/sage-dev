@@ -11,14 +11,14 @@ which has landed together with tests and documentation.
   user-defined impl discovery.
 - [ ] Define candidate-source completeness in the presence of unavailable or
   unsupported metadata.
-- [ ] Specify stable local and external impl identities.
+- [x] Specify stable local and external impl identities.
 
 ## Phase 2: Query and index design
 
-- [ ] Define the mandatory trait-keyed candidate API.
-- [ ] Define the conservative simplified-self-type key and fallback bucket.
+- [x] Define the mandatory trait-keyed candidate API.
+- [x] Define the conservative simplified-self-type key and fallback bucket.
 - [ ] Select a fine-grained Salsa representation for local impl indexing.
-- [ ] Extend `TcxDb` with trait signatures, impl signatures, and relevant-impl
+- [x] Extend `TcxDb` with trait signatures, impl signatures, and relevant-impl
   enumeration using owned metadata values.
 - [ ] Define deterministic ordering and deduplication across local, external,
   and fallback sources.
@@ -27,15 +27,16 @@ which has landed together with tests and documentation.
 
 - [ ] Index local impl signatures by trait without reading unrelated trait
   impls during lookup.
-- [x] Import represented external trait signatures through `TcxDb`; external
-  impl signatures and enumeration remain open.
+- [x] Import represented external trait signatures, relevant explicit-impl
+  identities, and impl headers through separate `TcxDb` operations.
 - [x] Expose local impls of external traits once defining predicates are
-  complete, while retaining source incompleteness until external relevant-impl
-  enumeration exists.
-- [ ] Add simplified-self-type filtering with no false negatives.
-- [ ] Replace the solver's direct `local_impls` scan with the accepted
+  complete and merge them with the reachable external candidate source.
+- [x] Add no-false-negative simplified-self-type filtering to external
+  metadata discovery; local indexing remains open.
+- [x] Replace the solver's direct `local_impls` scan with the accepted
   candidate API.
-- [ ] Preserve incomplete-source behavior until every relevant source exists.
+- [x] Preserve incomplete-source behavior for unavailable candidate sources
+  and unsupported individual headers.
 
 ## Phase 4: Required tests
 

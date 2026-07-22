@@ -174,6 +174,38 @@ pub fn with_test_crate_files_using_db<R>(
     })
 }
 
+/// Force the same operation twice in one caller-provided database and return
+/// the cold and warm query logs separately. This is intended for incremental
+/// dependency tests whose external metadata is supplied by `ProxyTcxDb`.
+pub fn with_test_crate_files_twice_using_db<R>(
+    mut db: Database,
+    files: &[(&str, &str)],
+    f: impl for<'db> Fn(&'db dyn Db, ModSymbol<'db>) -> R,
+) -> (R, String, String) {
+    let lib_file = {
+        let mut lib = None;
+        for (path, content) in files {
+            let sf = db.add_source_file(path.to_string(), content.to_string());
+            if *path == "lib.rs" || *path == "main.rs" {
+                lib = Some(sf);
+            }
+        }
+        lib.expect("fixture must include lib.rs or main.rs")
+    };
+
+    let first = db.attach(|db| {
+        let (_krate, root) = setup_root_module(db, lib_file);
+        f(db, root)
+    });
+    let cold = db.take_query_log();
+    db.attach(|db| {
+        let (_krate, root) = setup_root_module(db, lib_file);
+        f(db, root)
+    });
+    let warm = db.take_query_log();
+    (first, cold, warm)
+}
+
 /// Tracked function that creates the root module and crate.
 /// Being a tracked function provides the query-stack context that
 /// `LocalModSym::new` (a tracked struct) requires.

@@ -309,7 +309,7 @@ from invalidating a narrower query. Candidate order is deterministic but has
 no semantic effect.
 
 The current `local_impl_candidates(LocalCrateSymbol, TraitSymbol)` query is the
-first trait-keyed local boundary. It still linearly scans expanded local impls,
+trait-keyed local boundary. It still linearly scans expanded local impls,
 but also reports whether unresolved item/attribute macros, ambiguous or
 unsupported derives, or unresolved trait impl headers could hide a relevant
 impl. An impl with an unrepresented active attribute transformation is not a
@@ -319,18 +319,30 @@ withheld rather than published from the pre-transformation input.
 A uniquely resolved item macro with successfully parsed output remains
 complete. Failed, ambiguous, or depth-limited expansion is omitted from
 definite candidates and makes the source incomplete. The scan still depends on
-the whole expanded module vector, so the required unrelated-trait invalidation
+the whole expanded module vector, so local unrelated-trait invalidation
 isolation is explicitly not built yet. External trait defining predicates are
 available through the typed `TcxDb` boundary, so eligible local impls of
-represented external traits can be proved. External impl signatures and
-enumeration, trait-partitioned source dependencies, their unrelated-edit
-query-trace coverage, and a self-type index are planned in the
-[Trait Impl Candidate Discovery RFD](../rfds/trait-impl-candidate-discovery/README.md).
-Until external relevant-impl enumeration exists, every ordinary external-trait
-candidate source remains incomplete: the represented local candidates can
-prove `Yes`, but their absence cannot produce a ground `No`. Local traits may
-still use exhaustive local negative reasoning because upstream crates cannot
-implement a downstream trait.
+represented external traits can be proved.
+
+For an external trait, `external_relevant_impls(trait, optional_self_head)`
+imports the deterministic set of explicit impl identities visible in reachable
+external crates. The optional rigid head filters only provably disjoint impl
+heads; blanket and unclassifiable impls remain. A separate
+`external_impl_signature(impl)` query loads only a binder-aware header, lowers
+it into the local impl-signature shape, and feeds the same candidate
+instantiation and proof machinery. Associated values and impl items are not
+part of either operation. Unsupported headers or an incomplete source retain
+uncertainty instead of manufacturing a negative answer. Structural compiler
+traits such as `Sized` and `MetaSized` have explicit Sage candidates because
+they are not enumerable user impls. Rustc supplies their identities and type
+structure but does not answer the Sage goal.
+
+The external query trace is already isolated by trait and conservative rigid
+self head and is reused unchanged on a warm proof. The remaining index work in
+the [Trait Impl Candidate Discovery RFD](../rfds/trait-impl-candidate-discovery/README.md)
+is finer local-source partitioning and its edit-invalidation matrix. Local
+traits may use exhaustive local negative reasoning because upstream crates
+cannot implement a downstream trait.
 
 Incremental conformance is verified with query traces. Tests distinguish:
 
@@ -436,10 +448,10 @@ ready-queue ordering and assert an identical `Stashed<QueryResult>`.
 | Order-independent completed-answer reduction | Built |
 | Final hard substitution hints | Built |
 | Trait-keyed local impl discovery with conservative expansion/header completeness | Built, provisional linear scan |
-| External trait signatures and represented local impls | Built |
-| Unrelated-trait invalidation isolation and query-trace proof | Planned |
-| Global trait-keyed impl discovery | Planned (external impl metadata missing) |
-| Conservative simplified-self-type index | Planned |
+| External trait signatures and local/external explicit impl headers | Built |
+| Unrelated-trait invalidation isolation and query-trace proof | External queries are trait/head keyed with cold/warm trace; edit-invalidation proof and local partitioning planned |
+| Global trait-keyed impl discovery | Built for explicit impls in the visible local and reachable-external world |
+| Conservative simplified-self-type index | Built for external metadata; local refinement planned |
 | Parent-chain inductive cycle cutoff and depth limit | Built, provisional |
 | Groundness-sensitive result causes | Planned |
 | Term-size and deterministic work limits | Planned |

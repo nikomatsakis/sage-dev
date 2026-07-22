@@ -8,13 +8,14 @@ use crate::name::Name;
 use crate::symbol::{FnSymbol, SymExt, Symbol, TraitSymbol};
 use crate::tcx::{
     RawAdtSignature, RawAssociatedItemKind, RawDefId, RawFnSignature, RawGenericDefault,
-    RawGenericParam, RawGenericParamKind, RawReceiver, RawTraitSemantics, RawTraitSignature, RawTy,
+    RawGenericParam, RawGenericParamKind, RawImplSignature, RawReceiver, RawSelfTypeHead,
+    RawTraitSemantics, RawTraitSignature, RawTy,
 };
 use crate::ty::{
     Binder, CheckedParameterEnv, CheckedReceiver, Const, ExternalAdtSignature,
-    ExternalAdtSignatureData, FnSig, GenericDefault, MethodReceiver, SolverEligibility,
-    TraitItemDef, TraitItems, TraitRef, TraitSemantics, TraitSignature, TraitSignatureData, Ty,
-    WherePredicate,
+    ExternalAdtSignatureData, FnSig, GenericDefault, ImplSignature, ImplSignatureData,
+    MethodReceiver, SolverEligibility, TraitItemDef, TraitItems, TraitRef, TraitSemantics,
+    TraitSignature, TraitSignatureData, Ty, WherePredicate,
 };
 
 #[salsa::tracked]
@@ -43,6 +44,145 @@ pub fn external_adt_signature<'db>(
         .tcx()
         .adt_signature(adt.crate_num(db), adt.def_index(db))?;
     Some(lower_adt_signature(db, adt, raw))
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub enum SimplifiedSelfType<'db> {
+    Adt(SymExt<'db>),
+    Bool,
+    Char,
+    Int,
+    Uint,
+    Float,
+    Str,
+    Ref,
+    Tuple,
+    Slice,
+    Array,
+    FnPtr,
+    Never,
+}
+
+impl SimplifiedSelfType<'_> {
+    fn into_raw(self, db: &dyn crate::Db) -> RawSelfTypeHead {
+        match self {
+            Self::Adt(adt) => RawSelfTypeHead::Adt(RawDefId {
+                crate_num: adt.crate_num(db),
+                def_index: adt.def_index(db),
+                kind: adt.kind(db),
+            }),
+            Self::Bool => RawSelfTypeHead::Bool,
+            Self::Char => RawSelfTypeHead::Char,
+            Self::Int => RawSelfTypeHead::Int,
+            Self::Uint => RawSelfTypeHead::Uint,
+            Self::Float => RawSelfTypeHead::Float,
+            Self::Str => RawSelfTypeHead::Str,
+            Self::Ref => RawSelfTypeHead::Ref,
+            Self::Tuple => RawSelfTypeHead::Tuple,
+            Self::Slice => RawSelfTypeHead::Slice,
+            Self::Array => RawSelfTypeHead::Array,
+            Self::FnPtr => RawSelfTypeHead::FnPtr,
+            Self::Never => RawSelfTypeHead::Never,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, salsa::Update)]
+pub struct ExternalImplCandidates<'db> {
+    pub impls: Vec<SymExt<'db>>,
+    pub complete: bool,
+}
+
+/// External explicit impl identities for one fixed trait and optional rigid
+/// self head. Header and associated-value metadata remain separate queries.
+#[salsa::tracked(returns(ref))]
+pub fn external_relevant_impls<'db>(
+    db: &'db dyn crate::Db,
+    trait_sym: SymExt<'db>,
+    self_head: Option<SimplifiedSelfType<'db>>,
+) -> ExternalImplCandidates<'db> {
+    let Some(raw) = db.tcx().relevant_trait_impls(
+        trait_sym.crate_num(db),
+        trait_sym.def_index(db),
+        self_head.map(|head| head.into_raw(db)),
+    ) else {
+        return ExternalImplCandidates {
+            impls: Vec::new(),
+            complete: false,
+        };
+    };
+
+    let mut complete = raw.complete;
+    let mut impls = Vec::with_capacity(raw.impls.len());
+    for impl_def in raw.impls {
+        if impl_def.kind != crate::symbol::SymExtKind::Impl {
+            complete = false;
+            continue;
+        }
+        impls.push(SymExt::new(
+            db,
+            impl_def.crate_num,
+            impl_def.def_index,
+            impl_def.kind,
+        ));
+    }
+    ExternalImplCandidates { impls, complete }
+}
+
+#[salsa::tracked]
+pub fn external_impl_signature<'db>(
+    db: &'db dyn crate::Db,
+    impl_sym: SymExt<'db>,
+) -> Option<Stashed<ImplSignature<'db>>> {
+    let raw = db
+        .tcx()
+        .impl_signature(impl_sym.crate_num(db), impl_sym.def_index(db))?;
+    lower_impl_signature(db, impl_sym, raw)
+}
+
+pub fn simplify_self_type<'db>(
+    db: &'db dyn crate::Db,
+    source: &Stash,
+    ty: Ptr<Ty<'db>>,
+) -> Option<SimplifiedSelfType<'db>> {
+    use crate::symbol::{StructSymbol, SymbolData};
+
+    Some(match source[ty] {
+        Ty::Adt(symbol, _) => match symbol.data(db) {
+            SymbolData::StructSymbol(StructSymbol::Ext(external))
+            | SymbolData::EnumSymbol(crate::symbol::EnumSymbol::Ext(external)) => {
+                SimplifiedSelfType::Adt(external)
+            }
+            SymbolData::StructSymbol(StructSymbol::Local(_))
+            | SymbolData::EnumSymbol(crate::symbol::EnumSymbol::Local(_))
+            | SymbolData::FnSymbol(_)
+            | SymbolData::VariantSymbol(_)
+            | SymbolData::VariantCtorSymbol(_)
+            | SymbolData::TraitSymbol(_)
+            | SymbolData::TypeAliasSymbol(_)
+            | SymbolData::ConstSymbol(_)
+            | SymbolData::StaticSymbol(_)
+            | SymbolData::ImplSymbol(_)
+            | SymbolData::ModSymbol(_)
+            | SymbolData::MacroDefSymbol(_)
+            | SymbolData::IntrinsicTypeSymbol(_)
+            | SymbolData::MacroInvocationSymbol(_)
+            | SymbolData::UseSymbol(_) => return None,
+        },
+        Ty::Bool => SimplifiedSelfType::Bool,
+        Ty::Char => SimplifiedSelfType::Char,
+        Ty::Int(_) => SimplifiedSelfType::Int,
+        Ty::Uint(_) => SimplifiedSelfType::Uint,
+        Ty::Float(_) => SimplifiedSelfType::Float,
+        Ty::Str => SimplifiedSelfType::Str,
+        Ty::Ref(..) => SimplifiedSelfType::Ref,
+        Ty::Tuple(_) => SimplifiedSelfType::Tuple,
+        Ty::Slice(_) => SimplifiedSelfType::Slice,
+        Ty::Array(..) => SimplifiedSelfType::Array,
+        Ty::FnPtr(..) => SimplifiedSelfType::FnPtr,
+        Ty::Never => SimplifiedSelfType::Never,
+        Ty::Alias(_) | Ty::Param(_) | Ty::InferVar(_) | Ty::Error(_) => return None,
+    })
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -198,6 +338,7 @@ fn lower_trait_signature<'db>(
     let semantics = match raw.semantics {
         RawTraitSemantics::Ordinary => TraitSemantics::Ordinary,
         RawTraitSemantics::Sized => TraitSemantics::Sized,
+        RawTraitSemantics::MetaSized => TraitSemantics::MetaSized,
     };
     let signature = Binder::new(
         TraitSignatureData {
@@ -270,6 +411,43 @@ fn lower_adt_signature<'db>(
             generics,
         ),
     )
+}
+
+fn lower_impl_signature<'db>(
+    db: &'db dyn crate::Db,
+    impl_sym: SymExt<'db>,
+    raw: RawImplSignature,
+) -> Option<Stashed<ImplSignature<'db>>> {
+    let parent: Symbol<'db> = impl_sym.into();
+    let (generics, by_index) = lower_generics(db, parent, raw.generics);
+    let mut stash = Stash::new();
+    let mut complete = raw.complete;
+    let head = lower_predicate(db, &mut stash, &by_index, raw.trait_ref)?;
+    let mut predicates = Vec::new();
+    for predicate in raw.predicates {
+        match lower_predicate(db, &mut stash, &by_index, predicate) {
+            Some(predicate) => predicates.push(predicate),
+            None => complete = false,
+        }
+    }
+    let where_clauses = stash.alloc_slice(&predicates);
+    let generics = stash.alloc_slice(&generics);
+    Some(Stashed::new(
+        stash,
+        Binder::new(
+            ImplSignatureData {
+                trait_ref: Some(head.trait_ref),
+                self_ty: head.self_ty,
+                where_clauses,
+                solver_eligibility: if complete {
+                    SolverEligibility::Eligible
+                } else {
+                    SolverEligibility::Unsupported
+                },
+            },
+            generics,
+        ),
+    ))
 }
 
 fn lower_fn_signature<'db>(
