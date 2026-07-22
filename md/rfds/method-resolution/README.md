@@ -92,6 +92,12 @@ pub enum MethodResolution<'db> {
 }
 ```
 
+`ReceiverAdjustments` is an internal candidate-selection and commit recipe. A
+successful method call consumes it while constructing the [elaborated typed
+IR](../../design/typed-ir.md): dereferences, borrows, and coercions become
+ordinary expression nodes, and the completed body contains a resolved call
+target rather than `MethodCall` plus an adjustment list.
+
 `Found` means the unique candidate's inference effects have been applied transactionally
 and all nontrivial residuals have been registered with the caller's obligation store. It
 does not mean those residuals may be forgotten; body finalization must discharge them.

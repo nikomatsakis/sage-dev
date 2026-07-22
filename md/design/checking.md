@@ -44,9 +44,23 @@ bring the same param symbols into scope via `ribs.add_generic_params`. No
 re-minting, no identity confusion.
 
 **Sequential layering inside a query.** `body()` calls `sig()` → opens
-binder → resolves names → runs inference. Each step builds on the prior.
-From outside: one query, one result. Intermediates (`ResolvedBody`) are not
-separately queryable.
+binder → resolves names → runs inference → elaborates the completed typed
+tree. Each step builds on the prior. From outside: one query, one result.
+Intermediates (`ResolvedBody`, method candidates, adjustment recipes, and
+partially inferred expressions) are not separately queryable.
+
+## Completed body output
+
+The result of successful body checking is the [elaborated typed
+IR](./typed-ir.md), not a typed copy of source syntax. Resolved definitions,
+substitutions, borrows, dereferences, and coercions are materialized in the
+tree. A method resolver may describe an autoref or autoderef while selecting a
+candidate, but body elaboration consumes that description before returning
+`CheckedBody`.
+
+Checking one body may query callee signatures, associated items, impl headers,
+and trait-solver results. It does not query callee bodies. This is both a
+layering rule and an incremental dependency requirement.
 
 ## Data flow: the two-stash pattern
 
@@ -100,6 +114,19 @@ mandatory terminal proof pass after inference fallback. `CheckedBody` creation
 asserts that the obligation registry, runtime, wake queue, and root egraph have
 no live work. Selected-method predicates will use the same staged-batch API when
 method resolution lands.
+
+## Deferred lifetime and borrow semantics
+
+Lifetime syntax remains in the CST, but checking currently maps every
+explicit, elided, universal, existential, external, and synthesized lifetime
+directly to `Lifetime::Dummy`. No lifetime inference variables are introduced.
+The only lifetime relation is `Outlives(Dummy, Dummy)`, which succeeds.
+
+References and dereferences remain ordinary typed operations. Sage does not
+currently validate liveness, uniqueness, overlap, or any other borrow
+property. This deliberate soundness hole avoids committing to a separate
+region-inference subsystem before Sage's unified type-and-lifetime inference
+design is settled.
 
 ## Resolution model
 

@@ -35,6 +35,7 @@ one or more RFDs. Status is one of:
 
 | Group | RFDs | Notes |
 |---|---|---|
+| Typed IR elaboration | [typed-ir-elaboration] | Destination is fully resolved tree IR with explicit coercions and `Lifetime::Dummy`; first review slice is `DbDropGuard::db` in the [mini-redis roadmap] |
 | Method resolution | [method-resolution] | Inherent lookup follows [trait-system]; trait methods additionally depend on [trait-solving]; no method-resolution code landed |
 | Trait impl candidate discovery | [trait-impl-candidate-discovery] | Draft design for global visible-impl discovery, mandatory trait keys, conservative self-type refinement, and incremental reuse |
 | Trait solver search architecture | [trait-solver-cycle-semantics], [trait-solver-scheduling], [incremental-trait-results] | Draft design for recursive semantics and limits, fair future scheduling, and monotone progress envelopes |
@@ -71,3 +72,5 @@ one or more RFDs. Status is one of:
 [trait-solver-cycle-semantics]: ../rfds/trait-solver-cycle-semantics/README.md
 [trait-solver-scheduling]: ../rfds/trait-solver-scheduling/README.md
 [incremental-trait-results]: ../rfds/incremental-trait-results/README.md
+[typed-ir-elaboration]: ../rfds/typed-ir-elaboration/README.md
+[mini-redis roadmap]: ./mini-redis.md

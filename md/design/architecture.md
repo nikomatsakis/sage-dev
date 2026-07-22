@@ -72,7 +72,7 @@ crates/sage-ir/src/
       merge.rs        — order-independent answer reduction and subsumption
       anti_unify.rs   — hard-hint intersection
 
-  tytree/           — Typed tree (output of body checking)
+  tytree/           — Typed tree (output of body checking; elaboration is planned)
     mod.rs          — CheckedBody, TyBody, TyExpr, TyStmt, TyPat, Res
 
   tcx/              — TcxDb trait (interface to rustc metadata)
@@ -92,11 +92,17 @@ flowchart TD
     FnSig --> FnBinder[Stashed Binder of FnSig]
     StructSig --> StructBinder[Stashed Binder of StructSig]
     EnumSig --> EnumBinder[Stashed Binder of EnumSig]
-    FnBinder --> FnBody[LocalFnSym::body]
+    FnBinder --> FnBody[LocalFnSym::body: resolve, infer, elaborate]
     StructBinder --> Fields[LocalStructSym::fields]
     FnBody --> Checked[CheckedBody]
     Fields --> StructFields[Stashed StructFields]
 ```
+
+`CheckedBody` is intended to contain the fully resolved, elaborated tree
+specified by [Typed IR](./typed-ir.md). The current tree still preserves some
+source forms such as method calls and implicit adjustments; completing that
+transition is planned work. Temporary checking state remains inside the
+single-keyed body query rather than becoming a public incremental boundary.
 
 ## The salsa layer
 

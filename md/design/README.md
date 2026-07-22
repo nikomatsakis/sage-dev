@@ -13,6 +13,9 @@ structural overview.
   struct signature through body checking, macro expansion, and trait solving.
 - [Checking](./checking.md) — detailed design of the CST checking
   layer: contexts, type lowering, body inference.
+- [Typed IR](./typed-ir.md) — destination body representation: resolved calls,
+  explicit coercions, structured control flow, desugaring, and the temporary
+  lifetime/borrow-checking boundary.
 - [Trait Solver](./trait-solver.md) — semantic contract, proof-search
   model, result knowledge, recursion, resource limits, and scheduling.
 - [Stash](./stash.md) — `sage-stash` arena: `Stash`, `Ptr<T>`,

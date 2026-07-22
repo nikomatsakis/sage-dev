@@ -110,6 +110,11 @@ annotations in every non-ground inference case.
 
 The detailed contract lives in [Trait Solver Design](./trait-solver.md).
 
+This soundness contract is modulo the explicit temporary lifetime and borrow
+checking omission in D12. Type-only and trait-selection uncertainty must still
+be represented soundly; D12 does not permit a non-lifetime ambiguity to be
+guessed.
+
 ## D10: Trait impl discovery is global and trait-keyed
 
 Trait candidate discovery covers every impl visible in the current compilation
@@ -128,3 +133,51 @@ The current `local_impls(LocalCrateSymbol)` scan is an MVP source. The
 destination and required conformance tests live in
 [Trait Solver Design](./trait-solver.md) and the
 [Trait Impl Candidate Discovery RFD](../rfds/trait-impl-candidate-discovery/README.md).
+
+## D11: Completed bodies are elaborated typed trees
+
+`LocalFnSym::body` returns a fully typed, fully resolved, tree-structured IR.
+Implicit type-directed operations such as receiver dereference, autoref,
+coercion, and unsizing are materialized as nodes. Method syntax, unresolved
+field names, inference variables, and adjustment lists do not survive in a
+successful completed body.
+
+Structured control flow, closures, and async bodies remain above MIR: the IR
+does not introduce basic blocks, drop schedules, or coroutine state-machine
+layout. Candidate selection may use source-shaped nodes and adjustment recipes
+internally, but those are consumed inside the body query. The full destination
+contract is [Typed IR](./typed-ir.md).
+
+## D12: Lifetimes collapse to `Dummy` and borrow checking is deferred
+
+Every explicit, elided, universal, existential, imported, and synthesized
+lifetime immediately becomes `Lifetime::Dummy` during checking. Sage does not
+create lifetime inference variables. `Outlives(Dummy, Dummy)` is true, and
+lifetime relationships cannot reject a program.
+
+Borrow and dereference operations remain explicit in typed IR because they
+affect ordinary types and calls, but their validity is not checked. This is a
+known temporary soundness hole. A dedicated variant is used instead of
+`'static` or post-analysis erasure so the omission is visible and its eventual
+removal is mechanically enforced. A future unified type-and-lifetime
+inference design supersedes this decision.
+
+## D13: Named, associated, and opaque aliases share one semantic family
+
+The type representation distinguishes rigid types from alias types. Rigid
+constructors such as `Vec` are structural and do not normalize. `AliasTy` has
+three semantic variants: `Named` for a user-defined type alias, `Associated`
+for an associated-type projection, and `Opaque` for an opaque type. Every
+alias retains its definition identity and generic arguments.
+
+Normalization is a relation, not an eager erasure pass. Named aliases reveal
+their substituted right-hand sides infallibly. Associated types normalize
+through trait matching. Opaques reveal only within their definition boundary
+or in a future code-generation mode. The typing/reveal context is consequently
+part of the normalization query's semantic input.
+
+An unrevealed alias is not devoid of facts. Bounds declared on associated and
+opaque types may prove predicates without normalization, and identical alias
+applications may be related structurally. The complete destination contract
+is split between [Typed IR](./typed-ir.md#rigid-and-alias-types) and [Trait
+Solver Design](./trait-solver.md#alias-types-and-normalization).

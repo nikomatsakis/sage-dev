@@ -12,6 +12,7 @@
   - [Tenets](./design/tenets.md)
   - [Architecture](./design/architecture.md)
   - [Type Checking](./design/checking.md)
+  - [Typed IR](./design/typed-ir.md)
   - [Trait Solver](./design/trait-solver.md)
   - [Stash](./design/stash.md)
   - [Spans](./design/spans.md)
@@ -37,6 +38,8 @@
 - [RFD template](./rfds/TEMPLATE/README.md)
   - [Implementation plan and status](./rfds/TEMPLATE/implementation.md)
 - [Draft](./rfds/draft.md)
+  - [Typed IR Elaboration](./rfds/typed-ir-elaboration/README.md)
+    - [Implementation plan and status](./rfds/typed-ir-elaboration/implementation.md)
   - [Trait Impl Candidate Discovery](./rfds/trait-impl-candidate-discovery/README.md)
     - [Implementation plan and status](./rfds/trait-impl-candidate-discovery/implementation.md)
   - [Trait Solver Cycle Semantics](./rfds/trait-solver-cycle-semantics/README.md)
@@ -109,6 +112,7 @@
 # Implementation
 
 - [Build-Out Roadmap](./implementation/roadmap.md)
+- [Mini-redis Conformance Roadmap](./implementation/mini-redis.md)
 
 # Contributing
 

@@ -15,7 +15,8 @@ extensions with separate draft RFDs.
 
 - **Soundness takes priority over inference power.** The solver may decline to
   infer a type, but it may not publish a false proof, substitution, hard hint,
-  or negative result.
+  or negative result within the represented type-and-trait domain. Lifetimes
+  are the explicit temporary exception described below.
 - **Completeness depends on groundness.** A non-ground query terminates soundly
   but may return ambiguity despite having a valid answer. A ground query is
   sound and complete modulo explicit resource exhaustion.
@@ -39,6 +40,53 @@ extensions with separate draft RFDs.
   non-ground cases.
 
 ## Semantic contract
+
+### Temporary lifetime boundary
+
+Every lifetime currently lowers to `Lifetime::Dummy`, and
+`Outlives(Dummy, Dummy)` succeeds unconditionally. Borrow validity and
+meaningful lifetime predicates are outside the represented domain. This is a
+known temporary soundness hole recorded by D12, not solver ambiguity.
+
+The exception is narrow: it does not permit choosing an otherwise ambiguous
+type or trait candidate. A future unified type-and-lifetime inference design
+will remove `Dummy` and extend the solver contract.
+
+### Alias types and normalization
+
+The type model distinguishes non-normalizable [rigid types from alias
+types](./typed-ir.md#rigid-and-alias-types). Named type aliases,
+associated-type projections, and opaque types are three variants of the same
+alias concept. They retain definition identity and arguments even when they
+cannot or need not be normalized.
+
+The solver's destination goal language includes a type-valued normalization
+relation, conceptually `NormalizesTo(alias, ty)`, and a way to relate aliases
+without first assuming that both can be revealed. Their exact internal
+decomposition is deferred to a normalization RFD; the semantic requirements
+are:
+
+- a named type alias normalizes infallibly to its substituted right-hand side;
+- an associated type normalizes by trait matching and associated-value
+  selection from the environment or an impl, with the resulting obligations
+  and uncertainty preserved;
+- an opaque normalizes only inside its definition boundary, or in a future
+  code-generation mode;
+- identical alias applications can be related structurally; and
+- declared associated-type and opaque bounds can prove predicates about an
+  unnormalized alias.
+
+Failure or inability to normalize is not automatically `No`. An unavailable
+opaque hidden type is intentionally unrevealed, while a projection may be
+blocked on inference, trait ambiguity, or resource exhaustion. Conversely,
+normalization is not required merely to use a bound declared for the alias.
+
+Revealability is semantic input. Any cached normalization or alias-relation
+query includes enough typing context to distinguish an opaque's definition
+boundary from an outside use. Projection normalization depends on the fixed
+trait and associated item, relevant impl candidates, selected associated
+values, and their predicates; it must not read unrelated impls or callee
+bodies.
 
 ### Ground and non-ground queries
 

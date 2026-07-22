@@ -86,13 +86,29 @@ visibility is simpler and correct for the vast majority of code.
 macro between two items where only the second should see it) is extremely rare
 in practice.
 
+### Lifetime semantics and borrow checking are deferred
+
+**What:** Sage preserves lifetime syntax in the CST but maps every lifetime to
+the dedicated checked value `Lifetime::Dummy`. All lifetime relations hold
+trivially, and Sage does not perform borrow checking.
+
+**Why:** The intended lifetime and type inference design is more unified than
+rustc's separate region subsystem. Introducing a temporary region solver would
+prematurely constrain that design. `Dummy` keeps reference structure available
+to ordinary type elaboration without pretending to be `'static` or a solved
+region.
+
+**Impact:** Sage currently accepts some programs which rustc rejects for
+lifetime or borrow errors. This is a documented temporary soundness hole, not
+an ambiguous type-checking result.
+
 ## Supported features
 
 Everything not listed above is intended to be supported, including:
 
 - async/await
 - Trait definitions and implementations
-- Generics, lifetimes, where clauses
+- Generics, lifetime syntax, where clauses (with lifetime semantics deferred)
 - Pattern matching
 - Closures and `impl Fn` / `dyn Fn`
 - Derive macros (from external crates)

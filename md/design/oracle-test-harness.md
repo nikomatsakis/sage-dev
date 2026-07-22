@@ -50,6 +50,24 @@ test-fixtures/oracle/basics/hello.rs
 
 4. **Compare** — serialize both to `serde_json::Value` and diff structurally. On mismatch, report the exact JSON path that diverges.
 
+## Semantic and coverage boundary
+
+The destination comparison value is the [elaborated typed
+IR](./typed-ir.md). The rustc side translates its selected definitions,
+substitutions, and adjustment lists into explicit calls, borrows,
+dereferences, and coercions. Sage's internal method-candidate or adjustment
+representation is not part of the oracle contract.
+
+Structural equality is paired with coverage accounting. Each side reports the
+items and bodies in scope, including associated and macro-generated items. A
+successful comparison rejects unsupported expression placeholders and
+debug-formatted fallback types. Two emitters omitting the same body or
+collapsing the same expression to `?unsupported` is not conformance.
+
+The current `rust-ref` model and emitters cover a smaller source-shaped subset;
+expanding them to this boundary is planned by the [Typed IR Elaboration
+RFD](../rfds/typed-ir-elaboration/README.md).
+
 ## Output directory
 
 Every test run writes JSON files to a fresh temp directory:
