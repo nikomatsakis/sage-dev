@@ -354,6 +354,10 @@ exhaustive `NotFound` result.
 
 ## Deferred work
 
+The first planned follow-up which combines an external trait method,
+associated-type normalization, and an external inherent method is the
+mini-redis [`Parse::next` vertical slice](../associated-type-normalization/README.md).
+
 - External inherent and trait methods through `TcxDb`.
 - Lifetime/const-generic impl, trait, and method candidate instantiation.
 - Complete import, visibility, and prelude handling for traits in lookup scope.

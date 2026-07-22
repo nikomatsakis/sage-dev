@@ -40,6 +40,8 @@
 - [RFD template](./rfds/TEMPLATE/README.md)
   - [Implementation plan and status](./rfds/TEMPLATE/implementation.md)
 - [Draft](./rfds/draft.md)
+  - [Associated Type Normalization for `Parse::next`](./rfds/associated-type-normalization/README.md)
+    - [Implementation plan and status](./rfds/associated-type-normalization/implementation.md)
   - [Trait Impl Candidate Discovery](./rfds/trait-impl-candidate-discovery/README.md)
     - [Implementation plan and status](./rfds/trait-impl-candidate-discovery/implementation.md)
   - [Trait Solver Cycle Semantics](./rfds/trait-solver-cycle-semantics/README.md)

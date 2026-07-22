@@ -89,6 +89,9 @@ package-wide conformance.
 
 ## Slice 2: `Parse::next`
 
+This slice is planned in the [Associated Type Normalization
+RFD](../rfds/associated-type-normalization/README.md).
+
 The second slice adds:
 
 - an upstream `Iterator` impl for `vec::IntoIter<Frame>`;

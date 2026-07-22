@@ -62,9 +62,11 @@ cannot or need not be normalized.
 
 The solver's destination goal language includes a type-valued normalization
 relation, conceptually `NormalizesTo(alias, ty)`, and a way to relate aliases
-without first assuming that both can be revealed. Their exact internal
-decomposition is deferred to a normalization RFD; the semantic requirements
-are:
+without first assuming that both can be revealed. Their planned internal
+decomposition and first associated-projection slice are specified by the
+[Associated Type Normalization
+RFD](../rfds/associated-type-normalization/README.md); the semantic
+requirements are:
 
 - a named type alias normalizes infallibly to its substituted right-hand side;
 - an associated type normalizes by trait matching and associated-value

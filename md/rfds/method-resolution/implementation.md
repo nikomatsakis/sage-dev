@@ -11,6 +11,10 @@ tier from selecting when omitted work could take priority or compete. Missing
 metadata, imports, macros, attributes, inherent providers, additional method
 type parameters, and competing possible candidates remain unknown rather than
 being discarded. The checklist below still describes the complete design.
+The next planned integration slice, `Parse::next`, is tracked by the
+[Associated Type Normalization
+RFD](../associated-type-normalization/README.md); that RFD owns its projection,
+external impl, generic-default, and external inherent-method requirements.
 
 ### Step 1: Method candidate and result types
 
