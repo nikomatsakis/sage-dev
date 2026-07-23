@@ -17,7 +17,8 @@ which has landed together with tests and documentation.
 
 - [x] Define the mandatory trait-keyed candidate API.
 - [x] Define the conservative simplified-self-type key and fallback bucket.
-- [ ] Select a fine-grained Salsa representation for local impl indexing.
+- [x] Select a stable tracked index with a private tracked map and keyed
+  backdated lookup methods for local impl indexing.
 - [x] Extend `TcxDb` with trait signatures, impl signatures, and relevant-impl
   enumeration using owned metadata values.
 - [ ] Define deterministic ordering and deduplication across local, external,
@@ -46,7 +47,8 @@ which has landed together with tests and documentation.
 - [ ] Add cold, warm-cache, relevant-edit, and unrelated-edit goal traces.
 - [ ] Land every semantic discovery test listed in the RFD.
 - [ ] Compare indexed and exhaustive results over generated fixtures.
-- [ ] Land Salsa event tests for unrelated-trait invalidation.
+- [ ] Land Salsa event tests proving unrelated-trait edits stop at an equal
+  keyed lookup result.
 - [ ] Land signature-versus-body invalidation tests.
 - [ ] Land self-head bucket invalidation tests when that index is enabled.
 - [ ] Land stable external-metadata identity and reuse tests.

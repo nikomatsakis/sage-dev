@@ -15,9 +15,11 @@ The first package-wide target is the `mini_redis` library target at the pinned
 submodule revision, with default features and its declared Rust edition. Bins,
 examples, integration tests, and the optional `otel` feature are later rungs.
 
-The Cargo target identity, enabled features, `cfg` values, dependency world,
+The Cargo target identity, selected root, enabled features, dependency world,
 and edition are explicit analysis inputs. Sage and the rustc oracle must
-analyze the same target configuration.
+analyze the same operational inputs. General source-side `cfg` evaluation is a
+separate source-pipeline feature, not an acceptance requirement for an ungated
+vertical slice.
 
 Borrow checking and meaningful lifetime reasoning are not part of this
 conformance target. Every checked lifetime is `Lifetime::Dummy`, as specified
@@ -88,7 +90,7 @@ and local unrelated-edit invalidation isolation remain later work.
 
 ## Slice 2: `Parse::next`
 
-The pinned semantic slice is implemented by the in-progress [Associated Type
+The pinned semantic slice is implemented by the completed [Associated Type
 Normalization RFD](../rfds/associated-type-normalization/README.md).
 
 The second slice adds:
@@ -100,15 +102,13 @@ The second slice adds:
 
 The pinned test selects the real non-proc-macro `mini_redis` library target,
 uses its Rust 2018 edition, default-feature dependency world, and `src/lib.rs`
-root, records the host-target cfg values, then forces only the source
-`Parse::next` body. This body and its library module path have no `cfg`
-attributes; general source-side `cfg` evaluation remains unimplemented. Its
-completed tree contains static `Iterator::next` dispatch, direct
-`Option::ok_or` dispatch, separate owner/method substitutions, and an explicit
-mutable `Dummy` borrow. The cold semantic trace reads two relevant external
-impl headers and the selected `Iterator::Item` value; it lowers no unrelated
-local impl header and checks no other mini-redis or external body. Repeating
-the query is warm and rereads none of that metadata.
+root, then forces only the source `Parse::next` body. The body and containing
+module path are ungated. Its completed tree contains static `Iterator::next`
+dispatch, direct `Option::ok_or` dispatch, separate owner/method substitutions,
+and an explicit mutable `Dummy` borrow. The cold semantic trace reads two
+relevant external impl headers and the selected `Iterator::Item` value; it
+lowers no unrelated local impl header and checks no other mini-redis or external
+body. Repeating the query is warm and rereads none of that metadata.
 
 This is the first focused acceptance test for global, trait-keyed impl
 discovery and associated-alias normalization. Other aliases may retain their

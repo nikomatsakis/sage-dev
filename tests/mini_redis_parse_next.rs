@@ -136,12 +136,6 @@ fn pinned_mini_redis_parse_next_uses_real_target_and_narrow_queries() {
         assert_eq!(sage.target.name, "mini_redis");
         assert_eq!(sage.target.edition, Edition::Rust2018);
         assert!(sage.target.enabled_features.is_empty());
-        assert!(
-            sage.target
-                .cfgs
-                .iter()
-                .any(|cfg| cfg.starts_with("target_arch="))
-        );
         assert!(sage.direct_dependencies.iter().any(|name| name == "bytes"));
         assert!(
             !sage

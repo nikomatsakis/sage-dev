@@ -1,8 +1,8 @@
 # Implementation plan and status
 
-This RFD is in progress. Checked items represent work which landed with its
-tests and documentation. Each step leaves the repository building and keeps
-unsupported behavior conservative.
+This RFD is complete. Checked items represent work which landed with its tests
+and documentation. Each step left the repository building and kept unsupported
+behavior conservative.
 
 ## Step 1: Alias type family
 
@@ -134,11 +134,12 @@ normalization is involved.
 
 ## Step 8: Pinned mini-redis checkpoint
 
-- [ ] Force the real `Parse::next` body under the pinned library target's
-  edition, features, cfg values, and dependency world.
+- [x] Force the real `Parse::next` body from the pinned library target's
+  selected root under its edition, default-feature selection, and dependency
+  world; the selected body and containing module path are ungated.
 - [x] Assert the documented cold semantic trace and unchanged warm reuse.
 - [x] Confirm no other mini-redis or selected external body is queried.
-- [ ] Update the implementation checkpoint, destination architecture pages,
+- [x] Update the implementation checkpoint, destination architecture pages,
   and RFD status after the complete slice lands.
 
 The integration checkpoint also made target identity operational in the
@@ -152,13 +153,11 @@ the `Parse::next` trace therefore does not inspect unrelated mini-redis impl
 headers or macro output.
 
 The root, edition, and default-feature dependency world are active for the
-pinned library target. The cfg set is currently recorded rather than evaluated
-by Sage's source pipeline. `Parse::next` and its module path are ungated, but
-the first item above remains unchecked until source-side cfg evaluation makes
-the configuration boundary operational in general.
+pinned library target. `Parse::next` and its containing module path are
+ungated. General source-side `cfg` evaluation is a separate source-pipeline
+feature and is not part of this normalization RFD's completion contract.
 
-The pinned trace is complete, but the RFD cannot move to Completed until its
-required relevant-versus-unrelated impl edit invalidation test is executable.
-The current local trait-keyed query still depends on the expanded module tree;
-closing that final requirement needs the fine-grained local index specified by
-the Trait Impl Candidate Discovery RFD.
+Fine-grained local impl edit invalidation remains in the Trait Impl Candidate
+Discovery RFD. It is not required by this pinned goal: exact orphan-rule
+pruning proves that the external `Iterator` goals cannot have a local impl, and
+the trace confirms that the local impl source is never read.

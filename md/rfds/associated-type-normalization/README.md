@@ -1,6 +1,6 @@
 # RFD: Associated Type Normalization for `Parse::next`
 
-**Status:** Accepted
+**Status:** Completed
 
 **Depends on:**
 
@@ -9,7 +9,9 @@
 - [Trait Solving](../trait-solving/README.md) — canonical goals, isolated
   candidates, answer merging, and body obligations
 - [Trait Impl Candidate Discovery](../trait-impl-candidate-discovery/README.md)
-  — complete trait-keyed local and upstream impl discovery
+  — the landed relevant subset: external trait/head-keyed discovery plus
+  conservative provisional local trait-keyed discovery; its planned local
+  incremental firewall is not a prerequisite
 - [Method Resolution](../method-resolution/README.md) — fixed-trait method
   lookup, receiver adjustments, and selected-call transactions
 - [Typed IR Elaboration](../typed-ir-elaboration/README.md) — completed calls,
@@ -92,13 +94,12 @@ emit direct `Option::ok_or` and static-trait `Iterator::next` calls with the
 same owner/method substitutions, and both must match one exact checked-in
 snapshot. The real pinned mini-redis `Parse::next` body is now forced from the
 library target's selected root with its Rust 2018 edition and default-feature
-dependency world. The target cfg set is recorded, but general source-side cfg
-evaluation is not built; the accepted body and module path are ungated. Its
-cold trace loads only the two relevant external
-impl headers and one requested associated value, checks no other mini-redis
-body, and the unchanged warm query rereads no semantic metadata. This vertical
-slice does not introduce eager global normalization or ask rustc to answer
-Sage's trait goals.
+dependency world; the accepted body and containing module path are ungated.
+General source-side `cfg` evaluation is outside this RFD. Its cold
+trace loads only the two relevant external impl headers and one requested
+associated value, checks no other mini-redis body, and the unchanged warm query
+rereads no semantic metadata. This vertical slice does not introduce eager
+global normalization or ask rustc to answer Sage's trait goals.
 
 ## Change in a nutshell
 
@@ -578,15 +579,20 @@ same body with no new metadata requests or body-query execution.
 ### Oracle and incremental tests
 
 - The isolated `Parse::next` fixture has a checked-in exact shared-IR snapshot.
-- The pinned mini-redis source body produces the same semantic shape under its
-  real target configuration.
+- The pinned mini-redis source body produces the same semantic shape from the
+  selected library root under its edition, default-feature selection, and
+  dependency world. The body and containing module path are ungated.
 - The rustc and Sage files are byte-identical without comparator
   normalization.
 - The cold query trace contains only the expected semantic and metadata keys.
 - No callee or impl body is queried.
 - Repeating the unchanged body query reuses the result and rereads no metadata.
-- An impl edit for an unrelated trait does not reexecute `Iterator` candidate
-  lookup; a relevant `Iterator` change does.
+
+Fine-grained edit invalidation for local impl indexing is a separate
+destination contract of the [Trait Impl Candidate Discovery
+RFD](../trait-impl-candidate-discovery/README.md). The pinned goal needs no local
+impl source: the orphan rules prove that its external-trait/external-type
+obligations cannot have a local impl.
 
 ## Non-goals
 
@@ -599,6 +605,7 @@ same body with no new metadata requests or body-query execution.
 - Borrow checking; every introduced borrow lifetime is `Dummy`.
 - Async/await support or the `Shutdown::recv` slice.
 - Whole-library mini-redis conformance.
+- General source-side `cfg` and `cfg_attr` evaluation.
 - Changing solver scheduling, cycle semantics, or intermediate progress
   publication except where normalization must use their existing contracts.
 

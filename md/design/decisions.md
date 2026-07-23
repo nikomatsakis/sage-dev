@@ -137,8 +137,18 @@ A simplified self-type key may refine lookup when its rigid outer shape is
 known. Such an index is conservative: it may return extra candidates but never
 omit an applicable specific, blanket, or unclassifiable impl. Indexed and
 exhaustive discovery have identical solver meaning. The trait key, and
-eventually compatible self-type partitions, also form the incremental
-invalidation boundary so unrelated impl changes do not reexecute the query.
+eventually compatible self-type partitions, also form the semantic lookup
+boundary.
+
+The local incremental firewall has two layers. A crate-owned tracked index has
+stable identity and a private tracked map containing deterministic trait
+buckets plus explicit completeness hazards. Keyed tracked lookup methods are
+the only readers of that map. An unrelated impl edit may rebuild the index and
+reexecute a cheap lookup for another trait; when that lookup returns the same
+bucket, Salsa backdates it. The edit must not propagate into unrelated impl
+signature lowering, solver evaluation, normalization, or body checking.
+Unknown expansion which could emit an impl for any trait is a global hazard and
+legitimately affects every lookup.
 
 The current `local_impl_candidates(LocalCrateSymbol, TraitSymbol)` query is a
 trait-keyed local source backed by a provisional linear module-tree scan. It
@@ -148,8 +158,9 @@ and it excludes impls with unrepresented active attribute transformations from
 definite candidates. Exact orphan-rule pruning also skips local discovery for
 a foreign trait with no trait arguments on a non-fundamental foreign nominal
 self type. Because the backing identity scan still depends on the expanded
-module tree, the destination incremental-isolation contract is not yet met: an
-unrelated trait impl edit can reexecute the query despite the trait key.
+module tree, the destination incremental firewall is not yet built: an
+unrelated trait impl edit can propagate through the current candidate query
+despite producing the same candidates.
 Reachable external-crate coverage and conservative external self-head
 partitioning are built; trait-partitioned local source dependencies and their
 edit-invalidation matrix remain outstanding. The destination and required

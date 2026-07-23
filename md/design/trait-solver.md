@@ -69,10 +69,10 @@ remain planned.
 
 The solver operation language includes input-only normalization,
 `Normalize(alias) -> Type`, and caller-side alias relation without first
-assuming that both aliases can be revealed. The first associated-projection
-slice and the remaining body integration are specified by the
+assuming that both aliases can be revealed. The completed first
+associated-projection and body-integration slice is recorded by the
 [Associated Type Normalization
-RFD](../rfds/associated-type-normalization/README.md); the semantic
+RFD](../rfds/associated-type-normalization/README.md). The broader destination
 requirements are:
 
 - a named type alias normalizes infallibly to its substituted right-hand side;
@@ -304,11 +304,61 @@ type. That refinement is conservative:
 - blanket and otherwise unclassifiable impls remain in a fallback bucket; and
 - indexed and exhaustive discovery produce the same canonical solver result.
 
-This boundary is also incremental. Adding or changing an impl for an unrelated
-trait must not invalidate candidate discovery for the queried trait. A
-self-type refinement should eventually prevent unrelated rigid-head changes
-from invalidating a narrower query. Candidate order is deterministic but has
-no semantic effect.
+This boundary is also incremental. Candidate order is deterministic but has no
+semantic effect.
+
+#### Local impl-index incremental firewall
+
+The destination local index is a crate-owned Salsa tracked struct with stable
+identity and a private tracked contents field. The contents map fixed trait
+identities to deterministic impl-identity buckets and record completeness
+hazards separately. A keyed tracked method is the only API which reads the
+private map:
+
+```rust,ignore
+#[salsa::tracked]
+struct LocalImplIndex<'db> {
+    #[id]
+    krate: LocalCrateSymbol<'db>,
+
+    #[tracked]
+    #[returns(ref)]
+    contents: LocalImplIndexContents<'db>,
+}
+
+#[salsa::tracked]
+impl<'db> LocalImplIndex<'db> {
+    #[salsa::tracked]
+    fn for_trait(
+        self,
+        db: &'db dyn Db,
+        trait_sym: TraitSymbol<'db>,
+    ) -> LocalImplCandidates<'db>;
+}
+```
+
+The example is a destination shape, not a claim that these exact definitions
+are built. Rebuilding the index after an unrelated impl edit may reexecute
+`for_trait(TraitA)`, because that method reads the changed map. If its result is
+equal, Salsa backdates the lookup and the change stops there. The required
+guarantee is that the edit does not reexecute `TraitA` impl signature lowering,
+canonical solver evaluation, associated-value normalization, or dependent body
+checking. This permits a cheap map lookup to repeat without turning the entire
+index into dynamic per-key Salsa state.
+
+Known impls are partitioned by their resolved trait. An unresolved construct
+which might produce an impl of any trait is retained as a global completeness
+hazard and legitimately changes every lookup. A hazard whose target trait is
+known can remain within that trait's bucket. Inherent impls do not enter trait
+buckets. A future self-head refinement nests specific rigid-head buckets and a
+mandatory blanket/unclassifiable fallback within each trait entry; the same
+backdating boundary applies.
+
+The map stores signature-level stable impl identities, not lowered headers or
+associated-item bodies. An impl-body-only edit should leave the index result
+equal. If the current `LocalImplSym` lifecycle cannot preserve that property,
+the symbol must be split or given stable header identity rather than weakening
+the firewall.
 
 The current `local_impl_candidates(LocalCrateSymbol, TraitSymbol)` query is the
 trait-keyed local boundary. It still linearly scans expanded local impl
@@ -323,8 +373,8 @@ withheld rather than published from the pre-transformation input.
 A uniquely resolved item macro with successfully parsed output remains
 complete. Failed, ambiguous, or depth-limited expansion is omitted from
 definite candidates and makes the source incomplete. The scan still depends on
-the whole expanded module vector and trait-identity index, so local
-unrelated-trait invalidation isolation is explicitly not built yet. External
+the whole expanded module vector and has no stable private index/backdating
+layer, so the local incremental firewall is explicitly not built yet. External
 trait defining predicates are
 available through the typed `TcxDb` boundary, so eligible local impls of
 represented external traits can be proved.
@@ -358,13 +408,20 @@ is finer local-source partitioning and its edit-invalidation matrix. Local
 traits may use exhaustive local negative reasoning because upstream crates
 cannot implement a downstream trait.
 
-Incremental conformance is verified with query traces. Tests distinguish:
+Incremental conformance is verified with edit-and-query traces. Tests
+distinguish:
 
+- index construction and keyed lookup, which may reexecute;
 - Salsa tracked functions whose bodies actually execute;
 - semantic candidate lookups with stable trait and self-type keys; and
 - external `TcxDb` metadata requests.
 
 The trace is cleared after fixture setup and before the operation under test.
+After an unrelated-trait edit, the keyed lookup must return an equal value and
+no unrelated signature, solver, normalization, or body query may execute. A
+relevant edit must change the bucket and invalidate its consumers. Body-only
+edits must not change signature-level index contents. Global completeness
+hazards are tested separately because they intentionally affect every trait.
 Because solver work may complete in different orders, assertions compare
 normalized event sets or multisets unless a particular count or dependency
 order is itself part of the contract.

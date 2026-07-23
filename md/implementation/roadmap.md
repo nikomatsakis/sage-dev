@@ -19,6 +19,7 @@ one or more RFDs. Status is one of:
 | Diagnostics | [diagnostics-rendering] |
 | Testing | [oracle-test-framework], [test-harness-external-crates] |
 | Concurrency | [concurrent-type-checking] |
+| Associated type normalization | [associated-type-normalization] |
 
 ## In flight
 
@@ -32,7 +33,6 @@ one or more RFDs. Status is one of:
 | Trait solving | [trait-solving] | Positive type-only local solver, active per-query whiteboard, transactional query boundary, and body obligation lifecycle landed; final RFD hardening remains |
 | Typed IR elaboration | [typed-ir-elaboration] | `DbDropGuard::db` and `Parse::next` method-call slices landed; broader expression families remain |
 | Method resolution | [method-resolution] | Conservative external trait and inherent method slices, actual-edition preludes, and import-edge enumeration landed; general lookup remains |
-| Associated type normalization | [associated-type-normalization] | Pinned `Parse::next` behavior and trace landed; source-side `cfg` evaluation and required unrelated-edit invalidation isolation remain |
 
 ## Planned
 

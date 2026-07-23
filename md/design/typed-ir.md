@@ -11,7 +11,7 @@ Their field identities, reference dereferences, `Dummy` borrows, selected
 functions, dispatch, and type substitutions are explicit. Other expression
 families remain at the statuses below.
 The common alias representation and its first operational associated-type
-normalization path are built, as recorded by the in-progress [Associated Type
+normalization path are built, as recorded by the completed [Associated Type
 Normalization RFD](../rfds/associated-type-normalization/README.md).
 
 ## Role
