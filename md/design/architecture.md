@@ -147,7 +147,13 @@ associated projections in its instantiated signature with caller inference
 variables and registers input-only normalization operations in the retained
 body-obligation lifecycle. Completed IR is returned only after those outputs
 have been imported, related to the caller variables, and any residual proof
-goals have terminated. Complete method resolution, named-alias expansion,
+goals have terminated. For a rigid external ADT, the current method path also
+prioritizes a unique visible receiver-bearing inherent method from complete
+name-keyed metadata. It opens owner and method type generics together, binds
+the owner self type from the receiver and method generics from arguments in a
+short-lived inference transaction, and publishes the instantiated parameter
+environment only after that transaction commits. Complete method resolution,
+named-alias expansion,
 opaque reveal, higher-ranked reasoning, and the other explicitly deferred
 extensions remain planned; their status is tracked in the [Build-Out
 Roadmap](../implementation/roadmap.md).
@@ -215,12 +221,20 @@ from every supported standard-prelude edition. Until the crate edition is
 represented, only traits common to every prelude are definitely in scope;
 an applicable edition-specific trait makes lookup uncertain. For a rigid
 external ADT receiver, a separate lookup keyed by ADT identity and method name
-enumerates possible inherent shadowing without loading signatures or unrelated
-method names. A completeness audit prevents selection when ordinary imports,
+enumerates receiver-bearing inherent identities without loading signatures or
+unrelated method names. Trait lookup uses an empty complete result to rule out
+inherent shadowing. A nonempty complete result enters the higher-priority
+external inherent tier, which loads only the uniquely selected visible
+signature. External function metadata separates owner generics from method
+generics and ordinary-call completeness from const-only completeness; an
+unrepresented ordinary predicate blocks selection, while a recognized
+const-only host effect does not invalidate a non-const call. A completeness
+audit prevents selection when ordinary imports,
 unresolved/failed macros, active attributes, or a matching unhandled inherent
 provider could contribute another candidate.
-Complete import/glob enumeration, visibility, inherent-method selection,
-explicit-bound provider discovery, edition-specific prelude selection, and generic-method behavior remains in the
+Complete import/glob enumeration, local and builtin inherent-method selection,
+explicit-bound provider discovery, edition-specific prelude selection, and
+generic trait-method behavior remain in the
 Method Resolution RFD. Missing or unrepresented metadata contributes
 uncertainty rather than a false `NotFound`.
 

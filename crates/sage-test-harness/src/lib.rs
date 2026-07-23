@@ -521,11 +521,13 @@ mod derive_expansion_tests {
 
             match (crate_num.0, def_index.0) {
                 (2, 7 | 12) => Some(RawFnSignature {
-                    generics: vec![RawGenericParam {
+                    owner_generics: vec![RawGenericParam {
                         index: 0,
                         name: Some("Self".to_owned()),
                         kind: RawGenericParamKind::Type,
                     }],
+                    method_generics: Vec::new(),
+                    owner_self_ty: Some(RawTy::Param(0)),
                     owner_trait: Some(RawTraitPredicate {
                         self_ty: RawTy::Param(0),
                         trait_def: RawDefId {
@@ -539,7 +541,8 @@ mod derive_expansion_tests {
                     params: Vec::new(),
                     ret: RawTy::Param(0),
                     predicates: Vec::new(),
-                    complete: true,
+                    ordinary_complete: true,
+                    const_call_complete: true,
                 }),
                 _ => None,
             }

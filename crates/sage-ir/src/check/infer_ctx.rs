@@ -603,6 +603,37 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         self.egraph.borrow_mut().discard(version);
     }
 
+    #[cfg(test)]
+    pub(crate) fn root_semantic_revision(&self) -> u64 {
+        self.egraph.borrow().semantic_revision(Version::ROOT)
+    }
+
+    pub(crate) fn try_eq_in(
+        &self,
+        version: Version,
+        left: Ptr<Ty<'db>>,
+        right: Ptr<Ty<'db>>,
+    ) -> bool {
+        try_unify(
+            &mut self.egraph.borrow_mut(),
+            &mut self.target_stash.borrow_mut(),
+            version,
+            left,
+            right,
+        )
+        .is_ok()
+    }
+
+    pub(crate) fn commit_branch(&self, version: Version) {
+        let effects = {
+            let mut stash = self.target_stash.borrow_mut();
+            let mut egraph = self.egraph.borrow_mut();
+            egraph.rebuild(version, &mut stash);
+            egraph.collapse_into(version, Version::ROOT)
+        };
+        self.publish_commit_effects(effects);
+    }
+
     // ------------------------------------------------------------------
     // Expression slots
     // ------------------------------------------------------------------
@@ -835,12 +866,14 @@ impl<'check, 'db> InferCtx<'check, 'db> {
             .stash_copy(sig_stash, &mut *self.target_stash.borrow_mut());
 
         FnSig {
+            owner_generic_count: fn_sig.owner_generic_count,
             owner_self_ty,
             receiver,
             params,
             ret,
             parameter_env,
             method_candidate_eligibility: fn_sig.method_candidate_eligibility,
+            const_call_complete: fn_sig.const_call_complete,
         }
     }
 

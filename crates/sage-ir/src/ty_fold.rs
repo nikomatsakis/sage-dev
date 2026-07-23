@@ -122,12 +122,14 @@ pub fn fold_fn_sig<'db>(folder: &mut impl TyFolder<'db>, sig: FnSig<'db>) -> FnS
     let ret = folder.target().alloc(ret_ty);
     let parameter_env = fold_parameter_env(folder, sig.parameter_env);
     FnSig {
+        owner_generic_count: sig.owner_generic_count,
         owner_self_ty,
         receiver,
         params,
         ret,
         parameter_env,
         method_candidate_eligibility: sig.method_candidate_eligibility,
+        const_call_complete: sig.const_call_complete,
     }
 }
 

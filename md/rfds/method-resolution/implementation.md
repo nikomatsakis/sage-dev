@@ -16,6 +16,15 @@ The next planned integration slice, `Parse::next`, is tracked by the
 RFD](../associated-type-normalization/README.md); that RFD owns its projection,
 external impl, generic-default, and external inherent-method requirements.
 
+That integration slice now implements prioritized selection for one rigid
+external-ADT tier. Complete name-keyed metadata supplies receiver-bearing
+function identities; the selected signature preserves owner versus method type
+generics and is instantiated in a synchronous child egraph version. Receiver
+and argument mismatch discards the child and its staged parameter environment.
+Missing metadata remains incomplete, and broader local/builtin discovery,
+receiver adjustment, result-driven inference, and conditional-candidate work
+remain governed by the unchecked items below.
+
 ### Step 1: Method candidate and result types
 
 - [ ] Preserve local item `visibility_modifier` syntax in CST/symbol data and

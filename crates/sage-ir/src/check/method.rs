@@ -14,6 +14,23 @@ use super::infer_ctx::{InferCtx, Scope, TraitGoalCertainty};
 pub(crate) struct ResolvedMethod<'db> {
     pub target: ResolvedCallTarget<'db>,
     pub signature: FnSig<'db>,
+    pub parameter_env_published: bool,
+}
+
+pub(crate) fn resolve_method<'db>(
+    cx: &InferCtx<'_, 'db>,
+    scope: &Scope<'db>,
+    receiver_ty: Ptr<Ty<'db>>,
+    method_name: Name<'db>,
+    arguments: &[(Ptr<Ty<'db>>, RelativeSpan)],
+    span: RelativeSpan,
+) -> Result<ResolvedMethod<'db>, ErrorReported> {
+    if let Some(result) =
+        resolve_external_inherent_method(cx, receiver_ty, method_name, arguments, span)
+    {
+        return result;
+    }
+    resolve_trait_method(cx, scope, receiver_ty, method_name, span)
 }
 
 /// Select a trait method for the first completed-IR vertical slice.
@@ -22,7 +39,7 @@ pub(crate) struct ResolvedMethod<'db> {
 /// The represented subset currently admits methods whose only type parameter
 /// is the owning trait's `Self`; broader generic method inference remains an
 /// explicit unknown rather than being guessed.
-pub(crate) fn resolve_trait_method<'db>(
+fn resolve_trait_method<'db>(
     cx: &InferCtx<'_, 'db>,
     scope: &Scope<'db>,
     receiver_ty: Ptr<Ty<'db>>,
@@ -142,6 +159,7 @@ pub(crate) fn resolve_trait_method<'db>(
                     },
                 },
                 signature,
+                parameter_env_published: false,
             });
             // ANCHOR_END: example_instantiate_trait_method
         }
@@ -163,6 +181,170 @@ pub(crate) fn resolve_trait_method<'db>(
     };
     Err(cx.record(Diagnostic::error(cx.span(span), message)))
     // ANCHOR_END: example_select_trait_method
+}
+
+fn resolve_external_inherent_method<'db>(
+    cx: &InferCtx<'_, 'db>,
+    receiver_ty: Ptr<Ty<'db>>,
+    method_name: Name<'db>,
+    arguments: &[(Ptr<Ty<'db>>, RelativeSpan)],
+    span: RelativeSpan,
+) -> Option<Result<ResolvedMethod<'db>, ErrorReported>> {
+    let Ty::Adt(receiver_symbol, _) = cx.stash()[receiver_ty] else {
+        return None;
+    };
+    let external = match receiver_symbol.data(cx.db) {
+        SymbolData::StructSymbol(StructSymbol::Ext(external))
+        | SymbolData::EnumSymbol(EnumSymbol::Ext(external)) => external,
+        SymbolData::StructSymbol(StructSymbol::Local(_))
+        | SymbolData::EnumSymbol(EnumSymbol::Local(_))
+        | SymbolData::FnSymbol(_)
+        | SymbolData::VariantSymbol(_)
+        | SymbolData::VariantCtorSymbol(_)
+        | SymbolData::TraitSymbol(_)
+        | SymbolData::TypeAliasSymbol(_)
+        | SymbolData::ConstSymbol(_)
+        | SymbolData::StaticSymbol(_)
+        | SymbolData::ImplSymbol(_)
+        | SymbolData::ModSymbol(_)
+        | SymbolData::MacroDefSymbol(_)
+        | SymbolData::UseSymbol(_)
+        | SymbolData::IntrinsicTypeSymbol(_)
+        | SymbolData::MacroInvocationSymbol(_) => return None,
+    };
+
+    // ANCHOR: example_select_external_inherent_method
+    let candidates =
+        crate::external_syms::external_inherent_method_candidates(cx.db, external, method_name);
+    if !candidates.complete {
+        return Some(Err(cx.record(Diagnostic::error(
+            cx.span(span),
+            "external inherent method lookup is incomplete",
+        ))));
+    }
+    if candidates.candidates.is_empty() {
+        return None;
+    }
+    let visible: Vec<_> = candidates
+        .candidates
+        .iter()
+        .filter(|candidate| candidate.externally_visible)
+        .collect();
+    if visible.is_empty() {
+        return Some(Err(cx.record(Diagnostic::error(
+            cx.span(span),
+            "inherent method is not visible from this crate",
+        ))));
+    }
+    let [candidate] = visible.as_slice() else {
+        return Some(Err(cx.record(Diagnostic::error(
+            cx.span(span),
+            "inherent method call is ambiguous",
+        ))));
+    };
+    let candidate = **candidate;
+    // ANCHOR_END: example_select_external_inherent_method
+
+    let Some(signature) = candidate.function.sig(cx.db) else {
+        return Some(Err(cx.record(Diagnostic::error(
+            cx.span(span),
+            "external inherent method signature is unavailable",
+        ))));
+    };
+    let binder = signature.root();
+    let source = signature.stash();
+    if binder.value.method_candidate_eligibility != SolverEligibility::Eligible
+        || binder.value.receiver.is_none()
+        || binder.value.owner_self_ty.is_none()
+        || binder.value.owner_generic_count as usize > source[binder.generics].len()
+    {
+        return Some(Err(cx.record(Diagnostic::error(
+            cx.span(span),
+            "external inherent method signature is outside the represented subset",
+        ))));
+    }
+
+    let parameter_count = source[binder.value.params].len();
+    if parameter_count != arguments.len() {
+        return Some(Err(cx.record(Diagnostic::error(
+            cx.span(span),
+            "method argument count does not match its signature",
+        ))));
+    }
+
+    // ANCHOR: example_instantiate_external_inherent_method
+    let instantiated =
+        instantiate_external_inherent_signature(cx, &signature, receiver_ty, arguments, span);
+    let Ok(signature) = instantiated else {
+        return Some(Err(cx.record(Diagnostic::error(
+            cx.span(span),
+            "selected inherent method signature does not match this call",
+        ))));
+    };
+    // ANCHOR_END: example_instantiate_external_inherent_method
+    Some(Ok(ResolvedMethod {
+        target: ResolvedCallTarget {
+            function: candidate.function,
+            dispatch: CallDispatch::Direct,
+        },
+        signature,
+        parameter_env_published: true,
+    }))
+}
+
+fn instantiate_external_inherent_signature<'db>(
+    cx: &InferCtx<'_, 'db>,
+    signature: &sage_stash::Stashed<crate::ty::Binder<'db, FnSig<'db>>>,
+    receiver_ty: Ptr<Ty<'db>>,
+    arguments: &[(Ptr<Ty<'db>>, RelativeSpan)],
+    span: RelativeSpan,
+) -> Result<FnSig<'db>, ()> {
+    use super::infer::obligations::{ObligationReason, StagedObligationBatch};
+    use super::infer::version::{Universe, Version};
+
+    let binder = signature.root();
+    let source = signature.stash();
+    let transaction = cx.branch_from(Version::ROOT);
+    let type_argument_ptrs: Vec<_> = source[binder.generics]
+        .iter()
+        .filter(|generic| generic.kind(cx.db) == GenericParamKind::Type)
+        .map(|_| cx.fresh_ty_var_in(transaction, Universe(1)))
+        .collect();
+    let type_arguments: Vec<_> = type_argument_ptrs
+        .iter()
+        .map(|argument| cx.stash()[*argument])
+        .collect();
+    let instantiated = crate::ty_fold::instantiate_fn_sig(
+        cx.db,
+        source,
+        &mut *cx.stash_mut(),
+        &binder,
+        type_arguments,
+    );
+    let receiver_matches = instantiated
+        .owner_self_ty
+        .is_some_and(|owner_self_ty| cx.try_eq_in(transaction, receiver_ty, owner_self_ty));
+    let parameters = cx.stash()[instantiated.params].to_vec();
+    let arguments_match = receiver_matches
+        && parameters
+            .into_iter()
+            .zip(arguments.iter().map(|(ty, _)| *ty))
+            .all(|(parameter, argument)| cx.try_eq_in(transaction, parameter, argument));
+    if !arguments_match {
+        cx.discard_branch(transaction);
+        return Err(());
+    }
+
+    let mut obligations = StagedObligationBatch::new();
+    obligations.push_parameter_env(
+        instantiated.parameter_env,
+        span,
+        ObligationReason::FunctionCall,
+    );
+    cx.commit_branch(transaction);
+    cx.publish_obligation_batch(obligations);
+    let signature = cx.normalize_call_signature(instantiated, span);
+    Ok(signature)
 }
 
 fn unhandled_inherent_provider<'db>(
@@ -219,4 +401,183 @@ fn unhandled_inherent_provider<'db>(
             Ty::Adt(impl_symbol, _) if impl_symbol == receiver_symbol
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::check::infer::bound::Bound;
+    use crate::db::Database;
+    use crate::symbol::{CrateNum, DefIndex, SymExt, SymExtKind};
+    use crate::tcx::{
+        ExternalDefPath, RawChild, RawDefId, RawFnSignature, RawGenericParam, RawGenericParamKind,
+        RawReceiver, RawTy, TcxDb,
+    };
+    use sage_stash::Stash;
+    use salsa::Database as _;
+
+    #[derive(Clone)]
+    struct SignatureTcx {
+        ordinary_complete: bool,
+    }
+
+    impl TcxDb for SignatureTcx {
+        fn extern_crate(&self, _name: &str) -> Option<CrateNum> {
+            None
+        }
+
+        fn module_children(&self, _crate_num: CrateNum, _def_index: DefIndex) -> Vec<RawChild> {
+            Vec::new()
+        }
+
+        fn item_name(&self, _crate_num: CrateNum, _def_index: DefIndex) -> Option<String> {
+            None
+        }
+
+        fn is_module(&self, _crate_num: CrateNum, _def_index: DefIndex) -> bool {
+            false
+        }
+
+        fn is_builtin_derive(&self, _crate_num: CrateNum, _def_index: DefIndex) -> bool {
+            false
+        }
+
+        fn def_path(&self, _crate_num: CrateNum, _def_index: DefIndex) -> Option<String> {
+            None
+        }
+
+        fn structured_def_path(
+            &self,
+            _crate_num: CrateNum,
+            _def_index: DefIndex,
+        ) -> Option<ExternalDefPath> {
+            None
+        }
+
+        fn fn_signature(
+            &self,
+            _crate_num: CrateNum,
+            _def_index: DefIndex,
+        ) -> Option<RawFnSignature> {
+            Some(RawFnSignature {
+                owner_generics: vec![RawGenericParam {
+                    index: 0,
+                    name: Some("T".to_owned()),
+                    kind: RawGenericParamKind::Type,
+                }],
+                method_generics: vec![RawGenericParam {
+                    index: 1,
+                    name: Some("E".to_owned()),
+                    kind: RawGenericParamKind::Type,
+                }],
+                owner_self_ty: Some(RawTy::Adt(
+                    RawDefId {
+                        crate_num: CrateNum(1),
+                        def_index: DefIndex(10),
+                        kind: SymExtKind::Struct,
+                    },
+                    vec![RawTy::Param(0)],
+                )),
+                owner_trait: None,
+                receiver: Some(RawReceiver::Value),
+                params: vec![RawTy::Param(1), RawTy::Bool],
+                ret: RawTy::Bool,
+                predicates: Vec::new(),
+                ordinary_complete: self.ordinary_complete,
+                const_call_complete: true,
+            })
+        }
+
+        fn expand_proc_macro_derive(
+            &self,
+            _crate_num: CrateNum,
+            _def_index: DefIndex,
+            _item_source: &str,
+        ) -> Option<String> {
+            None
+        }
+
+        fn expand_proc_macro_bang(
+            &self,
+            _crate_num: CrateNum,
+            _def_index: DefIndex,
+            _input_tokens: &str,
+        ) -> Option<String> {
+            None
+        }
+
+        fn expand_proc_macro_attr(
+            &self,
+            _crate_num: CrateNum,
+            _def_index: DefIndex,
+            _attr_args: &str,
+            _item_source: &str,
+        ) -> Option<String> {
+            None
+        }
+    }
+
+    #[test]
+    fn external_method_mismatch_discards_partial_generic_bindings() {
+        let database = Database::new(SignatureTcx {
+            ordinary_complete: true,
+        });
+        database.attach(|db| {
+            let source_stash = Stash::new();
+            let cx = InferCtx::new(db, &source_stash, None);
+            let function =
+                FnSymbol::Ext(SymExt::new(db, CrateNum(1), DefIndex(11), SymExtKind::Fn));
+            let signature = function.sig(db).expect("synthetic external signature");
+
+            let bool_ty = cx.alloc_ty(Ty::Bool);
+            let char_ty = cx.alloc_ty(Ty::Char);
+            let caller_var = cx.fresh_ty_var();
+            let owner = StructSymbol::Ext(SymExt::new(
+                db,
+                CrateNum(1),
+                DefIndex(10),
+                SymExtKind::Struct,
+            ));
+            let owner_args = cx.stash_mut().alloc_slice(&[bool_ty]);
+            let receiver_ty = cx.alloc_ty(Ty::Adt(owner.into(), owner_args));
+            let span = RelativeSpan { start: 0, end: 0 };
+            let root_revision = cx.root_semantic_revision();
+
+            assert!(
+                instantiate_external_inherent_signature(
+                    &cx,
+                    &signature,
+                    receiver_ty,
+                    &[(caller_var, span), (char_ty, span)],
+                    span,
+                )
+                .is_err(),
+                "the second argument must reject the selected signature"
+            );
+            assert_eq!(cx.get_bound(caller_var), Bound::None);
+            assert_eq!(
+                cx.root_semantic_revision(),
+                root_revision,
+                "the first argument's method-generic binding must roll back"
+            );
+        });
+    }
+
+    #[test]
+    fn incomplete_ordinary_external_method_contract_is_ineligible() {
+        let database = Database::new(SignatureTcx {
+            ordinary_complete: false,
+        });
+        database.attach(|db| {
+            let function =
+                FnSymbol::Ext(SymExt::new(db, CrateNum(1), DefIndex(11), SymExtKind::Fn));
+            let signature = function.sig(db).expect("synthetic external signature");
+
+            assert_eq!(
+                signature.root().value.method_candidate_eligibility,
+                SolverEligibility::Unsupported,
+                "an unknown ordinary predicate must block method selection"
+            );
+        });
+    }
 }

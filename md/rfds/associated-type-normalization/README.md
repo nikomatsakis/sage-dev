@@ -82,9 +82,13 @@ replaces them with caller inference variables and retains input-only
 normalization operations through terminal obligation processing. The
 `Iterator::next` half of the slice is operational, including explicit mutable
 `Dummy` borrowing and name-keyed identity-only auditing for external inherent
-shadowing. External inherent method selection and the final exact oracle slice
-remain. This RFD defines one vertical change which closes those remaining gaps
-without introducing eager global normalization or asking rustc to answer
+shadowing. External inherent selection is also operational for a complete,
+rigid, name-keyed receiver source: `Option::ok_or` preserves owner versus method
+generic scopes, binds them transactionally from the receiver and argument, and
+keeps rustc's const-only `Destruct` condition separate from the ordinary call
+contract. Retaining those substitutions in shared IR and the final exact oracle
+slice remain. This RFD defines one vertical change which closes those remaining
+gaps without introducing eager global normalization or asking rustc to answer
 Sage's trait goals.
 
 ## Change in a nutshell

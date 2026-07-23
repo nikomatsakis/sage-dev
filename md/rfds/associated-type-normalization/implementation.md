@@ -94,16 +94,27 @@ lifecycle and drives it to a terminal result.
 
 ## Step 6: External inherent `Option::ok_or`
 
-- [ ] Select and instantiate candidates from the complete external
+- [x] Select and instantiate candidates from the complete external
   inherent-method discovery keyed by rigid receiver head and method name.
-- [ ] Preserve owner-generic and method-generic scopes in external function
+- [x] Preserve owner-generic and method-generic scopes in external function
   metadata and selected-call instantiation.
-- [ ] Bind `Option`'s `T = Frame` from the receiver and `ok_or`'s
+- [x] Bind `Option`'s `T = Frame` from the receiver and `ok_or`'s
   `E = ParseError` from its argument/result constraints.
-- [ ] Classify rustc const-only host-effect predicates separately from the
+- [x] Classify rustc const-only host-effect predicates separately from the
   ordinary call contract; do not discard unknown predicates.
-- [ ] Test lookup priority, completeness, generic rollback, and absence of
+- [x] Test lookup priority, completeness, generic rollback, and absence of
   dependencies on other `Option` methods or callee bodies.
+
+External inherent selection precedes final shared-IR retention because the
+completed `Iterator::next` shadow audit already depends on the same external
+provider boundary. The focused fixture includes an applicable local trait
+fallback named `ok_or`; the external inherent method wins without reading the
+fallback body.
+Absent external inherent metadata remains explicitly incomplete, and selected
+owner/method inference runs in a discardable child version before obligations
+are published. Rustc's `Destruct` lang item is recorded as const-only
+incompleteness; every unknown ordinary clause still makes the signature
+ineligible.
 
 ## Step 7: Completed IR and exact oracle
 

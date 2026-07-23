@@ -205,12 +205,18 @@ where
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct FnSig<'db> {
+    /// Number of leading entries in the enclosing binder which belong to the
+    /// owning trait or impl; remaining entries are function-level generics.
+    pub owner_generic_count: u32,
     pub owner_self_ty: Option<Ptr<Ty<'db>>>,
     pub receiver: Option<CheckedReceiver<'db>>,
     pub params: Slice<Ptr<Ty<'db>>>,
     pub ret: Ptr<Ty<'db>>,
     pub parameter_env: CheckedParameterEnv<'db>,
     pub method_candidate_eligibility: SolverEligibility,
+    /// Whether const-only call conditions are fully represented. Ordinary
+    /// body checking does not require this bit to be true.
+    pub const_call_complete: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]

@@ -125,8 +125,15 @@ retain source provenance, proof obligations deduplicate after canonicalization,
 retry only after relevant inference wakes, and receive a mandatory terminal
 pass after inference fallback. `CheckedBody` creation asserts that the
 obligation registry, runtime, wake queue, and root egraph have no live work.
-Selected-method predicates will use the same staged-batch API when that broader
-method-resolution support lands.
+
+The implemented external-inherent slice opens owner and method type generics
+in one synchronous child egraph version. Receiver and argument compatibility
+must all succeed before the child collapses into the body root. Its instantiated
+parameter environment is accumulated in `StagedObligationBatch` and published
+only after commit, so a rejected call cannot leak generic equalities, wakeups,
+or obligations. This transaction does not cross an await point. The broader
+method algorithm will extend the same boundary to result compatibility,
+autoderef, conditional candidate responses, and local inherent methods.
 
 ## Deferred lifetime and borrow semantics
 

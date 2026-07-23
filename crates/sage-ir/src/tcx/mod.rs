@@ -198,7 +198,13 @@ pub enum RawReceiver {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RawFnSignature {
-    pub generics: Vec<RawGenericParam>,
+    /// Generics introduced by the owning trait or impl.
+    pub owner_generics: Vec<RawGenericParam>,
+    /// Generics introduced by the function itself.
+    pub method_generics: Vec<RawGenericParam>,
+    /// The owning trait or inherent impl self type. This is absent for free
+    /// functions and associated functions outside a represented owner.
+    pub owner_self_ty: Option<RawTy>,
     /// The owning trait fact, including its instantiated `Self` type. This is
     /// absent for free functions and inherent methods.
     pub owner_trait: Option<RawTraitPredicate>,
@@ -206,9 +212,13 @@ pub struct RawFnSignature {
     pub params: Vec<RawTy>,
     pub ret: RawTy,
     pub predicates: Vec<RawTraitPredicate>,
-    /// False when metadata contains a signature form outside the represented
-    /// subset. Incomplete signatures are never method candidates.
-    pub complete: bool,
+    /// False when the ordinary non-const call contract contains a signature
+    /// form outside the represented subset. Incomplete signatures are never
+    /// method candidates.
+    pub ordinary_complete: bool,
+    /// Whether const-only call conditions are fully represented. This is
+    /// tracked separately and does not make an ordinary call ineligible.
+    pub const_call_complete: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

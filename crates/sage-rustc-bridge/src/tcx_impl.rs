@@ -325,14 +325,16 @@ impl<'tcx> RustcTcxDb<'tcx> {
 
         let generics = self.tcx.generics_of(def_id);
         let mut raw_generics = Vec::with_capacity(generics.count());
-        let mut complete = true;
+        let mut ordinary_complete = true;
+        let mut const_call_complete = true;
         for index in 0..generics.count() {
             let param = generics.param_at(index, self.tcx);
             let kind = match param.kind {
                 ty::GenericParamDefKind::Type { .. } => RawGenericParamKind::Type,
                 ty::GenericParamDefKind::Lifetime => RawGenericParamKind::Lifetime,
                 ty::GenericParamDefKind::Const { .. } => {
-                    complete = false;
+                    ordinary_complete = false;
+                    const_call_complete = false;
                     RawGenericParamKind::Const
                 }
             };
@@ -342,6 +344,8 @@ impl<'tcx> RustcTcxDb<'tcx> {
                 kind,
             });
         }
+        let method_generics = raw_generics.split_off(generics.parent_count);
+        let owner_generics = raw_generics;
 
         let assoc_item = matches!(self.tcx.def_kind(def_id), DefKind::AssocFn)
             .then(|| self.tcx.associated_item(def_id));
@@ -353,7 +357,24 @@ impl<'tcx> RustcTcxDb<'tcx> {
         if assoc_item.is_some_and(|item| item.trait_container(self.tcx).is_some())
             && owner_trait.is_none()
         {
-            complete = false;
+            ordinary_complete = false;
+            const_call_complete = false;
+        }
+        let owner_impl = assoc_item.and_then(|item| item.impl_container(self.tcx));
+        let owner_self_ty = owner_trait
+            .as_ref()
+            .map(|predicate| predicate.self_ty.clone())
+            .or_else(|| {
+                owner_impl.and_then(|impl_def_id| {
+                    raw_ty(
+                        self.tcx,
+                        self.tcx.type_of(impl_def_id).instantiate_identity(),
+                    )
+                })
+            });
+        if owner_impl.is_some() && owner_self_ty.is_none() {
+            ordinary_complete = false;
+            const_call_complete = false;
         }
 
         let signature = self.tcx.fn_sig(def_id).instantiate_identity().skip_binder();
@@ -361,7 +382,8 @@ impl<'tcx> RustcTcxDb<'tcx> {
             || signature.abi != rustc_abi::ExternAbi::Rust
             || signature.c_variadic
         {
-            complete = false;
+            ordinary_complete = false;
+            const_call_complete = false;
         }
         let mut inputs = signature.inputs().iter().copied();
         let receiver = match assoc_item.map(|item| item.kind) {
@@ -369,8 +391,7 @@ impl<'tcx> RustcTcxDb<'tcx> {
                 let Some(source_receiver) = inputs.next() else {
                     return None;
                 };
-                let owner_self = owner_trait.as_ref().map(|predicate| &predicate.self_ty);
-                match (source_receiver.kind(), owner_self) {
+                match (source_receiver.kind(), owner_self_ty.as_ref()) {
                     (ty::TyKind::Ref(_, inner, mutability), Some(owner_self))
                         if raw_ty(self.tcx, *inner).as_ref() == Some(owner_self) =>
                     {
@@ -385,7 +406,8 @@ impl<'tcx> RustcTcxDb<'tcx> {
                         Some(RawReceiver::Value)
                     }
                     _ => {
-                        complete = false;
+                        ordinary_complete = false;
+                        const_call_complete = false;
                         None
                     }
                 }
@@ -396,7 +418,8 @@ impl<'tcx> RustcTcxDb<'tcx> {
         let mut params = Vec::new();
         for input in inputs {
             let Some(input) = raw_ty(self.tcx, input) else {
-                complete = false;
+                ordinary_complete = false;
+                const_call_complete = false;
                 continue;
             };
             params.push(input);
@@ -409,10 +432,22 @@ impl<'tcx> RustcTcxDb<'tcx> {
             .instantiate_identity(self.tcx);
         let mut predicates = Vec::new();
         for clause in instantiated.predicates {
+            if !clause.kind().bound_vars().is_empty() {
+                ordinary_complete = false;
+                const_call_complete = false;
+                continue;
+            }
             match clause.kind().skip_binder() {
                 ty::ClauseKind::Trait(predicate) => {
+                    if self.tcx.lang_items().destruct_trait() == Some(predicate.trait_ref.def_id) {
+                        // `Destruct` is rustc's const-drop condition. It is
+                        // not part of the ordinary non-const call contract.
+                        const_call_complete = false;
+                        continue;
+                    }
                     let Some(predicate) = raw_trait_predicate(self.tcx, predicate.trait_ref) else {
-                        complete = false;
+                        ordinary_complete = false;
+                        const_call_complete = false;
                         continue;
                     };
                     if owner_trait.as_ref() == Some(&predicate) {
@@ -421,23 +456,29 @@ impl<'tcx> RustcTcxDb<'tcx> {
                     predicates.push(predicate);
                 }
                 ty::ClauseKind::RegionOutlives(_) | ty::ClauseKind::TypeOutlives(_) => {}
+                ty::ClauseKind::HostEffect(_) => const_call_complete = false,
                 ty::ClauseKind::Projection(_)
                 | ty::ClauseKind::ConstArgHasType(..)
                 | ty::ClauseKind::WellFormed(_)
                 | ty::ClauseKind::ConstEvaluatable(_)
-                | ty::ClauseKind::HostEffect(_)
-                | ty::ClauseKind::UnstableFeature(_) => complete = false,
+                | ty::ClauseKind::UnstableFeature(_) => {
+                    ordinary_complete = false;
+                    const_call_complete = false;
+                }
             }
         }
 
         Some(RawFnSignature {
-            generics: raw_generics,
+            owner_generics,
+            method_generics,
+            owner_self_ty,
             owner_trait,
             receiver,
             params,
             ret,
             predicates,
-            complete,
+            ordinary_complete,
+            const_call_complete,
         })
     }
 

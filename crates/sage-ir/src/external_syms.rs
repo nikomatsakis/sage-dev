@@ -559,10 +559,20 @@ fn lower_fn_signature<'db>(
     raw: RawFnSignature,
 ) -> Stashed<Binder<'db, FnSig<'db>>> {
     let parent: Symbol<'db> = FnSymbol::Ext(fn_sym).into();
-    let (generics, by_index) = lower_generics(db, parent, raw.generics);
+    let owner_generic_count = raw.owner_generics.len() as u32;
+    let mut raw_generics = raw.owner_generics;
+    raw_generics.extend(raw.method_generics);
+    let (generics, by_index) = lower_generics(db, parent, raw_generics);
 
     let mut stash = Stash::new();
-    let mut complete = raw.complete;
+    let mut complete = raw.ordinary_complete;
+    let had_owner_self_ty = raw.owner_self_ty.is_some();
+    let owner_self_ty = raw
+        .owner_self_ty
+        .and_then(|owner_self_ty| lower_ty(db, &mut stash, &by_index, owner_self_ty));
+    if had_owner_self_ty && owner_self_ty.is_none() {
+        complete = false;
+    }
     let had_owner = raw.owner_trait.is_some();
     let owner_predicate = raw
         .owner_trait
@@ -570,7 +580,13 @@ fn lower_fn_signature<'db>(
     if had_owner && owner_predicate.is_none() {
         complete = false;
     }
-    let owner_self_ty = owner_predicate.map(|predicate| predicate.self_ty);
+    let owner_trait_self_ty = owner_predicate.map(|predicate| predicate.self_ty);
+    if let (Some(owner_self_ty), Some(owner_trait_self_ty)) = (owner_self_ty, owner_trait_self_ty)
+        && owner_self_ty != owner_trait_self_ty
+    {
+        complete = false;
+    }
+    let owner_self_ty = owner_self_ty.or(owner_trait_self_ty);
 
     let receiver = match (raw.receiver, owner_self_ty) {
         (Some(RawReceiver::Value), Some(owner_self_ty)) => Some(CheckedReceiver {
@@ -631,6 +647,7 @@ fn lower_fn_signature<'db>(
         stash,
         Binder::new(
             FnSig {
+                owner_generic_count,
                 owner_self_ty,
                 receiver,
                 params,
@@ -644,6 +661,7 @@ fn lower_fn_signature<'db>(
                 } else {
                     SolverEligibility::Unsupported
                 },
+                const_call_complete: raw.const_call_complete,
             },
             generics,
         ),
@@ -764,4 +782,29 @@ fn lower_ty<'db>(
         RawTy::Never => Ty::Never,
     };
     Some(stash.alloc(ty))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Database;
+    use crate::symbol::{CrateNum, DefIndex, SymExtKind};
+    use crate::tcx::NoopTcxDb;
+    use salsa::Database as _;
+
+    #[test]
+    fn absent_inherent_method_metadata_is_incomplete() {
+        let database = Database::new(NoopTcxDb);
+        database.attach(|db| {
+            let adt = SymExt::new(db, CrateNum(1), DefIndex(2), SymExtKind::Struct);
+            let candidates =
+                external_inherent_method_candidates(db, adt, Name::new(db, "method".to_owned()));
+
+            assert!(candidates.candidates.is_empty());
+            assert!(
+                !candidates.complete,
+                "missing metadata must block selection rather than prove that no inherent method exists"
+            );
+        });
+    }
 }

@@ -211,16 +211,19 @@ impl<'db> LocalFnSym<'db> {
             SolverEligibility::Unsupported
         };
 
+        let owner_generic_count = owner.generics.len() as u32;
         let mut generics = owner.generics;
         generics.extend_from_slice(&cx.target_stash[method_generics]);
         let generics = cx.target_stash.alloc_slice(&generics);
         let fn_sig = FnSig {
+            owner_generic_count,
             owner_self_ty: owner.self_ty,
             receiver,
             params,
             ret,
             parameter_env,
             method_candidate_eligibility,
+            const_call_complete: false,
         };
         let binder = Binder::new(fn_sig, generics);
         cx.finish(binder)

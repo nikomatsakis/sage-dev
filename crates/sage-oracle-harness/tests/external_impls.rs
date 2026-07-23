@@ -10,7 +10,9 @@ use sage_ir::check::solve::{
 use sage_ir::name::Name;
 use sage_ir::scope::ScopeSymbol;
 use sage_ir::symbol::{FnSymbol, StructSymbol, Symbol, SymbolData};
-use sage_ir::ty::{AliasTy, Lifetime, ProjectionTy, TraitItemDef, TraitRef, Ty};
+use sage_ir::ty::{
+    AliasTy, BinderExt, Lifetime, ProjectionTy, SolverEligibility, TraitItemDef, TraitRef, Ty,
+};
 use sage_ir::tytree::{CallDispatch, TyExprData};
 use sage_oracle_harness::{Fixture, combined};
 use sage_stash::{Stash, StashCopy};
@@ -534,4 +536,191 @@ fn external_inherent_discovery_excludes_static_associated_functions() {
     );
     assert!(!cold.contains("tcx::fn_signature"));
     assert!(!warm.contains("tcx::inherent_method_candidates"));
+}
+
+#[test]
+fn option_ok_or_binds_owner_and_method_generics() {
+    let fixture = Fixture::SingleFile(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test-fixtures/solver/external_option_ok_or.rs"),
+    );
+
+    let (diagnostics, cold, warm) = combined::with_proxy_database(&fixture, |database, files| {
+        let refs: Vec<_> = files
+            .iter()
+            .map(|(path, source)| (path.as_str(), source.as_str()))
+            .collect();
+        sage_test_harness::with_test_crate_files_twice_using_db(database, &refs, |db, root| {
+            let function = root
+                .expanded_module_items(db)
+                .iter()
+                .find_map(|symbol| match symbol.data(db) {
+                    SymbolData::FnSymbol(FnSymbol::Local(function))
+                        if function.name(db).text(db) == "next_item" =>
+                    {
+                        Some(function)
+                    }
+                    SymbolData::FnSymbol(_)
+                    | SymbolData::StructSymbol(_)
+                    | SymbolData::EnumSymbol(_)
+                    | SymbolData::VariantSymbol(_)
+                    | SymbolData::VariantCtorSymbol(_)
+                    | SymbolData::TraitSymbol(_)
+                    | SymbolData::TypeAliasSymbol(_)
+                    | SymbolData::ConstSymbol(_)
+                    | SymbolData::StaticSymbol(_)
+                    | SymbolData::ImplSymbol(_)
+                    | SymbolData::ModSymbol(_)
+                    | SymbolData::MacroDefSymbol(_)
+                    | SymbolData::UseSymbol(_)
+                    | SymbolData::IntrinsicTypeSymbol(_)
+                    | SymbolData::MacroInvocationSymbol(_) => None,
+                })
+                .expect("next_item function");
+            let declared = function.sig(db);
+            let (declared_stash, declared) = declared.open();
+            let Ty::Adt(expected_result, expected_result_args) = declared_stash[declared.value.ret]
+            else {
+                panic!("next_item must declare Result<Frame, ParseError>")
+            };
+            let [expected_frame, expected_error] = &declared_stash[expected_result_args] else {
+                panic!("Result must have two type arguments")
+            };
+            let Ty::Adt(expected_frame, expected_frame_args) = declared_stash[*expected_frame]
+            else {
+                panic!("the success type must be Frame")
+            };
+            let Ty::Adt(expected_error, expected_error_args) = declared_stash[*expected_error]
+            else {
+                panic!("the error type must be ParseError")
+            };
+            assert!(declared_stash[expected_frame_args].is_empty());
+            assert!(declared_stash[expected_error_args].is_empty());
+
+            let checked = function.body(db);
+            let diagnostics = checked
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.render(db))
+                .collect::<Vec<_>>();
+            if !diagnostics.is_empty() {
+                return diagnostics;
+            }
+            let (stash, body) = checked.body.open_deref();
+            let TyExprData::Block(_, Some(ok_or)) = stash[body.root].data else {
+                panic!("expected ok_or as the tail expression")
+            };
+            let TyExprData::ResolvedCall(ok_or_target, ok_or_arguments) = stash[ok_or].data else {
+                panic!("ok_or must be a resolved call")
+            };
+            assert_eq!(
+                Symbol::from(ok_or_target.function)
+                    .name(db)
+                    .unwrap()
+                    .0
+                    .text(db),
+                "ok_or"
+            );
+            assert!(matches!(ok_or_target.dispatch, CallDispatch::Direct));
+            let [next, error_argument] = &stash[ok_or_arguments] else {
+                panic!("ok_or must contain its receiver and error argument")
+            };
+            assert!(matches!(stash[*error_argument].data, TyExprData::Path(_)));
+
+            let Ty::Adt(result, result_args) = stash[stash[ok_or].ty] else {
+                panic!("ok_or must return Result<Frame, ParseError>")
+            };
+            assert_eq!(result, expected_result);
+            let [actual_frame, actual_error] = &stash[result_args] else {
+                panic!("Result must retain both type arguments")
+            };
+            let Ty::Adt(actual_frame, actual_frame_args) = stash[*actual_frame] else {
+                panic!("ok_or success type must be Frame")
+            };
+            let Ty::Adt(actual_error, actual_error_args) = stash[*actual_error] else {
+                panic!("ok_or error type must be ParseError")
+            };
+            assert_eq!(actual_frame, expected_frame);
+            assert_eq!(actual_error, expected_error);
+            assert!(stash[actual_frame_args].is_empty());
+            assert!(stash[actual_error_args].is_empty());
+
+            let TyExprData::ResolvedCall(next_target, _) = stash[*next].data else {
+                panic!("ok_or receiver must be the resolved Iterator::next call")
+            };
+            assert_eq!(
+                Symbol::from(next_target.function)
+                    .name(db)
+                    .unwrap()
+                    .0
+                    .text(db),
+                "next"
+            );
+            let Ty::Adt(option, option_args) = stash[stash[*next].ty] else {
+                panic!("Iterator::next must produce Option<Frame>")
+            };
+            assert_eq!(Symbol::from(option).name(db).unwrap().0.text(db), "Option");
+            let [option_frame] = &stash[option_args] else {
+                panic!("Option must retain Frame")
+            };
+            let Ty::Adt(option_frame, option_frame_args) = stash[*option_frame] else {
+                panic!("Option element must be Frame")
+            };
+            assert_eq!(option_frame, expected_frame);
+            assert!(stash[option_frame_args].is_empty());
+
+            let ok_or_signature = ok_or_target.function.sig(db).unwrap();
+            assert_eq!(ok_or_signature.root().value.owner_generic_count, 1);
+            assert_eq!(
+                ok_or_signature.root().value.method_candidate_eligibility,
+                SolverEligibility::Eligible
+            );
+            assert!(
+                !ok_or_signature.root().value.const_call_complete,
+                "rustc's Destruct condition is const-only"
+            );
+            let generic_names: Vec<_> = ok_or_signature
+                .iter_symbols()
+                .map(|generic| generic.name(db).unwrap().text(db).as_str())
+                .collect();
+            assert_eq!(generic_names, ["T", "E"]);
+            diagnostics
+        })
+    });
+
+    assert!(
+        diagnostics.is_empty(),
+        "{diagnostics:#?}\ncold trace:\n{cold}"
+    );
+    let inherent_lookups: Vec<_> = cold
+        .lines()
+        .filter(|line| line.contains("tcx::inherent_method_candidates"))
+        .collect();
+    assert_eq!(inherent_lookups.len(), 2, "one lookup per call:\n{cold}");
+    assert!(
+        inherent_lookups
+            .iter()
+            .any(|line| line.contains("\"next\""))
+    );
+    assert!(
+        inherent_lookups
+            .iter()
+            .any(|line| line.contains("\"ok_or\""))
+    );
+    assert_eq!(
+        cold.matches("tcx::fn_signature").count(),
+        2,
+        "only Iterator::next and Option::ok_or signatures should be read:\n{cold}"
+    );
+    assert_eq!(cold.matches("tcx::associated_type_value").count(), 1);
+    assert_eq!(cold.matches("tcx::relevant_trait_impls").count(), 2);
+    assert_eq!(cold.matches("tcx::impl_signature").count(), 2);
+    assert!(
+        !warm.contains("tcx::inherent_method_candidates")
+            && !warm.contains("tcx::fn_signature")
+            && !warm.contains("tcx::associated_type_value")
+            && !warm.contains("tcx::relevant_trait_impls")
+            && !warm.contains("tcx::impl_signature"),
+        "the completed body and all selected metadata should be reused:\n{warm}"
+    );
 }

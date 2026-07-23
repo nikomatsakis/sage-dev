@@ -143,18 +143,43 @@ boundary. The completed body now records the selected function, the static
 `Db: Clone` dispatch, the resolved `DbDropGuard::db` field, the dereference of
 the method's own `&self`, and the borrow required by `Clone::clone`.
 
+## 6. Prioritize a represented external inherent method
+
+The same name-keyed external boundary is now also a selection boundary for a
+rigid external ADT. A complete empty result permits trait fallback. A nonempty
+result filters visibility and requires exactly one visible function before its
+signature is loaded:
+
+```{anchor}
+example_select_external_inherent_method
+```
+
+The selected signature retains how many leading binder parameters belong to
+the owning impl. Method checking creates fresh variables for all represented
+owner and method type generics, matches the owner self type against the
+receiver, and matches every ordinary argument inside one child inference
+version. The function parameter environment is staged beside that child and is
+published only after commit:
+
+```{anchor}
+example_instantiate_external_inherent_method
+```
+
+For `Option<Frame>::ok_or(ParseError::EndOfStream)`, receiver matching binds
+the owner `T` to `Frame`, while argument matching independently binds the
+method `E` to `ParseError`. The selected call uses direct dispatch; it does not
+ask trait proof to return an impl.
+
 ## Current boundary
 
 This is a deliberately narrow vertical slice, not the complete method algorithm
 specified by the [Method Resolution RFD](../../rfds/method-resolution/README.md).
 Explicit and glob imports, explicit-bound provider enumeration, edition-aware
-prelude selection, inherent-method selection, generic trait methods, receiver
-autoderef, conditional candidates, and retained lookup obligations remain
-planned. The current function does not resolve inherent methods. It
-conservatively reports uncertainty when a local inherent impl could provide a
-competitor. For a rigid external ADT, it enumerates same-name receiver-bearing
-inherent method identities to audit shadowing without reading their signatures;
-other external or builtin receiver forms remain unenumerated. The complete
-design extends that audit into prioritized inherent lookup while continuing to
-make every unrepresented candidate source uncertain rather than a false unique
-result.
+prelude selection, local and builtin inherent-method selection, generic trait
+methods, receiver autoderef, conditional candidates, and retained lookup
+obligations remain planned. The current function does not resolve local or
+builtin inherent methods. It conservatively reports uncertainty when a local
+inherent impl could provide a competitor. For a rigid external ADT, it can
+audit or select from complete same-name receiver-bearing metadata; other
+external or builtin receiver forms remain unenumerated. Every unrepresented
+candidate source stays uncertain rather than becoming a false unique result.

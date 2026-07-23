@@ -81,7 +81,21 @@ impl<'db> ExprCst<'db> {
                     let ty = cx.alloc_ty(Ty::Error(error));
                     (TyExprData::Error(error), ty)
                 } else {
-                    match super::method::resolve_trait_method(cx, scope, receiver_ty, *name, span) {
+                    let method_arguments: Vec<_> = rargs
+                        .iter()
+                        .map(|argument| {
+                            let argument = cx.stash()[*argument];
+                            (argument.ty, argument.span)
+                        })
+                        .collect();
+                    match super::method::resolve_method(
+                        cx,
+                        scope,
+                        receiver_ty,
+                        *name,
+                        &method_arguments,
+                        span,
+                    ) {
                         // ANCHOR: example_elaborate_trait_method_call
                         Ok(method) => {
                             let checked_receiver = method
@@ -127,11 +141,13 @@ impl<'db> ExprCst<'db> {
                                     })
                                     .record_err(cx);
                             }
-                            cx.submit_parameter_env(
-                                method.signature.parameter_env,
-                                span,
-                                crate::check::infer::obligations::ObligationReason::FunctionCall,
-                            );
+                            if !method.parameter_env_published {
+                                cx.submit_parameter_env(
+                                    method.signature.parameter_env,
+                                    span,
+                                    crate::check::infer::obligations::ObligationReason::FunctionCall,
+                                );
+                            }
                             let mut call_args = Vec::with_capacity(rargs.len() + 1);
                             call_args.push(receiver);
                             call_args.extend(rargs);

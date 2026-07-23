@@ -352,9 +352,10 @@ the same transactional call checks. Visibility and unsupported/incomplete
 metadata use the ordinary outcome table. Unqualified trait-associated function
 lookup and complete UFCS behavior remain deferred.
 
-An external `Type::function` lookup is likewise unsupported/unknown until
-external inherent-item metadata exists; the absence of local impls is not an
-exhaustive `NotFound` result.
+External receiver-bearing dot calls now have a narrow rigid-ADT metadata path.
+External `Type::function` lookup remains unsupported/unknown because that path
+deliberately excludes receiver-less associated functions; the absence of local
+impls is not an exhaustive `NotFound` result.
 
 ## Deferred work
 
@@ -362,7 +363,8 @@ The first planned follow-up which combines an external trait method,
 associated-type normalization, and an external inherent method is the
 mini-redis [`Parse::next` vertical slice](../associated-type-normalization/README.md).
 
-- External inherent and trait methods through `TcxDb`.
+- General external inherent and trait methods beyond the implemented rigid-ADT
+  inherent and fixed-trait vertical slices.
 - Lifetime/const-generic impl, trait, and method candidate instantiation.
 - Complete import, visibility, and prelude handling for traits in lookup scope.
 - Custom `Deref` chains and associated type normalization.
