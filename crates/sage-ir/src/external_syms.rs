@@ -37,6 +37,12 @@ pub fn external_adt_is_always_sized<'db>(db: &'db dyn crate::Db, adt: SymExt<'db
 }
 
 #[salsa::tracked]
+pub fn external_adt_is_fundamental<'db>(db: &'db dyn crate::Db, adt: SymExt<'db>) -> Option<bool> {
+    db.tcx()
+        .adt_is_fundamental(adt.crate_num(db), adt.def_index(db))
+}
+
+#[salsa::tracked]
 pub fn external_adt_signature<'db>(
     db: &'db dyn crate::Db,
     adt: SymExt<'db>,

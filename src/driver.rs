@@ -16,7 +16,7 @@ use sage_ir::db::Database;
 use sage_ir::local_syms::mods::{LocalModSym, ModBodySource};
 use sage_ir::name::Name;
 use sage_ir::parse::parse_str_to_cst;
-use sage_ir::scope::{LocalCrateSymbol, ScopeSymbol, local_crate};
+use sage_ir::scope::{LocalCrateSymbol, ScopeSymbol, local_crate_with_edition};
 use sage_ir::source::SourceFile;
 use sage_ir::span::{AbsoluteSpan, ParseSource};
 use sage_ir::symbol::ModSymbol;
@@ -31,6 +31,8 @@ pub struct SageContext<'db> {
     pub db: &'db Database,
     pub krate: LocalCrateSymbol<'db>,
     pub root: ModSymbol<'db>,
+    pub target: metadata::SelectedTarget,
+    pub direct_dependencies: Vec<String>,
 }
 
 impl<'db> SageContext<'db> {}
@@ -54,14 +56,20 @@ where
         ws.direct_dep_rlibs.len(),
     );
 
-    let src_dir = ws
+    let target = ws
         .selected
         .first()
-        .map(|k| k.manifest_dir.join("src"))
+        .map(|krate| krate.target.clone())
         .expect("no workspace crates");
+    let src_dir = target
+        .src_path
+        .parent()
+        .expect("crate target must have a source directory");
 
     let source_files = collect_source_files(&src_dir);
     let args = build_rustc_args(&ws);
+    let mut direct_dependencies: Vec<_> = ws.direct_dep_rlibs.keys().cloned().collect();
+    direct_dependencies.sort();
 
     // Channel: main thread (salsa) → rustc thread (TyCtxt).
     // Each request carries its own oneshot reply sender.
@@ -94,57 +102,70 @@ where
         });
 
         // Main thread: run salsa work.
-        let db = Database::with_proxy(req_tx);
-        db.attach(|db| {
-            let mut files = Vec::new();
-            for (rel_path, text) in &source_files {
-                files.push(SourceFile::new(db, rel_path.clone(), text.clone()));
+        let mut db = Database::with_proxy(req_tx);
+        let root_file_name = target
+            .src_path
+            .file_name()
+            .expect("crate target must have a root source file")
+            .to_string_lossy();
+        let mut root_file = None;
+        for (rel_path, text) in &source_files {
+            let file = db.add_source_file(rel_path.clone(), text.clone());
+            if rel_path == root_file_name.as_ref() {
+                root_file = Some(file);
             }
-
-            let lib_file = files
-                .iter()
-                .find(|f| f.path(db) == "lib.rs")
-                .or_else(|| files.iter().find(|f| f.path(db) == "main.rs"))
-                .copied()
-                .expect("no lib.rs or main.rs found");
-
-            let mut empty_stash = Stash::new();
-            let empty_slice = empty_stash.alloc_slice::<sage_ir::cst::attrs::AttrCst>(&[]);
-            let empty_attrs = Stashed::new(empty_stash, empty_slice);
-            let abs_span = AbsoluteSpan {
-                source: ParseSource::SourceFile(lib_file),
-                start: 0,
-                end: lib_file.text(db).len() as u32,
-            };
-
-            let root_mod = LocalModSym::new(
+        }
+        let root_file = root_file.expect("selected target root source was not loaded");
+        db.attach(|db| {
+            let (krate, root) = setup_root_module(db, root_file, target.edition);
+            let ctx = SageContext {
                 db,
-                Name::new(db, String::new()),
-                None,
-                ModBodySource::File(lib_file),
-                empty_attrs,
-                abs_span,
-            );
-
-            let krate = local_crate(db, root_mod);
-            let scope = ScopeSymbol::Crate(krate);
-
-            let source = ParseSource::SourceFile(lib_file);
-            let items = parse_str_to_cst(db, source, lib_file.text(db), scope);
-            sage_ir::local_syms::mods::unexpanded_items::specify(db, root_mod, items);
-
-            let root = ModSymbol::Local(root_mod);
-            let ctx = SageContext { db, krate, root };
+                krate,
+                root,
+                target,
+                direct_dependencies,
+            };
 
             f(&ctx)
         })
     })
 }
 
+#[salsa::tracked]
+fn setup_root_module<'db>(
+    db: &'db dyn sage_ir::Db,
+    root_file: SourceFile,
+    edition: sage_ir::scope::Edition,
+) -> (LocalCrateSymbol<'db>, ModSymbol<'db>) {
+    let mut empty_stash = Stash::new();
+    let empty_slice = empty_stash.alloc_slice::<sage_ir::cst::attrs::AttrCst>(&[]);
+    let empty_attrs = Stashed::new(empty_stash, empty_slice);
+    let source = ParseSource::SourceFile(root_file);
+    let abs_span = AbsoluteSpan {
+        source,
+        start: 0,
+        end: root_file.text(db).len() as u32,
+    };
+    let root_mod = LocalModSym::new(
+        db,
+        Name::new(db, String::new()),
+        edition,
+        None,
+        ModBodySource::File(root_file),
+        empty_attrs,
+        abs_span,
+    );
+    let krate = local_crate_with_edition(db, root_mod, edition);
+    let items = parse_str_to_cst(db, source, root_file.text(db), ScopeSymbol::Crate(krate));
+    sage_ir::local_syms::mods::unexpanded_items::specify(db, root_mod, items);
+    (krate, ModSymbol::Local(root_mod))
+}
+
 /// Build rustc args for the stub driver.
 pub fn build_rustc_args(ws: &WorkspaceInfo) -> Vec<String> {
     let sysroot = metadata::our_sysroot();
 
+    let target = &ws.selected.first().expect("no workspace crates").target;
     let stub_dir = std::env::temp_dir().join("sage-stub");
     std::fs::create_dir_all(&stub_dir).unwrap();
     let stub_path = stub_dir.join("lib.rs");
@@ -157,7 +178,8 @@ pub fn build_rustc_args(ws: &WorkspaceInfo) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "sage".into(),
         stub_path.to_string_lossy().into_owned(),
-        "--edition=2021".into(),
+        format!("--edition={}", target.edition.as_str()),
+        format!("--crate-name={}", target.name.replace('-', "_")),
         "--crate-type=lib".into(),
         format!("--sysroot={sysroot}"),
         format!("-Ldependency={}", ws.deps_dir.display()),
@@ -165,6 +187,10 @@ pub fn build_rustc_args(ws: &WorkspaceInfo) -> Vec<String> {
 
     for (name, path) in &ws.direct_dep_rlibs {
         args.push(format!("--extern={name}={}", path.display()));
+    }
+    for feature in &target.enabled_features {
+        args.push("--cfg".into());
+        args.push(format!("feature={feature:?}"));
     }
 
     args

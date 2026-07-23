@@ -661,6 +661,7 @@ impl<'a, 'db> Parser<'a, 'db> {
             let mod_sym = LocalModSym::new(
                 self.db,
                 name,
+                self.scope.local_crate(self.db).edition(self.db),
                 Some(self.scope),
                 ModBodySource::Inline,
                 attrs_cst,
@@ -694,6 +695,7 @@ impl<'a, 'db> Parser<'a, 'db> {
             let mod_sym = LocalModSym::new(
                 self.db,
                 name,
+                self.scope.local_crate(self.db).edition(self.db),
                 Some(self.scope),
                 body_source,
                 attrs_cst,
@@ -986,8 +988,15 @@ impl<'a, 'db> Parser<'a, 'db> {
             }
             "use_wildcard" => {
                 let mut full = prefix.clone();
-                if let Some(path_node) = node.child_by_field_name("path") {
+                let path_node = node.child_by_field_name("path").or_else(|| {
+                    let mut cursor = node.walk();
+                    node.named_children(&mut cursor).next()
+                });
+                if let Some(path_node) = path_node {
                     self.collect_use_scoped_parts(stash, path_node, item_start, &mut full);
+                }
+                if full.anchor.is_none() && full.segments.is_empty() {
+                    return;
                 }
                 let path = full.alloc(stash);
                 out.push(UseImportCst {

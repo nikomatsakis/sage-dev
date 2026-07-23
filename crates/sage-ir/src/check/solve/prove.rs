@@ -1456,6 +1456,7 @@ mod whiteboard_tests {
         let root = LocalModSym::new(
             db,
             Name::new(db, String::new()),
+            crate::scope::Edition::Rust2021,
             None,
             ModBodySource::File(file),
             Stashed::new(attrs, empty),

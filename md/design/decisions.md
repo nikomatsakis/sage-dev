@@ -141,15 +141,19 @@ eventually compatible self-type partitions, also form the incremental
 invalidation boundary so unrelated impl changes do not reexecute the query.
 
 The current `local_impl_candidates(LocalCrateSymbol, TraitSymbol)` query is a
-trait-keyed local source backed by a provisional linear module-tree scan. Its
-result carries conservative expansion/header completeness, and it excludes
-impls with unrepresented active attribute transformations from definite
-candidates. Because the backing scan still reads every expanded local impl,
-the destination incremental-isolation contract is not yet met: an unrelated
-trait impl edit can reexecute the query despite the trait key. Global
-external-crate coverage, trait-partitioned source dependencies, their
-query-trace conformance test, and conservative self-type partitioning remain
-outstanding. The destination and required conformance tests live in
+trait-keyed local source backed by a provisional linear module-tree scan. It
+resolves each impl's trait identity first and lowers a full header only for the
+requested trait. Its result carries conservative expansion/header completeness,
+and it excludes impls with unrepresented active attribute transformations from
+definite candidates. Exact orphan-rule pruning also skips local discovery for
+a foreign trait with no trait arguments on a non-fundamental foreign nominal
+self type. Because the backing identity scan still depends on the expanded
+module tree, the destination incremental-isolation contract is not yet met: an
+unrelated trait impl edit can reexecute the query despite the trait key.
+Reachable external-crate coverage and conservative external self-head
+partitioning are built; trait-partitioned local source dependencies and their
+edit-invalidation matrix remain outstanding. The destination and required
+conformance tests live in
 [Trait Solver Design](./trait-solver.md) and the
 [Trait Impl Candidate Discovery RFD](../rfds/trait-impl-candidate-discovery/README.md).
 

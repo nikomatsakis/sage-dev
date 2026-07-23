@@ -365,6 +365,13 @@ pub trait TcxDb: Send + Sync {
         None
     }
 
+    /// Whether this external nominal type is fundamental for Rust's orphan
+    /// rules. Kept separate from its signature so orphan pruning does not
+    /// depend on defaults, predicates, or completeness.
+    fn adt_is_fundamental(&self, _crate_num: CrateNum, _def_index: DefIndex) -> Option<bool> {
+        None
+    }
+
     /// Expand a proc-macro derive. Returns the expanded source text.
     fn expand_proc_macro_derive(
         &self,

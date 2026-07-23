@@ -30,13 +30,14 @@ one or more RFDs. Status is one of:
 | Numeric types | [numeric-inference-variables] | |
 | Trait system | [trait-system] | Checked local trait/impl data, deterministic local impl enumeration, and function/struct/enum predicate environments landed; trait/impl item queries remain |
 | Trait solving | [trait-solving] | Positive type-only local solver, active per-query whiteboard, transactional query boundary, and body obligation lifecycle landed; final RFD hardening remains |
-| Typed IR elaboration | [typed-ir-elaboration] | Implementing the `DbDropGuard::db` vertical slice with explicit coercions, `Lifetime::Dummy`, exact oracle output, and dependency traces |
+| Typed IR elaboration | [typed-ir-elaboration] | `DbDropGuard::db` and `Parse::next` method-call slices landed; broader expression families remain |
+| Method resolution | [method-resolution] | Conservative external trait and inherent method slices, actual-edition preludes, and import-edge enumeration landed; general lookup remains |
+| Associated type normalization | [associated-type-normalization] | Pinned `Parse::next` behavior and trace landed; source-side `cfg` evaluation and required unrelated-edit invalidation isolation remain |
 
 ## Planned
 
 | Group | RFDs | Notes |
 |---|---|---|
-| Method resolution | [method-resolution] | Inherent lookup follows [trait-system]; trait methods additionally depend on [trait-solving]; no method-resolution code landed |
 | Trait impl candidate discovery | [trait-impl-candidate-discovery] | Draft design for global visible-impl discovery, mandatory trait keys, conservative self-type refinement, and incremental reuse |
 | Trait solver search architecture | [trait-solver-cycle-semantics], [trait-solver-scheduling], [incremental-trait-results] | Draft design for recursive semantics and limits, fair future scheduling, and monotone progress envelopes |
 
@@ -59,6 +60,7 @@ one or more RFDs. Status is one of:
 [oracle-test-framework]: ../rfds/oracle-test-framework/README.md
 [test-harness-external-crates]: ../rfds/test-harness-external-crates/README.md
 [concurrent-type-checking]: ../rfds/concurrent-type-checking/README.md
+[associated-type-normalization]: ../rfds/associated-type-normalization/README.md
 [async-type-checker]: ../rfds/async-type-checker/README.md
 [stash-safety]: ../rfds/stash-safety/README.md
 [stash-faster-collision-chains]: ../rfds/stash-faster-collision-chains/README.md

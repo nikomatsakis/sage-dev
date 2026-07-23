@@ -822,6 +822,17 @@ impl<'tcx> RustcTcxDb<'tcx> {
         Some(adt_ty.is_sized(self.tcx, typing_env))
     }
 
+    pub fn adt_is_fundamental(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<bool> {
+        let def_id = rustc_def_id(crate_num, def_index);
+        if !matches!(
+            self.tcx.def_kind(def_id),
+            DefKind::Struct | DefKind::Enum | DefKind::Union
+        ) {
+            return None;
+        }
+        Some(self.tcx.adt_def(def_id).is_fundamental())
+    }
+
     pub fn expand_proc_macro_derive(
         &self,
         crate_num: CrateNum,

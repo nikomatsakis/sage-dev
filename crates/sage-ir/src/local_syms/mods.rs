@@ -16,6 +16,10 @@ use crate::symbol::{MacroDefSymbol, Symbol, SymbolData};
 pub struct LocalModSym<'db> {
     pub name: Name<'db>,
 
+    /// The crate edition is copied onto modules so resolution performed while
+    /// expanding the root module does not require a cyclic root-to-crate edge.
+    pub edition: crate::scope::Edition,
+
     /// The enclosing module, if any. `None` only for the crate root.
     pub parent: Option<ScopeSymbol<'db>>,
 
@@ -66,9 +70,7 @@ pub fn unexpanded_items<'db>(
     match module.body_source(db) {
         ModBodySource::File(f) => {
             let source = ParseSource::SourceFile(*f);
-            let scope = module
-                .parent(db)
-                .unwrap_or_else(|| panic!("file-backed module has no parent scope"));
+            let scope = ScopeSymbol::Module(module);
             crate::parse::parse_str_to_cst(db, source, f.text(db), scope)
                 .into_iter()
                 .collect()

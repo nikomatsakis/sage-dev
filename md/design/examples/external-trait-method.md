@@ -41,15 +41,16 @@ which can participate in method lookup:
 example_traits_in_method_scope
 ```
 
-The current slice sees traits defined directly in the module and traits from
-the standard prelude. Until the source edition is represented, it searches the
-prelude modules for every supported edition, treats only traits common to all
-of them as definitely in scope, and records an applicable edition-specific
-trait as uncertainty. The returned
+The current slice sees traits defined directly in the module, traits introduced
+by resolved explicit imports or external glob imports, and traits from the
+crate's actual edition prelude. A local glob remains incomplete until its
+reexport and macro-provider edges can be enumerated recursively. The edition
+is retained on the crate and every module so root macro expansion and ordinary
+checking make the same choice. The returned
 `complete` bit is as important as the list. Unresolved expansion, active
-attributes, or a `use` which the current lookup does not represent makes the
-source incomplete, so absence from the returned list cannot justify `NotFound`
-or selecting a sole visible candidate.
+attributes, or an unresolved import makes the source incomplete, so absence
+from the returned list cannot justify `NotFound` or selecting a sole visible
+candidate.
 
 For every discovered trait, method lookup first requests its associated-item
 list and filters functions by the source name:
@@ -200,11 +201,11 @@ example_exact_parse_next_snapshot
 
 This is a deliberately narrow vertical slice, not the complete method algorithm
 specified by the [Method Resolution RFD](../../rfds/method-resolution/README.md).
-Explicit and glob imports, explicit-bound provider enumeration, edition-aware
-prelude selection, local and builtin inherent-method selection, generic trait
-methods, receiver autoderef, conditional candidates, and retained lookup
-obligations remain planned. The current function does not resolve local or
-builtin inherent methods. It conservatively reports uncertainty when a local
+Local-glob provider enumeration, explicit-bound provider enumeration, local
+and builtin inherent-method selection, generic trait methods, receiver
+autoderef, conditional candidates, and retained lookup obligations remain
+planned. The current function does not resolve local or builtin inherent
+methods. It conservatively reports uncertainty when a local
 inherent impl could provide a competitor. For a rigid external ADT, it can
 audit or select from complete same-name receiver-bearing metadata; other
 external or builtin receiver forms remain unenumerated. Every unrepresented

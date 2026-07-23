@@ -111,9 +111,9 @@ fn resolve_trait_method<'db>(
                 TraitGoalCertainty::Yes => {}
             }
             if !definitely_in_scope {
-                // The crate edition is not represented yet. A trait exported
-                // by only some standard preludes is therefore a possible, not
-                // definite, provider.
+                // Conservatively discovered providers which are not known to
+                // be introduced by the active module/import/prelude edges
+                // cannot be selected as definite method candidates.
                 unknown = true;
                 continue;
             }

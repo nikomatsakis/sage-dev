@@ -20,7 +20,7 @@ crates/sage-ir/src/
   lib.rs              — module declarations and public re-exports
   db.rs               — concrete database support
   symbol/mod.rs       — Symbol wrappers and external symbol handles
-  scope.rs            — ScopeSymbol and LocalCrateSymbol
+  scope.rs            — ScopeSymbol, LocalCrateSymbol, and Rust edition
   ty.rs               — Ty, Binder<T>, signatures, lifetime and const leaves
   ty_fold.rs          — type substitution/folding
   span.rs             — AbsoluteSpan and RelativeSpan
@@ -78,6 +78,14 @@ crates/sage-ir/src/
 
   tcx/              — TcxDb trait (interface to rustc metadata)
 ```
+
+The top-level `metadata.rs` selects a non-proc-macro Cargo library target and
+records its root source, edition, enabled features, host-target cfg values, and
+direct dependency world. `driver.rs` gives the edition, features, and
+dependency world to the rustc metadata stub; Sage's source loader uses the
+selected root and edition. General source-side `cfg` evaluation is not built
+yet. The edition is retained on both the local crate and its modules;
+file-backed items use the file module itself as their resolution scope.
 
 ## Data flow
 
@@ -182,8 +190,14 @@ completeness audit. Known lint-only inner module attributes (`allow`, `deny`,
 `warn`, and `forbid`) do not affect completeness; other inner attributes remain
 incomplete until module-attribute semantics are represented.
 An incomplete source cannot justify logical `No`. The backing scan still reads
-all expanded local impls, so unrelated-trait edits can reexecute this query;
-trait-partitioned source dependencies and their query-trace test remain required.
+all expanded local impl identities, but it lowers a full header only after the
+impl's separately resolved trait identity matches the requested trait.
+Unrelated-trait edits can still reexecute the identity scan; trait-partitioned
+source dependencies and their edit-invalidation test remain required.
+Foreign-trait goals with no trait arguments and a non-fundamental foreign
+nominal self type skip local discovery by the exact orphan rule, so those
+external/external goals do not depend on unrelated local impls or macro
+expansion.
 Method-name discovery remains in method resolution and submits one fixed-trait
 goal per candidate trait.
 
@@ -205,7 +219,8 @@ Trait proof stops after headers. Normalization separately asks
 value of a surviving candidate; local normalization has an equivalent tracked
 operation and does not first lower `LocalImplSym::items`. The ADT-signature
 query contains only ordered generics, aligned type defaults, represented
-ordinary predicates, and separate ordinary/deferred completeness; it does not
+ordinary predicates and separate
+ordinary/deferred completeness; it does not
 read fields, associated values, impls, or bodies. Source type lowering applies
 omitted type defaults in declaration order and instantiates the ADT predicate
 environment.
@@ -216,10 +231,11 @@ instantiated when the field is constructed or projected.
 Name discovery reads associated-item metadata first;
 it does not load every trait signature speculatively. The selected candidate
 then reads only its function and defining-trait signatures. The current lookup
-scope is deliberately narrow: traits in the current module plus candidates
-from every supported standard-prelude edition. Until the crate edition is
-represented, only traits common to every prelude are definitely in scope;
-an applicable edition-specific trait makes lookup uncertain. For a rigid
+scope includes traits in the current module, traits introduced by resolved
+explicit imports or external glob imports, and traits from the crate's actual
+edition prelude. Local glob imports remain conservative because their
+reexport/macro provider edges are not recursively enumerated. Unresolved
+imports retain uncertainty. For a rigid
 external ADT receiver, a separate lookup keyed by ADT identity and method name
 enumerates receiver-bearing inherent identities without loading signatures or
 unrelated method names. Trait lookup uses an empty complete result to rule out
@@ -229,12 +245,11 @@ signature. External function metadata separates owner generics from method
 generics and ordinary-call completeness from const-only completeness; an
 unrepresented ordinary predicate blocks selection, while a recognized
 const-only host effect does not invalidate a non-const call. A completeness
-audit prevents selection when ordinary imports,
-unresolved/failed macros, active attributes, or a matching unhandled inherent
+audit prevents selection when imports are unresolved, unresolved/failed
+macros, active attributes, or a matching unhandled inherent
 provider could contribute another candidate.
-Complete import/glob enumeration, local and builtin inherent-method selection,
-explicit-bound provider discovery, edition-specific prelude selection, and
-generic trait-method behavior remain in the
+Local and builtin inherent-method selection, explicit-bound provider
+discovery, and generic trait-method behavior remain in the
 Method Resolution RFD. Missing or unrepresented metadata contributes
 uncertainty rather than a false `NotFound`.
 

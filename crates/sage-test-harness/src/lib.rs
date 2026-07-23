@@ -226,6 +226,7 @@ pub fn setup_root_module<'db>(
     let root_mod = LocalModSym::new(
         db,
         Name::new(db, String::new()),
+        sage_ir::scope::Edition::Rust2021,
         None,
         ModBodySource::File(lib_file),
         empty_attrs,
@@ -241,6 +242,87 @@ pub fn setup_root_module<'db>(
 
     let root = ModSymbol::Local(root_mod);
     (krate, root)
+}
+
+#[cfg(test)]
+mod file_module_scope_tests {
+    use super::*;
+    use sage_ir::symbol::{FnSymbol, StructSymbol, Symbol, SymbolData};
+    use sage_ir::ty::Ty;
+
+    #[test]
+    fn items_in_a_file_backed_module_use_that_module_as_their_scope() {
+        with_test_crate_files(
+            &[("lib.rs", "mod child;"), ("child.rs", "struct Holder;")],
+            |db, root| {
+                let child = root
+                    .expanded_module_items(db)
+                    .iter()
+                    .find_map(|symbol| match symbol.data(db) {
+                        SymbolData::ModSymbol(ModSymbol::Local(module)) => Some(module),
+                        _ => None,
+                    })
+                    .expect("child module");
+                let holder = ModSymbol::Local(child)
+                    .expanded_module_items(db)
+                    .iter()
+                    .find_map(|symbol| match symbol.data(db) {
+                        SymbolData::StructSymbol(StructSymbol::Local(strukt)) => Some(strukt),
+                        _ => None,
+                    })
+                    .expect("Holder struct");
+
+                assert_eq!(holder.scope(db), ScopeSymbol::Module(child));
+            },
+        );
+    }
+
+    #[test]
+    fn transitive_local_globs_resolve_and_glob_cycles_terminate() {
+        with_test_crate_files(
+            &[(
+                "lib.rs",
+                "mod c { pub use crate::b::*; pub struct Item; }\n\
+                 mod b { pub use crate::c::*; }\n\
+                 mod a { pub use crate::b::*; }\n\
+                 use crate::a::*;\n\
+                 fn resolved(_: Item) {}\n\
+                 fn missing(_: Missing) {}",
+            )],
+            |db, root| {
+                let parameter = |name: &str| {
+                    let function = root
+                        .expanded_module_items(db)
+                        .iter()
+                        .find_map(|symbol| match symbol.data(db) {
+                            SymbolData::FnSymbol(FnSymbol::Local(function))
+                                if function.name(db).text(db) == name =>
+                            {
+                                Some(function)
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| panic!("{name} function"));
+                    let signature = function.sig(db);
+                    let (stash, binder) = signature.open();
+                    let [parameter] = &stash[binder.value.params] else {
+                        panic!("expected one parameter")
+                    };
+                    match stash[*parameter] {
+                        Ty::Adt(adt, arguments) => (Some(adt), stash[arguments].len(), false),
+                        Ty::Error(_) => (None, 0, true),
+                        other => panic!("unexpected {name} parameter type: {other:?}"),
+                    }
+                };
+
+                let (Some(item), 0, false) = parameter("resolved") else {
+                    panic!("transitive glob should resolve Item")
+                };
+                assert_eq!(Symbol::from(item).name(db).unwrap().0.text(db), "Item");
+                assert_eq!(parameter("missing"), (None, 0, true));
+            },
+        );
+    }
 }
 
 #[cfg(test)]
@@ -300,10 +382,22 @@ mod derive_expansion_tests {
                 kind,
             };
             match (crate_num.0, def_index.0) {
-                (1, 0) => vec![
-                    child("prelude", 1, 1, Namespace::Type, SymExtKind::Mod),
-                    child("Pair", 1, 20, Namespace::Type, SymExtKind::Struct),
-                ],
+                (1, 0) => {
+                    let mut children = vec![
+                        child("prelude", 1, 1, Namespace::Type, SymExtKind::Mod),
+                        child("Pair", 1, 20, Namespace::Type, SymExtKind::Struct),
+                    ];
+                    if self.edition_only_clone_trait {
+                        children.push(child(
+                            "RenamedEditionClone",
+                            2,
+                            11,
+                            Namespace::Type,
+                            SymExtKind::Trait,
+                        ));
+                    }
+                    children
+                }
                 (1, 1) => vec![
                     child("rust_2015", 1, 8, Namespace::Type, SymExtKind::Mod),
                     child("rust_2018", 1, 9, Namespace::Type, SymExtKind::Mod),
@@ -960,7 +1054,7 @@ mod derive_expansion_tests {
     }
 
     #[test]
-    fn unenumerated_trait_import_prevents_definitive_method_selection() {
+    fn an_unrelated_resolved_trait_import_does_not_block_method_selection() {
         with_test_crate_files_using_db(
             Database::new(BuiltinDeriveTcx::default()),
             &[(
@@ -987,11 +1081,7 @@ mod derive_expansion_tests {
                         })
                     })
                     .expect("DbDropGuard::db method");
-                assert!(checked.diagnostics.iter().any(|diagnostic| {
-                    diagnostic
-                        .message
-                        .contains("incomplete candidate information")
-                }));
+                assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
             },
         );
     }
@@ -1123,7 +1213,7 @@ mod derive_expansion_tests {
     }
 
     #[test]
-    fn edition_dependent_prelude_provider_is_not_definite() {
+    fn a_trait_from_another_editions_prelude_is_not_a_provider() {
         with_test_crate_files_using_db(
             Database::new(BuiltinDeriveTcx {
                 edition_only_clone_trait: true,
@@ -1158,16 +1248,133 @@ mod derive_expansion_tests {
                         (function.name(db).text(db) == "db").then(|| function.body(db))
                     })
                     .expect("DbDropGuard::db method");
+                assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+            },
+        );
+    }
+
+    #[test]
+    fn a_local_glob_with_trait_reexports_keeps_method_scope_incomplete() {
+        with_test_crate_files_using_db(
+            Database::new(BuiltinDeriveTcx {
+                edition_only_clone_trait: true,
+                ..BuiltinDeriveTcx::default()
+            }),
+            &[(
+                "lib.rs",
+                "mod providers { pub use std::prelude::rust_2024::EditionClone; }\n\
+                 use providers::*;\n\
+                 #[derive(Clone)]\nstruct Db { shared: bool }\n\
+                 impl std::prelude::rust_2024::EditionClone for Db {}\n\
+                 struct DbDropGuard { db: Db }\n\
+                 impl DbDropGuard { fn db(&self) -> Db { self.db.clone() } }",
+            )],
+            |db, root| {
+                let checked = root
+                    .expanded_module_items(db)
+                    .iter()
+                    .filter_map(|symbol| match symbol.data(db) {
+                        SymbolData::ImplSymbol(ImplSymbol::Local(local_impl)) => {
+                            Some(local_impl.items(db))
+                        }
+                        SymbolData::FnSymbol(_)
+                        | SymbolData::StructSymbol(_)
+                        | SymbolData::EnumSymbol(_)
+                        | SymbolData::VariantSymbol(_)
+                        | SymbolData::VariantCtorSymbol(_)
+                        | SymbolData::TraitSymbol(_)
+                        | SymbolData::TypeAliasSymbol(_)
+                        | SymbolData::ConstSymbol(_)
+                        | SymbolData::StaticSymbol(_)
+                        | SymbolData::ImplSymbol(ImplSymbol::Ext(_))
+                        | SymbolData::ModSymbol(_)
+                        | SymbolData::MacroDefSymbol(_)
+                        | SymbolData::UseSymbol(_)
+                        | SymbolData::IntrinsicTypeSymbol(_)
+                        | SymbolData::MacroInvocationSymbol(_) => None,
+                    })
+                    .flat_map(|items| {
+                        items.stash()[items.root().value]
+                            .iter()
+                            .copied()
+                            .collect::<Vec<_>>()
+                    })
+                    .find_map(|item| {
+                        let sage_ir::ty::TraitItemDef::Function(FnSymbol::Local(function)) = item
+                        else {
+                            return None;
+                        };
+                        (function.name(db).text(db) == "db").then(|| function.body(db))
+                    })
+                    .expect("DbDropGuard::db method");
                 assert!(checked.diagnostics.iter().any(|diagnostic| {
                     diagnostic
                         .message
                         .contains("incomplete candidate information")
                 }));
+            },
+        );
+    }
+
+    #[test]
+    fn an_explicitly_imported_renamed_external_trait_is_a_provider() {
+        with_test_crate_files_using_db(
+            Database::new(BuiltinDeriveTcx {
+                edition_only_clone_trait: true,
+                ..BuiltinDeriveTcx::default()
+            }),
+            &[(
+                "lib.rs",
+                "use std::RenamedEditionClone;\n\
+                 #[derive(Clone)]\nstruct Db { shared: bool }\n\
+                 impl std::prelude::rust_2024::EditionClone for Db {}\n\
+                 struct DbDropGuard { db: Db }\n\
+                 impl DbDropGuard { fn db(&self) -> Db { self.db.clone() } }",
+            )],
+            |db, root| {
+                let checked = root
+                    .expanded_module_items(db)
+                    .iter()
+                    .filter_map(|symbol| match symbol.data(db) {
+                        SymbolData::ImplSymbol(ImplSymbol::Local(local_impl)) => {
+                            Some(local_impl.items(db))
+                        }
+                        SymbolData::FnSymbol(_)
+                        | SymbolData::StructSymbol(_)
+                        | SymbolData::EnumSymbol(_)
+                        | SymbolData::VariantSymbol(_)
+                        | SymbolData::VariantCtorSymbol(_)
+                        | SymbolData::TraitSymbol(_)
+                        | SymbolData::TypeAliasSymbol(_)
+                        | SymbolData::ConstSymbol(_)
+                        | SymbolData::StaticSymbol(_)
+                        | SymbolData::ImplSymbol(ImplSymbol::Ext(_))
+                        | SymbolData::ModSymbol(_)
+                        | SymbolData::MacroDefSymbol(_)
+                        | SymbolData::UseSymbol(_)
+                        | SymbolData::IntrinsicTypeSymbol(_)
+                        | SymbolData::MacroInvocationSymbol(_) => None,
+                    })
+                    .flat_map(|items| {
+                        items.stash()[items.root().value]
+                            .iter()
+                            .copied()
+                            .collect::<Vec<_>>()
+                    })
+                    .find_map(|item| {
+                        let sage_ir::ty::TraitItemDef::Function(FnSymbol::Local(function)) = item
+                        else {
+                            return None;
+                        };
+                        (function.name(db).text(db) == "db").then(|| function.body(db))
+                    })
+                    .expect("DbDropGuard::db method");
                 assert!(
-                    checked
-                        .diagnostics
-                        .iter()
-                        .all(|diagnostic| !diagnostic.message.contains("ambiguous"))
+                    checked.diagnostics.iter().any(|diagnostic| {
+                        diagnostic.message.contains("method call is ambiguous")
+                    }),
+                    "{:?}",
+                    checked.diagnostics
                 );
             },
         );

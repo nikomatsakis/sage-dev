@@ -1,8 +1,8 @@
 # Implementation plan and status
 
-This RFD is a draft. Checked items represent work which has landed with its
-tests and documentation. Each step below leaves the repository building and
-keeps unsupported behavior conservative.
+This RFD is in progress. Checked items represent work which landed with its
+tests and documentation. Each step leaves the repository building and keeps
+unsupported behavior conservative.
 
 ## Step 1: Alias type family
 
@@ -105,11 +105,10 @@ lifecycle and drives it to a terminal result.
 - [x] Test lookup priority, completeness, generic rollback, and absence of
   dependencies on other `Option` methods or callee bodies.
 
-External inherent selection precedes final shared-IR retention because the
-completed `Iterator::next` shadow audit already depends on the same external
-provider boundary. The focused fixture includes an applicable local trait
-fallback named `ok_or`; the external inherent method wins without reading the
-fallback body.
+External inherent selection and the `Iterator::next` shadow audit share one
+external provider boundary. The focused fixture includes an applicable local
+trait fallback named `ok_or`; the external inherent method wins without reading
+the fallback body.
 Absent external inherent metadata remains explicitly incomplete, and selected
 owner/method inference runs in a discardable child version before obligations
 are published. Rustc's `Destruct` lang item is recorded as const-only
@@ -137,7 +136,29 @@ normalization is involved.
 
 - [ ] Force the real `Parse::next` body under the pinned library target's
   edition, features, cfg values, and dependency world.
-- [ ] Assert the documented cold semantic trace and unchanged warm reuse.
-- [ ] Confirm no other mini-redis or selected external body is queried.
+- [x] Assert the documented cold semantic trace and unchanged warm reuse.
+- [x] Confirm no other mini-redis or selected external body is queried.
 - [ ] Update the implementation checkpoint, destination architecture pages,
   and RFD status after the complete slice lands.
+
+The integration checkpoint also made target identity operational in the
+driver: the selected non-proc-macro library target supplies its root source,
+edition, enabled features, target cfg values, and direct dependency set. File
+modules retain their own scope and crate edition. Method-provider discovery
+resolves explicit and glob import edges and selects only the actual edition
+prelude. For foreign traits on non-fundamental foreign nominal receivers with
+no trait arguments, exact orphan-rule pruning skips the local candidate source;
+the `Parse::next` trace therefore does not inspect unrelated mini-redis impl
+headers or macro output.
+
+The root, edition, and default-feature dependency world are active for the
+pinned library target. The cfg set is currently recorded rather than evaluated
+by Sage's source pipeline. `Parse::next` and its module path are ungated, but
+the first item above remains unchecked until source-side cfg evaluation makes
+the configuration boundary operational in general.
+
+The pinned trace is complete, but the RFD cannot move to Completed until its
+required relevant-versus-unrelated impl edit invalidation test is executable.
+The current local trait-keyed query still depends on the expanded module tree;
+closing that final requirement needs the fine-grained local index specified by
+the Trait Impl Candidate Discovery RFD.

@@ -311,18 +311,21 @@ from invalidating a narrower query. Candidate order is deterministic but has
 no semantic effect.
 
 The current `local_impl_candidates(LocalCrateSymbol, TraitSymbol)` query is the
-trait-keyed local boundary. It still linearly scans expanded local impls,
-but also reports whether unresolved item/attribute macros, ambiguous or
-unsupported derives, or unresolved trait impl headers could hide a relevant
-impl. An impl with an unrepresented active attribute transformation is not a
+trait-keyed local boundary. It still linearly scans expanded local impl
+identities, but resolves only each impl's trait identity before lowering a full
+header for the requested trait. It also reports whether unresolved
+item/attribute macros, ambiguous or unsupported derives, or unresolved trait
+impl headers could hide a relevant impl. An impl with an unrepresented active
+attribute transformation is not a
 definite candidate, nor is an attributed containing module or macro expansion.
 A derive attached to an item with another unexpanded active attribute is also
 withheld rather than published from the pre-transformation input.
 A uniquely resolved item macro with successfully parsed output remains
 complete. Failed, ambiguous, or depth-limited expansion is omitted from
 definite candidates and makes the source incomplete. The scan still depends on
-the whole expanded module vector, so local unrelated-trait invalidation
-isolation is explicitly not built yet. External trait defining predicates are
+the whole expanded module vector and trait-identity index, so local
+unrelated-trait invalidation isolation is explicitly not built yet. External
+trait defining predicates are
 available through the typed `TcxDb` boundary, so eligible local impls of
 represented external traits can be proved.
 
@@ -337,8 +340,14 @@ part of either proof operation. `Normalize` uses a separate
 `external_associated_type_value(impl, associated_type)` query after header
 matching; its local counterpart reads the requested type value without first
 lowering the impl-item list. Unsupported headers or an incomplete source retain
-uncertainty instead of manufacturing a negative answer. Structural compiler
-traits such as `Sized` and `MetaSized` have explicit Sage candidates because
+uncertainty instead of manufacturing a negative answer. Before local
+discovery, an exact orphan-rule check skips the local source for a foreign
+trait with no trait arguments and a non-fundamental foreign nominal self type.
+The fundamental marker is imported through its own structural metadata query,
+separate from the external ADT signature. This pruning cannot omit a legal
+local impl and prevents external/external goals
+such as `IntoIter<Frame>: Iterator` from depending on unrelated local impls or
+macro expansion. Structural compiler traits such as `Sized` and `MetaSized` have explicit Sage candidates because
 they are not enumerable user impls. Rustc supplies their identities and type
 structure but does not answer the Sage goal.
 
@@ -464,7 +473,7 @@ ready-queue ordering and assert an identical `Stashed<QueryResult>`.
 | Concurrent conjunction | Planned |
 | Candidate and frame progress envelopes | Planned |
 | Provisional cycle fixpoints and coinductive paths | Planned |
-| Goal-specific outputs (`Proven` and `Type`) | Planned by Associated Type Normalization RFD |
+| Goal-specific outputs (`Proven` and `Type`) | Built |
 
 The planned work is split across the
 [Cycle Semantics](../rfds/trait-solver-cycle-semantics/README.md),

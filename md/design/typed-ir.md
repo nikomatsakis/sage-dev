@@ -5,14 +5,14 @@ current `TyExprData` is still partly source-shaped; the transition to this
 representation is tracked by the [Typed IR Elaboration
 RFD](../rfds/typed-ir-elaboration/README.md) and the [Build-Out
 Roadmap](../implementation/roadmap.md). The completed method-call paths now
-include `DbDropGuard::db` and the isolated mini-redis `Parse::next` slice.
+include `DbDropGuard::db`, the isolated `Parse::next` fixture, and the real
+pinned mini-redis `Parse::next` body from its selected library root and edition.
 Their field identities, reference dereferences, `Dummy` borrows, selected
 functions, dispatch, and type substitutions are explicit. Other expression
 families remain at the statuses below.
-The common alias representation is built. Its first operational
-associated-type normalization path is specified by the [Associated Type
-Normalization RFD](../rfds/associated-type-normalization/README.md), using
-mini-redis `Parse::next` as its acceptance target.
+The common alias representation and its first operational associated-type
+normalization path are built, as recorded by the in-progress [Associated Type
+Normalization RFD](../rfds/associated-type-normalization/README.md).
 
 ## Role
 

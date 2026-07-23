@@ -113,6 +113,10 @@ impl<'db> Resolver<'db> {
         self.scope.module(self.db).into()
     }
 
+    fn edition(&self) -> crate::scope::Edition {
+        self.scope.module(self.db).edition(self.db)
+    }
+
     pub(crate) fn local_crate(&self) -> crate::scope::LocalCrateSymbol<'db> {
         self.scope.local_crate(self.db)
     }
@@ -176,10 +180,11 @@ impl<'db> Resolver<'db> {
     // ANCHOR: example_traits_in_method_scope
     /// Enumerate the trait definitions directly available for method lookup.
     ///
-    /// This first implementation covers traits defined in the current module
-    /// and traits re-exported by the standard prelude. The boolean is false
-    /// when an import or unresolved macro could contribute another trait;
-    /// callers must not interpret that subset as an exhaustive negative.
+    /// This covers traits defined in the current module, explicitly imported
+    /// or glob-imported traits, and traits re-exported by the edition's
+    /// standard prelude. The boolean is false when an unresolved import or
+    /// macro could contribute another trait; callers must not interpret that
+    /// subset as an exhaustive negative.
     pub(crate) fn traits_in_method_scope(&mut self) -> (Vec<(TraitSymbol<'db>, bool)>, bool) {
         let mut traits = Vec::new();
         let mut complete = match self.module() {
@@ -190,31 +195,101 @@ impl<'db> Resolver<'db> {
             }
             ModSymbol::Ext(_) => false,
         };
-        let mut push_module_traits =
-            |module: ModSymbol<'db>, definitely_in_scope: bool, audit_completeness: bool| {
-                for symbol in module.expanded_module_items(self.db) {
-                    match symbol.data(self.db) {
-                        SymbolData::TraitSymbol(trait_sym) => {
-                            if let Some((_, definite)) = traits
-                                .iter_mut()
-                                .find(|(candidate, _)| *candidate == trait_sym)
-                            {
-                                *definite |= definitely_in_scope;
-                            } else {
-                                traits.push((trait_sym, definitely_in_scope));
-                            }
-                        }
-                        SymbolData::UseSymbol(_) | SymbolData::MacroInvocationSymbol(_)
-                            if audit_completeness =>
-                        {
+        let mut push_module_traits = |module: ModSymbol<'db>, definitely_in_scope: bool| {
+            for trait_sym in trait_symbols_in_module(self.db, module) {
+                if let Some((_, definite)) = traits
+                    .iter_mut()
+                    .find(|(candidate, _)| *candidate == trait_sym)
+                {
+                    *definite |= definitely_in_scope;
+                } else {
+                    traits.push((trait_sym, definitely_in_scope));
+                }
+            }
+        };
+
+        push_module_traits(self.module(), true);
+        drop(push_module_traits);
+
+        // A `use` can place a trait in method scope even when the trait name is
+        // never mentioned by the call. Resolve each import as an import edge;
+        // successful non-trait imports are complete and add no provider.
+        for symbol in self.module().expanded_module_items(self.db) {
+            let imports = match symbol.data(self.db) {
+                SymbolData::UseSymbol(UseSymbol::Local(imports)) => imports,
+                SymbolData::UseSymbol(UseSymbol::Ext(_)) => {
+                    complete = false;
+                    continue;
+                }
+                SymbolData::FnSymbol(_)
+                | SymbolData::StructSymbol(_)
+                | SymbolData::EnumSymbol(_)
+                | SymbolData::VariantSymbol(_)
+                | SymbolData::VariantCtorSymbol(_)
+                | SymbolData::TraitSymbol(_)
+                | SymbolData::TypeAliasSymbol(_)
+                | SymbolData::ConstSymbol(_)
+                | SymbolData::StaticSymbol(_)
+                | SymbolData::ImplSymbol(_)
+                | SymbolData::ModSymbol(_)
+                | SymbolData::MacroDefSymbol(_)
+                | SymbolData::IntrinsicTypeSymbol(_)
+                | SymbolData::MacroInvocationSymbol(_) => continue,
+            };
+            let (stash, imports) = imports.imports(self.db).open();
+            for import in &stash[imports] {
+                let resolved = self.resolve_use(self.module(), stash, import.path, Namespace::Type);
+                match import.kind {
+                    UseKind::Named(_) | UseKind::Unnamed => {
+                        let value_resolved = if resolved.is_empty() {
+                            self.resolve_use(self.module(), stash, import.path, Namespace::Value)
+                        } else {
+                            Vec::new()
+                        };
+                        if resolved.is_empty() && value_resolved.is_empty() {
                             complete = false;
                         }
-                        _ => {}
+                        for symbol in resolved {
+                            if let Some(trait_sym) = symbol.trait_symbol(self.db)
+                                && !traits.iter().any(|(candidate, _)| *candidate == trait_sym)
+                            {
+                                traits.push((trait_sym, true));
+                            }
+                        }
+                    }
+                    UseKind::Glob => {
+                        let modules: Vec<_> = resolved
+                            .into_iter()
+                            .filter_map(|symbol| symbol.module(self.db))
+                            .collect();
+                        if modules.is_empty() {
+                            complete = false;
+                        }
+                        for module in modules {
+                            match module {
+                                ModSymbol::Local(_) => {
+                                    // A local glob can expose reexports and
+                                    // macro-produced providers. Until those
+                                    // export edges are enumerated recursively,
+                                    // it is not an exhaustive provider source.
+                                    complete = false;
+                                }
+                                ModSymbol::Ext(_) => {
+                                    for trait_sym in trait_symbols_in_module(self.db, module) {
+                                        if !traits
+                                            .iter()
+                                            .any(|(candidate, _)| *candidate == trait_sym)
+                                        {
+                                            traits.push((trait_sym, true));
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
-            };
-
-        push_module_traits(self.module(), true, true);
+            }
+        }
 
         let std_name = Name::new(self.db, "std".to_owned());
         if let Some(std_module) = lookup_extern_prelude(self.db, std_name, Namespace::Type)
@@ -229,53 +304,27 @@ impl<'db> Resolver<'db> {
             if prelude_modules.len() != 1 {
                 complete = false;
             }
-            let mut prelude_traits: Vec<(TraitSymbol<'db>, usize)> = Vec::new();
-            for edition in ["rust_2015", "rust_2018", "rust_2021", "rust_2024"] {
-                let mut edition_modules = Vec::new();
-                for module in &prelude_modules {
-                    edition_modules.extend(
-                        self.resolve_name_from_module(
-                            *module,
-                            Name::new(self.db, edition.to_owned()),
-                            Namespace::Type,
-                        )
-                        .into_iter()
-                        .filter_map(|edition_module| edition_module.module(self.db)),
-                    );
-                }
-                if edition_modules.len() != 1 {
-                    complete = false;
-                }
-                let mut module_traits = Vec::new();
-                for edition_module in edition_modules {
-                    for symbol in edition_module.expanded_module_items(self.db) {
-                        if let SymbolData::TraitSymbol(trait_sym) = symbol.data(self.db)
-                            && !module_traits.contains(&trait_sym)
-                        {
-                            module_traits.push(trait_sym);
-                        }
-                    }
-                }
-                for trait_sym in module_traits {
-                    if let Some((_, count)) = prelude_traits
-                        .iter_mut()
-                        .find(|(candidate, _)| *candidate == trait_sym)
-                    {
-                        *count += 1;
-                    } else {
-                        prelude_traits.push((trait_sym, 1));
-                    }
-                }
+            let edition = self.edition().prelude_module();
+            let mut edition_modules = Vec::new();
+            for module in &prelude_modules {
+                edition_modules.extend(
+                    self.resolve_name_from_module(
+                        *module,
+                        Name::new(self.db, edition.to_owned()),
+                        Namespace::Type,
+                    )
+                    .into_iter()
+                    .filter_map(|edition_module| edition_module.module(self.db)),
+                );
             }
-            for (trait_sym, edition_count) in prelude_traits {
-                let definitely_in_scope = edition_count == 4;
-                if let Some((_, definite)) = traits
-                    .iter_mut()
-                    .find(|(candidate, _)| *candidate == trait_sym)
-                {
-                    *definite |= definitely_in_scope;
-                } else {
-                    traits.push((trait_sym, definitely_in_scope));
+            if edition_modules.len() != 1 {
+                complete = false;
+            }
+            for edition_module in edition_modules {
+                for trait_sym in trait_symbols_in_module(self.db, edition_module) {
+                    if !traits.iter().any(|(candidate, _)| *candidate == trait_sym) {
+                        traits.push((trait_sym, true));
+                    }
                 }
             }
         } else {
@@ -422,7 +471,17 @@ impl<'db> Resolver<'db> {
         name: Name<'db>,
         namespace: Namespace,
     ) -> Vec<Symbol<'db>> {
-        match self.phase {
+        let query = InFlightQuery {
+            module,
+            name,
+            namespace,
+        };
+        if self.in_flight.contains(&query) {
+            return Vec::new();
+        }
+        self.in_flight.push(query);
+
+        let results = match self.phase {
             ResolvePhase::MacroExpansion => self.lookup_in_module(
                 LookupFilter {
                     named: true,
@@ -443,19 +502,23 @@ impl<'db> Resolver<'db> {
                     namespace,
                 );
                 if !results.is_empty() {
-                    return results;
+                    results
+                } else {
+                    self.lookup_in_module(
+                        LookupFilter {
+                            named: false,
+                            globs: true,
+                        },
+                        module,
+                        name,
+                        namespace,
+                    )
                 }
-                self.lookup_in_module(
-                    LookupFilter {
-                        named: false,
-                        globs: true,
-                    },
-                    module,
-                    name,
-                    namespace,
-                )
             }
-        }
+        };
+
+        self.in_flight.pop();
+        results
     }
 
     fn lookup_in_module(
@@ -466,6 +529,8 @@ impl<'db> Resolver<'db> {
         namespace: Namespace,
     ) -> Vec<Symbol<'db>> {
         if let (ModSymbol::Ext(external), Namespace::Macro(_)) = (module, namespace) {
+            // Macro namespace is retained on the exported-child edge; a bare
+            // external macro definition does not encode its macro flavor.
             return if filter.named {
                 external.named_children(self.db, name, namespace).to_vec()
             } else {
@@ -557,7 +622,73 @@ impl<'db> Resolver<'db> {
         namespace: Namespace,
     ) -> Vec<Symbol<'db>> {
         let path = stash[path_ptr];
-        self.resolve_path_in_module(origin_module, stash, path, namespace)
+        match path {
+            Path::Relative(first, rest) => {
+                if stash[rest].is_empty() {
+                    return self.flexibly_resolve_name_from_module(
+                        origin_module,
+                        first.name,
+                        namespace,
+                    );
+                }
+                let symbols = self.flexibly_resolve_name_from_module(
+                    origin_module,
+                    first.name,
+                    Namespace::Type,
+                );
+                self.resolve_use_remaining_segments(stash, symbols, &stash[rest], namespace)
+            }
+            Path::Anchored(anchor, members) => {
+                let anchor_modules = resolve_anchor(self.db, origin_module, stash, anchor.kind);
+                let rest = &stash[members];
+                if rest.is_empty() {
+                    return if namespace == Namespace::Type {
+                        anchor_modules.into_iter().map(mod_to_symbol).collect()
+                    } else {
+                        Vec::new()
+                    };
+                }
+                let symbols = anchor_modules.into_iter().map(mod_to_symbol).collect();
+                self.resolve_use_remaining_segments(stash, symbols, rest, namespace)
+            }
+        }
+    }
+
+    fn resolve_use_remaining_segments(
+        &mut self,
+        stash: &Stash,
+        symbols: Vec<Symbol<'db>>,
+        rest: &[PathSegment<'db>],
+        namespace: Namespace,
+    ) -> Vec<Symbol<'db>> {
+        symbols
+            .into_iter()
+            .flat_map(|symbol| match rest {
+                [final_segment] => self.resolve_name_in_use(symbol, final_segment.name, namespace),
+                [next_segment, rest @ ..] => {
+                    let next = self.resolve_name_in_use(symbol, next_segment.name, Namespace::Type);
+                    self.resolve_use_remaining_segments(stash, next, rest, namespace)
+                }
+                [] => Vec::new(),
+            })
+            .collect()
+    }
+
+    fn resolve_name_in_use(
+        &mut self,
+        symbol: Symbol<'db>,
+        name: Name<'db>,
+        namespace: Namespace,
+    ) -> Vec<Symbol<'db>> {
+        match symbol.module(self.db) {
+            Some(ModSymbol::Ext(external)) => {
+                external.named_children(self.db, name, namespace).to_vec()
+            }
+            Some(ModSymbol::Local(module)) => {
+                self.resolve_name_from_module(ModSymbol::Local(module), name, namespace)
+            }
+            None => self.resolve_name_in(symbol, name, namespace),
+        }
     }
 
     fn resolve_glob(
@@ -571,20 +702,7 @@ impl<'db> Resolver<'db> {
 
         modules
             .into_iter()
-            .flat_map(|m| {
-                let query = InFlightQuery {
-                    module: m,
-                    name,
-                    namespace,
-                };
-                if self.in_flight.contains(&query) {
-                    return vec![];
-                }
-                self.in_flight.push(query);
-                let results = self.resolve_name_from_module(m, name, namespace);
-                self.in_flight.pop();
-                results
-            })
+            .flat_map(|module| self.resolve_name_from_module(module, name, namespace))
             .collect()
     }
 
@@ -600,8 +718,7 @@ impl<'db> Resolver<'db> {
         let prelude_name = Name::new(self.db, "prelude".to_owned());
         let prelude_syms = self.resolve_name_from_module(std_mod, prelude_name, Namespace::Type);
 
-        // TODO: derive this from the crate's actual edition
-        let edition_name = Name::new(self.db, "rust_2024".to_owned());
+        let edition_name = Name::new(self.db, self.edition().prelude_module().to_owned());
         let edition_mods: Vec<Symbol<'db>> = prelude_syms
             .iter()
             .filter_map(|s| s.module(self.db))
@@ -609,6 +726,20 @@ impl<'db> Resolver<'db> {
             .collect();
 
         self.resolve_glob(&edition_mods, name, namespace)
+    }
+}
+
+fn trait_symbols_in_module<'db>(
+    db: &'db dyn crate::Db,
+    module: ModSymbol<'db>,
+) -> Vec<TraitSymbol<'db>> {
+    match module {
+        ModSymbol::Local(_) => module
+            .expanded_module_items(db)
+            .iter()
+            .filter_map(|symbol| symbol.trait_symbol(db))
+            .collect(),
+        ModSymbol::Ext(external) => external.trait_children(db).to_vec(),
     }
 }
 

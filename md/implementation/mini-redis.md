@@ -71,26 +71,25 @@ the typed metadata boundary; lookup discovers `Clone::clone`, proves the fixed
 IR. The source-associated body is emitted on both sides and compares by exact
 serialized identity. Each side must also match a checked-in exact JSON
 snapshot, whose external `Clone::clone` identity records the native
-`Mod("clone") → Trait("Clone") → Fn("clone")` path kinds. A focused trace also proves that checking reads the
-represented trait/item/function metadata but no callee body, and that the
-unchanged second body query is reused.
+`Mod("clone") → Trait("Clone") → Fn("clone")` path kinds. A focused trace
+also proves that checking reads the represented trait/item/function metadata
+but no callee body, and that the unchanged second body query is reused.
 
-This does not complete general method resolution or global impl discovery.
-Lookup currently covers current-module traits and candidates from every
-standard prelude, treating only traits common to all supported editions as
-definitely in scope. It accepts only the represented Self-only external method
-generic shape, and treats unenumerated imports, macros, attributes, inherent
-providers, explicit-bound providers, and metadata as uncertainty. External relevant-impl enumeration,
-explicit/glob import enumeration, inherent selection, and unrelated-trait
-invalidation isolation remain later work. The fixture isolates the source
-shape; loading the pinned crate with its declared Cargo target configuration
-and Rust 2018 prelude is still required before this body counts toward
-package-wide conformance.
+This does not complete general method resolution. Lookup now uses the crate's
+actual edition prelude, resolves explicit import edges including renamed
+external reexports, and enumerates external glob edges. Local globs remain an
+incomplete source until their reexports can be enumerated recursively. It
+accepts only the represented Self-only external trait-method shape, and treats
+unresolved imports, macros, attributes, unhandled inherent providers,
+explicit-bound providers, and unavailable metadata as uncertainty. External
+inherent selection and relevant-impl enumeration are built for the rigid
+receiver slices; local and builtin inherent methods, general receiver search,
+and local unrelated-edit invalidation isolation remain later work.
 
 ## Slice 2: `Parse::next`
 
-This slice is planned in the [Associated Type Normalization
-RFD](../rfds/associated-type-normalization/README.md).
+The pinned semantic slice is implemented by the in-progress [Associated Type
+Normalization RFD](../rfds/associated-type-normalization/README.md).
 
 The second slice adds:
 
@@ -99,11 +98,22 @@ The second slice adds:
 - an inherent generic `Option::ok_or` call; and
 - chained elaborated calls with no callee-body dependency.
 
+The pinned test selects the real non-proc-macro `mini_redis` library target,
+uses its Rust 2018 edition, default-feature dependency world, and `src/lib.rs`
+root, records the host-target cfg values, then forces only the source
+`Parse::next` body. This body and its library module path have no `cfg`
+attributes; general source-side `cfg` evaluation remains unimplemented. Its
+completed tree contains static `Iterator::next` dispatch, direct
+`Option::ok_or` dispatch, separate owner/method substitutions, and an explicit
+mutable `Dummy` borrow. The cold semantic trace reads two relevant external
+impl headers and the selected `Iterator::Item` value; it lowers no unrelated
+local impl header and checks no other mini-redis or external body. Repeating
+the query is warm and rereads none of that metadata.
+
 This is the first focused acceptance test for global, trait-keyed impl
-discovery and associated-alias normalization. The final tree may retain an
-`AliasTy::Associated` where its identity matters; the test requires the solver
-to establish the `Iterator::Item` relation needed by the call, not an eager
-alias-erasure pass over the whole body.
+discovery and associated-alias normalization. Other aliases may retain their
+identity; this body normalizes `Iterator::Item` because its value is demanded
+by the method chain and declared return type.
 
 ## Slice 3: `Shutdown::recv`
 

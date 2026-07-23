@@ -161,6 +161,13 @@ pub fn serve_tcx_requests(tcx: TyCtxt<'_>, req_rx: mpsc::Receiver<TcxRequest>) {
             } => {
                 let _ = reply.send(tcx_db.adt_is_always_sized(crate_num, def_index));
             }
+            TcxRequest::AdtIsFundamental {
+                crate_num,
+                def_index,
+                reply,
+            } => {
+                let _ = reply.send(tcx_db.adt_is_fundamental(crate_num, def_index));
+            }
             TcxRequest::ExpandDerive {
                 crate_num,
                 def_index,

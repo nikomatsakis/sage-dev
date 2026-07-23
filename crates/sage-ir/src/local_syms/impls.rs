@@ -76,6 +76,25 @@ pub fn local_impl_associated_type_value<'db>(
 
 #[salsa::tracked]
 impl<'db> LocalImplSym<'db> {
+    /// Resolve only the trait identity named by this impl header.
+    ///
+    /// Candidate indexing uses this before lowering the full header so a
+    /// query for one trait does not read self types, predicates, or associated
+    /// items belonging to impls of other traits.
+    #[salsa::tracked]
+    pub fn trait_symbol(self, db: &'db dyn crate::Db) -> Option<crate::symbol::TraitSymbol<'db>> {
+        use crate::check::Check;
+        use crate::resolve::{Namespace, Resolution, Resolver};
+
+        let (stash, cst) = self.cst(db).open_deref();
+        let path = stash[cst.trait_path?];
+        let mut cx = Check::new(db, stash, Resolver::new(db, self.scope(db)));
+        let Resolution::Sym(symbol) = path.resolve(&mut cx, Namespace::Type)? else {
+            return None;
+        };
+        symbol.trait_symbol(db)
+    }
+
     #[salsa::tracked]
     pub fn sig(self, db: &'db dyn crate::Db) -> sage_stash::Stashed<crate::ty::ImplSignature<'db>> {
         use crate::check::Check;
@@ -227,10 +246,15 @@ pub fn local_impl_candidates<'db>(
                     }
 
                     let (_, cst) = local.cst(db).open_deref();
-                    let signature = local.sig(db);
-                    match signature.root().value.trait_ref {
-                        Some(trait_ref) if trait_ref.trait_sym == target_trait => {
-                            output.push(local)
+                    match local.trait_symbol(db) {
+                        Some(trait_symbol) if trait_symbol == target_trait => {
+                            let signature = local.sig(db);
+                            match signature.root().value.trait_ref {
+                                Some(trait_ref) if trait_ref.trait_sym == target_trait => {
+                                    output.push(local)
+                                }
+                                Some(_) | None => *complete = false,
+                            }
                         }
                         Some(_) => {}
                         None if cst.trait_path.is_none() => {}

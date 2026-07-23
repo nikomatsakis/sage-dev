@@ -95,6 +95,11 @@ pub enum TcxRequest {
         def_index: DefIndex,
         reply: mpsc::Sender<Option<bool>>,
     },
+    AdtIsFundamental {
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        reply: mpsc::Sender<Option<bool>>,
+    },
     ExpandDerive {
         crate_num: CrateNum,
         def_index: DefIndex,
@@ -402,6 +407,22 @@ impl TcxDb for ProxyTcxDb {
         let (reply, rx) = mpsc::channel();
         self.tx
             .send(TcxRequest::AdtIsAlwaysSized {
+                crate_num,
+                def_index,
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn adt_is_fundamental(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<bool> {
+        self.log.lock().unwrap().push(format!(
+            "tcx::adt_is_fundamental({}, {})",
+            crate_num.0, def_index.0
+        ));
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::AdtIsFundamental {
                 crate_num,
                 def_index,
                 reply,

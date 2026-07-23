@@ -101,6 +101,29 @@ impl<'db> SymExt<'db> {
             .collect()
     }
 
+    /// Enumerate only represented trait children of an external module.
+    ///
+    /// Some metadata children have kinds Sage does not represent yet. Trait
+    /// provider discovery must not try to convert those unrelated children to
+    /// `SymbolData`, while general module/enum enumeration must retain them so
+    /// existing path behavior is unchanged.
+    #[salsa::tracked(returns(ref))]
+    pub fn trait_children(self, db: &'db dyn Db) -> Vec<TraitSymbol<'db>> {
+        db.tcx()
+            .module_children(self.crate_num(db), self.def_index(db))
+            .into_iter()
+            .filter(|raw_child| raw_child.kind == SymExtKind::Trait)
+            .map(|raw_child| {
+                TraitSymbol::Ext(SymExt::new(
+                    db,
+                    raw_child.crate_num,
+                    raw_child.def_index,
+                    raw_child.kind,
+                ))
+            })
+            .collect()
+    }
+
     /// Look up exported children while retaining the namespace on the
     /// metadata edge. Namespace is not part of canonical definition identity.
     #[salsa::tracked(returns(ref))]
@@ -114,7 +137,9 @@ impl<'db> SymExt<'db> {
             .module_children(self.crate_num(db), self.def_index(db))
             .into_iter()
             .filter(|child| {
-                child.name.as_str() == name.text(db).as_str() && child.namespace == namespace
+                child.kind != SymExtKind::Other
+                    && child.name.as_str() == name.text(db).as_str()
+                    && child.namespace == namespace
             })
             .map(|child| SymExt::new(db, child.crate_num, child.def_index, child.kind).into())
             .collect()
@@ -348,6 +373,48 @@ impl<'db> Symbol<'db> {
         match self.data(db) {
             SymbolData::ModSymbol(sym) => Some(sym),
             _ => None,
+        }
+    }
+
+    pub fn trait_symbol(self, db: &'db dyn Db) -> Option<TraitSymbol<'db>> {
+        match self.data(db) {
+            SymbolData::TraitSymbol(trait_sym) => Some(trait_sym),
+            SymbolData::FnSymbol(_)
+            | SymbolData::StructSymbol(_)
+            | SymbolData::EnumSymbol(_)
+            | SymbolData::VariantSymbol(_)
+            | SymbolData::VariantCtorSymbol(_)
+            | SymbolData::TypeAliasSymbol(_)
+            | SymbolData::ConstSymbol(_)
+            | SymbolData::StaticSymbol(_)
+            | SymbolData::ImplSymbol(_)
+            | SymbolData::ModSymbol(_)
+            | SymbolData::MacroDefSymbol(_)
+            | SymbolData::UseSymbol(_)
+            | SymbolData::IntrinsicTypeSymbol(_)
+            | SymbolData::MacroInvocationSymbol(_) => None,
+        }
+    }
+
+    pub fn external_adt(self, db: &'db dyn Db) -> Option<SymExt<'db>> {
+        match self.data(db) {
+            SymbolData::StructSymbol(StructSymbol::Ext(external))
+            | SymbolData::EnumSymbol(EnumSymbol::Ext(external)) => Some(external),
+            SymbolData::StructSymbol(StructSymbol::Local(_))
+            | SymbolData::EnumSymbol(EnumSymbol::Local(_))
+            | SymbolData::FnSymbol(_)
+            | SymbolData::VariantSymbol(_)
+            | SymbolData::VariantCtorSymbol(_)
+            | SymbolData::TraitSymbol(_)
+            | SymbolData::TypeAliasSymbol(_)
+            | SymbolData::ConstSymbol(_)
+            | SymbolData::StaticSymbol(_)
+            | SymbolData::ImplSymbol(_)
+            | SymbolData::ModSymbol(_)
+            | SymbolData::MacroDefSymbol(_)
+            | SymbolData::UseSymbol(_)
+            | SymbolData::IntrinsicTypeSymbol(_)
+            | SymbolData::MacroInvocationSymbol(_) => None,
         }
     }
 

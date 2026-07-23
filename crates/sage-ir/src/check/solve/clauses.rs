@@ -107,15 +107,17 @@ pub(crate) fn assemble_candidates<'db>(
         return (candidates, incomplete);
     }
 
-    let local_source = local_impl_candidates(db, state.local_crate, trait_ref.trait_sym);
-    incomplete |= !local_source.complete;
-    for &local_impl in &local_source.impls {
-        let signature = local_impl.sig(db);
-        let signature_data = signature.root().value;
-        if signature_data.solver_eligibility == SolverEligibility::Eligible {
-            candidates.push(Candidate::LocalImpl(local_impl));
-        } else {
-            incomplete = true;
+    if !local_impl_is_orphan_impossible(db, &state.stash, self_root, trait_ref) {
+        let local_source = local_impl_candidates(db, state.local_crate, trait_ref.trait_sym);
+        incomplete |= !local_source.complete;
+        for &local_impl in &local_source.impls {
+            let signature = local_impl.sig(db);
+            let signature_data = signature.root().value;
+            if signature_data.solver_eligibility == SolverEligibility::Eligible {
+                candidates.push(Candidate::LocalImpl(local_impl));
+            } else {
+                incomplete = true;
+            }
         }
     }
 
@@ -149,6 +151,56 @@ pub(crate) fn assemble_candidates<'db>(
     (candidates, incomplete)
 }
 // ANCHOR_END: example_assemble_candidates
+
+/// A local crate cannot implement a foreign trait with no trait arguments for
+/// a non-fundamental foreign nominal self type. Applying this orphan-rule fact
+/// before local discovery is both logically exact and avoids making an
+/// external/external goal depend on unrelated local impls or macro expansion.
+fn local_impl_is_orphan_impossible<'db>(
+    db: &'db dyn crate::Db,
+    stash: &Stash,
+    self_ty: Ptr<Ty<'db>>,
+    trait_ref: TraitRef<'db>,
+) -> bool {
+    let trait_is_external = matches!(trait_ref.trait_sym, TraitSymbol::Ext(_));
+    let trait_arguments_are_empty = stash[trait_ref.args].is_empty();
+    if !trait_is_external || !trait_arguments_are_empty {
+        return false;
+    }
+    let Ty::Adt(symbol, _) = stash[self_ty] else {
+        return false;
+    };
+    let Some(external) = symbol.external_adt(db) else {
+        return false;
+    };
+    orphan_rule_excludes_local_impl(
+        trait_is_external,
+        trait_arguments_are_empty,
+        crate::external_syms::external_adt_is_fundamental(db, external),
+    )
+}
+
+fn orphan_rule_excludes_local_impl(
+    trait_is_external: bool,
+    trait_arguments_are_empty: bool,
+    self_is_fundamental: Option<bool>,
+) -> bool {
+    trait_is_external && trait_arguments_are_empty && self_is_fundamental == Some(false)
+}
+
+#[cfg(test)]
+mod orphan_rule_tests {
+    use super::orphan_rule_excludes_local_impl;
+
+    #[test]
+    fn only_a_non_fundamental_external_self_without_trait_arguments_is_pruned() {
+        assert!(orphan_rule_excludes_local_impl(true, true, Some(false)));
+        assert!(!orphan_rule_excludes_local_impl(true, true, Some(true)));
+        assert!(!orphan_rule_excludes_local_impl(true, false, Some(false)));
+        assert!(!orphan_rule_excludes_local_impl(false, true, Some(false)));
+        assert!(!orphan_rule_excludes_local_impl(true, true, None));
+    }
+}
 
 pub(crate) fn instantiate_candidate<'db>(
     db: &'db dyn crate::Db,
