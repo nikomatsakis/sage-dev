@@ -147,11 +147,14 @@ the method's own `&self`, and the borrow required by `Clone::clone`.
 
 This is a deliberately narrow vertical slice, not the complete method algorithm
 specified by the [Method Resolution RFD](../../rfds/method-resolution/README.md).
-Explicit and glob imports, explicit-bound provider enumeration, edition-aware prelude selection, inherent methods,
-generic trait methods, receiver autoderef, conditional candidates, and retained
-lookup obligations remain planned. In particular, the current function does
-not resolve inherent methods. It conservatively reports uncertainty when a
-local inherent impl could provide a competitor, and for external or builtin
-inherent providers which it cannot enumerate. The complete design extends that
-audit into prioritized inherent lookup while continuing to make every
-unrepresented candidate source uncertain rather than a false unique result.
+Explicit and glob imports, explicit-bound provider enumeration, edition-aware
+prelude selection, inherent-method selection, generic trait methods, receiver
+autoderef, conditional candidates, and retained lookup obligations remain
+planned. The current function does not resolve inherent methods. It
+conservatively reports uncertainty when a local inherent impl could provide a
+competitor. For a rigid external ADT, it enumerates same-name receiver-bearing
+inherent method identities to audit shadowing without reading their signatures;
+other external or builtin receiver forms remain unenumerated. The complete
+design extends that audit into prioritized inherent lookup while continuing to
+make every unrepresented candidate source uncertain rather than a false unique
+result.

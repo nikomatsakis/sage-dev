@@ -74,24 +74,28 @@ cases and reports uncertainty when an external unsized tail is unavailable.
 
 The caller-side alias relation is transactional: it solves and imports the
 input-only normalization result before relating that result to the expected
-type. Step 5 still owns registering an unresolved relation in the body
-obligation lifecycle and driving it to a terminal result.
+type. Step 5 connects the same operation to the retained body-obligation
+lifecycle and drives it to a terminal result.
 
 ## Step 5: `Iterator::next` elaboration
 
-- [ ] Admit represented projection-bearing external method signatures.
-- [ ] Instantiate `Iterator::next` for
+- [x] Introduce complete name-keyed external inherent-method discovery and
+  use its identity-only result to audit trait-method shadowing for an external
+  rigid receiver. Sound trait fallback requires proving that no inherent
+  method shadows `Iterator::next`; candidate selection remains Step 6.
+- [x] Admit represented projection-bearing external method signatures.
+- [x] Instantiate `Iterator::next` for
   `IntoIter<Frame, Global>: Iterator` and discharge the result projection.
-- [ ] Consume `&mut self` into an explicit mutable `Dummy` borrow.
-- [ ] Register normalization residuals in the body obligation lifecycle and
+- [x] Consume `&mut self` into an explicit mutable `Dummy` borrow.
+- [x] Register normalization residuals in the body obligation lifecycle and
   require a terminal result before completed IR is returned.
-- [ ] Add a focused one-call fixture whose completed result is
+- [x] Add a focused one-call fixture whose completed result is
   `Option<Frame>`.
 
 ## Step 6: External inherent `Option::ok_or`
 
-- [ ] Add complete external inherent-method discovery keyed by rigid receiver
-  head and method name.
+- [ ] Select and instantiate candidates from the complete external
+  inherent-method discovery keyed by rigid receiver head and method name.
 - [ ] Preserve owner-generic and method-generic scopes in external function
   metadata and selected-call instantiation.
 - [ ] Bind `Option`'s `T = Frame` from the receiver and `ok_or`'s

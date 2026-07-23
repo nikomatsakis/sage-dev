@@ -76,11 +76,16 @@ fixed trait and conservative self head. It also represents associated
 projections in owned metadata and implements input-only associated-type
 normalization over isolated local, external, and environment-value candidates.
 Canonical type outputs participate in response binding, merging, caching, and
-caller import, while trait proof still returns only `Proven`. Projection-bearing
-external function signatures, retained body normalization obligations, and
-external inherent method selection remain. This RFD defines one vertical
-change which closes those remaining gaps without introducing eager global
-normalization or asking rustc to answer Sage's trait goals.
+caller import, while trait proof still returns only `Proven`. Selected external
+trait-method signatures may now contain associated projections: body checking
+replaces them with caller inference variables and retains input-only
+normalization operations through terminal obligation processing. The
+`Iterator::next` half of the slice is operational, including explicit mutable
+`Dummy` borrowing and name-keyed identity-only auditing for external inherent
+shadowing. External inherent method selection and the final exact oracle slice
+remain. This RFD defines one vertical change which closes those remaining gaps
+without introducing eager global normalization or asking rustc to answer
+Sage's trait goals.
 
 ## Change in a nutshell
 
@@ -396,11 +401,19 @@ resolution finds `Iterator::next`, asks the solver the fixed post-deref goal
 signature. Projection-bearing signatures become eligible when every
 projection is represented, even if its value is not yet known.
 
+Before selecting that trait candidate, method resolution uses the same narrow
+external inherent lookup boundary required by the second call to prove that no
+same-name inherent method shadows `Iterator::next`. This shadow audit reads
+only candidate identity and completeness; it does not load unrelated inherent
+methods or any candidate signature. Introducing the boundary at this point is
+necessary for sound trait-method selection on an external rigid receiver.
+
 The mutable receiver recipe is consumed into an explicit `Ref` node with
 `Mutability::Mut` and `Lifetime::Dummy`. The solver proposition still uses
 `IntoIter<Frame, Global>` rather than `&mut IntoIter<Frame, Global>`.
 
-The second call requires a narrow external inherent lookup boundary:
+The second call consumes candidates from that narrow external inherent lookup
+boundary:
 
 ```text
 inherent_method_candidates(receiver rigid head, method name)
@@ -472,6 +485,7 @@ keys. It includes only work such as:
 
 - the `IntoIter` declaration needed to apply its allocator default;
 - name discovery and signature data for `Iterator::next`;
+- name-keyed external inherent shadow lookup for `IntoIter` and `next`;
 - relevant `Iterator` impl identities for the `IntoIter` rigid head;
 - headers of candidates which may apply;
 - the requested `Item` value from each impl which survives applicability

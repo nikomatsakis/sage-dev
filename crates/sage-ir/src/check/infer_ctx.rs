@@ -21,8 +21,8 @@ use crate::tytree::*;
 use super::infer::bound::Bound;
 use super::infer::egraph::VersionedEGraph;
 use super::infer::obligations::{
-    Obligation, ObligationManager, ObligationProvenance, ObligationReason, ObligationState,
-    StagedObligationBatch,
+    Obligation, ObligationGoal, ObligationManager, ObligationProvenance, ObligationReason,
+    ObligationState, StagedObligationBatch,
 };
 use super::infer::runtime::Runtime;
 use super::infer::unify::{UnifyError, try_set_bound, try_unify};
@@ -37,11 +37,57 @@ pub(crate) enum TraitGoalCertainty {
     No,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(crate) enum AliasRelationCertainty {
+enum NormalizationProgress<'db> {
     Yes,
     Maybe,
     No,
+    Residual(super::solve::Goal<'db>),
+}
+
+struct CallSignatureNormalizer<'a, 'db> {
+    source: &'a Stash,
+    target: &'a mut Stash,
+    egraph: &'a mut VersionedEGraph<'db>,
+    relations: Vec<(AliasTy<'db>, Ptr<Ty<'db>>)>,
+}
+
+impl<'db> crate::ty_fold::TyFolder<'db> for CallSignatureNormalizer<'_, 'db> {
+    fn target(&mut self) -> &mut Stash {
+        self.target
+    }
+
+    fn source(&self) -> &Stash {
+        self.source
+    }
+
+    fn fold_ty(&mut self, ty: Ty<'db>) -> Ty<'db> {
+        match ty {
+            Ty::Alias(AliasTy::Associated(alias)) => {
+                let alias = crate::ty_fold::fold_alias_ty(self, AliasTy::Associated(alias));
+                let index = self.egraph.alloc_var(Version::ROOT, Universe(1));
+                let expected = self.target.alloc(Ty::InferVar(index));
+                self.relations.push((alias, expected));
+                Ty::InferVar(index)
+            }
+            Ty::Alias(AliasTy::Named(_) | AliasTy::Opaque(_))
+            | Ty::Bool
+            | Ty::Char
+            | Ty::Int(_)
+            | Ty::Uint(_)
+            | Ty::Float(_)
+            | Ty::Str
+            | Ty::Adt(..)
+            | Ty::Ref(..)
+            | Ty::Tuple(_)
+            | Ty::Slice(_)
+            | Ty::Array(..)
+            | Ty::FnPtr(..)
+            | Ty::Param(_)
+            | Ty::InferVar(_)
+            | Ty::Never
+            | Ty::Error(_) => crate::ty_fold::default_fold_ty(self, ty),
+        }
+    }
 }
 
 impl Wake for MainTaskWake {
@@ -798,6 +844,42 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         }
     }
 
+    /// Replace associated projections in an instantiated call signature with
+    /// caller inference variables and retain the input-only normalization
+    /// relations which determine those variables. The expected variables are
+    /// deliberately not part of the solver operation input.
+    pub(crate) fn normalize_call_signature(
+        &self,
+        signature: FnSig<'db>,
+        span: RelativeSpan,
+    ) -> FnSig<'db> {
+        let mut source = Stash::new();
+        let signature = signature.stash_copy(&self.target_stash.borrow(), &mut source);
+        let (signature, relations) = {
+            let mut target = self.target_stash.borrow_mut();
+            let mut egraph = self.egraph.borrow_mut();
+            let mut folder = CallSignatureNormalizer {
+                source: &source,
+                target: &mut target,
+                egraph: &mut egraph,
+                relations: Vec::new(),
+            };
+            let signature = crate::ty_fold::fold_fn_sig(&mut folder, signature);
+            (signature, folder.relations)
+        };
+        for (alias, expected) in relations {
+            self.submit_alias_relation(
+                alias,
+                expected,
+                ObligationProvenance {
+                    span,
+                    reason: ObligationReason::FunctionCall,
+                },
+            );
+        }
+        signature
+    }
+
     // ------------------------------------------------------------------
     // Trait environments and obligations
     // ------------------------------------------------------------------
@@ -822,9 +904,27 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     /// Whether the current body may have trait-method providers introduced by
     /// its parameter environment that the first method-lookup slice does not
     /// enumerate by name.
-    pub(crate) fn has_unhandled_method_bound_providers(&self) -> bool {
-        !*self.assumptions_complete.borrow()
-            || !self.target_stash.borrow()[*self.solver_assumptions.borrow()].is_empty()
+    pub(crate) fn has_unhandled_method_bound_providers(&self, receiver_ty: Ptr<Ty<'db>>) -> bool {
+        use super::solve::Assumption;
+
+        if !*self.assumptions_complete.borrow() {
+            return true;
+        }
+        let assumptions = self.target_stash.borrow()[*self.solver_assumptions.borrow()].to_vec();
+        assumptions.into_iter().any(|assumption| match assumption {
+            Assumption::TraitImpl { self_ty, .. } => self.types_may_unify(self_ty, receiver_ty),
+            Assumption::NormalizesTo { .. } => false,
+            Assumption::Implies(..) | Assumption::All(_) => true,
+        })
+    }
+
+    fn types_may_unify(&self, left: Ptr<Ty<'db>>, right: Ptr<Ty<'db>>) -> bool {
+        let mut egraph = self.egraph.borrow_mut();
+        let mut stash = self.target_stash.borrow_mut();
+        let transaction = egraph.branch_from(Version::ROOT);
+        let result = try_unify(&mut egraph, &mut stash, transaction, left, right);
+        egraph.discard(transaction);
+        !matches!(result, Err(UnifyError::Mismatch { .. }))
     }
 
     fn elaborate_solver_predicates(
@@ -957,7 +1057,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
             local_crate,
             assumptions_complete,
             assumptions,
-            Goal::Atom(Atom::TraitImpl { self_ty, trait_ref }),
+            ObligationGoal::Prove(Goal::Atom(Atom::TraitImpl { self_ty, trait_ref })),
         );
         if canonical
             .mapping
@@ -981,95 +1081,21 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     }
     // ANCHOR_END: example_classify_fixed_trait_goal
 
-    /// Normalize an alias as an input-only solver operation, then relate its
-    /// merged output to `expected` in one caller-side transaction. The
-    /// expected type is intentionally absent from the canonical query and is
-    /// not visible while normalization candidates are selected or merged.
-    pub(crate) fn relate_alias(
-        &self,
-        alias: AliasTy<'db>,
-        expected: Ptr<Ty<'db>>,
-    ) -> AliasRelationCertainty {
-        use super::solve::{
-            AppliedCertainty, GoalOutput, GoalQuery, SolverGoal, apply_query_response,
-            canonicalize_solver_goal,
-        };
-
-        let local_crate = self
-            .local_crate
-            .expect("alias normalization requires a local crate context");
-        let assumptions = *self.solver_assumptions.borrow();
-        let assumptions_complete = *self.assumptions_complete.borrow();
-        let canonical = canonicalize_solver_goal(
-            self.db,
-            &self.target_stash.borrow(),
-            &self.egraph.borrow(),
-            Version::ROOT,
-            local_crate,
-            Universe(1),
-            assumptions_complete,
-            assumptions,
-            SolverGoal::Normalize(alias),
-        );
-        let response = GoalQuery::new(self.db, canonical.data.clone()).solve(self.db);
-
-        let mut stash = self.target_stash.borrow_mut();
-        let mut egraph = self.egraph.borrow_mut();
-        let transaction = egraph.branch_from(Version::ROOT);
-        let Ok(applied) = apply_query_response(
-            self.db,
-            &mut stash,
-            &mut egraph,
-            transaction,
-            &canonical.data,
-            &canonical.mapping,
-            &response,
-        ) else {
-            egraph.discard(transaction);
-            return AliasRelationCertainty::No;
-        };
-        let AppliedCertainty::Yes {
-            output: GoalOutput::Type(output),
-            modulo,
-        } = applied.certainty
-        else {
-            egraph.discard(transaction);
-            return match applied.certainty {
-                AppliedCertainty::Maybe => AliasRelationCertainty::Maybe,
-                AppliedCertainty::No => AliasRelationCertainty::No,
-                AppliedCertainty::Yes { .. } => {
-                    unreachable!("normalization returned a non-type output")
-                }
-            };
-        };
-        if !modulo.is_trivially_true(&stash)
-            || try_unify(&mut egraph, &mut stash, transaction, output, expected).is_err()
-        {
-            egraph.discard(transaction);
-            return if modulo.is_trivially_true(&stash) {
-                AliasRelationCertainty::No
-            } else {
-                AliasRelationCertainty::Maybe
-            };
-        }
-        let effects = egraph.collapse_into(transaction, Version::ROOT);
-        drop(egraph);
-        drop(stash);
-        self.publish_commit_effects(effects);
-        AliasRelationCertainty::Yes
-    }
-
     fn canonicalize_obligation_goal(
         &self,
         local_crate: crate::scope::LocalCrateSymbol<'db>,
         assumptions_complete: bool,
         assumptions: sage_stash::Slice<super::solve::Assumption<'db>>,
-        goal: super::solve::Goal<'db>,
+        goal: ObligationGoal<'db>,
     ) -> (
         super::solve::CanonicalizedGoal<'db>,
         Vec<crate::ty::InferVarIndex>,
     ) {
-        let canonical = super::solve::canonicalize_goal(
+        let solver_goal = match goal {
+            ObligationGoal::Prove(goal) => super::solve::SolverGoal::Prove(goal),
+            ObligationGoal::Normalize { alias, .. } => super::solve::SolverGoal::Normalize(alias),
+        };
+        let canonical = super::solve::canonicalize_solver_goal(
             self.db,
             &self.target_stash.borrow(),
             &self.egraph.borrow(),
@@ -1078,7 +1104,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
             Universe(1),
             assumptions_complete,
             assumptions,
-            goal,
+            solver_goal,
         );
         let stalled_on = canonical
             .mapping
@@ -1097,9 +1123,22 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         goal: super::solve::Goal<'db>,
         provenance: ObligationProvenance,
     ) {
+        self.submit_obligation(ObligationGoal::Prove(goal), provenance);
+    }
+
+    fn submit_alias_relation(
+        &self,
+        alias: AliasTy<'db>,
+        expected: Ptr<Ty<'db>>,
+        provenance: ObligationProvenance,
+    ) {
+        self.submit_obligation(ObligationGoal::Normalize { alias, expected }, provenance);
+    }
+
+    fn submit_obligation(&self, goal: ObligationGoal<'db>, provenance: ObligationProvenance) {
         let local_crate = self
             .local_crate
-            .expect("trait obligations require a local crate context");
+            .expect("solver obligations require a local crate context");
         let assumptions = *self.solver_assumptions.borrow();
         let assumptions_complete = *self.assumptions_complete.borrow();
         let (canonical, stalled_on) =
@@ -1107,7 +1146,9 @@ impl<'check, 'db> InferCtx<'check, 'db> {
 
         let mut manager = self.obligations.borrow_mut();
         if let Some(existing) = manager.obligations.iter_mut().find(|existing| {
-            existing.state != ObligationState::Terminal
+            matches!(goal, ObligationGoal::Prove(_))
+                && matches!(existing.goal, ObligationGoal::Prove(_))
+                && existing.state != ObligationState::Terminal
                 && existing.canonical_goal == canonical.data
                 && existing.mapping.absolute_universe_base
                     == canonical.mapping.absolute_universe_base
@@ -1184,7 +1225,9 @@ impl<'check, 'db> InferCtx<'check, 'db> {
                 let equivalent = {
                     let left = &manager.obligations[index];
                     let right = &manager.obligations[duplicate];
-                    left.canonical_goal == right.canonical_goal
+                    matches!(left.goal, ObligationGoal::Prove(_))
+                        && matches!(right.goal, ObligationGoal::Prove(_))
+                        && left.canonical_goal == right.canonical_goal
                         && left.mapping.absolute_universe_base
                             == right.mapping.absolute_universe_base
                         && left.mapping.inputs == right.mapping.inputs
@@ -1203,13 +1246,12 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     }
 
     fn attempt_obligation(&self, index: usize, terminal: bool) {
-        use super::solve::{AppliedCertainty, GoalQuery, apply_query_response};
-
         let revision = self.recanonicalize_obligation(index);
-        let (canonical_goal, mapping, unchanged) = {
+        let (goal, canonical_goal, mapping, unchanged) = {
             let manager = self.obligations.borrow();
             let obligation = &manager.obligations[index];
             (
+                obligation.goal,
                 obligation.canonical_goal.clone(),
                 obligation.mapping.clone(),
                 obligation.last_attempted_revision == Some(revision),
@@ -1219,6 +1261,29 @@ impl<'check, 'db> InferCtx<'check, 'db> {
             self.obligations.borrow_mut().obligations[index].state = ObligationState::Stalled;
             return;
         }
+
+        match goal {
+            ObligationGoal::Prove(_) => {
+                self.attempt_proof_obligation(index, terminal, canonical_goal, mapping)
+            }
+            ObligationGoal::Normalize { expected, .. } => self.attempt_normalization_obligation(
+                index,
+                terminal,
+                canonical_goal,
+                mapping,
+                expected,
+            ),
+        }
+    }
+
+    fn attempt_proof_obligation(
+        &self,
+        index: usize,
+        terminal: bool,
+        canonical_goal: Stashed<super::solve::GoalQueryData<'db>>,
+        mapping: super::solve::CanonicalMapping<'db>,
+    ) {
+        use super::solve::{AppliedCertainty, GoalQuery, apply_query_response};
 
         // ANCHOR: example_run_trait_query
         let response = GoalQuery::new(self.db, canonical_goal.clone()).prove(self.db);
@@ -1281,13 +1346,126 @@ impl<'check, 'db> InferCtx<'check, 'db> {
                     {
                         let mut manager = self.obligations.borrow_mut();
                         let obligation = &mut manager.obligations[index];
-                        obligation.goal = modulo;
+                        obligation.goal = ObligationGoal::Prove(modulo);
                         obligation.last_attempted_revision = Some(post_revision);
                         obligation.state = ObligationState::Stalled;
                     }
                     self.recanonicalize_obligation(index);
                 }
             }
+        }
+    }
+
+    fn attempt_normalization_obligation(
+        &self,
+        index: usize,
+        terminal: bool,
+        canonical_goal: Stashed<super::solve::GoalQueryData<'db>>,
+        mapping: super::solve::CanonicalMapping<'db>,
+        expected: Ptr<Ty<'db>>,
+    ) {
+        use super::solve::GoalQuery;
+
+        let response = GoalQuery::new(self.db, canonical_goal.clone()).solve(self.db);
+        let progress =
+            self.apply_normalization_relation(&canonical_goal, &mapping, &response, expected);
+        let revision = self.egraph.borrow().semantic_revision(Version::ROOT);
+        match progress {
+            NormalizationProgress::No => {
+                self.fail_obligation(index, "associated type relation is not satisfied");
+            }
+            NormalizationProgress::Maybe => {
+                if terminal {
+                    self.fail_obligation(index, "associated type could not be normalized");
+                    return;
+                }
+                self.recanonicalize_obligation(index);
+                let mut manager = self.obligations.borrow_mut();
+                let obligation = &mut manager.obligations[index];
+                obligation.last_attempted_revision = Some(revision);
+                obligation.state = ObligationState::Stalled;
+            }
+            NormalizationProgress::Yes => {
+                let mut manager = self.obligations.borrow_mut();
+                let obligation = &mut manager.obligations[index];
+                obligation.state = ObligationState::Terminal;
+                obligation.last_attempted_revision = Some(revision);
+            }
+            NormalizationProgress::Residual(modulo) => {
+                if terminal {
+                    self.fail_obligation(
+                        index,
+                        "associated type normalization remains conditional",
+                    );
+                    return;
+                }
+                {
+                    let mut manager = self.obligations.borrow_mut();
+                    let obligation = &mut manager.obligations[index];
+                    obligation.goal = ObligationGoal::Prove(modulo);
+                    obligation.last_attempted_revision = Some(revision);
+                    obligation.state = ObligationState::Stalled;
+                }
+                self.recanonicalize_obligation(index);
+            }
+        }
+    }
+
+    fn apply_normalization_relation(
+        &self,
+        canonical_goal: &Stashed<super::solve::GoalQueryData<'db>>,
+        mapping: &super::solve::CanonicalMapping<'db>,
+        response: &Stashed<super::solve::QueryResult<'db>>,
+        expected: Ptr<Ty<'db>>,
+    ) -> NormalizationProgress<'db> {
+        use super::solve::{AppliedCertainty, GoalOutput, apply_query_response};
+
+        let mut stash = self.target_stash.borrow_mut();
+        let mut egraph = self.egraph.borrow_mut();
+        let transaction = egraph.branch_from(Version::ROOT);
+        let Ok(applied) = apply_query_response(
+            self.db,
+            &mut stash,
+            &mut egraph,
+            transaction,
+            canonical_goal,
+            mapping,
+            response,
+        ) else {
+            egraph.discard(transaction);
+            return NormalizationProgress::No;
+        };
+        let (output, modulo) = match applied.certainty {
+            AppliedCertainty::Yes {
+                output: GoalOutput::Type(output),
+                modulo,
+            } => (output, modulo),
+            AppliedCertainty::Yes {
+                output: GoalOutput::Proven,
+                ..
+            } => unreachable!("normalization returned a proof output"),
+            AppliedCertainty::Maybe => {
+                egraph.discard(transaction);
+                return NormalizationProgress::Maybe;
+            }
+            AppliedCertainty::No => {
+                egraph.discard(transaction);
+                return NormalizationProgress::No;
+            }
+        };
+        if try_unify(&mut egraph, &mut stash, transaction, output, expected).is_err() {
+            egraph.discard(transaction);
+            return NormalizationProgress::No;
+        }
+        let complete = modulo.is_trivially_true(&stash);
+        let effects = egraph.collapse_into(transaction, Version::ROOT);
+        drop(egraph);
+        drop(stash);
+        self.publish_commit_effects(effects);
+        if complete {
+            NormalizationProgress::Yes
+        } else {
+            NormalizationProgress::Residual(modulo)
         }
     }
 
@@ -1594,6 +1772,28 @@ mod tests {
         InferCtx::new(leak_db(), stash, None)
     }
 
+    fn apply_alias_relation<'db>(
+        cx: &InferCtx<'_, 'db>,
+        alias: AliasTy<'db>,
+        expected: Ptr<Ty<'db>>,
+    ) -> NormalizationProgress<'db> {
+        use crate::check::solve::{GoalQuery, SolverGoal, canonicalize_solver_goal};
+
+        let canonical = canonicalize_solver_goal(
+            cx.db,
+            &cx.target_stash.borrow(),
+            &cx.egraph.borrow(),
+            Version::ROOT,
+            cx.local_crate.unwrap(),
+            Universe(1),
+            *cx.assumptions_complete.borrow(),
+            *cx.solver_assumptions.borrow(),
+            SolverGoal::Normalize(alias),
+        );
+        let response = GoalQuery::new(cx.db, canonical.data.clone()).solve(cx.db);
+        cx.apply_normalization_relation(&canonical.data, &canonical.mapping, &response, expected)
+    }
+
     fn leak_db() -> &'static dyn crate::Db {
         let db = Box::new(Database::default());
         Box::leak(db)
@@ -1749,7 +1949,10 @@ mod tests {
             let mismatch_elements = cx.stash_mut().alloc_slice(&[caller_var, char_ty]);
             let mismatch = cx.alloc_ty(Ty::Tuple(mismatch_elements));
             let revision = cx.egraph.borrow().semantic_revision(Version::ROOT);
-            assert_eq!(cx.relate_alias(alias, mismatch), AliasRelationCertainty::No);
+            assert!(matches!(
+                apply_alias_relation(&cx, alias, mismatch),
+                NormalizationProgress::No
+            ));
             assert_eq!(cx.get_bound(caller_var), Bound::None);
             assert_eq!(
                 cx.egraph.borrow().semantic_revision(Version::ROOT),
@@ -1759,10 +1962,10 @@ mod tests {
 
             let expected_elements = cx.stash_mut().alloc_slice(&[caller_var, bool_ty]);
             let expected = cx.alloc_ty(Ty::Tuple(expected_elements));
-            assert_eq!(
-                cx.relate_alias(alias, expected),
-                AliasRelationCertainty::Yes
-            );
+            assert!(matches!(
+                apply_alias_relation(&cx, alias, expected),
+                NormalizationProgress::Yes
+            ));
             assert_eq!(cx.get_bound(caller_var), Bound::Exactly(bool_ty));
         });
     }

@@ -8,8 +8,9 @@ use crate::name::Name;
 use crate::symbol::{FnSymbol, SymExt, Symbol, TraitSymbol, TypeAliasSymbol};
 use crate::tcx::{
     RawAdtSignature, RawAssociatedItemKind, RawAssociatedTypeValue, RawDefId, RawFnSignature,
-    RawGenericDefault, RawGenericParam, RawGenericParamKind, RawImplSignature, RawReceiver,
-    RawSelfTypeHead, RawTraitSemantics, RawTraitSignature, RawTy,
+    RawGenericDefault, RawGenericParam, RawGenericParamKind, RawImplSignature,
+    RawInherentMethodCandidates, RawReceiver, RawSelfTypeHead, RawTraitSemantics,
+    RawTraitSignature, RawTy,
 };
 use crate::ty::{
     Binder, CheckedParameterEnv, CheckedReceiver, Const, ExternalAdtSignature,
@@ -91,6 +92,65 @@ impl SimplifiedSelfType<'_> {
 pub struct ExternalImplCandidates<'db> {
     pub impls: Vec<SymExt<'db>>,
     pub complete: bool,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub struct ExternalInherentMethodCandidate<'db> {
+    pub function: FnSymbol<'db>,
+    pub impl_def: SymExt<'db>,
+    pub externally_visible: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, salsa::Update)]
+pub struct ExternalInherentMethodCandidates<'db> {
+    pub candidates: Vec<ExternalInherentMethodCandidate<'db>>,
+    pub complete: bool,
+}
+
+/// Name-keyed receiver-bearing inherent methods for one rigid external ADT.
+/// Associated functions without `self` are outside this dot-call boundary.
+/// Signatures and bodies remain separate; trait lookup uses only identity and
+/// completeness to decide whether an inherent item can shadow a trait method.
+#[salsa::tracked(returns(ref))]
+pub fn external_inherent_method_candidates<'db>(
+    db: &'db dyn crate::Db,
+    adt: SymExt<'db>,
+    method_name: Name<'db>,
+) -> ExternalInherentMethodCandidates<'db> {
+    let Some(RawInherentMethodCandidates {
+        candidates: raw_candidates,
+        complete,
+    }) = db.tcx().inherent_method_candidates(
+        adt.crate_num(db),
+        adt.def_index(db),
+        method_name.text(db),
+    )
+    else {
+        return ExternalInherentMethodCandidates {
+            candidates: Vec::new(),
+            complete: false,
+        };
+    };
+
+    let mut candidates = Vec::with_capacity(raw_candidates.len());
+    let mut complete = complete;
+    for candidate in raw_candidates {
+        if candidate.function.kind != crate::symbol::SymExtKind::Fn
+            || candidate.impl_def.kind != crate::symbol::SymExtKind::Impl
+        {
+            complete = false;
+            continue;
+        }
+        candidates.push(ExternalInherentMethodCandidate {
+            function: FnSymbol::Ext(lower_def(db, candidate.function)),
+            impl_def: lower_def(db, candidate.impl_def),
+            externally_visible: candidate.externally_visible,
+        });
+    }
+    ExternalInherentMethodCandidates {
+        candidates,
+        complete,
+    }
 }
 
 /// External explicit impl identities for one fixed trait and optional rigid

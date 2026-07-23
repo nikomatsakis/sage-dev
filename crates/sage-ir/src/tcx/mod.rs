@@ -171,6 +171,25 @@ pub struct RawAssociatedItems {
     pub complete: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RawInherentMethodCandidate {
+    pub function: RawDefId,
+    pub impl_def: RawDefId,
+    /// External inherent methods are callable from Sage's local crate only
+    /// when rustc reports public visibility. Non-public same-name items remain
+    /// candidates so lookup cannot incorrectly fall through to a trait method.
+    pub externally_visible: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RawInherentMethodCandidates {
+    pub candidates: Vec<RawInherentMethodCandidate>,
+    /// Whether every receiver-bearing inherent method with this name on the
+    /// rigid external ADT is represented. Associated functions without a
+    /// `self` parameter are deliberately outside this dot-call boundary.
+    pub complete: bool,
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum RawReceiver {
     Value,
@@ -280,6 +299,19 @@ pub trait TcxDb: Send + Sync {
     /// for an external nominal type. This intentionally excludes fields,
     /// variants, inherent items, and impls.
     fn adt_signature(&self, _crate_num: CrateNum, _def_index: DefIndex) -> Option<RawAdtSignature> {
+        None
+    }
+
+    /// Return receiver-bearing inherent methods on one rigid external ADT with
+    /// exactly the requested source name. Associated functions without a
+    /// `self` parameter are excluded. This name-keyed boundary is used both to
+    /// audit trait-method shadowing and to select inherent methods.
+    fn inherent_method_candidates(
+        &self,
+        _crate_num: CrateNum,
+        _def_index: DefIndex,
+        _method_name: &str,
+    ) -> Option<RawInherentMethodCandidates> {
         None
     }
 

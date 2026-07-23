@@ -5,7 +5,7 @@ use crate::generic_param::GenericParamKind;
 use crate::local_syms::impls::local_impls;
 use crate::name::Name;
 use crate::span::RelativeSpan;
-use crate::symbol::{FnSymbol, StructSymbol, Symbol, SymbolData};
+use crate::symbol::{EnumSymbol, FnSymbol, StructSymbol, Symbol, SymbolData};
 use crate::ty::{BinderExt, FnSig, SolverEligibility, TraitRef, Ty};
 use crate::tytree::{CallDispatch, ResolvedCallTarget};
 
@@ -32,9 +32,10 @@ pub(crate) fn resolve_trait_method<'db>(
     let mut resolver = scope.resolver.clone();
     let (traits, scope_complete) = resolver.traits_in_method_scope();
     let mut definite = Vec::new();
-    let mut unknown = !scope_complete
-        || cx.has_unhandled_method_bound_providers()
-        || unhandled_inherent_provider(cx, scope, receiver_ty);
+    let bound_provider_unknown = cx.has_unhandled_method_bound_providers(receiver_ty);
+    let inherent_provider_unknown =
+        unhandled_inherent_provider(cx, scope, receiver_ty, method_name);
+    let mut unknown = !scope_complete || bound_provider_unknown || inherent_provider_unknown;
 
     for (trait_sym, definitely_in_scope) in traits {
         let Some(items) = trait_sym.items(cx.db) else {
@@ -148,7 +149,9 @@ pub(crate) fn resolve_trait_method<'db>(
 
     // ANCHOR: example_select_trait_method
     if definite.len() == 1 && !unknown {
-        return Ok(definite.pop().unwrap());
+        let mut method = definite.pop().unwrap();
+        method.signature = cx.normalize_call_signature(method.signature, span);
+        return Ok(method);
     }
 
     let message = if definite.len() > 1 {
@@ -166,18 +169,35 @@ fn unhandled_inherent_provider<'db>(
     cx: &InferCtx<'_, 'db>,
     scope: &Scope<'db>,
     receiver_ty: Ptr<Ty<'db>>,
+    method_name: Name<'db>,
 ) -> bool {
     let Ty::Adt(receiver_symbol, _) = cx.stash()[receiver_ty] else {
-        // External, primitive, reference/autoderef, and inference-dependent
-        // inherent providers are not enumerated by this vertical slice.
+        // Primitive, reference/autoderef, and inference-dependent inherent
+        // providers are not enumerated by this vertical slice.
         return true;
     };
-    if !matches!(
-        receiver_symbol.data(cx.db),
+    match receiver_symbol.data(cx.db) {
+        SymbolData::StructSymbol(StructSymbol::Ext(adt))
+        | SymbolData::EnumSymbol(EnumSymbol::Ext(adt)) => {
+            let candidates =
+                crate::external_syms::external_inherent_method_candidates(cx.db, adt, method_name);
+            return !candidates.complete || !candidates.candidates.is_empty();
+        }
         SymbolData::StructSymbol(StructSymbol::Local(_))
-            | SymbolData::EnumSymbol(crate::symbol::EnumSymbol::Local(_))
-    ) {
-        return true;
+        | SymbolData::EnumSymbol(EnumSymbol::Local(_)) => {}
+        SymbolData::FnSymbol(_)
+        | SymbolData::VariantSymbol(_)
+        | SymbolData::VariantCtorSymbol(_)
+        | SymbolData::TraitSymbol(_)
+        | SymbolData::TypeAliasSymbol(_)
+        | SymbolData::ConstSymbol(_)
+        | SymbolData::StaticSymbol(_)
+        | SymbolData::ImplSymbol(_)
+        | SymbolData::ModSymbol(_)
+        | SymbolData::MacroDefSymbol(_)
+        | SymbolData::UseSymbol(_)
+        | SymbolData::IntrinsicTypeSymbol(_)
+        | SymbolData::MacroInvocationSymbol(_) => return true,
     }
 
     let local_crate = scope.resolver.local_crate();

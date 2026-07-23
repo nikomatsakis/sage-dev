@@ -88,7 +88,8 @@ re-execution.
 
 ## Trait obligations
 
-Trait and type-equality goals are handled by the `check::solve` subsystem under
+Trait proof and type-producing normalization operations are handled by the
+`check::solve` subsystem under
 the [trait-solver semantic contract](./trait-solver.md). The
 body checker keeps an obligation registry rather
 than treating a conditional solver answer as final: substitutions are applied,
@@ -116,12 +117,16 @@ be reinterpreted outside their owning ancestry.
 The body environment contains opened function predicates and the deduplicated
 defining predicates of referenced local traits. Generic function uses and
 struct/enum construction or explicit type uses submit their instantiated
-parameter environments. Obligations retain source provenance, deduplicate after
-canonicalization, retry only after relevant inference wakes, and receive a
-mandatory terminal proof pass after inference fallback. `CheckedBody` creation
-asserts that the obligation registry, runtime, wake queue, and root egraph have
-no live work. Selected-method predicates will use the same staged-batch API when
-method resolution lands.
+parameter environments. Once trait method selection is complete, associated
+projections in its instantiated signature are replaced by caller inference
+variables and registered as input-only normalization operations; the caller's
+expected type is related only after the solver output is imported. Obligations
+retain source provenance, proof obligations deduplicate after canonicalization,
+retry only after relevant inference wakes, and receive a mandatory terminal
+pass after inference fallback. `CheckedBody` creation asserts that the
+obligation registry, runtime, wake queue, and root egraph have no live work.
+Selected-method predicates will use the same staged-batch API when that broader
+method-resolution support lands.
 
 ## Deferred lifetime and borrow semantics
 

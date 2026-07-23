@@ -142,11 +142,15 @@ inference and solver boundaries. Input-only associated-type normalization is
 operational at the canonical solver boundary: it merges isolated local,
 external, and explicit environment value candidates and returns a type output.
 The caller-side alias relation applies that merged output before relating it to
-an expected type. Projection-bearing method signatures and retained body
-normalization obligations are not yet connected. Complete method resolution,
-named-alias expansion, opaque reveal, higher-ranked reasoning, and the other
-explicitly deferred extensions remain planned; their status is tracked in the
-[Build-Out Roadmap](../implementation/roadmap.md).
+an expected type. After selecting a represented trait method, checking replaces
+associated projections in its instantiated signature with caller inference
+variables and registers input-only normalization operations in the retained
+body-obligation lifecycle. Completed IR is returned only after those outputs
+have been imported, related to the caller variables, and any residual proof
+goals have terminated. Complete method resolution, named-alias expansion,
+opaque reveal, higher-ranked reasoning, and the other explicitly deferred
+extensions remain planned; their status is tracked in the [Build-Out
+Roadmap](../implementation/roadmap.md).
 The destination-level soundness, completeness, candidate-discovery, progress,
 scheduling, and resource contract is recorded in
 [Trait Solver Design](./trait-solver.md).
@@ -179,8 +183,9 @@ goal per candidate trait.
 
 External trait signatures, ADT signatures, associated-item lists, function
 signatures, trait-keyed relevant-impl identities, impl headers, requested
-associated-type values, and structural sizedness facts cross `TcxDb` as owned
-raw metadata and are lowered by separate tracked queries. The external
+associated-type values, name-keyed inherent-method identities, and structural
+sizedness facts cross `TcxDb` as owned raw metadata and are lowered by separate
+tracked queries. The external
 candidate operation is keyed by the fixed trait
 and an optional conservative rigid self head. It retains blanket and
 unclassifiable impls, returns deterministic identities plus explicit
@@ -208,9 +213,12 @@ then reads only its function and defining-trait signatures. The current lookup
 scope is deliberately narrow: traits in the current module plus candidates
 from every supported standard-prelude edition. Until the crate edition is
 represented, only traits common to every prelude are definitely in scope;
-an applicable edition-specific trait makes lookup uncertain. A completeness audit prevents selection
-when ordinary imports, unresolved/failed macros, active attributes, or a
-matching unhandled inherent provider could contribute another candidate.
+an applicable edition-specific trait makes lookup uncertain. For a rigid
+external ADT receiver, a separate lookup keyed by ADT identity and method name
+enumerates possible inherent shadowing without loading signatures or unrelated
+method names. A completeness audit prevents selection when ordinary imports,
+unresolved/failed macros, active attributes, or a matching unhandled inherent
+provider could contribute another candidate.
 Complete import/glob enumeration, visibility, inherent-method selection,
 explicit-bound provider discovery, edition-specific prelude selection, and generic-method behavior remains in the
 Method Resolution RFD. Missing or unrepresented metadata contributes

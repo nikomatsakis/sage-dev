@@ -540,6 +540,67 @@ impl<'tcx> RustcTcxDb<'tcx> {
         })
     }
 
+    pub fn inherent_method_candidates(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        method_name: &str,
+    ) -> Option<sage_ir::tcx::RawInherentMethodCandidates> {
+        use sage_ir::tcx::{RawDefId, RawInherentMethodCandidate, RawInherentMethodCandidates};
+
+        let adt_def_id = rustc_def_id(crate_num, def_index);
+        if !matches!(
+            self.tcx.def_kind(adt_def_id),
+            DefKind::Struct | DefKind::Enum | DefKind::Union
+        ) {
+            return None;
+        }
+
+        let mut candidates = Vec::new();
+        for &impl_def_id in self.tcx.inherent_impls(adt_def_id) {
+            for item in self.tcx.associated_items(impl_def_id).in_definition_order() {
+                let name = match item.kind {
+                    ty::AssocKind::Fn {
+                        name,
+                        has_self: true,
+                    } => name,
+                    ty::AssocKind::Fn {
+                        has_self: false, ..
+                    }
+                    | ty::AssocKind::Type { .. }
+                    | ty::AssocKind::Const { .. } => continue,
+                };
+                if name.as_str() != method_name {
+                    continue;
+                }
+                candidates.push(RawInherentMethodCandidate {
+                    function: RawDefId {
+                        crate_num: CrateNum(item.def_id.krate.as_u32()),
+                        def_index: DefIndex(item.def_id.index.as_u32()),
+                        kind: SymExtKind::Fn,
+                    },
+                    impl_def: RawDefId {
+                        crate_num: CrateNum(impl_def_id.krate.as_u32()),
+                        def_index: DefIndex(impl_def_id.index.as_u32()),
+                        kind: SymExtKind::Impl,
+                    },
+                    externally_visible: self.tcx.visibility(item.def_id).is_public(),
+                });
+            }
+        }
+        candidates.sort_by_key(|candidate| {
+            (
+                candidate.function.crate_num.0,
+                candidate.function.def_index.0,
+            )
+        });
+        candidates.dedup_by_key(|candidate| candidate.function);
+        Some(RawInherentMethodCandidates {
+            candidates,
+            complete: true,
+        })
+    }
+
     pub fn relevant_trait_impls(
         &self,
         crate_num: CrateNum,

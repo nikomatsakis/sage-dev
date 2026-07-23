@@ -5,7 +5,8 @@ use crate::symbol::{CrateNum, DefIndex};
 
 use super::{
     ExternalDefPath, RawAdtSignature, RawAssociatedItems, RawAssociatedTypeValue, RawChild,
-    RawFnSignature, RawImplSignature, RawRelevantImpls, RawSelfTypeHead, RawTraitSignature, TcxDb,
+    RawFnSignature, RawImplSignature, RawInherentMethodCandidates, RawRelevantImpls,
+    RawSelfTypeHead, RawTraitSignature, TcxDb,
 };
 
 /// Request from the salsa thread to the TyCtxt thread.
@@ -64,6 +65,12 @@ pub enum TcxRequest {
         crate_num: CrateNum,
         def_index: DefIndex,
         reply: mpsc::Sender<Option<RawAdtSignature>>,
+    },
+    InherentMethodCandidates {
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        method_name: String,
+        reply: mpsc::Sender<Option<RawInherentMethodCandidates>>,
     },
     RelevantTraitImpls {
         crate_num: CrateNum,
@@ -297,6 +304,28 @@ impl TcxDb for ProxyTcxDb {
             .send(TcxRequest::AdtSignature {
                 crate_num,
                 def_index,
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn inherent_method_candidates(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        method_name: &str,
+    ) -> Option<RawInherentMethodCandidates> {
+        self.log.lock().unwrap().push(format!(
+            "tcx::inherent_method_candidates({}, {}, {:?})",
+            crate_num.0, def_index.0, method_name
+        ));
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::InherentMethodCandidates {
+                crate_num,
+                def_index,
+                method_name: method_name.to_owned(),
                 reply,
             })
             .expect("TyCtxt thread hung up");
