@@ -170,6 +170,32 @@ the owner `T` to `Frame`, while argument matching independently binds the
 method `E` to `ParseError`. The selected call uses direct dispatch; it does not
 ask trait proof to return an impl.
 
+## 7. Retain the semantic call in shared IR
+
+Completed calls preserve these choices instead of requiring a downstream
+consumer to reconstruct them. The shared dispatch variant distinguishes a
+direct inherent call from static trait dispatch:
+
+```{anchor}
+example_call_dispatch_schema
+```
+
+The call itself retains owner and method substitutions separately:
+
+```{anchor}
+example_call_substitution_schema
+```
+
+Sage emits those fields from `ResolvedCallTarget`; the rustc oracle projects
+its selected associated item and node substitutions into the same schema
+without reading Sage output. The isolated `Parse::next` test checks the
+semantic fields and then requires both independent trees to equal one exact
+snapshot:
+
+```{anchor}
+example_exact_parse_next_snapshot
+```
+
 ## Current boundary
 
 This is a deliberately narrow vertical slice, not the complete method algorithm

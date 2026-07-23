@@ -481,6 +481,9 @@ impl<'tcx> Emitter<'tcx> {
                     }
                     Res::Def(HirDefKind::Fn | HirDefKind::AssocFn, def_id) => Expr::Call {
                         target: self.normalize_def(def_id),
+                        dispatch: CallDispatch::Direct,
+                        owner_type_args: vec![],
+                        method_type_args: vec![],
                         args: vec![],
                         ty: self.emit_type(expr_ty),
                     },
@@ -488,6 +491,9 @@ impl<'tcx> Emitter<'tcx> {
                         let variant_def_id = self.tcx.parent(def_id);
                         Expr::Call {
                             target: self.normalize_def(variant_def_id),
+                            dispatch: CallDispatch::Direct,
+                            owner_type_args: vec![],
+                            method_type_args: vec![],
                             args: vec![],
                             ty: self.emit_type(expr_ty),
                         }
@@ -525,6 +531,9 @@ impl<'tcx> Emitter<'tcx> {
                             .collect();
                         return Expr::Call {
                             target: self.normalize_def(target_def_id),
+                            dispatch: CallDispatch::Direct,
+                            owner_type_args: vec![],
+                            method_type_args: vec![],
                             args: emitted_args,
                             ty: self.emit_type(expr_ty),
                         };
@@ -539,6 +548,9 @@ impl<'tcx> Emitter<'tcx> {
                         krate: "?".to_string(),
                         segments: vec![],
                     }),
+                    dispatch: CallDispatch::Direct,
+                    owner_type_args: vec![],
+                    method_type_args: vec![],
                     args: emitted_args,
                     ty: self.emit_type(expr_ty),
                 }
@@ -547,6 +559,37 @@ impl<'tcx> Emitter<'tcx> {
                 let target = typeck
                     .type_dependent_def_id(expr.hir_id)
                     .expect("type-checked method call must name its selected function");
+                let generics = self.tcx.generics_of(target);
+                let owner_type_count = (0..generics.parent_count)
+                    .filter(|&index| {
+                        matches!(
+                            generics.param_at(index, self.tcx).kind,
+                            ty::GenericParamDefKind::Type { .. }
+                        )
+                    })
+                    .count();
+                let type_arguments: Vec<_> = typeck
+                    .node_args(expr.hir_id)
+                    .types()
+                    .map(|ty| self.emit_type(ty))
+                    .collect();
+                let (owner_type_args, method_type_args) = type_arguments.split_at(owner_type_count);
+                let owner_type_args = owner_type_args.to_vec();
+                let method_type_args = method_type_args.to_vec();
+                let dispatch = self
+                    .tcx
+                    .associated_item(target)
+                    .trait_container(self.tcx)
+                    .map_or(CallDispatch::Direct, |trait_def_id| {
+                        let [self_ty, trait_type_args @ ..] = owner_type_args.as_slice() else {
+                            panic!("trait method call must retain its Self substitution")
+                        };
+                        CallDispatch::StaticTrait {
+                            self_ty: self_ty.clone(),
+                            trait_target: self.normalize_def(trait_def_id),
+                            trait_type_args: trait_type_args.to_vec(),
+                        }
+                    });
                 let mut emitted_args = Vec::with_capacity(args.len() + 1);
                 emitted_args.push(self.emit_method_receiver_adjustments(receiver, typeck, locals));
                 emitted_args.extend(
@@ -555,6 +598,9 @@ impl<'tcx> Emitter<'tcx> {
                 );
                 Expr::Call {
                     target: self.normalize_def(target),
+                    dispatch,
+                    owner_type_args,
+                    method_type_args,
                     args: emitted_args,
                     ty: self.emit_type(expr_ty),
                 }

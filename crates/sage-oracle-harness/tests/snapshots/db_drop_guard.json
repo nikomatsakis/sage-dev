@@ -95,6 +95,41 @@
                       ]
                     }
                   },
+                  "dispatch": {
+                    "static_trait": {
+                      "self_ty": {
+                        "def": {
+                          "target": {
+                            "local": 1
+                          }
+                        }
+                      },
+                      "trait_target": {
+                        "external": {
+                          "krate": "core",
+                          "segments": [
+                            {
+                              "kind": "mod",
+                              "name": "clone"
+                            },
+                            {
+                              "kind": "trait",
+                              "name": "Clone"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "owner_type_args": [
+                    {
+                      "def": {
+                        "target": {
+                          "local": 1
+                        }
+                      }
+                    }
+                  ],
                   "args": [
                     {
                       "ref": {

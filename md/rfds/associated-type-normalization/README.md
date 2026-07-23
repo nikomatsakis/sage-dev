@@ -87,8 +87,13 @@ rigid, name-keyed receiver source: `Option::ok_or` preserves owner versus method
 generic scopes, binds them transactionally from the receiver and argument, and
 keeps rustc's const-only `Destruct` condition separate from the ordinary call
 contract. Retaining those substitutions in shared IR and the final exact oracle
-slice remain. This RFD defines one vertical change which closes those remaining
-gaps without introducing eager global normalization or asking rustc to answer
+slice are now operational for the isolated fixture: Sage and rustc independently
+emit direct `Option::ok_or` and static-trait `Iterator::next` calls with the
+same owner/method substitutions, and both must match one exact checked-in
+snapshot. The remaining checkpoint is forcing the pinned mini-redis source
+body under its real target configuration and pinning that query trace. This
+RFD defines one vertical change which closes that remaining integration gap
+without introducing eager global normalization or asking rustc to answer
 Sage's trait goals.
 
 ## Change in a nutshell

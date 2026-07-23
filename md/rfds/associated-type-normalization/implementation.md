@@ -118,13 +118,20 @@ ineligible.
 
 ## Step 7: Completed IR and exact oracle
 
-- [ ] Retain selected function identity, dispatch, trait reference, and owner
+- [x] Retain selected function identity, dispatch, trait reference, and owner
   and method substitutions in resolved calls.
-- [ ] Extend the shared reference schema and both independent emitters with the
+- [x] Extend the shared reference schema and both independent emitters with the
   same semantic call information.
-- [ ] Add an isolated exact `Parse::next` JSON snapshot and byte-identity test.
-- [ ] Assert that successful output contains no unresolved method, required
+- [x] Add an isolated exact `Parse::next` JSON snapshot and byte-identity test.
+- [x] Assert that successful output contains no unresolved method, required
   projection, inference variable, unsupported placeholder, or debug type.
+
+The shared call form now separates direct and static-trait dispatch, records
+the trait `Self` and trait arguments for static dispatch, and keeps owner and
+method type substitutions in distinct lists. The isolated `Parse::next`
+fixture structurally checks those fields before both independent outputs are
+compared with one checked-in exact snapshot. No pairwise adapter or comparator
+normalization is involved.
 
 ## Step 8: Pinned mini-redis checkpoint
 

@@ -5,12 +5,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use libtest_mimic::{Arguments, Failed, Trial};
-use rust_ref::{Crate, DefKind, DefPathSegment, Expr, Item, Module, NormalizedDef};
+use rust_ref::{
+    CallDispatch, Crate, DefKind, DefPathSegment, Expr, Item, Module, NormalizedDef, Type,
+};
 use sage_oracle_harness::{
     Fixture, assert_crates_eq, check_annotations, combined, discover_fixtures, fixtures_dir,
 };
 
 const DB_DROP_GUARD_SNAPSHOT: &str = include_str!("snapshots/db_drop_guard.json");
+const PARSE_NEXT_SNAPSHOT: &str = include_str!("snapshots/parse_next.json");
 
 fn output_dir() -> PathBuf {
     let base = std::env::temp_dir().join("sage-oracle-output");
@@ -156,6 +159,152 @@ fn assert_db_drop_guard_snapshot(side: &str, krate: &Crate<NormalizedDef>) -> Re
 }
 // ANCHOR_END: example_exact_db_drop_guard_snapshot
 
+fn assert_parse_next_coverage(side: &str, krate: &Crate<NormalizedDef>) -> Result<(), Failed> {
+    fn find_next_body(module: &Module<NormalizedDef>) -> Option<&Expr<NormalizedDef>> {
+        module.items.iter().find_map(|item| match item {
+            Item::Fn(function) if function.name == "next" => function.body.as_ref(),
+            Item::Mod(module) => find_next_body(module),
+            Item::Fn(_) | Item::Struct(_) | Item::Enum(_) => None,
+        })
+    }
+
+    fn is_external_item(def: &NormalizedDef, krate: &str, kind: DefKind, name: &str) -> bool {
+        matches!(
+            def,
+            NormalizedDef::External(path)
+                if path.krate == krate
+                    && path.segments.last().is_some_and(|segment| {
+                        segment.kind == kind && segment.name == name
+                    })
+        )
+    }
+
+    fn assert_into_iter(side: &str, ty: &Type<NormalizedDef>) -> Result<(), Failed> {
+        let Type::Def { target, type_args } = ty else {
+            return Err(
+                format!("{side} did not retain Iterator::next's concrete Self type").into(),
+            );
+        };
+        if !is_external_item(target, "alloc", DefKind::Struct, "IntoIter") {
+            return Err(format!("{side} emitted the wrong Iterator::next Self type").into());
+        }
+        let [
+            Type::Def { target: frame, .. },
+            Type::Def {
+                target: allocator, ..
+            },
+        ] = type_args.as_slice()
+        else {
+            return Err(format!("{side} omitted IntoIter<Frame, Global> substitutions").into());
+        };
+        if !matches!(frame, NormalizedDef::Local(1))
+            || !is_external_item(allocator, "alloc", DefKind::Struct, "Global")
+        {
+            return Err(format!("{side} emitted the wrong IntoIter substitutions").into());
+        }
+        Ok(())
+    }
+
+    let Some(Expr::Block {
+        tail: Some(tail), ..
+    }) = find_next_body(&krate.root)
+    else {
+        return Err(format!("{side} omitted the source-written Parse::next body").into());
+    };
+    let Expr::Call {
+        target,
+        dispatch,
+        owner_type_args,
+        method_type_args,
+        args,
+        ..
+    } = tail.as_ref()
+    else {
+        return Err(format!("{side} did not emit Option::ok_or as a resolved call").into());
+    };
+    if !is_external_item(target, "core", DefKind::Fn, "ok_or")
+        || !matches!(dispatch, CallDispatch::Direct)
+        || !matches!(
+            owner_type_args.as_slice(),
+            [Type::Def {
+                target: NormalizedDef::Local(1),
+                ..
+            }]
+        )
+        || !matches!(
+            method_type_args.as_slice(),
+            [Type::Def {
+                target: NormalizedDef::Local(2),
+                ..
+            }]
+        )
+    {
+        return Err(
+            format!("{side} emitted the wrong Option::ok_or dispatch or substitutions").into(),
+        );
+    }
+
+    let [
+        Expr::Call {
+            target,
+            dispatch,
+            owner_type_args,
+            method_type_args,
+            args,
+            ..
+        },
+        _,
+    ] = args.as_slice()
+    else {
+        return Err(format!("{side} omitted the resolved Iterator::next receiver call").into());
+    };
+    if !is_external_item(target, "core", DefKind::Fn, "next") || !method_type_args.is_empty() {
+        return Err(format!("{side} emitted the wrong Iterator::next target").into());
+    }
+    let CallDispatch::StaticTrait {
+        self_ty,
+        trait_target,
+        trait_type_args,
+    } = dispatch
+    else {
+        return Err(
+            format!("{side} did not retain static trait dispatch for Iterator::next").into(),
+        );
+    };
+    if !is_external_item(trait_target, "core", DefKind::Trait, "Iterator")
+        || !trait_type_args.is_empty()
+        || owner_type_args.as_slice() != [self_ty.clone()]
+    {
+        return Err(format!("{side} emitted inconsistent Iterator dispatch metadata").into());
+    }
+    assert_into_iter(side, self_ty)?;
+    let [Expr::Ref { mutable: true, .. }] = args.as_slice() else {
+        return Err(
+            format!("{side} omitted Iterator::next's explicit mutable receiver borrow").into(),
+        );
+    };
+    Ok(())
+}
+
+fn assert_parse_next_snapshot(side: &str, krate: &Crate<NormalizedDef>) -> Result<(), Failed> {
+    let actual = format!("{}\n", serde_json::to_string_pretty(krate).unwrap());
+    if actual.contains("\"alias\"")
+        || actual.contains("\"primitive\": \"?")
+        || actual.contains("unsupported")
+    {
+        return Err(format!("{side} Parse::next output contains an unresolved type").into());
+    }
+    // ANCHOR: example_exact_parse_next_snapshot
+    if actual.as_bytes() != PARSE_NEXT_SNAPSHOT.as_bytes() {
+        return Err(format!(
+            "{side} Parse::next output differs from the checked-in exact JSON snapshot"
+        )
+        .into());
+    }
+    // ANCHOR_END: example_exact_parse_next_snapshot
+    Ok(())
+}
+
 fn assert_external_adt_default_coverage(
     side: &str,
     krate: &Crate<NormalizedDef>,
@@ -241,6 +390,13 @@ fn run_fixture(fixture: &Fixture, out_dir: &Path) -> Result<(), Failed> {
         assert_db_drop_guard_coverage("sage", &sage)?;
         assert_db_drop_guard_snapshot("oracle", &oracle)?;
         assert_db_drop_guard_snapshot("sage", &sage)?;
+    }
+
+    if fixture.name() == "mini_redis/parse_next.rs" {
+        assert_parse_next_coverage("oracle", &oracle)?;
+        assert_parse_next_coverage("sage", &sage)?;
+        assert_parse_next_snapshot("oracle", &oracle)?;
+        assert_parse_next_snapshot("sage", &sage)?;
     }
 
     if fixture.name() == "basics/external_adt_default.rs" {

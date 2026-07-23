@@ -622,6 +622,22 @@ fn option_ok_or_binds_owner_and_method_generics() {
                 "ok_or"
             );
             assert!(matches!(ok_or_target.dispatch, CallDispatch::Direct));
+            let [ok_or_owner] = &stash[ok_or_target.owner_type_args] else {
+                panic!("ok_or must retain its owner substitution")
+            };
+            let Ty::Adt(ok_or_owner, ok_or_owner_args) = stash[*ok_or_owner] else {
+                panic!("ok_or owner substitution must be Frame")
+            };
+            assert_eq!(ok_or_owner, expected_frame);
+            assert!(stash[ok_or_owner_args].is_empty());
+            let [ok_or_method] = &stash[ok_or_target.method_type_args] else {
+                panic!("ok_or must retain its method substitution")
+            };
+            let Ty::Adt(ok_or_method, ok_or_method_args) = stash[*ok_or_method] else {
+                panic!("ok_or method substitution must be ParseError")
+            };
+            assert_eq!(ok_or_method, expected_error);
+            assert!(stash[ok_or_method_args].is_empty());
             let [next, error_argument] = &stash[ok_or_arguments] else {
                 panic!("ok_or must contain its receiver and error argument")
             };
@@ -656,6 +672,14 @@ fn option_ok_or_binds_owner_and_method_generics() {
                     .text(db),
                 "next"
             );
+            let CallDispatch::StaticTrait { self_ty, .. } = next_target.dispatch else {
+                panic!("Iterator::next must retain static trait dispatch")
+            };
+            let [next_owner] = &stash[next_target.owner_type_args] else {
+                panic!("Iterator::next must retain its Self substitution")
+            };
+            assert_eq!(*next_owner, self_ty);
+            assert!(stash[next_target.method_type_args].is_empty());
             let Ty::Adt(option, option_args) = stash[stash[*next].ty] else {
                 panic!("Iterator::next must produce Option<Frame>")
             };

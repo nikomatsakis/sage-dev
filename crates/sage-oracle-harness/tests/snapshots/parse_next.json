@@ -1,0 +1,620 @@
+{
+  "root": {
+    "def": {
+      "local": 0
+    },
+    "name": "",
+    "items": [
+      {
+        "struct": {
+          "def": {
+            "local": 1
+          },
+          "name": "Frame",
+          "fields": []
+        }
+      },
+      {
+        "enum": {
+          "def": {
+            "local": 2
+          },
+          "name": "ParseError",
+          "variants": [
+            {
+              "def": {
+                "local": 3
+              },
+              "name": "EndOfStream",
+              "fields": []
+            }
+          ]
+        }
+      },
+      {
+        "struct": {
+          "def": {
+            "local": 4
+          },
+          "name": "Parse",
+          "fields": [
+            {
+              "name": "parts",
+              "ty": {
+                "def": {
+                  "target": {
+                    "external": {
+                      "krate": "alloc",
+                      "segments": [
+                        {
+                          "kind": "mod",
+                          "name": "vec"
+                        },
+                        {
+                          "kind": "mod",
+                          "name": "into_iter"
+                        },
+                        {
+                          "kind": "struct",
+                          "name": "IntoIter"
+                        }
+                      ]
+                    }
+                  },
+                  "type_args": [
+                    {
+                      "def": {
+                        "target": {
+                          "local": 1
+                        }
+                      }
+                    },
+                    {
+                      "def": {
+                        "target": {
+                          "external": {
+                            "krate": "alloc",
+                            "segments": [
+                              {
+                                "kind": "mod",
+                                "name": "alloc"
+                              },
+                              {
+                                "kind": "struct",
+                                "name": "Global"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "fn": {
+          "def": {
+            "local": 5
+          },
+          "name": "next",
+          "params": [
+            {
+              "name": "self",
+              "ty": {
+                "ref": {
+                  "mutable": true,
+                  "ty": {
+                    "def": {
+                      "target": {
+                        "local": 4
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ],
+          "return_ty": {
+            "def": {
+              "target": {
+                "external": {
+                  "krate": "core",
+                  "segments": [
+                    {
+                      "kind": "mod",
+                      "name": "result"
+                    },
+                    {
+                      "kind": "enum",
+                      "name": "Result"
+                    }
+                  ]
+                }
+              },
+              "type_args": [
+                {
+                  "def": {
+                    "target": {
+                      "local": 1
+                    }
+                  }
+                },
+                {
+                  "def": {
+                    "target": {
+                      "local": 2
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "body": {
+            "block": {
+              "stmts": [],
+              "tail": {
+                "call": {
+                  "target": {
+                    "external": {
+                      "krate": "core",
+                      "segments": [
+                        {
+                          "kind": "mod",
+                          "name": "option"
+                        },
+                        {
+                          "kind": "fn",
+                          "name": "ok_or"
+                        }
+                      ]
+                    }
+                  },
+                  "owner_type_args": [
+                    {
+                      "def": {
+                        "target": {
+                          "local": 1
+                        }
+                      }
+                    }
+                  ],
+                  "method_type_args": [
+                    {
+                      "def": {
+                        "target": {
+                          "local": 2
+                        }
+                      }
+                    }
+                  ],
+                  "args": [
+                    {
+                      "call": {
+                        "target": {
+                          "external": {
+                            "krate": "core",
+                            "segments": [
+                              {
+                                "kind": "mod",
+                                "name": "iter"
+                              },
+                              {
+                                "kind": "mod",
+                                "name": "traits"
+                              },
+                              {
+                                "kind": "mod",
+                                "name": "iterator"
+                              },
+                              {
+                                "kind": "trait",
+                                "name": "Iterator"
+                              },
+                              {
+                                "kind": "fn",
+                                "name": "next"
+                              }
+                            ]
+                          }
+                        },
+                        "dispatch": {
+                          "static_trait": {
+                            "self_ty": {
+                              "def": {
+                                "target": {
+                                  "external": {
+                                    "krate": "alloc",
+                                    "segments": [
+                                      {
+                                        "kind": "mod",
+                                        "name": "vec"
+                                      },
+                                      {
+                                        "kind": "mod",
+                                        "name": "into_iter"
+                                      },
+                                      {
+                                        "kind": "struct",
+                                        "name": "IntoIter"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "type_args": [
+                                  {
+                                    "def": {
+                                      "target": {
+                                        "local": 1
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "def": {
+                                      "target": {
+                                        "external": {
+                                          "krate": "alloc",
+                                          "segments": [
+                                            {
+                                              "kind": "mod",
+                                              "name": "alloc"
+                                            },
+                                            {
+                                              "kind": "struct",
+                                              "name": "Global"
+                                            }
+                                          ]
+                                        }
+                                      }
+                                    }
+                                  }
+                                ]
+                              }
+                            },
+                            "trait_target": {
+                              "external": {
+                                "krate": "core",
+                                "segments": [
+                                  {
+                                    "kind": "mod",
+                                    "name": "iter"
+                                  },
+                                  {
+                                    "kind": "mod",
+                                    "name": "traits"
+                                  },
+                                  {
+                                    "kind": "mod",
+                                    "name": "iterator"
+                                  },
+                                  {
+                                    "kind": "trait",
+                                    "name": "Iterator"
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        },
+                        "owner_type_args": [
+                          {
+                            "def": {
+                              "target": {
+                                "external": {
+                                  "krate": "alloc",
+                                  "segments": [
+                                    {
+                                      "kind": "mod",
+                                      "name": "vec"
+                                    },
+                                    {
+                                      "kind": "mod",
+                                      "name": "into_iter"
+                                    },
+                                    {
+                                      "kind": "struct",
+                                      "name": "IntoIter"
+                                    }
+                                  ]
+                                }
+                              },
+                              "type_args": [
+                                {
+                                  "def": {
+                                    "target": {
+                                      "local": 1
+                                    }
+                                  }
+                                },
+                                {
+                                  "def": {
+                                    "target": {
+                                      "external": {
+                                        "krate": "alloc",
+                                        "segments": [
+                                          {
+                                            "kind": "mod",
+                                            "name": "alloc"
+                                          },
+                                          {
+                                            "kind": "struct",
+                                            "name": "Global"
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ],
+                        "args": [
+                          {
+                            "ref": {
+                              "mutable": true,
+                              "expr": {
+                                "field": {
+                                  "expr": {
+                                    "deref": {
+                                      "expr": {
+                                        "local": {
+                                          "name": "self",
+                                          "index": 0
+                                        }
+                                      },
+                                      "ty": {
+                                        "def": {
+                                          "target": {
+                                            "local": 4
+                                          }
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "field": {
+                                    "owner": {
+                                      "local": 4
+                                    },
+                                    "index": 0
+                                  },
+                                  "ty": {
+                                    "def": {
+                                      "target": {
+                                        "external": {
+                                          "krate": "alloc",
+                                          "segments": [
+                                            {
+                                              "kind": "mod",
+                                              "name": "vec"
+                                            },
+                                            {
+                                              "kind": "mod",
+                                              "name": "into_iter"
+                                            },
+                                            {
+                                              "kind": "struct",
+                                              "name": "IntoIter"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      "type_args": [
+                                        {
+                                          "def": {
+                                            "target": {
+                                              "local": 1
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "def": {
+                                            "target": {
+                                              "external": {
+                                                "krate": "alloc",
+                                                "segments": [
+                                                  {
+                                                    "kind": "mod",
+                                                    "name": "alloc"
+                                                  },
+                                                  {
+                                                    "kind": "struct",
+                                                    "name": "Global"
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              },
+                              "ty": {
+                                "ref": {
+                                  "mutable": true,
+                                  "ty": {
+                                    "def": {
+                                      "target": {
+                                        "external": {
+                                          "krate": "alloc",
+                                          "segments": [
+                                            {
+                                              "kind": "mod",
+                                              "name": "vec"
+                                            },
+                                            {
+                                              "kind": "mod",
+                                              "name": "into_iter"
+                                            },
+                                            {
+                                              "kind": "struct",
+                                              "name": "IntoIter"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      "type_args": [
+                                        {
+                                          "def": {
+                                            "target": {
+                                              "local": 1
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "def": {
+                                            "target": {
+                                              "external": {
+                                                "krate": "alloc",
+                                                "segments": [
+                                                  {
+                                                    "kind": "mod",
+                                                    "name": "alloc"
+                                                  },
+                                                  {
+                                                    "kind": "struct",
+                                                    "name": "Global"
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        ],
+                        "ty": {
+                          "def": {
+                            "target": {
+                              "external": {
+                                "krate": "core",
+                                "segments": [
+                                  {
+                                    "kind": "mod",
+                                    "name": "option"
+                                  },
+                                  {
+                                    "kind": "enum",
+                                    "name": "Option"
+                                  }
+                                ]
+                              }
+                            },
+                            "type_args": [
+                              {
+                                "def": {
+                                  "target": {
+                                    "local": 1
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "call": {
+                        "target": {
+                          "local": 3
+                        },
+                        "args": [],
+                        "ty": {
+                          "def": {
+                            "target": {
+                              "local": 2
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "ty": {
+                    "def": {
+                      "target": {
+                        "external": {
+                          "krate": "core",
+                          "segments": [
+                            {
+                              "kind": "mod",
+                              "name": "result"
+                            },
+                            {
+                              "kind": "enum",
+                              "name": "Result"
+                            }
+                          ]
+                        }
+                      },
+                      "type_args": [
+                        {
+                          "def": {
+                            "target": {
+                              "local": 1
+                            }
+                          }
+                        },
+                        {
+                          "def": {
+                            "target": {
+                              "local": 2
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              "ty": {
+                "def": {
+                  "target": {
+                    "external": {
+                      "krate": "core",
+                      "segments": [
+                        {
+                          "kind": "mod",
+                          "name": "result"
+                        },
+                        {
+                          "kind": "enum",
+                          "name": "Result"
+                        }
+                      ]
+                    }
+                  },
+                  "type_args": [
+                    {
+                      "def": {
+                        "target": {
+                          "local": 1
+                        }
+                      }
+                    },
+                    {
+                      "def": {
+                        "target": {
+                          "local": 2
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}

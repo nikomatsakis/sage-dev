@@ -552,6 +552,9 @@ impl<'db> Emitter<'db> {
                     let target = self.normalize_def(*sym);
                     Expr::Call {
                         target,
+                        dispatch: rust_ref::CallDispatch::Direct,
+                        owner_type_args: vec![],
+                        method_type_args: vec![],
                         args: vec![],
                         ty: expr_ty,
                     }
@@ -591,6 +594,9 @@ impl<'db> Emitter<'db> {
                         let target = self.normalize_def(*sym);
                         Expr::Call {
                             target,
+                            dispatch: rust_ref::CallDispatch::Direct,
+                            owner_type_args: vec![],
+                            method_type_args: vec![],
                             args,
                             ty: expr_ty,
                         }
@@ -602,6 +608,9 @@ impl<'db> Emitter<'db> {
                         });
                         Expr::Call {
                             target,
+                            dispatch: rust_ref::CallDispatch::Direct,
+                            owner_type_args: vec![],
+                            method_type_args: vec![],
                             args,
                             ty: expr_ty,
                         }
@@ -613,8 +622,30 @@ impl<'db> Emitter<'db> {
                     .iter()
                     .map(|&argument| self.emit_expr(stash, &stash[argument], locals))
                     .collect();
+                let dispatch = match target.dispatch {
+                    sage_ir::tytree::CallDispatch::Direct => rust_ref::CallDispatch::Direct,
+                    sage_ir::tytree::CallDispatch::StaticTrait { self_ty, trait_ref } => {
+                        rust_ref::CallDispatch::StaticTrait {
+                            self_ty: self.emit_ty(stash, stash[self_ty]),
+                            trait_target: self.normalize_def(trait_ref.trait_sym.into()),
+                            trait_type_args: stash[trait_ref.args]
+                                .iter()
+                                .map(|&argument| self.emit_ty(stash, stash[argument]))
+                                .collect(),
+                        }
+                    }
+                };
                 Expr::Call {
                     target: self.normalize_def(target.function.into()),
+                    dispatch,
+                    owner_type_args: stash[target.owner_type_args]
+                        .iter()
+                        .map(|&argument| self.emit_ty(stash, stash[argument]))
+                        .collect(),
+                    method_type_args: stash[target.method_type_args]
+                        .iter()
+                        .map(|&argument| self.emit_ty(stash, stash[argument]))
+                        .collect(),
                     args,
                     ty: expr_ty,
                 }

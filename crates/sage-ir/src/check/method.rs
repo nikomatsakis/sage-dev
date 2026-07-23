@@ -150,6 +150,8 @@ fn resolve_trait_method<'db>(
             if signature.receiver.is_none() {
                 continue;
             }
+            let owner_type_args = cx.stash_mut().alloc_slice(&[receiver_ty]);
+            let method_type_args = cx.stash_mut().alloc_slice(&[]);
             definite.push(ResolvedMethod {
                 target: ResolvedCallTarget {
                     function,
@@ -157,6 +159,8 @@ fn resolve_trait_method<'db>(
                         self_ty: receiver_ty,
                         trait_ref,
                     },
+                    owner_type_args,
+                    method_type_args,
                 },
                 signature,
                 parameter_env_published: false,
@@ -275,7 +279,7 @@ fn resolve_external_inherent_method<'db>(
     // ANCHOR: example_instantiate_external_inherent_method
     let instantiated =
         instantiate_external_inherent_signature(cx, &signature, receiver_ty, arguments, span);
-    let Ok(signature) = instantiated else {
+    let Ok(instantiated) = instantiated else {
         return Some(Err(cx.record(Diagnostic::error(
             cx.span(span),
             "selected inherent method signature does not match this call",
@@ -286,10 +290,18 @@ fn resolve_external_inherent_method<'db>(
         target: ResolvedCallTarget {
             function: candidate.function,
             dispatch: CallDispatch::Direct,
+            owner_type_args: instantiated.owner_type_args,
+            method_type_args: instantiated.method_type_args,
         },
-        signature,
+        signature: instantiated.signature,
         parameter_env_published: true,
     }))
+}
+
+struct InstantiatedExternalMethod<'db> {
+    signature: FnSig<'db>,
+    owner_type_args: sage_stash::Slice<Ptr<Ty<'db>>>,
+    method_type_args: sage_stash::Slice<Ptr<Ty<'db>>>,
 }
 
 fn instantiate_external_inherent_signature<'db>(
@@ -298,12 +310,16 @@ fn instantiate_external_inherent_signature<'db>(
     receiver_ty: Ptr<Ty<'db>>,
     arguments: &[(Ptr<Ty<'db>>, RelativeSpan)],
     span: RelativeSpan,
-) -> Result<FnSig<'db>, ()> {
+) -> Result<InstantiatedExternalMethod<'db>, ()> {
     use super::infer::obligations::{ObligationReason, StagedObligationBatch};
     use super::infer::version::{Universe, Version};
 
     let binder = signature.root();
     let source = signature.stash();
+    let owner_type_count = source[binder.generics][..binder.value.owner_generic_count as usize]
+        .iter()
+        .filter(|generic| generic.kind(cx.db) == GenericParamKind::Type)
+        .count();
     let transaction = cx.branch_from(Version::ROOT);
     let type_argument_ptrs: Vec<_> = source[binder.generics]
         .iter()
@@ -344,7 +360,14 @@ fn instantiate_external_inherent_signature<'db>(
     cx.commit_branch(transaction);
     cx.publish_obligation_batch(obligations);
     let signature = cx.normalize_call_signature(instantiated, span);
-    Ok(signature)
+    let (owner_type_args, method_type_args) = type_argument_ptrs.split_at(owner_type_count);
+    let owner_type_args = cx.stash_mut().alloc_slice(owner_type_args);
+    let method_type_args = cx.stash_mut().alloc_slice(method_type_args);
+    Ok(InstantiatedExternalMethod {
+        signature,
+        owner_type_args,
+        method_type_args,
+    })
 }
 
 fn unhandled_inherent_provider<'db>(

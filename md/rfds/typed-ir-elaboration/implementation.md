@@ -11,7 +11,7 @@ remain incomplete where their checkboxes are still open.
 - [x] Introduce resolved call, shared borrow, and static-trait dispatch forms
   needed by the first vertical slice. General coercion, substitution, and
   explicit error forms remain.
-- [ ] Represent rigid types separately from the named, associated, and opaque
+- [x] Represent rigid types separately from the named, associated, and opaque
   `AliasTy` family without requiring aliases to be eagerly normalized.
 - [x] Introduce `Lifetime::Dummy` as the only lifetime produced by checking.
 - [ ] Make successful body finalization reject unresolved names, source method
@@ -43,7 +43,9 @@ remain incomplete where their checkboxes are still open.
   without consulting or rewriting Sage output.
 - [x] Adapt the rustc receiver adjustment used by `DbDropGuard::db` directly
   into completed dereference and shared-borrow forms without consulting or
-  rewriting Sage output. General substitutions and adjustments remain.
+  rewriting Sage output. Method owner/method substitutions and static-trait
+  dispatch are also represented for the isolated `Parse::next` slice; general
+  direct-call substitutions and adjustments remain.
 - [x] Remove paired output normalization and make pass/fail depend on
   byte-for-byte identity of deterministic serialized output.
 - [x] Enumerate source-written associated bodies for this slice; generated

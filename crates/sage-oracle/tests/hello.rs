@@ -422,8 +422,18 @@ fn macro_rules_fixture() {
         Expr::Block {
             tail: Some(tail), ..
         } => match tail.as_ref() {
-            Expr::Call { target, args, ty } => {
+            Expr::Call {
+                target,
+                dispatch,
+                owner_type_args,
+                method_type_args,
+                args,
+                ty,
+            } => {
                 assert_eq!(*target, get_value.def);
+                assert_eq!(*dispatch, CallDispatch::Direct);
+                assert!(owner_type_args.is_empty());
+                assert!(method_type_args.is_empty());
                 assert!(args.is_empty());
                 assert_eq!(*ty, Type::Primitive("u32".to_string()));
             }

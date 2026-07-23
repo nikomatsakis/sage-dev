@@ -4,10 +4,11 @@ This page defines the destination representation produced by body checking. The
 current `TyExprData` is still partly source-shaped; the transition to this
 representation is tracked by the [Typed IR Elaboration
 RFD](../rfds/typed-ir-elaboration/README.md) and the [Build-Out
-Roadmap](../implementation/roadmap.md). The first completed path is the
-`DbDropGuard::db` slice: its field identity, reference dereference, shared
-`Dummy` borrow, static trait dispatch, and selected `Clone::clone` definition
-are all explicit. Other expression families remain at the statuses below.
+Roadmap](../implementation/roadmap.md). The completed method-call paths now
+include `DbDropGuard::db` and the isolated mini-redis `Parse::next` slice.
+Their field identities, reference dereferences, `Dummy` borrows, selected
+functions, dispatch, and type substitutions are explicit. Other expression
+families remain at the statuses below.
 The common alias representation is built. Its first operational
 associated-type normalization path is specified by the [Associated Type
 Normalization RFD](../rfds/associated-type-normalization/README.md), using
@@ -89,6 +90,26 @@ a generic `T: Clone` still names `Clone::clone` with `Self = T`; the proof that
 `T: Clone` justifies the call. Trait-object calls additionally record dynamic
 dispatch.
 
+The built call schema currently makes direct versus static-trait dispatch
+explicit:
+
+```{anchor}
+example_call_dispatch_schema
+```
+
+Every represented method call separately retains substitutions owned by the
+associated owner and substitutions introduced by the method:
+
+```{anchor}
+example_call_substitution_schema
+```
+
+For the current slice, `Iterator::next` records static dispatch with
+`Self = IntoIter<Frame, Global>`, while `Option::ok_or` records direct dispatch,
+owner substitution `T = Frame`, and method substitution `E = ParseError`.
+Receiver adjustment recipes are absent because their dereference and borrow
+operations are already expression nodes.
+
 ## Preserved and elaborated constructs
 
 The table is the destination contract. A row marked *planned* is not yet fully
@@ -102,7 +123,7 @@ represented by the implementation.
 | field access | Resolved field definition, not a field name |
 | closure | Typed nested body, explicit parameters and captures (planned) |
 | async block or async function body | Typed nested coroutine body; no state-machine lowering (planned) |
-| `x.method(a)` | Resolved call with receiver operations materialized (built for the conservative external trait-method slice; general lookup planned) |
+| `x.method(a)` | Resolved call with dispatch, owner/method substitutions, and receiver operations materialized (built for the conservative external trait and inherent method slices; general lookup planned) |
 | overloaded operator | Resolved trait call (planned) |
 | primitive operator | Typed intrinsic operation |
 | `x[i]` | Resolved `Index` or `IndexMut` call (planned) |

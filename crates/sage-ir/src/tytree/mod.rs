@@ -67,6 +67,8 @@ pub enum CallDispatch<'db> {
 pub struct ResolvedCallTarget<'db> {
     pub function: FnSymbol<'db>,
     pub dispatch: CallDispatch<'db>,
+    pub owner_type_args: Slice<Ptr<Ty<'db>>>,
+    pub method_type_args: Slice<Ptr<Ty<'db>>>,
 }
 
 // ---------------------------------------------------------------------------

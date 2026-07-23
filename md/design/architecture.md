@@ -261,8 +261,11 @@ today. External nominal type use also imports declared defaults and ordinary
 predicates through `external_syms::external_adt_signature`; a missing required
 type argument is an arity error rather than a fresh inference variable. The
 represented external trait-method slice submits the selected method's
-parameter environment. General selected-method submission remains owned by the
-Method Resolution RFD.
+parameter environment. Its completed call retains static-trait `Self` and
+trait arguments as well as separate owner/method type substitutions. The
+represented rigid external inherent slice retains the same substitution split
+with direct dispatch. General selected-method submission and other dispatch
+forms remain owned by the Method Resolution RFD.
 
 Canonicalization preserves the logical role and scope of every input variable:
 
