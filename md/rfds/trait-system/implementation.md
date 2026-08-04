@@ -12,7 +12,7 @@ Each step leaves the workspace building and adds focused tests.
   negative/default/unsafe/const markers, and the exact receiver/associated-fn
   distinction. Eligibility must not infer absence from syntax the CST dropped.
 - [x] Add stash allocation, copying, hashing, folding, and display support.
-- [ ] Test that trait arguments preserve order and that unsupported lifetime, const, and
+- [ ] Test that trait arguments preserve order and that unsupported const and
   associated-type syntax is reported rather than omitted.
 - [ ] Round-trip or structurally inspect every preserved header/receiver marker
   so token emission and checked eligibility see the same source facts.
@@ -23,9 +23,9 @@ Each step leaves the workspace building and adds focused tests.
 - [x] Synthesize the trait's `Self` type parameter, store it as `self_param`, and place it
   before the explicit type parameters in the signature binder.
 - [x] Set `solver_eligibility` to `Eligible` only after every defining
-  predicate is represented and every source generic is a type parameter. Mark
-  lifetime/const-generic or otherwise unsupported trait signatures
-  `Unsupported` without silently dropping their syntax.
+  predicate is represented and every source generic is a supported type or
+  `Dummy` lifetime parameter. Mark const-generic or otherwise unsupported
+  trait signatures `Unsupported` without silently dropping their syntax.
 - [x] Mark auto-trait declarations `Unsupported`; coinductive structural
   candidates are not ordinary positive impl clauses.
 - [x] Mark supertrait syntax and trait type-parameter defaults `Unsupported`
@@ -43,7 +43,7 @@ Each step leaves the workspace building and adds focused tests.
   signatures reuse the recorded `self_param`.
 - [ ] Test zero/exact/missing/extra trait arguments in bounds and impl headers;
   only the exact no-default form becomes eligible.
-- [ ] Test that an unsupported defining predicate or lifetime/const trait
+- [ ] Test that an unsupported defining predicate or const trait
   generic makes the signature ineligible and cannot be observed as an empty,
   complete predicate set.
 
@@ -54,12 +54,12 @@ Each step leaves the workspace building and adds focused tests.
   generic substitution.
 - [x] Distinguish inherent impls (`trait_ref: None`) from trait impls.
 - [x] Mark an impl `Eligible` only when its complete header and applicability
-  conditions can be opened by the type-only consumers. Lifetime/const-generic
-  impls and impls with unsupported predicates remain represented but are
+  conditions can be opened by the type-only consumers. Const-generic impls and
+  impls with unsupported predicates remain represented but are
   ineligible candidates.
-- [x] Detect implicit/elided lifetime binders in impl headers and predicates.
-  Mark them `Unsupported` rather than lowering an erased lifetime as a matching
-  wildcard; allow a concrete `'static` leaf to remain structural.
+- [x] Lower explicit, elided, and `'static` reference lifetimes to
+  `Lifetime::Dummy`; skip lifetime binders during candidate instantiation and
+  treat lifetime predicates as trivially true.
 - [x] Recognize and gate declaration polarity/kind while lowering: negative,
   const, and default/specializing impls are `Unsupported` and can never be
   reinterpreted as ordinary positive clauses. A separate checked polarity enum
@@ -68,10 +68,10 @@ Each step leaves the workspace building and adds focused tests.
   `T` have the same identity.
 - [ ] Test that a failed or unsupported predicate prevents the impl from being exposed as
   an unconditional solver clause.
-- [ ] Test that lifetime/const-generic trait and inherent impls are not opened
-  with nonexistent lifetime/const inference variables.
-- [ ] Test `impl<T> Trait for &T` is ineligible while a concrete-lifetime header
-  does not acquire wildcard lifetime semantics.
+- [x] Test that lifetime-generic trait and inherent impls are opened without
+  creating lifetime inference variables; const-generic forms remain ineligible.
+- [x] Test that `impl<T> Trait for &T`, an explicit lifetime, and a `'static`
+  spelling all use `Dummy` without making the candidate source incomplete.
 - [ ] Test that negative/const/default impl syntax never enters the positive
   local impl candidate stream; test the same separately for an auto-trait
   declaration.
@@ -97,7 +97,7 @@ Each step leaves the workspace building and adds focused tests.
   a partial external/unsupported defining-predicate set.
 - [x] Retain ADT predicates for well-formedness obligations at construction/use
   sites even if that obligation integration lands with body checking.
-- [ ] Mark an owner unsupported when any required lifetime, const,
+- [ ] Mark an owner unsupported when any required const,
   higher-ranked, projection, or otherwise unrepresented predicate remains, and
   prevent the MVP from finalizing that owner as successfully checked.
 
@@ -120,18 +120,20 @@ Tests:
 
 ### Step 5: Trait and impl items
 
-- [ ] Give local function items a stable owner relation to their trait or impl so signature
+- [x] Give local function items a stable owner relation to their trait or impl so signature
   checking can distinguish owner generics from method-level generics.
-- [ ] Implement `LocalTraitSym::items` and `LocalImplSym::items`.
-- [ ] Open the owner signature's binder and reuse its generic parameters while checking
+- [x] Implement `LocalTraitSym::items` and `LocalImplSym::items`.
+- [x] Open the owner signature's binder and reuse its generic parameters while checking
   function, type, and const item identities.
-- [ ] Bind the trait signature's recorded `Self` parameter while checking trait items.
-- [ ] Bind `Self` to the opened, substituted `ImplSignatureData::self_ty` while
+- [x] Bind the trait signature's recorded `Self` parameter while checking trait items.
+- [x] Bind `Self` to the opened, substituted `ImplSignatureData::self_ty` while
   checking impl items; impl signatures do not have a trait `self_param`.
-- [ ] Lower `self`, `mut self`, `&self`, and `&mut self` to a separate
+- [x] Lower `self`, `mut self`, `&self`, and `&mut self` to a separate
   `CheckedReceiver` using the opened owner `Self` type. Preserve the absence of
-  a receiver for associated functions; diagnose/defer explicit-lifetime and
-  typed receivers instead of lowering them to `Ty::Infer`.
+  a receiver for associated functions and erase explicit receiver lifetimes to
+  `Dummy`.
+- [ ] Diagnose/defer typed receivers instead of admitting them as method
+  candidates or lowering them to `Ty::Infer`.
 - [ ] Compute `method_candidate_eligibility` for every trait/impl function.
   Require a supported receiver/associated form, type-instantiable method
   generics, a complete function parameter environment, and projection-free
@@ -142,10 +144,12 @@ Tests:
   in the same type.
 - [ ] Test `Self` independently in a trait method and an impl method, including
   a generic impl whose opened self type contains its owner generic.
-- [ ] Test all four supported receiver forms, an associated function, and
-  rejected typed/explicit-lifetime receivers. Dot-call consumers can
-  distinguish them without guessing from an inferred first parameter.
-- [ ] Test lifetime/const method generics, unsupported method predicates, and
+- [ ] Test all four supported receiver forms, an associated function, an
+  explicit-lifetime reference receiver, and a rejected typed receiver.
+  Dot-call consumers can distinguish them without guessing from an inferred
+  first parameter.
+- [ ] Test lifetime method generics use `Dummy`; const method generics,
+  unsupported method predicates, and
   associated-type/projection occurrences make only the method-consumer view
   ineligible; none can be exposed as a partially checked candidate.
 
@@ -158,6 +162,9 @@ Tests:
 - [ ] Add tests for nested modules, multiple impls for one trait, inherent impls, and
   macro-expanded impls.
 - [x] Keep consumer filtering as a linear scan for the MVP.
+- [ ] Partition the candidate source dependency by trait and add a query-trace
+  regression proving that an unrelated-trait impl edit does not reexecute the
+  queried trait's candidate discovery.
 
 ### Step 7: Consumer boundaries
 
@@ -169,8 +176,11 @@ Tests:
   do not implement proof search or method selection in this RFD.
 - [x] Expose to the MVP solver only impls whose trait signature and defining
   predicates are available and whose impl and trait eligibility markers are
-  both `Eligible`. Keep local impls of external traits out until the external
-  metadata boundary supplies those predicates.
+  both `Eligible`. Represented local impls of external traits use the same gate
+  after the external metadata boundary supplies those predicates.
+- [x] Import represented external trait signatures, associated-item lists, and
+  function signatures as owned `TcxDb` values and lower them through tracked
+  queries without reading external bodies.
 - [x] Treat a relevant `Unsupported` signature as an incomplete candidate
   source, never as an eligible signature with an empty predicate set.
 - [ ] Give method resolution the same eligibility gate for type-only inherent
@@ -179,8 +189,8 @@ Tests:
 ### Deferred beyond the MVP
 
 - [ ] External and builtin impl enumeration.
-- [ ] Lifetime, const, and higher-ranked predicates.
-- [ ] Lifetime/const-generic trait and impl candidate exposure.
+- [ ] Meaningful lifetime semantics, const predicates, and higher-ranked predicates.
+- [ ] Const-generic trait and impl candidate exposure.
 - [ ] Associated type and associated const definitions.
 - [ ] Supertrait elaboration.
 - [ ] Coherence, overlap, negative impls, auto traits, and specialization.

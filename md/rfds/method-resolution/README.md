@@ -51,10 +51,14 @@ fixed trait:
 LookupSelfTy: CandidateTrait<TraitArgs...>
 ```
 
-There is no existential `?Trait` solver query. The solver returns proof certainty,
-substitutions, and residual obligations; it does not return an impl or trait identity. The
-method resolver already knows the candidate trait and obtains the function symbol from that
-trait's items. This keeps solver caching and clause selection independent of name lookup.
+There is no existential `?Trait` solver query. The resolver invokes the
+goal-specific proof operation, whose successful semantic output is `Proven`
+alongside substitutions and residual obligations; it does not return an impl or
+trait identity. The method resolver already knows the candidate trait and
+obtains the function symbol from that trait's items. This keeps solver caching
+and clause selection independent of name lookup. Future callable-instance or
+vtable operations may return other output variants, but their representation
+and code-generation role are outside this RFD.
 `LookupSelfTy` is the receiver after the current built-in deref step but before
 the selected method's value/shared/mutable autoref adjustment.
 
@@ -91,6 +95,12 @@ pub enum MethodResolution<'db> {
     Error(ErrorReported),
 }
 ```
+
+`ReceiverAdjustments` is an internal candidate-selection and commit recipe. A
+successful method call consumes it while constructing the [elaborated typed
+IR](../../design/typed-ir.md): dereferences, borrows, and coercions become
+ordinary expression nodes, and the completed body contains a resolved call
+target rather than `MethodCall` plus an adjustment list.
 
 `Found` means the unique candidate's inference effects have been applied transactionally
 and all nontrivial residuals have been registered with the caller's obligation store. It
@@ -342,13 +352,19 @@ the same transactional call checks. Visibility and unsupported/incomplete
 metadata use the ordinary outcome table. Unqualified trait-associated function
 lookup and complete UFCS behavior remain deferred.
 
-An external `Type::function` lookup is likewise unsupported/unknown until
-external inherent-item metadata exists; the absence of local impls is not an
-exhaustive `NotFound` result.
+External receiver-bearing dot calls now have a narrow rigid-ADT metadata path.
+External `Type::function` lookup remains unsupported/unknown because that path
+deliberately excludes receiver-less associated functions; the absence of local
+impls is not an exhaustive `NotFound` result.
 
 ## Deferred work
 
-- External inherent and trait methods through `TcxDb`.
+The first planned follow-up which combines an external trait method,
+associated-type normalization, and an external inherent method is the
+mini-redis [`Parse::next` vertical slice](../associated-type-normalization/README.md).
+
+- General external inherent and trait methods beyond the implemented rigid-ADT
+  inherent and fixed-trait vertical slices.
 - Lifetime/const-generic impl, trait, and method candidate instantiation.
 - Complete import, visibility, and prelude handling for traits in lookup scope.
 - Custom `Deref` chains and associated type normalization.

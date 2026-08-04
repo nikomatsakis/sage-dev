@@ -2,8 +2,12 @@ use sage_ir::Db;
 use sage_ir::cst::Mutability;
 use sage_ir::cst::expr::{BinaryOp as SageBinaryOp, Literal as SageLiteral};
 use sage_ir::local_syms::enums::{LocalEnumSym, enum_variants};
-use sage_ir::symbol::{EnumSymbol, FnSymbol, ModSymbol, StructSymbol, Symbol, SymbolData};
-use sage_ir::ty::{self, Ty};
+use sage_ir::span::ParseSource;
+use sage_ir::symbol::{
+    EnumSymbol, FnSymbol, ImplSymbol, ModSymbol, StructSymbol, Symbol, SymbolData, TraitSymbol,
+    TypeAliasSymbol,
+};
+use sage_ir::ty::{self, AliasTy, TraitItemDef, Ty};
 use sage_ir::tytree::{PathResolution, TyBody, TyExprData, TyFieldInit, TyStmt, TyStmtKind};
 use sage_stash::Stash;
 
@@ -11,6 +15,7 @@ use rust_ref::*;
 
 pub fn emit_module<'db>(db: &'db dyn Db, module: ModSymbol<'db>) -> Crate<NormalizedDef> {
     let mut emitter = Emitter::new(db);
+    emitter.pre_register_mod(module);
     let root = emitter.emit_mod(module);
     Crate { root }
 }
@@ -30,11 +35,87 @@ impl<'db> Emitter<'db> {
         }
     }
 
-    fn assign_local_id(&mut self, sym: Symbol<'db>) -> u32 {
+    fn register_local_def(&mut self, sym: Symbol<'db>) {
+        assert!(
+            !self
+                .local_def_map
+                .iter()
+                .any(|(registered, _)| *registered == sym),
+            "local definition registered twice: {sym:?}"
+        );
         let id = self.local_def_counter;
         self.local_def_counter += 1;
         self.local_def_map.push((sym, id));
-        id
+    }
+
+    fn local_id(&self, sym: Symbol<'db>) -> u32 {
+        self.local_def_map
+            .iter()
+            .find_map(|(registered, id)| (*registered == sym).then_some(*id))
+            .expect("emitted local definition must be pre-registered")
+    }
+
+    fn pre_register_mod(&mut self, module: ModSymbol<'db>) {
+        let module_symbol: Symbol<'db> = module.into();
+        self.register_local_def(module_symbol);
+
+        for &item in module.expanded_module_items(self.db) {
+            match item.data(self.db) {
+                SymbolData::FnSymbol(FnSymbol::Local(_))
+                | SymbolData::StructSymbol(StructSymbol::Local(_))
+                | SymbolData::TypeAliasSymbol(sage_ir::symbol::TypeAliasSymbol::Local(_)) => {
+                    self.register_local_def(item);
+                }
+                SymbolData::EnumSymbol(EnumSymbol::Local(local_enum)) => {
+                    self.register_local_def(item);
+                    for &variant in enum_variants(self.db, local_enum) {
+                        if matches!(variant.data(self.db), SymbolData::VariantSymbol(_)) {
+                            self.register_local_def(variant);
+                        }
+                    }
+                }
+                SymbolData::ModSymbol(ModSymbol::Local(local_module)) => {
+                    self.pre_register_mod(ModSymbol::Local(local_module));
+                }
+                SymbolData::ImplSymbol(ImplSymbol::Local(local_impl)) => {
+                    for function in self.source_impl_functions(local_impl) {
+                        self.register_local_def(function.into());
+                    }
+                }
+                SymbolData::TraitSymbol(TraitSymbol::Local(local_trait)) => {
+                    let items = local_trait.items(self.db);
+                    let associated_types: Vec<_> = items.stash()[items.root().value]
+                        .iter()
+                        .filter_map(|item| match *item {
+                            TraitItemDef::Type(TypeAliasSymbol::Local(associated_type)) => {
+                                Some(associated_type)
+                            }
+                            TraitItemDef::Type(TypeAliasSymbol::Ext(_))
+                            | TraitItemDef::Function(_)
+                            | TraitItemDef::Const(_) => None,
+                        })
+                        .collect();
+                    for associated_type in associated_types {
+                        self.register_local_def(associated_type.into());
+                    }
+                }
+                SymbolData::FnSymbol(FnSymbol::Ext(_))
+                | SymbolData::StructSymbol(StructSymbol::Ext(_))
+                | SymbolData::EnumSymbol(EnumSymbol::Ext(_))
+                | SymbolData::ModSymbol(ModSymbol::Ext(_))
+                | SymbolData::VariantSymbol(_)
+                | SymbolData::VariantCtorSymbol(_)
+                | SymbolData::TraitSymbol(TraitSymbol::Ext(_))
+                | SymbolData::TypeAliasSymbol(sage_ir::symbol::TypeAliasSymbol::Ext(_))
+                | SymbolData::ConstSymbol(_)
+                | SymbolData::StaticSymbol(_)
+                | SymbolData::ImplSymbol(ImplSymbol::Ext(_))
+                | SymbolData::MacroDefSymbol(_)
+                | SymbolData::UseSymbol(_)
+                | SymbolData::IntrinsicTypeSymbol(_)
+                | SymbolData::MacroInvocationSymbol(_) => {}
+            }
+        }
     }
 
     fn normalize_def(&self, sym: Symbol<'db>) -> NormalizedDef {
@@ -76,9 +157,6 @@ impl<'db> Emitter<'db> {
     }
 
     fn ext_to_def_path(&self, ext: sage_ir::symbol::SymExt<'db>) -> NormalizedDef {
-        use sage_ir::symbol::SymExtKind;
-        use sage_ir::tcx::DefPathNs;
-
         let Some(sdp) = self
             .db
             .tcx()
@@ -90,26 +168,16 @@ impl<'db> Emitter<'db> {
             });
         };
 
-        let leaf_kind = match ext.kind(self.db) {
-            SymExtKind::Fn => DefKind::Fn,
-            SymExtKind::Struct | SymExtKind::TupleStructCtor => DefKind::Struct,
-            SymExtKind::Enum | SymExtKind::Variant | SymExtKind::VariantCtor => DefKind::Enum,
-            SymExtKind::Trait => DefKind::Trait,
-            SymExtKind::Mod => DefKind::Mod,
-            SymExtKind::TypeAlias => DefKind::TypeAlias,
-            SymExtKind::Const => DefKind::Const,
-            SymExtKind::Static => DefKind::Static,
-            _ => DefKind::Struct,
-        };
-
         let segments = sdp
             .segments
             .into_iter()
             .map(|seg| {
-                let kind = match seg.ns {
-                    DefPathNs::Type => leaf_kind.clone(),
-                    DefPathNs::Value => DefKind::Fn,
-                };
+                let kind = reference_def_kind(seg.kind).unwrap_or_else(|| {
+                    panic!(
+                        "Sage cannot represent external path segment kind {:?} for {}",
+                        seg.kind, seg.name
+                    )
+                });
                 DefPathSegment {
                     kind,
                     name: seg.name,
@@ -125,7 +193,7 @@ impl<'db> Emitter<'db> {
 
     fn emit_mod(&mut self, module: ModSymbol<'db>) -> Module<NormalizedDef> {
         let sym: Symbol<'db> = module.into();
-        let local_id = self.assign_local_id(sym);
+        let local_id = self.local_id(sym);
 
         let name = sym
             .name(self.db)
@@ -136,6 +204,12 @@ impl<'db> Emitter<'db> {
         let mut items = Vec::new();
 
         for &item_sym in expanded {
+            if let SymbolData::ImplSymbol(ImplSymbol::Local(local_impl)) = item_sym.data(self.db) {
+                for function in self.source_impl_functions(local_impl) {
+                    items.push(Item::Fn(self.emit_fn(function.into(), function)));
+                }
+                continue;
+            }
             if let Some(ref_item) = self.emit_item(item_sym) {
                 items.push(ref_item);
             }
@@ -147,6 +221,29 @@ impl<'db> Emitter<'db> {
             items,
         }
     }
+
+    // ANCHOR: example_sage_source_impl_functions
+    fn source_impl_functions(
+        &self,
+        local_impl: sage_ir::local_syms::impls::LocalImplSym<'db>,
+    ) -> Vec<sage_ir::local_syms::fns::LocalFnSym<'db>> {
+        let items = local_impl.items(self.db);
+        items.stash()[items.root().value]
+            .iter()
+            .filter_map(|item| match *item {
+                TraitItemDef::Function(FnSymbol::Local(function))
+                    if !matches!(function.span(self.db).source, ParseSource::Derive(_)) =>
+                {
+                    Some(function)
+                }
+                TraitItemDef::Function(FnSymbol::Local(_))
+                | TraitItemDef::Function(FnSymbol::Ext(_))
+                | TraitItemDef::Type(_)
+                | TraitItemDef::Const(_) => None,
+            })
+            .collect()
+    }
+    // ANCHOR_END: example_sage_source_impl_functions
 
     fn emit_item(&mut self, sym: Symbol<'db>) -> Option<Item<NormalizedDef>> {
         match sym.data(self.db) {
@@ -182,7 +279,7 @@ impl<'db> Emitter<'db> {
         sym: Symbol<'db>,
         local_fn: sage_ir::local_syms::fns::LocalFnSym<'db>,
     ) -> FnItem<NormalizedDef> {
-        let local_id = self.assign_local_id(sym);
+        let local_id = self.local_id(sym);
         let name = local_fn.name(self.db).text(self.db).to_string();
 
         let sig = local_fn.sig(self.db);
@@ -214,25 +311,41 @@ impl<'db> Emitter<'db> {
         let cst_params = &cst_stash[cst.params];
         let sig_params = &sig_stash[fn_sig.params];
 
-        sig_params
-            .iter()
-            .enumerate()
-            .map(|(i, &ty_ptr)| {
-                let param_name = if i < cst_params.len() {
-                    cst_params[i]
-                        .name
-                        .map(|n| n.text(self.db).to_string())
-                        .unwrap_or_else(|| "_".to_string())
-                } else {
-                    "_".to_string()
-                };
-                let ty = self.emit_ty(sig_stash, sig_stash[ty_ptr]);
-                Param {
-                    name: param_name,
-                    ty,
-                }
-            })
-            .collect()
+        let mut params = Vec::new();
+        if let Some(receiver) = fn_sig.receiver {
+            let owner_ty = self.emit_ty(sig_stash, sig_stash[receiver.owner_self_ty]);
+            let ty = match receiver.form {
+                ty::MethodReceiver::Value { .. } => owner_ty,
+                ty::MethodReceiver::Ref { mutability } => Type::Ref {
+                    mutable: matches!(mutability, Mutability::Mut),
+                    ty: Box::new(owner_ty),
+                },
+            };
+            let name = cst_params
+                .first()
+                .and_then(|parameter| parameter.name)
+                .map(|name| name.text(self.db).to_string())
+                .unwrap_or_else(|| "self".to_string());
+            params.push(Param { name, ty });
+        }
+
+        let cst_offset = usize::from(fn_sig.receiver.is_some());
+        params.extend(sig_params.iter().enumerate().map(|(i, &ty_ptr)| {
+            let param_name = if i + cst_offset < cst_params.len() {
+                cst_params[i + cst_offset]
+                    .name
+                    .map(|n| n.text(self.db).to_string())
+                    .unwrap_or_else(|| "_".to_string())
+            } else {
+                "_".to_string()
+            };
+            let ty = self.emit_ty(sig_stash, sig_stash[ty_ptr]);
+            Param {
+                name: param_name,
+                ty,
+            }
+        }));
+        params
     }
 
     fn emit_struct(
@@ -240,7 +353,7 @@ impl<'db> Emitter<'db> {
         sym: Symbol<'db>,
         local_struct: sage_ir::local_syms::structs::LocalStructSym<'db>,
     ) -> StructItem<NormalizedDef> {
-        let local_id = self.assign_local_id(sym);
+        let local_id = self.local_id(sym);
         let name = local_struct.name(self.db).text(self.db).to_string();
 
         let fields_stashed = local_struct.fields(self.db);
@@ -271,7 +384,7 @@ impl<'db> Emitter<'db> {
         sym: Symbol<'db>,
         local_enum: LocalEnumSym<'db>,
     ) -> EnumItem<NormalizedDef> {
-        let local_id = self.assign_local_id(sym);
+        let local_id = self.local_id(sym);
         let name = local_enum.name(self.db).text(self.db).to_string();
 
         let variant_syms = enum_variants(self.db, local_enum);
@@ -294,7 +407,7 @@ impl<'db> Emitter<'db> {
     }
 
     fn emit_variant(&mut self, sym: Symbol<'db>) -> VariantDef<NormalizedDef> {
-        let local_id = self.assign_local_id(sym);
+        let local_id = self.local_id(sym);
         let name = sym
             .name(self.db)
             .map(|(n, _)| n.text(self.db).to_string())
@@ -352,6 +465,30 @@ impl<'db> Emitter<'db> {
                     type_args: args,
                 }
             }
+            Ty::Alias(alias) => {
+                let (kind, target, type_args) = match alias {
+                    AliasTy::Named(alias) => {
+                        (AliasKind::Named, alias.def, stash[alias.args].to_vec())
+                    }
+                    AliasTy::Associated(projection) => {
+                        let mut arguments = vec![projection.self_ty];
+                        arguments.extend(stash[projection.trait_ref.args].iter().copied());
+                        arguments.extend(stash[projection.args].iter().copied());
+                        (AliasKind::Associated, projection.associated_ty, arguments)
+                    }
+                    AliasTy::Opaque(alias) => {
+                        (AliasKind::Opaque, alias.def, stash[alias.args].to_vec())
+                    }
+                };
+                Type::Alias {
+                    kind,
+                    target: self.normalize_def(target.into()),
+                    type_args: type_args
+                        .into_iter()
+                        .map(|argument| self.emit_ty(stash, stash[argument]))
+                        .collect(),
+                }
+            }
             Ty::Ref(inner_ptr, mutability, _) => Type::Ref {
                 mutable: matches!(mutability, Mutability::Mut),
                 ty: Box::new(self.emit_ty(stash, stash[inner_ptr])),
@@ -370,7 +507,12 @@ impl<'db> Emitter<'db> {
                 }
             }
             Ty::Never => Type::Primitive("!".to_string()),
-            _ => Type::Primitive(format!("?{:?}", ty)),
+            Ty::Slice(_)
+            | Ty::Array(_, _)
+            | Ty::FnPtr(_, _)
+            | Ty::Param(_)
+            | Ty::InferVar(_)
+            | Ty::Error(_) => Type::Primitive(format!("?{:?}", ty)),
         }
     }
 
@@ -410,6 +552,9 @@ impl<'db> Emitter<'db> {
                     let target = self.normalize_def(*sym);
                     Expr::Call {
                         target,
+                        dispatch: rust_ref::CallDispatch::Direct,
+                        owner_type_args: vec![],
+                        method_type_args: vec![],
                         args: vec![],
                         ty: expr_ty,
                     }
@@ -449,6 +594,9 @@ impl<'db> Emitter<'db> {
                         let target = self.normalize_def(*sym);
                         Expr::Call {
                             target,
+                            dispatch: rust_ref::CallDispatch::Direct,
+                            owner_type_args: vec![],
+                            method_type_args: vec![],
                             args,
                             ty: expr_ty,
                         }
@@ -460,10 +608,46 @@ impl<'db> Emitter<'db> {
                         });
                         Expr::Call {
                             target,
+                            dispatch: rust_ref::CallDispatch::Direct,
+                            owner_type_args: vec![],
+                            method_type_args: vec![],
                             args,
                             ty: expr_ty,
                         }
                     }
+                }
+            }
+            TyExprData::ResolvedCall(target, args_slice) => {
+                let args = stash[*args_slice]
+                    .iter()
+                    .map(|&argument| self.emit_expr(stash, &stash[argument], locals))
+                    .collect();
+                let dispatch = match target.dispatch {
+                    sage_ir::tytree::CallDispatch::Direct => rust_ref::CallDispatch::Direct,
+                    sage_ir::tytree::CallDispatch::StaticTrait { self_ty, trait_ref } => {
+                        rust_ref::CallDispatch::StaticTrait {
+                            self_ty: self.emit_ty(stash, stash[self_ty]),
+                            trait_target: self.normalize_def(trait_ref.trait_sym.into()),
+                            trait_type_args: stash[trait_ref.args]
+                                .iter()
+                                .map(|&argument| self.emit_ty(stash, stash[argument]))
+                                .collect(),
+                        }
+                    }
+                };
+                Expr::Call {
+                    target: self.normalize_def(target.function.into()),
+                    dispatch,
+                    owner_type_args: stash[target.owner_type_args]
+                        .iter()
+                        .map(|&argument| self.emit_ty(stash, stash[argument]))
+                        .collect(),
+                    method_type_args: stash[target.method_type_args]
+                        .iter()
+                        .map(|&argument| self.emit_ty(stash, stash[argument]))
+                        .collect(),
+                    args,
+                    ty: expr_ty,
                 }
             }
             TyExprData::StructLit(res, fields_slice) => {
@@ -490,11 +674,18 @@ impl<'db> Emitter<'db> {
                     ty: expr_ty,
                 }
             }
-            TyExprData::Field(base_ptr, field_name) => {
+            TyExprData::Field(base_ptr, field) => {
                 let base = &stash[*base_ptr];
+                let owner = match field.owner {
+                    sage_ir::tytree::FieldOwner::Struct(owner) => self.normalize_def(owner.into()),
+                    sage_ir::tytree::FieldOwner::Variant(owner) => self.normalize_def(owner.into()),
+                };
                 Expr::Field {
                     expr: Box::new(self.emit_expr(stash, base, locals)),
-                    field_name: field_name.text(self.db).to_string(),
+                    field: FieldId {
+                        owner,
+                        index: field.index,
+                    },
                     ty: expr_ty,
                 }
             }
@@ -508,7 +699,8 @@ impl<'db> Emitter<'db> {
                     ty: expr_ty,
                 }
             }
-            TyExprData::Unary(sage_ir::cst::expr::UnaryOp::Deref, inner_ptr) => {
+            TyExprData::Unary(sage_ir::cst::expr::UnaryOp::Deref, inner_ptr)
+            | TyExprData::Deref(inner_ptr) => {
                 let inner = &stash[*inner_ptr];
                 Expr::Deref {
                     expr: Box::new(self.emit_expr(stash, inner, locals)),
@@ -604,4 +796,81 @@ impl<'db> Emitter<'db> {
             SageBinaryOp::Shr => BinOp::Shr,
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sage_ir::ty::{ProjectionTy, TraitRef};
+    use sage_test_harness::with_test_crate;
+
+    #[test]
+    fn local_associated_alias_emits_registered_identity_and_ordered_inputs() {
+        with_test_crate("trait Marker<T> { type Item; }", |db, root| {
+            let [symbol] = root.expanded_module_items(db) else {
+                panic!("expected one trait")
+            };
+            let trait_symbol = match symbol.data(db) {
+                SymbolData::TraitSymbol(trait_symbol) => trait_symbol,
+                other => panic!("expected trait, found {other:?}"),
+            };
+            let items = trait_symbol
+                .items(db)
+                .expect("trait items should be complete");
+            let [item] = &items.stash()[items.root().value] else {
+                panic!("expected one associated type")
+            };
+            let associated_ty = match item {
+                TraitItemDef::Type(associated_ty) => *associated_ty,
+                other => panic!("expected associated type, found {other:?}"),
+            };
+
+            let mut emitter = Emitter::new(db);
+            emitter.pre_register_mod(root);
+            let mut stash = Stash::new();
+            let self_ty = stash.alloc(Ty::Uint(ty::UintTy::U8));
+            let trait_argument = stash.alloc(Ty::Bool);
+            let trait_args = stash.alloc_slice(&[trait_argument]);
+            let item_args = stash.alloc_slice(&[]);
+            let projection = Ty::Alias(AliasTy::Associated(ProjectionTy {
+                associated_ty,
+                self_ty,
+                trait_ref: TraitRef {
+                    trait_sym: trait_symbol,
+                    args: trait_args,
+                },
+                args: item_args,
+            }));
+
+            assert_eq!(
+                emitter.emit_ty(&stash, projection),
+                Type::Alias {
+                    kind: AliasKind::Associated,
+                    target: NormalizedDef::Local(1),
+                    type_args: vec![
+                        Type::Primitive("u8".to_owned()),
+                        Type::Primitive("bool".to_owned()),
+                    ],
+                }
+            );
+        });
+    }
+}
+
+fn reference_def_kind(kind: sage_ir::symbol::SymExtKind) -> Option<DefKind> {
+    use sage_ir::symbol::SymExtKind;
+
+    Some(match kind {
+        SymExtKind::Fn => DefKind::Fn,
+        SymExtKind::Struct | SymExtKind::TupleStructCtor => DefKind::Struct,
+        SymExtKind::Enum => DefKind::Enum,
+        SymExtKind::Variant | SymExtKind::VariantCtor => DefKind::Variant,
+        SymExtKind::Trait => DefKind::Trait,
+        SymExtKind::Impl => DefKind::Impl,
+        SymExtKind::Mod => DefKind::Mod,
+        SymExtKind::TypeAlias => DefKind::TypeAlias,
+        SymExtKind::Const => DefKind::Const,
+        SymExtKind::Static => DefKind::Static,
+        SymExtKind::MacroDef | SymExtKind::Use | SymExtKind::Other => return None,
+    })
 }

@@ -152,29 +152,59 @@ fn collect_rs_recursive(dir: &Path, files: &mut Vec<PathBuf>) {
 // Comparison
 // ═══════════════════════════════════════════════════════════════════════════
 
+// ANCHOR: example_exact_oracle_comparison
 pub fn assert_crates_eq(
     fixture_name: &str,
     lhs: &Crate<NormalizedDef>,
     rhs: &Crate<NormalizedDef>,
 ) -> Result<(), String> {
-    let lhs_json = serde_json::to_value(lhs).unwrap();
-    let rhs_json = serde_json::to_value(rhs).unwrap();
+    let lhs_text = serde_json::to_string_pretty(lhs).unwrap();
+    let rhs_text = serde_json::to_string_pretty(rhs).unwrap();
+    assert_serialized_text_eq(fixture_name, &lhs_text, &rhs_text)
+}
 
-    if lhs_json == rhs_json {
+fn assert_serialized_text_eq(
+    fixture_name: &str,
+    lhs_text: &str,
+    rhs_text: &str,
+) -> Result<(), String> {
+    if lhs_text == rhs_text {
         return Ok(());
     }
 
+    // Exact deterministic text decides conformance. Parsing the already
+    // unequal outputs is diagnostic-only: it can explain a failure but can
+    // never turn one into a pass.
+    let lhs_json: serde_json::Value = serde_json::from_str(lhs_text).unwrap();
+    let rhs_json: serde_json::Value = serde_json::from_str(rhs_text).unwrap();
     let diff = assert_json_diff::assert_json_matches_no_panic(
         &lhs_json,
         &rhs_json,
         assert_json_diff::Config::new(assert_json_diff::CompareMode::Strict),
     );
     match diff {
-        Ok(()) => Ok(()),
+        Ok(()) => Err(format!(
+            "fixture '{fixture_name}' has structurally equal but textually distinct output"
+        )),
         Err(msg) => Err(format!(
             "fixture '{}' diverges between oracle and sage:\n{}",
             fixture_name, msg
         )),
+    }
+}
+// ANCHOR_END: example_exact_oracle_comparison
+
+#[cfg(test)]
+mod comparison_tests {
+    use super::assert_serialized_text_eq;
+
+    #[test]
+    fn exact_text_is_the_conformance_boundary() {
+        assert!(assert_serialized_text_eq("same", "{\n  \"x\": 1\n}", "{\n  \"x\": 1\n}").is_ok());
+
+        let error = assert_serialized_text_eq("spacing", "{\"x\":1}", "{ \"x\": 1 }")
+            .expect_err("structurally equal JSON with different text must fail");
+        assert!(error.contains("structurally equal but textually distinct"));
     }
 }
 

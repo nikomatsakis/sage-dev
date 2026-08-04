@@ -3,7 +3,11 @@ use std::sync::{Arc, Mutex};
 
 use crate::symbol::{CrateNum, DefIndex};
 
-use super::{ExternalDefPath, RawChild, TcxDb};
+use super::{
+    ExternalDefPath, RawAdtSignature, RawAssociatedItems, RawAssociatedTypeValue, RawChild,
+    RawFnSignature, RawImplSignature, RawInherentMethodCandidates, RawRelevantImpls,
+    RawSelfTypeHead, RawTraitSignature, TcxDb,
+};
 
 /// Request from the salsa thread to the TyCtxt thread.
 /// Each variant carries a oneshot sender for its typed response.
@@ -41,6 +45,60 @@ pub enum TcxRequest {
         crate_num: CrateNum,
         def_index: DefIndex,
         reply: mpsc::Sender<Option<ExternalDefPath>>,
+    },
+    TraitSignature {
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        reply: mpsc::Sender<Option<RawTraitSignature>>,
+    },
+    AssociatedItems {
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        reply: mpsc::Sender<Option<RawAssociatedItems>>,
+    },
+    FnSignature {
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        reply: mpsc::Sender<Option<RawFnSignature>>,
+    },
+    AdtSignature {
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        reply: mpsc::Sender<Option<RawAdtSignature>>,
+    },
+    InherentMethodCandidates {
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        method_name: String,
+        reply: mpsc::Sender<Option<RawInherentMethodCandidates>>,
+    },
+    RelevantTraitImpls {
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        self_head: Option<RawSelfTypeHead>,
+        reply: mpsc::Sender<Option<RawRelevantImpls>>,
+    },
+    ImplSignature {
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        reply: mpsc::Sender<Option<RawImplSignature>>,
+    },
+    AssociatedTypeValue {
+        impl_crate_num: CrateNum,
+        impl_def_index: DefIndex,
+        associated_crate_num: CrateNum,
+        associated_def_index: DefIndex,
+        reply: mpsc::Sender<Option<RawAssociatedTypeValue>>,
+    },
+    AdtIsAlwaysSized {
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        reply: mpsc::Sender<Option<bool>>,
+    },
+    AdtIsFundamental {
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        reply: mpsc::Sender<Option<bool>>,
     },
     ExpandDerive {
         crate_num: CrateNum,
@@ -177,6 +235,194 @@ impl TcxDb for ProxyTcxDb {
         let (reply, rx) = mpsc::channel();
         self.tx
             .send(TcxRequest::StructuredDefPath {
+                crate_num,
+                def_index,
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn trait_signature(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+    ) -> Option<RawTraitSignature> {
+        self.log.lock().unwrap().push(format!(
+            "tcx::trait_signature({}, {})",
+            crate_num.0, def_index.0
+        ));
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::TraitSignature {
+                crate_num,
+                def_index,
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn associated_items(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+    ) -> Option<RawAssociatedItems> {
+        self.log.lock().unwrap().push(format!(
+            "tcx::associated_items({}, {})",
+            crate_num.0, def_index.0
+        ));
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::AssociatedItems {
+                crate_num,
+                def_index,
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn fn_signature(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<RawFnSignature> {
+        self.log.lock().unwrap().push(format!(
+            "tcx::fn_signature({}, {})",
+            crate_num.0, def_index.0
+        ));
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::FnSignature {
+                crate_num,
+                def_index,
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn adt_signature(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<RawAdtSignature> {
+        self.log.lock().unwrap().push(format!(
+            "tcx::adt_signature({}, {})",
+            crate_num.0, def_index.0
+        ));
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::AdtSignature {
+                crate_num,
+                def_index,
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn inherent_method_candidates(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        method_name: &str,
+    ) -> Option<RawInherentMethodCandidates> {
+        self.log.lock().unwrap().push(format!(
+            "tcx::inherent_method_candidates({}, {}, {:?})",
+            crate_num.0, def_index.0, method_name
+        ));
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::InherentMethodCandidates {
+                crate_num,
+                def_index,
+                method_name: method_name.to_owned(),
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn relevant_trait_impls(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        self_head: Option<RawSelfTypeHead>,
+    ) -> Option<RawRelevantImpls> {
+        self.log.lock().unwrap().push(format!(
+            "tcx::relevant_trait_impls({}, {}, {:?})",
+            crate_num.0, def_index.0, self_head
+        ));
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::RelevantTraitImpls {
+                crate_num,
+                def_index,
+                self_head,
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn impl_signature(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<RawImplSignature> {
+        self.log.lock().unwrap().push(format!(
+            "tcx::impl_signature({}, {})",
+            crate_num.0, def_index.0
+        ));
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::ImplSignature {
+                crate_num,
+                def_index,
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn associated_type_value(
+        &self,
+        impl_crate_num: CrateNum,
+        impl_def_index: DefIndex,
+        associated_crate_num: CrateNum,
+        associated_def_index: DefIndex,
+    ) -> Option<RawAssociatedTypeValue> {
+        self.log.lock().unwrap().push(format!(
+            "tcx::associated_type_value({}, {}, {}, {})",
+            impl_crate_num.0, impl_def_index.0, associated_crate_num.0, associated_def_index.0,
+        ));
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::AssociatedTypeValue {
+                impl_crate_num,
+                impl_def_index,
+                associated_crate_num,
+                associated_def_index,
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn adt_is_always_sized(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<bool> {
+        self.log.lock().unwrap().push(format!(
+            "tcx::adt_is_always_sized({}, {})",
+            crate_num.0, def_index.0
+        ));
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::AdtIsAlwaysSized {
+                crate_num,
+                def_index,
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn adt_is_fundamental(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<bool> {
+        self.log.lock().unwrap().push(format!(
+            "tcx::adt_is_fundamental({}, {})",
+            crate_num.0, def_index.0
+        ));
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::AdtIsFundamental {
                 crate_num,
                 def_index,
                 reply,

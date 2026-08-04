@@ -5,6 +5,7 @@ pub mod derive;
 pub mod diagnostic;
 pub mod display;
 pub mod dump;
+pub mod external_syms;
 pub mod generic_param;
 pub mod local_syms;
 pub mod lower;

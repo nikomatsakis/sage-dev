@@ -12,6 +12,7 @@
   - [Tenets](./design/tenets.md)
   - [Architecture](./design/architecture.md)
   - [Type Checking](./design/checking.md)
+  - [Typed IR](./design/typed-ir.md)
   - [Trait Solver](./design/trait-solver.md)
   - [Stash](./design/stash.md)
   - [Spans](./design/spans.md)
@@ -22,6 +23,8 @@
     - [Macro-generated struct](./design/examples/macro-generated-struct.md)
     - [A direct trait obligation](./design/examples/direct-trait-obligation.md)
     - [A nested trait proof](./design/examples/nested-trait-proof.md)
+    - [An external trait method call](./design/examples/external-trait-method.md)
+    - [An oracle-checked method body](./design/examples/oracle-checked-method.md)
   - [Architecture Decisions](./design/decisions.md)
 - [Research](./design/research/README.md)
   - [tree-sitter-rust Grammar Reference](./design/research/tree-sitter-rust-grammar.md)
@@ -66,7 +69,11 @@
     - [Implementation plan and status](./rfds/trait-solving/implementation.md)
   - [Method Resolution](./rfds/method-resolution/README.md)
     - [Implementation plan and status](./rfds/method-resolution/implementation.md)
+  - [Typed IR Elaboration](./rfds/typed-ir-elaboration/README.md)
+    - [Implementation plan and status](./rfds/typed-ir-elaboration/implementation.md)
 - [Completed](./rfds/completed.md)
+  - [Associated Type Normalization for `Parse::next`](./rfds/associated-type-normalization/README.md)
+    - [Implementation plan and status](./rfds/associated-type-normalization/implementation.md)
   - [Initial Setup](./rfds/initial-setup/README.md)
     - [Implementation plan and status](./rfds/initial-setup/implementation.md)
   - [Relative Span Model](./rfds/relative-span-model/README.md)
@@ -109,6 +116,7 @@
 # Implementation
 
 - [Build-Out Roadmap](./implementation/roadmap.md)
+- [Mini-redis Conformance Roadmap](./implementation/mini-redis.md)
 
 # Contributing
 

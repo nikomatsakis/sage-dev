@@ -2,6 +2,7 @@
 #![feature(proc_macro_internals)]
 #![allow(internal_features)]
 
+extern crate rustc_abi;
 extern crate rustc_driver;
 extern crate rustc_expand;
 extern crate rustc_hir;
@@ -84,17 +85,97 @@ pub fn serve_tcx_requests(tcx: TyCtxt<'_>, req_rx: mpsc::Receiver<TcxRequest>) {
             } => {
                 let _ = reply.send(tcx_db.structured_def_path(crate_num, def_index));
             }
+            TcxRequest::TraitSignature {
+                crate_num,
+                def_index,
+                reply,
+            } => {
+                let _ = reply.send(tcx_db.trait_signature(crate_num, def_index));
+            }
+            TcxRequest::AssociatedItems {
+                crate_num,
+                def_index,
+                reply,
+            } => {
+                let _ = reply.send(tcx_db.associated_items(crate_num, def_index));
+            }
+            TcxRequest::FnSignature {
+                crate_num,
+                def_index,
+                reply,
+            } => {
+                let _ = reply.send(tcx_db.fn_signature(crate_num, def_index));
+            }
+            TcxRequest::AdtSignature {
+                crate_num,
+                def_index,
+                reply,
+            } => {
+                let _ = reply.send(tcx_db.adt_signature(crate_num, def_index));
+            }
+            TcxRequest::InherentMethodCandidates {
+                crate_num,
+                def_index,
+                method_name,
+                reply,
+            } => {
+                let _ = reply.send(tcx_db.inherent_method_candidates(
+                    crate_num,
+                    def_index,
+                    &method_name,
+                ));
+            }
+            TcxRequest::RelevantTraitImpls {
+                crate_num,
+                def_index,
+                self_head,
+                reply,
+            } => {
+                let _ = reply.send(tcx_db.relevant_trait_impls(crate_num, def_index, self_head));
+            }
+            TcxRequest::ImplSignature {
+                crate_num,
+                def_index,
+                reply,
+            } => {
+                let _ = reply.send(tcx_db.impl_signature(crate_num, def_index));
+            }
+            TcxRequest::AssociatedTypeValue {
+                impl_crate_num,
+                impl_def_index,
+                associated_crate_num,
+                associated_def_index,
+                reply,
+            } => {
+                let _ = reply.send(tcx_db.associated_type_value(
+                    impl_crate_num,
+                    impl_def_index,
+                    associated_crate_num,
+                    associated_def_index,
+                ));
+            }
+            TcxRequest::AdtIsAlwaysSized {
+                crate_num,
+                def_index,
+                reply,
+            } => {
+                let _ = reply.send(tcx_db.adt_is_always_sized(crate_num, def_index));
+            }
+            TcxRequest::AdtIsFundamental {
+                crate_num,
+                def_index,
+                reply,
+            } => {
+                let _ = reply.send(tcx_db.adt_is_fundamental(crate_num, def_index));
+            }
             TcxRequest::ExpandDerive {
                 crate_num,
                 def_index,
                 item_source,
                 reply,
             } => {
-                let _ = reply.send(tcx_db.expand_proc_macro_derive(
-                    crate_num,
-                    def_index,
-                    &item_source,
-                ));
+                let _ =
+                    reply.send(tcx_db.expand_proc_macro_derive(crate_num, def_index, &item_source));
             }
             TcxRequest::ExpandBang {
                 crate_num,
@@ -102,11 +183,8 @@ pub fn serve_tcx_requests(tcx: TyCtxt<'_>, req_rx: mpsc::Receiver<TcxRequest>) {
                 input_tokens,
                 reply,
             } => {
-                let _ = reply.send(tcx_db.expand_proc_macro_bang(
-                    crate_num,
-                    def_index,
-                    &input_tokens,
-                ));
+                let _ =
+                    reply.send(tcx_db.expand_proc_macro_bang(crate_num, def_index, &input_tokens));
             }
             TcxRequest::ExpandAttr {
                 crate_num,

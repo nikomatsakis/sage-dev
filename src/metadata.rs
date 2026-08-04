@@ -24,6 +24,8 @@ struct Package {
 struct Target {
     name: String,
     kind: Vec<String>,
+    src_path: PathBuf,
+    edition: String,
 }
 
 #[derive(Deserialize)]
@@ -35,6 +37,8 @@ struct Resolve {
 struct ResolveNode {
     id: String,
     deps: Vec<ResolveDep>,
+    #[serde(default)]
+    features: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -64,15 +68,27 @@ struct BuildTarget {
 
 // --- public API ---
 
+#[derive(Debug)]
 pub struct WorkspaceInfo {
     pub selected: Vec<SelectedCrate>,
     pub deps_dir: PathBuf,
     pub direct_dep_rlibs: HashMap<String, PathBuf>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SelectedCrate {
     pub name: String,
     pub manifest_dir: PathBuf,
+    pub target: SelectedTarget,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SelectedTarget {
+    pub name: String,
+    pub src_path: PathBuf,
+    pub edition: sage_ir::scope::Edition,
+    pub enabled_features: Vec<String>,
+    pub cfgs: Vec<String>,
 }
 
 /// Get the sysroot for sage's own embedded rustc.
@@ -89,6 +105,13 @@ pub fn our_rustc() -> PathBuf {
 pub fn load_workspace(manifest_dir: &Path, selected_packages: &[String]) -> WorkspaceInfo {
     let meta = run_cargo_metadata(manifest_dir);
     let ws_member_ids: HashSet<&str> = meta.workspace_members.iter().map(|s| s.as_str()).collect();
+    let node_by_id: HashMap<&str, &ResolveNode> = meta
+        .resolve
+        .nodes
+        .iter()
+        .map(|n| (n.id.as_str(), n))
+        .collect();
+    let target_cfgs = rustc_target_cfgs();
 
     let selected: Vec<SelectedCrate> = meta
         .packages
@@ -96,10 +119,30 @@ pub fn load_workspace(manifest_dir: &Path, selected_packages: &[String]) -> Work
         .filter(|p| ws_member_ids.contains(p.id.as_str()))
         .filter(|p| selected_packages.is_empty() || selected_packages.iter().any(|s| s == &p.name))
         .filter_map(|p| {
-            p.targets.first()?;
+            let target = p.targets.iter().find(|target| {
+                target.kind.iter().any(|kind| kind == "lib")
+                    && !target.kind.iter().any(|kind| kind == "proc-macro")
+            })?;
+            let edition = sage_ir::scope::Edition::parse(&target.edition).unwrap_or_else(|| {
+                panic!(
+                    "unsupported Rust edition {:?} for {}",
+                    target.edition, p.name
+                )
+            });
+            let mut enabled_features = node_by_id
+                .get(p.id.as_str())
+                .map_or_else(Vec::new, |node| node.features.clone());
+            enabled_features.sort();
             Some(SelectedCrate {
                 name: p.name.clone(),
                 manifest_dir: p.manifest_path.parent().unwrap().to_path_buf(),
+                target: SelectedTarget {
+                    name: target.name.clone(),
+                    src_path: target.src_path.clone(),
+                    edition,
+                    enabled_features,
+                    cfgs: target_cfgs.clone(),
+                },
             })
         })
         .collect();
@@ -111,13 +154,6 @@ pub fn load_workspace(manifest_dir: &Path, selected_packages: &[String]) -> Work
             ws_member_ids.contains(p.id.as_str()) && selected.iter().any(|s| s.name == p.name)
         })
         .map(|p| p.id.as_str())
-        .collect();
-
-    let node_by_id: HashMap<&str, &ResolveNode> = meta
-        .resolve
-        .nodes
-        .iter()
-        .map(|n| (n.id.as_str(), n))
         .collect();
 
     let mut direct_dep_names: HashSet<String> = HashSet::new();
@@ -140,6 +176,25 @@ pub fn load_workspace(manifest_dir: &Path, selected_packages: &[String]) -> Work
         deps_dir,
         direct_dep_rlibs,
     }
+}
+
+fn rustc_target_cfgs() -> Vec<String> {
+    let output = Command::new(our_rustc())
+        .args(["--print", "cfg"])
+        .output()
+        .expect("failed to ask rustc for target cfg values");
+    assert!(
+        output.status.success(),
+        "rustc --print cfg failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut cfgs: Vec<_> = String::from_utf8(output.stdout)
+        .expect("rustc cfg output was not UTF-8")
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    cfgs.sort();
+    cfgs
 }
 
 fn run_cargo_metadata(manifest_dir: &Path) -> Metadata {

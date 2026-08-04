@@ -23,19 +23,23 @@
 
 ## Motivation
 
-The MVP solver calls `local_impls(db, local_crate)` and then reads every local
-impl signature to filter for the queried trait. This has two deliberate but
-non-destination limitations:
+The original MVP solver called `local_impls(db, local_crate)` and then read
+every local impl signature to filter for the queried trait. Its candidate
+source had two deliberate but non-destination limitations:
 
-1. It cannot prove a goal from an impl defined in an upstream crate, even
+1. It could not prove a goal from an impl defined in an upstream crate, even
    though such impls are globally visible to the current Rust compilation.
 2. A change to any local impl invalidates the all-local-impl list and forces
    every trait query to repeat filtering, including queries for unrelated
    traits.
 
-The current `TcxDb` boundary exposes external names and macros but no external
-trait/impl signature or relevant-impl query. The Trait System RFD therefore
-deferred external impls and described the linear list as an MVP source.
+The first limitation is now closed for represented explicit impls. Separate
+owned `TcxDb` operations expose a fixed-trait relevant-impl set, optional
+conservative rigid self-head refinement, and one binder-aware impl header.
+Candidate assembly lowers those headers and uses the same proof path as local
+impls. Associated values remain a separate operation. The local source is
+trait-keyed at its public Salsa boundary but still scans the expanded local
+module tree, so the second invalidation limitation remains.
 
 These limitations must remain explicit in the MVP without becoming accidental
 architecture. Candidate discovery is a semantic completeness boundary and an
@@ -53,9 +57,11 @@ trait_impl_candidates(
 ) -> complete deterministic candidate set
 ```
 
-The exact Rust types and the split between Salsa queries and `TcxDb` callbacks
-remain open. The fixed trait is mandatory. A self-type key is an optimization
-which may return a conservative superset.
+The fixed trait is mandatory. The external half is split into a tracked
+relevant-identity query and a tracked per-header import over owned `TcxDb`
+values. The planned local half uses a stable tracked index with a private
+tracked map and keyed tracked lookup methods; the implementation remains open.
+A self-type key is an optimization which may return a conservative superset.
 
 ## Detailed plans
 
@@ -122,23 +128,34 @@ missing metadata path yields an incomplete source and prevents exhaustive
 
 ### Define the incremental boundary
 
-The accepted implementation must make these invalidation properties
+The local collection query produces a crate-owned tracked index. The index
+preserves its identity across revisions and stores a private tracked map from
+trait identity to deterministic candidate identities and trait-specific
+hazards. Global hazards record unresolved constructs which could emit an impl
+of any trait. Only keyed tracked lookup methods may read the map.
+
+An unrelated edit may rebuild the index and reexecute the requested keyed
+lookup. If the requested bucket is unchanged, Salsa backdates the equal lookup
+result. The accepted implementation must make the resulting firewall
 observable in tests:
 
-- adding or editing an impl for `TraitB` does not reexecute candidate discovery
-  for `TraitA`;
-- adding an applicable impl for `TraitA` invalidates its candidate query;
-- changing unrelated item bodies does not invalidate impl discovery;
-- a self-head index may avoid invalidation from an impl in a disjoint rigid
+- adding or editing an impl for `TraitB` may reexecute `for_trait(TraitA)`, but
+  the equal result prevents reexecution of `TraitA` signature lowering,
+  canonical solver evaluation, normalization, and dependent body checking;
+- adding an applicable impl for `TraitA` changes its bucket and invalidates its
+  consumers;
+- changing only an impl body leaves the signature-level index value equal;
+- a global completeness hazard legitimately affects every trait lookup;
+- a self-head index may backdate a lookup after an edit in a disjoint rigid
   head bucket; and
 - local and external candidate identities remain stable across unrelated
   edits.
 
-The RFD will select the Salsa representation needed to achieve those
-properties. A trait-keyed tracked collection, per-trait index object, or
-equivalent fine-grained input may be used; one aggregate vector followed by a
-tracked filter is insufficient if reading the vector records a broad
-dependency.
+The private map prevents callers from bypassing the keyed/backdated boundary.
+One aggregate vector returned directly to solver consumers is insufficient.
+The map contains stable signature-level impl identities rather than lowered
+headers or associated-item bodies. If necessary, local impl symbols must gain
+stable header identity independently of their bodies.
 
 ## Required tests
 
@@ -153,11 +170,12 @@ Sage already constructs `Database` with a Salsa event callback which records
 hook records tracked-function bodies which actually execute; a memoized value
 served without reexecution does not emit `WillExecute`.
 
-No current executable test consumes `take_query_log`; older RFDs only proposed
-query-log snapshots. Before landing the incremental tests below, the test
-harness must expose a recorder or concrete database handle and replace the
-single unstructured string stream with, or normalize it into, three useful
-event classes:
+Executable tests now consume `take_query_log` through caller-provided and live
+proxy databases. The external `IntoIter: Iterator` checkpoint asserts cold and
+warm execution, the exact number and shape of relevant-impl/header requests,
+and the absence of associated-item or callee-body reads. The broader test
+matrix still needs a stable normalization layer over three useful event
+classes:
 
 1. **Salsa execution** — tracked function and stable key whose body executed.
 2. **Semantic lookup** — trait and optional simplified-self-type key requested
@@ -191,20 +209,24 @@ Counts are asserted only where repeated execution would itself be a bug.
 
 ### Incremental reuse tests
 
-- Salsa `WillExecute` events show that an unrelated-trait impl edit does not
-  reexecute the queried trait's candidate lookup.
-- Adding a relevant impl does reexecute and changes the candidate set.
-- Editing an impl body without changing its signature does not invalidate the
-  signature-level index.
-- When self-head partitioning is enabled, a disjoint-head signature edit does
-  not invalidate the narrower bucket.
+- After an unrelated-trait impl edit, Salsa events may show index construction
+  and keyed lookup reexecution, but the lookup result is equal and no queried
+  trait signature, solver, normalization, or dependent body query reexecutes.
+- Adding a relevant impl changes the candidate set and reexecutes its
+  downstream consumers.
+- Editing an impl body without changing its signature leaves the index contents
+  equal and does not invalidate signature-level consumers.
+- A global completeness-hazard edit invalidates every potentially affected
+  lookup.
+- When self-head partitioning is enabled, a disjoint-head signature edit may
+  reexecute the keyed lookup but is backdated before narrower consumers.
 - Equivalent external metadata snapshots retain stable candidate identities
   and cached results.
 - A cold goal trace contains only the expected trait-keyed lookup, relevant impl
   signatures, and required external metadata calls; impls for other traits are
   absent.
-- Repeating the unchanged goal produces the same solver result without a
-  `WillExecute` for the cached candidate query.
+- Repeating the unchanged goal produces the same solver result without index,
+  lookup, or downstream `WillExecute` events.
 
 These tests land with the implementation. Adding ignored or expected-failing
 tests now would not enforce the requirement and adding assertions for the MVP

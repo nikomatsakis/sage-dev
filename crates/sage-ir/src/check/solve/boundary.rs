@@ -6,11 +6,15 @@ use crate::check::infer::unify::{UnifyError, unify_in_probe};
 use crate::check::infer::version::{Universe, Version};
 use crate::generic_param::{AlphaEquivParam, GenericParam, GenericParamKind};
 use crate::scope::LocalCrateSymbol;
-use crate::ty::{Binder, Const, Lifetime, TraitRef, Ty, WherePredicate};
+use crate::ty::{
+    AliasTy, Binder, Const, NamedAliasTy, OpaqueAliasTy, ProjectionTy, TraitRef, Ty, WherePredicate,
+};
 
 use super::canonical::{CallerCanonicalVar, CanonicalMapping};
-use super::goal::{Assumption, Atom, CanonicalVarRole, Goal, GoalQueryData};
-use super::result::{GoalResult, QueryResult, QueryResultData, ResponseVarInfo, SubstEntry};
+use super::goal::{Assumption, Atom, CanonicalVarRole, Goal, GoalQueryData, SolverGoal};
+use super::result::{
+    GoalOutput, GoalResult, QueryResult, QueryResultData, ResponseVarInfo, SubstEntry,
+};
 
 #[derive(Copy, Clone, Debug)]
 pub struct InputInstance<'db> {
@@ -28,7 +32,7 @@ pub struct QueryProofState<'db> {
     pub assumptions: Slice<Assumption<'db>>,
     pub assumptions_complete: bool,
     pub local_crate: LocalCrateSymbol<'db>,
-    pub goal: Goal<'db>,
+    pub goal: SolverGoal<'db>,
     pub canonical_universe: Universe,
     pub next_response_param: u32,
 }
@@ -67,7 +71,7 @@ pub fn instantiate_query<'db>(query: &Stashed<GoalQueryData<'db>>) -> QueryProof
 
     let mut copier = IrCopier::new(source, &mut stash, type_mapping, None);
     let assumptions = copier.copy_assumption_slice(data.assumptions);
-    let goal = copier.copy_goal(data.goal);
+    let goal = copier.copy_solver_goal(data.goal);
 
     QueryProofState {
         stash,
@@ -89,7 +93,19 @@ pub fn extract_query_result<'db>(
     state: &QueryProofState<'db>,
     result: GoalResult<'db>,
 ) -> Stashed<QueryResult<'db>> {
-    extract_query_result_at(db, state, state.version, result)
+    extract_query_result_with_output_at(db, state, state.version, GoalOutput::Proven, result)
+}
+
+/// Extract a successful value-producing operation into a canonical response.
+/// The operation/output pairing is checked before response-local variables are
+/// bound, so malformed cached answers cannot cross the solver boundary.
+pub fn extract_query_result_with_output<'db>(
+    db: &'db dyn crate::Db,
+    state: &QueryProofState<'db>,
+    output: GoalOutput<'db>,
+    result: GoalResult<'db>,
+) -> Stashed<QueryResult<'db>> {
+    extract_query_result_with_output_at(db, state, state.version, output, result)
 }
 
 pub(crate) fn extract_query_result_at<'db>(
@@ -98,6 +114,26 @@ pub(crate) fn extract_query_result_at<'db>(
     version: Version,
     result: GoalResult<'db>,
 ) -> Stashed<QueryResult<'db>> {
+    extract_query_result_with_output_at(db, state, version, GoalOutput::Proven, result)
+}
+
+pub(crate) fn extract_query_result_with_output_at<'db>(
+    db: &'db dyn crate::Db,
+    state: &QueryProofState<'db>,
+    version: Version,
+    output: GoalOutput<'db>,
+    result: GoalResult<'db>,
+) -> Stashed<QueryResult<'db>> {
+    if matches!(result, GoalResult::Yes { .. }) {
+        assert!(
+            matches!(
+                (state.goal, output),
+                (SolverGoal::Prove(_), GoalOutput::Proven)
+                    | (SolverGoal::Normalize(_), GoalOutput::Type(_))
+            ),
+            "solver operation returned an incompatible output kind"
+        );
+    }
     let mut target = Stash::new();
     let mut extractor = ResponseExtractor::new(db, state, version, &mut target);
 
@@ -109,8 +145,13 @@ pub(crate) fn extract_query_result_at<'db>(
         }
         GoalResult::Yes { modulo } => {
             let subst = extractor.extract_substitution();
+            let output = extractor.copy_output(output);
             let modulo = extractor.copy_goal(modulo);
-            QueryResultData::Yes { subst, modulo }
+            QueryResultData::Yes {
+                output,
+                subst,
+                modulo,
+            }
         }
     };
     let response_vars = std::mem::take(&mut extractor.response_vars);
@@ -125,14 +166,23 @@ pub(crate) fn extract_query_result_at<'db>(
 }
 
 fn response_contains_no_infer_vars(stash: &Stash, result: QueryResult<'_>) -> bool {
-    let (substitution, residual) = match result.value {
-        QueryResultData::Yes { subst, modulo } => (subst, Some(modulo)),
-        QueryResultData::Maybe { hints } => (hints, None),
+    let (substitution, output, residual) = match result.value {
+        QueryResultData::Yes {
+            output,
+            subst,
+            modulo,
+        } => (subst, Some(output), Some(modulo)),
+        QueryResultData::Maybe { hints } => (hints, None, None),
         QueryResultData::No => return true,
     };
-    stash[substitution]
+    let substitutions_valid = stash[substitution]
         .iter()
-        .all(|entry| ty_contains_no_infer_vars(stash, entry.value))
+        .all(|entry| ty_contains_no_infer_vars(stash, entry.value));
+    substitutions_valid
+        && output.is_none_or(|output| match output {
+            GoalOutput::Proven => true,
+            GoalOutput::Type(ty) => ty_contains_no_infer_vars(stash, ty),
+        })
         && residual.is_none_or(|goal| goal_contains_no_infer_vars(stash, goal))
 }
 
@@ -171,6 +221,9 @@ fn assumption_contains_no_infer_vars(stash: &Stash, assumption: Assumption<'_>) 
                     .iter()
                     .all(|argument| ty_contains_no_infer_vars(stash, *argument))
         }
+        Assumption::NormalizesTo { alias, ty } => {
+            alias_contains_no_infer_vars(stash, alias) && ty_contains_no_infer_vars(stash, ty)
+        }
         Assumption::Implies(conditions, consequence) => {
             stash[conditions]
                 .iter()
@@ -186,6 +239,24 @@ fn assumption_contains_no_infer_vars(stash: &Stash, assumption: Assumption<'_>) 
         Assumption::All(assumptions) => stash[assumptions]
             .iter()
             .all(|item| assumption_contains_no_infer_vars(stash, *item)),
+    }
+}
+
+fn alias_contains_no_infer_vars(stash: &Stash, alias: AliasTy<'_>) -> bool {
+    match alias {
+        AliasTy::Named(alias) => stash[alias.args]
+            .iter()
+            .all(|ty| ty_contains_no_infer_vars(stash, *ty)),
+        AliasTy::Associated(projection) => {
+            ty_contains_no_infer_vars(stash, projection.self_ty)
+                && stash[projection.trait_ref.args]
+                    .iter()
+                    .chain(stash[projection.args].iter())
+                    .all(|ty| ty_contains_no_infer_vars(stash, *ty))
+        }
+        AliasTy::Opaque(alias) => stash[alias.args]
+            .iter()
+            .all(|ty| ty_contains_no_infer_vars(stash, *ty)),
     }
 }
 
@@ -213,7 +284,10 @@ pub struct AppliedResponse<'db> {
 }
 
 pub enum AppliedCertainty<'db> {
-    Yes { modulo: Goal<'db> },
+    Yes {
+        output: GoalOutput<'db>,
+        modulo: Goal<'db>,
+    },
     Maybe,
     No,
 }
@@ -331,10 +405,15 @@ pub fn apply_query_response<'db>(
                 let substitutions = copier.copy_substitution(hints);
                 (AppliedCertainty::Maybe, substitutions)
             }
-            QueryResultData::Yes { subst, modulo } => {
+            QueryResultData::Yes {
+                output,
+                subst,
+                modulo,
+            } => {
                 let substitutions = copier.copy_substitution(subst);
+                let output = copier.copy_output(output);
                 let modulo = copier.copy_goal(modulo);
-                (AppliedCertainty::Yes { modulo }, substitutions)
+                (AppliedCertainty::Yes { output, modulo }, substitutions)
             }
         };
 
@@ -381,6 +460,13 @@ struct ResponseExtractor<'state, 'target, 'db> {
 }
 
 impl<'state, 'target, 'db> ResponseExtractor<'state, 'target, 'db> {
+    fn copy_output(&mut self, output: GoalOutput<'db>) -> GoalOutput<'db> {
+        match output {
+            GoalOutput::Proven => GoalOutput::Proven,
+            GoalOutput::Type(ty) => GoalOutput::Type(self.copy_ty(ty)),
+        }
+    }
+
     fn new(
         db: &'db dyn crate::Db,
         state: &'state QueryProofState<'db>,
@@ -497,6 +583,10 @@ impl<'state, 'target, 'db> ResponseExtractor<'state, 'target, 'db> {
                 self_ty: self.copy_ty(self_ty),
                 trait_ref: self.copy_trait_ref(trait_ref),
             },
+            Assumption::NormalizesTo { alias, ty } => Assumption::NormalizesTo {
+                alias: self.copy_alias(alias),
+                ty: self.copy_ty(ty),
+            },
             Assumption::Implies(conditions, consequence) => {
                 let source = self.state.stash[conditions].to_vec();
                 let conditions: Vec<_> = source
@@ -518,6 +608,25 @@ impl<'state, 'target, 'db> ResponseExtractor<'state, 'target, 'db> {
                 trait_ref: self.copy_trait_ref(trait_ref),
             },
             Atom::Equals(left, right) => Atom::Equals(self.copy_ty(left), self.copy_ty(right)),
+        }
+    }
+
+    fn copy_alias(&mut self, alias: AliasTy<'db>) -> AliasTy<'db> {
+        match alias {
+            AliasTy::Named(alias) => AliasTy::Named(NamedAliasTy {
+                def: alias.def,
+                args: self.copy_ty_slice(alias.args),
+            }),
+            AliasTy::Associated(projection) => AliasTy::Associated(ProjectionTy {
+                associated_ty: projection.associated_ty,
+                self_ty: self.copy_ty(projection.self_ty),
+                trait_ref: self.copy_trait_ref(projection.trait_ref),
+                args: self.copy_ty_slice(projection.args),
+            }),
+            AliasTy::Opaque(alias) => AliasTy::Opaque(OpaqueAliasTy {
+                def: alias.def,
+                args: self.copy_ty_slice(alias.args),
+            }),
         }
     }
 
@@ -590,11 +699,25 @@ impl<'state, 'target, 'db> ResponseExtractor<'state, 'target, 'db> {
                 let args: Vec<_> = source.into_iter().map(|arg| self.copy_ty(arg)).collect();
                 Ty::Adt(symbol, self.target.alloc_slice(&args))
             }
-            Ty::Ref(inner, mutability, lifetime) => Ty::Ref(
-                self.copy_ty(inner),
-                mutability,
-                self.copy_lifetime(lifetime),
-            ),
+            Ty::Alias(alias) => Ty::Alias(match alias {
+                AliasTy::Named(alias) => AliasTy::Named(NamedAliasTy {
+                    def: alias.def,
+                    args: self.copy_ty_slice(alias.args),
+                }),
+                AliasTy::Associated(projection) => AliasTy::Associated(ProjectionTy {
+                    associated_ty: projection.associated_ty,
+                    self_ty: self.copy_ty(projection.self_ty),
+                    trait_ref: self.copy_trait_ref(projection.trait_ref),
+                    args: self.copy_ty_slice(projection.args),
+                }),
+                AliasTy::Opaque(alias) => AliasTy::Opaque(OpaqueAliasTy {
+                    def: alias.def,
+                    args: self.copy_ty_slice(alias.args),
+                }),
+            }),
+            Ty::Ref(inner, mutability, lifetime) => {
+                Ty::Ref(self.copy_ty(inner), mutability, lifetime)
+            }
             Ty::Tuple(elements) => {
                 let source = self.state.stash[elements].to_vec();
                 let elements: Vec<_> = source
@@ -620,13 +743,10 @@ impl<'state, 'target, 'db> ResponseExtractor<'state, 'target, 'db> {
         self.target.alloc(copied)
     }
 
-    fn copy_lifetime(&self, lifetime: Lifetime<'db>) -> Lifetime<'db> {
-        match lifetime {
-            Lifetime::Param(param) => {
-                Lifetime::Param(self.binder_params.get(&param).copied().unwrap_or(param))
-            }
-            other => other,
-        }
+    fn copy_ty_slice(&mut self, source: Slice<Ptr<Ty<'db>>>) -> Slice<Ptr<Ty<'db>>> {
+        let source = self.state.stash[source].to_vec();
+        let copied: Vec<_> = source.into_iter().map(|ty| self.copy_ty(ty)).collect();
+        self.target.alloc_slice(&copied)
     }
 
     fn copy_const(&self, constant: Const<'db>) -> Const<'db> {
@@ -662,6 +782,39 @@ impl<'source, 'target, 'db> IrCopier<'source, 'target, 'db> {
             type_mapping,
             binder_mapping: FxHashMap::default(),
             fresh_binders,
+        }
+    }
+
+    pub(crate) fn copy_solver_goal(&mut self, goal: SolverGoal<'db>) -> SolverGoal<'db> {
+        match goal {
+            SolverGoal::Prove(goal) => SolverGoal::Prove(self.copy_goal(goal)),
+            SolverGoal::Normalize(alias) => SolverGoal::Normalize(self.copy_alias(alias)),
+        }
+    }
+
+    pub(crate) fn copy_output(&mut self, output: GoalOutput<'db>) -> GoalOutput<'db> {
+        match output {
+            GoalOutput::Proven => GoalOutput::Proven,
+            GoalOutput::Type(ty) => GoalOutput::Type(self.copy_ty(ty)),
+        }
+    }
+
+    fn copy_alias(&mut self, alias: AliasTy<'db>) -> AliasTy<'db> {
+        match alias {
+            AliasTy::Named(alias) => AliasTy::Named(NamedAliasTy {
+                def: alias.def,
+                args: self.copy_ty_slice(alias.args),
+            }),
+            AliasTy::Associated(projection) => AliasTy::Associated(ProjectionTy {
+                associated_ty: projection.associated_ty,
+                self_ty: self.copy_ty(projection.self_ty),
+                trait_ref: self.copy_trait_ref(projection.trait_ref),
+                args: self.copy_ty_slice(projection.args),
+            }),
+            AliasTy::Opaque(alias) => AliasTy::Opaque(OpaqueAliasTy {
+                def: alias.def,
+                args: self.copy_ty_slice(alias.args),
+            }),
         }
     }
 
@@ -750,6 +903,10 @@ impl<'source, 'target, 'db> IrCopier<'source, 'target, 'db> {
                 self_ty: self.copy_ty(self_ty),
                 trait_ref: self.copy_trait_ref(trait_ref),
             },
+            Assumption::NormalizesTo { alias, ty } => Assumption::NormalizesTo {
+                alias: self.copy_alias(alias),
+                ty: self.copy_ty(ty),
+            },
             Assumption::Implies(conditions, consequence) => {
                 let source = self.source[conditions].to_vec();
                 let conditions: Vec<_> = source
@@ -805,11 +962,25 @@ impl<'source, 'target, 'db> IrCopier<'source, 'target, 'db> {
                 let args: Vec<_> = source.into_iter().map(|arg| self.copy_ty(arg)).collect();
                 Ty::Adt(symbol, self.target.alloc_slice(&args))
             }
-            Ty::Ref(inner, mutability, lifetime) => Ty::Ref(
-                self.copy_ty(inner),
-                mutability,
-                self.copy_lifetime(lifetime),
-            ),
+            Ty::Alias(alias) => Ty::Alias(match alias {
+                AliasTy::Named(alias) => AliasTy::Named(NamedAliasTy {
+                    def: alias.def,
+                    args: self.copy_ty_slice(alias.args),
+                }),
+                AliasTy::Associated(projection) => AliasTy::Associated(ProjectionTy {
+                    associated_ty: projection.associated_ty,
+                    self_ty: self.copy_ty(projection.self_ty),
+                    trait_ref: self.copy_trait_ref(projection.trait_ref),
+                    args: self.copy_ty_slice(projection.args),
+                }),
+                AliasTy::Opaque(alias) => AliasTy::Opaque(OpaqueAliasTy {
+                    def: alias.def,
+                    args: self.copy_ty_slice(alias.args),
+                }),
+            }),
+            Ty::Ref(inner, mutability, lifetime) => {
+                Ty::Ref(self.copy_ty(inner), mutability, lifetime)
+            }
             Ty::Tuple(elements) => {
                 let source = self.source[elements].to_vec();
                 let elements: Vec<_> = source
@@ -835,13 +1006,10 @@ impl<'source, 'target, 'db> IrCopier<'source, 'target, 'db> {
         self.target.alloc(copied)
     }
 
-    fn copy_lifetime(&self, lifetime: Lifetime<'db>) -> Lifetime<'db> {
-        match lifetime {
-            Lifetime::Param(param) => {
-                Lifetime::Param(self.binder_mapping.get(&param).copied().unwrap_or(param))
-            }
-            other => other,
-        }
+    fn copy_ty_slice(&mut self, source: Slice<Ptr<Ty<'db>>>) -> Slice<Ptr<Ty<'db>>> {
+        let source = self.source[source].to_vec();
+        let copied: Vec<_> = source.into_iter().map(|ty| self.copy_ty(ty)).collect();
+        self.target.alloc_slice(&copied)
     }
 
     fn copy_const(&self, constant: Const<'db>) -> Const<'db> {

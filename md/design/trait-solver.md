@@ -15,7 +15,8 @@ extensions with separate draft RFDs.
 
 - **Soundness takes priority over inference power.** The solver may decline to
   infer a type, but it may not publish a false proof, substitution, hard hint,
-  or negative result.
+  or negative result within the represented type-and-trait domain. Lifetimes
+  are the explicit temporary exception described below.
 - **Completeness depends on groundness.** A non-ground query terminates soundly
   but may return ambiguity despite having a valid answer. A ground query is
   sound and complete modulo explicit resource exhaustion.
@@ -25,6 +26,10 @@ extensions with separate draft RFDs.
 - **Answers and progress have dual meanings.** A conditional `Yes` supplies a
   sufficient condition for the goal. A progress envelope supplies a necessary
   condition shared by every result still possible.
+- **Solver operations have semantic outputs.** Proving a proposition produces
+  `Proven`; normalization produces a type. The response representation is
+  extensible to later non-type operations without encoding their outputs as
+  caller-supplied inference variables.
 - **`No` requires exhaustive failure.** Failure to discover a useful
   instantiation is ambiguity, not evidence that no instantiation exists.
 - **Results are schedule-invariant.** For a fixed canonical query, program,
@@ -39,6 +44,58 @@ extensions with separate draft RFDs.
   non-ground cases.
 
 ## Semantic contract
+
+### Temporary lifetime boundary
+
+Every lifetime currently lowers to `Lifetime::Dummy`, and
+`Outlives(Dummy, Dummy)` succeeds unconditionally. Borrow validity and
+meaningful lifetime predicates are outside the represented domain. This is a
+known temporary soundness hole recorded by D12, not solver ambiguity.
+
+The exception is narrow: it does not permit choosing an otherwise ambiguous
+type or trait candidate. A future unified type-and-lifetime inference design
+will remove `Dummy` and extend the solver contract.
+
+### Alias types and normalization
+
+The type model distinguishes non-normalizable [rigid types from alias
+types](./typed-ir.md#rigid-and-alias-types). Named type aliases,
+associated-type projections, and opaque types are three variants of the same
+alias concept. They retain definition identity and arguments even when they
+cannot or need not be normalized. That structural representation is built and
+survives inference and canonical solver boundaries. Associated projections now
+have an operational normalization path; named-alias expansion and opaque reveal
+remain planned.
+
+The solver operation language includes input-only normalization,
+`Normalize(alias) -> Type`, and caller-side alias relation without first
+assuming that both aliases can be revealed. The completed first
+associated-projection and body-integration slice is recorded by the
+[Associated Type Normalization
+RFD](../rfds/associated-type-normalization/README.md). The broader destination
+requirements are:
+
+- a named type alias normalizes infallibly to its substituted right-hand side;
+- an associated type normalizes by trait matching and associated-value
+  selection from the environment or an impl, with the resulting obligations
+  and uncertainty preserved;
+- an opaque normalizes only inside its definition boundary, or in a future
+  code-generation mode;
+- identical alias applications can be related structurally; and
+- declared associated-type and opaque bounds can prove predicates about an
+  unnormalized alias.
+
+Failure or inability to normalize is not automatically `No`. An unavailable
+opaque hidden type is intentionally unrevealed, while a projection may be
+blocked on inference, trait ambiguity, or resource exhaustion. Conversely,
+normalization is not required merely to use a bound declared for the alias.
+
+Revealability is semantic input. Any cached normalization or alias-relation
+query includes enough typing context to distinguish an opaque's definition
+boundary from an outside use. Projection normalization depends on the fixed
+trait and associated item, relevant impl candidates, selected associated
+values, and their predicates; it must not read unrelated impls or callee
+bodies.
 
 ### Ground and non-ground queries
 
@@ -99,31 +156,79 @@ configuration participates in the cached query boundary.
 
 ## Knowledge returned by the solver
 
+The destination distinguishes a value-producing solver operation from the
+proposition language used for assumptions, conjunction, implication,
+quantification, and residual conditions:
+
+```rust,ignore
+enum SolverGoal<'db> {
+    Prove(ProofGoal<'db>),
+    Normalize(AliasTy<'db>),
+}
+
+enum GoalOutput<'db> {
+    Proven,
+    Type(Ptr<Ty<'db>>),
+}
+```
+
+These are the implemented canonical operation and output boundaries.
+`Prove(P)` returns `Proven`; `Normalize(A)` returns `Type(T)`. Keeping
+structural `ProofGoal` separate avoids assigning an arbitrary value to a
+conjunction containing several value-producing operations. A normalization
+operation may still return a `ProofGoal` residual which must hold for its type
+result to be valid.
+
+`GoalOutput` is intentionally extensible. Future operations such as callable
+instance resolution or vtable construction may add purpose-built outputs; they
+need not be forced into the type variant merely because function-item types or
+vtable pointers can be represented in Rust's type system.
+
 Let `Cond(A)` mean the conjunction of a response's substitution and residual
-goal, with its response-local variables existentially bound.
+proof goal, with its response-local variables existentially bound. A successful
+answer also contains a canonicalized `GoalOutput`; response-local variables in
+that output participate in binding, occurs and universe checks, caching, and
+caller import just like variables in substitutions and residuals.
 
 ### Definite answers are sufficient
 
-A conditional answer `A` promises:
+A conditional answer `A` for operation `G` and output `V` promises:
 
 ```text
-Cond(A) => Goal
+Cond(A) => G evaluates to V
 ```
 
-An empty substitution with a trivially true residual is unconditional. For a
-disjunction, an unconditional answer is absorbing: no sibling can change the
-truth of the goal.
+For `Prove(P)`, this reduces to `Cond(A) => P` because the only successful
+output is `Proven`. An empty substitution with a trivially true residual is
+unconditional. Such an answer is absorbing for a proof disjunction: no sibling
+can change the truth of the proposition.
+
+An unconditional value-producing answer is not automatically absorbing. A
+normalization candidate returning `Type(A)` cannot cancel a live candidate
+which may return `Type(B)` unless candidate priority proves the first dominates
+the second or the complete answers are known to agree. Output agreement is part
+of answer merging, not an incidental property of substitutions.
 
 ### Progress envelopes are necessary
 
-A progress envelope `P` promises:
+A progress envelope `P` promises that every final answer still possible
+implies its conditions. For a proof operation this can be written:
 
 ```text
-Goal => Cond(P)
+Prove(Goal) succeeds => Cond(P)
 ```
 
-Equivalently, `P` subsumes every final answer still possible. If each live
-alternative has an envelope `E_i`, an aggregate envelope must be a sound common
+For any operation `G`, including normalization, the general form is:
+
+```text
+G evaluates to any V => Cond(P)
+```
+
+Thus `P` constrains every possible completion without claiming a final output.
+If a future progress channel constrains the output itself, that constraint must
+also be necessary for every value still possible; it is not a successful
+`GoalOutput` until the operation has a definite answer. If each live alternative
+has an envelope `E_i`, an aggregate envelope must be a sound common
 generalization:
 
 ```text
@@ -144,8 +249,9 @@ the unconstrained envelope `true`.
 
 The current `Maybe::hints` value is a restricted, final form of this channel:
 it contains only hard substitution facts necessary across every still-possible
-alternative. Planned incremental publication may expose candidate-local and
-frame-level envelopes before the owning future completes.
+alternative and no semantic goal output. Planned incremental publication may
+expose candidate-local and frame-level envelopes before the owning future
+completes.
 
 ### Subsumption
 
@@ -155,10 +261,14 @@ The directional convention is:
 A subsumes B  iff  Cond(B) => Cond(A)
 ```
 
-Thus `A` is at least as general as `B`. A completed answer can cancel a pending
-alternative only when it is proven to subsume the pending alternative's entire
-envelope. Conservative failure to prove subsumption may retain redundant work;
-a false-positive subsumption result would be unsound.
+Thus `A` is at least as general as `B`. For a value-producing operation,
+subsumption additionally requires output compatibility under those conditions;
+`Proven` is trivially compatible with `Proven`, while two type outputs must be
+provably equal or ordered by an operation-specific candidate rule. A completed
+answer can cancel a pending alternative only when it is proven to subsume the
+pending alternative's entire envelope and possible output. Conservative
+failure to prove subsumption may retain redundant work; a false-positive
+subsumption result would be unsound.
 
 ### Ambiguity and overflow
 
@@ -170,7 +280,7 @@ different diagnostics, retry behavior, and caching implications.
 An absorbing result still wins over an exhausted sibling when logic permits
 it:
 
-- an unconditional `Yes` wins a disjunction;
+- an unconditional `Yes(Proven)` wins a proof disjunction;
 - a definitive `No` wins a conjunction; and
 - otherwise an exhausted branch prevents a result which requires exhausting
   all possibilities.
@@ -194,24 +304,124 @@ type. That refinement is conservative:
 - blanket and otherwise unclassifiable impls remain in a fallback bucket; and
 - indexed and exhaustive discovery produce the same canonical solver result.
 
-This boundary is also incremental. Adding or changing an impl for an unrelated
-trait must not invalidate candidate discovery for the queried trait. A
-self-type refinement should eventually prevent unrelated rigid-head changes
-from invalidating a narrower query. Candidate order is deterministic but has
-no semantic effect.
+This boundary is also incremental. Candidate order is deterministic but has no
+semantic effect.
 
-The current `local_impls(LocalCrateSymbol)` query is an MVP enumeration source,
-not the destination candidate API. External impl signatures, defining trait
-predicates, and indexed lookup are planned in the
-[Trait Impl Candidate Discovery RFD](../rfds/trait-impl-candidate-discovery/README.md).
+#### Local impl-index incremental firewall
 
-Incremental conformance is verified with query traces. Tests distinguish:
+The destination local index is a crate-owned Salsa tracked struct with stable
+identity and a private tracked contents field. The contents map fixed trait
+identities to deterministic impl-identity buckets and record completeness
+hazards separately. A keyed tracked method is the only API which reads the
+private map:
 
+```rust,ignore
+#[salsa::tracked]
+struct LocalImplIndex<'db> {
+    #[id]
+    krate: LocalCrateSymbol<'db>,
+
+    #[tracked]
+    #[returns(ref)]
+    contents: LocalImplIndexContents<'db>,
+}
+
+#[salsa::tracked]
+impl<'db> LocalImplIndex<'db> {
+    #[salsa::tracked]
+    fn for_trait(
+        self,
+        db: &'db dyn Db,
+        trait_sym: TraitSymbol<'db>,
+    ) -> LocalImplCandidates<'db>;
+}
+```
+
+The example is a destination shape, not a claim that these exact definitions
+are built. Rebuilding the index after an unrelated impl edit may reexecute
+`for_trait(TraitA)`, because that method reads the changed map. If its result is
+equal, Salsa backdates the lookup and the change stops there. The required
+guarantee is that the edit does not reexecute `TraitA` impl signature lowering,
+canonical solver evaluation, associated-value normalization, or dependent body
+checking. This permits a cheap map lookup to repeat without turning the entire
+index into dynamic per-key Salsa state.
+
+Known impls are partitioned by their resolved trait. An unresolved construct
+which might produce an impl of any trait is retained as a global completeness
+hazard and legitimately changes every lookup. A hazard whose target trait is
+known can remain within that trait's bucket. Inherent impls do not enter trait
+buckets. A future self-head refinement nests specific rigid-head buckets and a
+mandatory blanket/unclassifiable fallback within each trait entry; the same
+backdating boundary applies.
+
+The map stores signature-level stable impl identities, not lowered headers or
+associated-item bodies. An impl-body-only edit should leave the index result
+equal. If the current `LocalImplSym` lifecycle cannot preserve that property,
+the symbol must be split or given stable header identity rather than weakening
+the firewall.
+
+The current `local_impl_candidates(LocalCrateSymbol, TraitSymbol)` query is the
+trait-keyed local boundary. It still linearly scans expanded local impl
+identities, but resolves only each impl's trait identity before lowering a full
+header for the requested trait. It also reports whether unresolved
+item/attribute macros, ambiguous or unsupported derives, or unresolved trait
+impl headers could hide a relevant impl. An impl with an unrepresented active
+attribute transformation is not a
+definite candidate, nor is an attributed containing module or macro expansion.
+A derive attached to an item with another unexpanded active attribute is also
+withheld rather than published from the pre-transformation input.
+A uniquely resolved item macro with successfully parsed output remains
+complete. Failed, ambiguous, or depth-limited expansion is omitted from
+definite candidates and makes the source incomplete. The scan still depends on
+the whole expanded module vector and has no stable private index/backdating
+layer, so the local incremental firewall is explicitly not built yet. External
+trait defining predicates are
+available through the typed `TcxDb` boundary, so eligible local impls of
+represented external traits can be proved.
+
+For an external trait, `external_relevant_impls(trait, optional_self_head)`
+imports the deterministic set of explicit impl identities visible in reachable
+external crates. The optional rigid head filters only provably disjoint impl
+heads; blanket and unclassifiable impls remain. A separate
+`external_impl_signature(impl)` query loads only a binder-aware header, lowers
+it into the local impl-signature shape, and feeds the same candidate
+instantiation and proof machinery. Associated values and impl items are not
+part of either proof operation. `Normalize` uses a separate
+`external_associated_type_value(impl, associated_type)` query after header
+matching; its local counterpart reads the requested type value without first
+lowering the impl-item list. Unsupported headers or an incomplete source retain
+uncertainty instead of manufacturing a negative answer. Before local
+discovery, an exact orphan-rule check skips the local source for a foreign
+trait with no trait arguments and a non-fundamental foreign nominal self type.
+The fundamental marker is imported through its own structural metadata query,
+separate from the external ADT signature. This pruning cannot omit a legal
+local impl and prevents external/external goals
+such as `IntoIter<Frame>: Iterator` from depending on unrelated local impls or
+macro expansion. Structural compiler traits such as `Sized` and `MetaSized` have explicit Sage candidates because
+they are not enumerable user impls. Rustc supplies their identities and type
+structure but does not answer the Sage goal.
+
+The external query trace is already isolated by trait and conservative rigid
+self head and is reused unchanged on a warm proof. The remaining index work in
+the [Trait Impl Candidate Discovery RFD](../rfds/trait-impl-candidate-discovery/README.md)
+is finer local-source partitioning and its edit-invalidation matrix. Local
+traits may use exhaustive local negative reasoning because upstream crates
+cannot implement a downstream trait.
+
+Incremental conformance is verified with edit-and-query traces. Tests
+distinguish:
+
+- index construction and keyed lookup, which may reexecute;
 - Salsa tracked functions whose bodies actually execute;
 - semantic candidate lookups with stable trait and self-type keys; and
 - external `TcxDb` metadata requests.
 
 The trace is cleared after fixture setup and before the operation under test.
+After an unrelated-trait edit, the keyed lookup must return an equal value and
+no unrelated signature, solver, normalization, or body query may execute. A
+relevant edit must change the bucket and invalidate its consumers. Body-only
+edits must not change signature-level index contents. Global completeness
+hazards are tested separately because they intentionally affect every trait.
 Because solver work may complete in different orders, assertions compare
 normalized event sets or multisets unless a particular count or dependency
 order is itself part of the contract.
@@ -221,7 +431,10 @@ order is itself part of the contract.
 Candidate alternatives form disjunctions. Each candidate owns speculative
 inference state and eventually produces a canonical response. The aggregate
 retains non-dominated definite answers and necessary information from every
-still-possible alternative.
+still-possible alternative. Proof candidates all return `Proven`; candidates
+for a value-producing operation also merge their outputs. Incompatible
+normalization types remain ambiguous unless coherence or specialization gives
+one candidate semantic priority.
 
 Conjuncts share a logical inference problem. A definitive `No` is absorbing,
 while sound constraints learned by one conjunct may advance another. Planned
@@ -286,6 +499,7 @@ For fixed semantic inputs and configured limits, scheduling may change only:
 It may not change:
 
 - `Yes`, `Maybe`, or `No`;
+- the successful goal output;
 - substitutions or response-variable numbering;
 - residual goals or hard hints;
 - ambiguity versus overflow; or
@@ -304,9 +518,11 @@ ready-queue ordering and assert an identical `Stashed<QueryResult>`.
 | Isolated candidate futures and active atomic frames | Built |
 | Order-independent completed-answer reduction | Built |
 | Final hard substitution hints | Built |
-| Local-crate exhaustive impl scan | Built, provisional |
-| Global trait-keyed impl discovery | Planned |
-| Conservative simplified-self-type index | Planned |
+| Trait-keyed local impl discovery with conservative expansion/header completeness | Built, provisional linear scan |
+| External trait signatures and local/external explicit impl headers | Built |
+| Unrelated-trait invalidation isolation and query-trace proof | External queries are trait/head keyed with cold/warm trace; edit-invalidation proof and local partitioning planned |
+| Global trait-keyed impl discovery | Built for explicit impls in the visible local and reachable-external world |
+| Conservative simplified-self-type index | Built for external metadata; local refinement planned |
 | Parent-chain inductive cycle cutoff and depth limit | Built, provisional |
 | Groundness-sensitive result causes | Planned |
 | Term-size and deterministic work limits | Planned |
@@ -314,6 +530,7 @@ ready-queue ordering and assert an identical `Stashed<QueryResult>`.
 | Concurrent conjunction | Planned |
 | Candidate and frame progress envelopes | Planned |
 | Provisional cycle fixpoints and coinductive paths | Planned |
+| Goal-specific outputs (`Proven` and `Type`) | Built |
 
 The planned work is split across the
 [Cycle Semantics](../rfds/trait-solver-cycle-semantics/README.md),

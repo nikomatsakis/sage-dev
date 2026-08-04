@@ -23,6 +23,19 @@ pub struct LocalMacroInvocationSym<'db> {
 
 impl StashDirect for LocalMacroInvocationSym<'_> {}
 
+impl<'db> LocalMacroInvocationSym<'db> {
+    pub fn attrs(
+        self,
+        db: &'db dyn crate::Db,
+    ) -> (
+        &'db sage_stash::Stash,
+        &'db [crate::cst::attrs::AttrCst<'db>],
+    ) {
+        let (stash, cst) = self.cst(db).open_deref();
+        (stash, &stash[cst.attrs])
+    }
+}
+
 #[salsa::tracked]
 impl<'db> LocalMacroInvocationSym<'db> {
     #[salsa::tracked(returns(ref))]

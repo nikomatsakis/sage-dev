@@ -5,9 +5,13 @@ use crate::check::infer::egraph::VersionedEGraph;
 use crate::check::infer::version::{Universe, Version};
 use crate::generic_param::{AlphaEquivParam, GenericParam, GenericParamKind};
 use crate::scope::LocalCrateSymbol;
-use crate::ty::{Binder, Const, Lifetime, TraitRef, Ty, WherePredicate};
+use crate::ty::{
+    AliasTy, Binder, Const, NamedAliasTy, OpaqueAliasTy, ProjectionTy, TraitRef, Ty, WherePredicate,
+};
 
-use super::goal::{Assumption, Atom, CanonicalVarInfo, CanonicalVarRole, Goal, GoalQueryData};
+use super::goal::{
+    Assumption, Atom, CanonicalVarInfo, CanonicalVarRole, Goal, GoalQueryData, SolverGoal,
+};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CallerCanonicalVar<'db> {
@@ -66,6 +70,31 @@ pub fn canonicalize_goal<'db>(
     assumptions: Slice<Assumption<'db>>,
     goal: Goal<'db>,
 ) -> CanonicalizedGoal<'db> {
+    canonicalize_solver_goal(
+        db,
+        source,
+        egraph,
+        version,
+        local_crate,
+        current_universe,
+        assumptions_complete,
+        assumptions,
+        SolverGoal::Prove(goal),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn canonicalize_solver_goal<'db>(
+    db: &'db dyn crate::Db,
+    source: &Stash,
+    egraph: &VersionedEGraph<'db>,
+    version: Version,
+    local_crate: LocalCrateSymbol<'db>,
+    current_universe: Universe,
+    assumptions_complete: bool,
+    assumptions: Slice<Assumption<'db>>,
+    goal: SolverGoal<'db>,
+) -> CanonicalizedGoal<'db> {
     let mut canonicalizer = Canonicalizer {
         db,
         source,
@@ -80,7 +109,7 @@ pub fn canonicalize_goal<'db>(
     };
 
     let assumptions = canonicalizer.fold_assumption_slice(assumptions);
-    let goal = canonicalizer.fold_goal(goal);
+    let goal = canonicalizer.fold_solver_goal(goal);
 
     let absolute_universe_base = canonicalizer
         .inputs
@@ -135,6 +164,32 @@ pub fn canonicalize_goal<'db>(
 // ANCHOR_END: example_canonicalize_goal
 
 impl<'db> Canonicalizer<'_, 'db> {
+    fn fold_solver_goal(&mut self, goal: SolverGoal<'db>) -> SolverGoal<'db> {
+        match goal {
+            SolverGoal::Prove(goal) => SolverGoal::Prove(self.fold_goal(goal)),
+            SolverGoal::Normalize(alias) => SolverGoal::Normalize(self.fold_alias(alias)),
+        }
+    }
+
+    fn fold_alias(&mut self, alias: AliasTy<'db>) -> AliasTy<'db> {
+        match alias {
+            AliasTy::Named(alias) => AliasTy::Named(NamedAliasTy {
+                def: alias.def,
+                args: self.fold_ty_slice(alias.args),
+            }),
+            AliasTy::Associated(projection) => AliasTy::Associated(ProjectionTy {
+                associated_ty: projection.associated_ty,
+                self_ty: self.fold_ty_ptr(projection.self_ty),
+                trait_ref: self.fold_trait_ref(projection.trait_ref),
+                args: self.fold_ty_slice(projection.args),
+            }),
+            AliasTy::Opaque(alias) => AliasTy::Opaque(OpaqueAliasTy {
+                def: alias.def,
+                args: self.fold_ty_slice(alias.args),
+            }),
+        }
+    }
+
     fn fresh_alpha(&mut self, kind: GenericParamKind) -> AlphaEquivParam<'db> {
         let index = self.next_param;
         self.next_param += 1;
@@ -217,6 +272,10 @@ impl<'db> Canonicalizer<'_, 'db> {
                 self_ty: self.fold_ty_ptr(self_ty),
                 trait_ref: self.fold_trait_ref(trait_ref),
             },
+            Assumption::NormalizesTo { alias, ty } => Assumption::NormalizesTo {
+                alias: self.fold_alias(alias),
+                ty: self.fold_ty_ptr(ty),
+            },
             Assumption::Implies(conditions, consequence) => {
                 let source_conditions = self.source[conditions].to_vec();
                 let conditions: Vec<_> = source_conditions
@@ -282,11 +341,25 @@ impl<'db> Canonicalizer<'_, 'db> {
                     .collect();
                 Ty::Adt(symbol, self.target.alloc_slice(&args))
             }
-            Ty::Ref(inner, mutability, lifetime) => Ty::Ref(
-                self.fold_ty_ptr(inner),
-                mutability,
-                self.fold_lifetime(lifetime),
-            ),
+            Ty::Alias(alias) => Ty::Alias(match alias {
+                AliasTy::Named(alias) => AliasTy::Named(NamedAliasTy {
+                    def: alias.def,
+                    args: self.fold_ty_slice(alias.args),
+                }),
+                AliasTy::Associated(projection) => AliasTy::Associated(ProjectionTy {
+                    associated_ty: projection.associated_ty,
+                    self_ty: self.fold_ty_ptr(projection.self_ty),
+                    trait_ref: self.fold_trait_ref(projection.trait_ref),
+                    args: self.fold_ty_slice(projection.args),
+                }),
+                AliasTy::Opaque(alias) => AliasTy::Opaque(OpaqueAliasTy {
+                    def: alias.def,
+                    args: self.fold_ty_slice(alias.args),
+                }),
+            }),
+            Ty::Ref(inner, mutability, lifetime) => {
+                Ty::Ref(self.fold_ty_ptr(inner), mutability, lifetime)
+            }
             Ty::Tuple(elements) => {
                 let source_elements = self.source[elements].to_vec();
                 let elements: Vec<_> = source_elements
@@ -315,11 +388,13 @@ impl<'db> Canonicalizer<'_, 'db> {
         self.target.alloc(folded)
     }
 
-    fn fold_lifetime(&mut self, lifetime: Lifetime<'db>) -> Lifetime<'db> {
-        match lifetime {
-            Lifetime::Param(param) => Lifetime::Param(self.fold_generic_param(param)),
-            other => other,
-        }
+    fn fold_ty_slice(&mut self, source: Slice<Ptr<Ty<'db>>>) -> Slice<Ptr<Ty<'db>>> {
+        let source = self.source[source].to_vec();
+        let folded: Vec<_> = source
+            .into_iter()
+            .map(|element| self.fold_ty_ptr(element))
+            .collect();
+        self.target.alloc_slice(&folded)
     }
 
     fn fold_const(&mut self, constant: Const<'db>) -> Const<'db> {

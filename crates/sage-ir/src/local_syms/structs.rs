@@ -61,12 +61,8 @@ impl<'db> LocalStructSym<'db> {
             generics,
             cst.where_clauses,
         );
-        let struct_sig = StructSig {
-            parameter_env: crate::ty::CheckedParameterEnv {
-                where_clauses,
-                solver_eligibility,
-            },
-        };
+        let parameter_env = cx.complete_parameter_env(where_clauses, solver_eligibility);
+        let struct_sig = StructSig { parameter_env };
         let binder = Binder::new(struct_sig, generics);
         cx.finish(binder)
     }
@@ -100,8 +96,16 @@ impl<'db> LocalStructSym<'db> {
             })
             .collect();
         let fields = cx.target_stash.alloc_slice(&field_sigs);
+        let no_declared_predicates = cx.target_stash.alloc_slice(&[]);
+        let parameter_env = cx.complete_parameter_env(
+            no_declared_predicates,
+            crate::ty::SolverEligibility::Eligible,
+        );
 
-        cx.finish(StructFields { fields })
+        cx.finish(StructFields {
+            fields,
+            parameter_env,
+        })
     }
     // ANCHOR_END: example_struct_fields
 }

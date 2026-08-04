@@ -1,0 +1,75 @@
+# Implementation plan and status
+
+The first isolated `DbDropGuard::db` vertical slice is implemented and covered
+by an exact oracle fixture plus a semantic dependency trace. The broader steps
+remain incomplete where their checkboxes are still open.
+
+### Step 1: Completed-IR data model and finalization checks
+
+- [x] Introduce resolved local-field identity and explicit dereference nodes,
+  and materialize built-in reference dereferences used by field access.
+- [x] Introduce resolved call, shared borrow, and static-trait dispatch forms
+  needed by the first vertical slice. General coercion, substitution, and
+  explicit error forms remain.
+- [x] Represent rigid types separately from the named, associated, and opaque
+  `AliasTy` family without requiring aliases to be eagerly normalized.
+- [x] Introduce `Lifetime::Dummy` as the only lifetime produced by checking.
+- [ ] Make successful body finalization reject unresolved names, source method
+  calls, inference variables, adjustment recipes, and unsupported nodes.
+- [ ] Add focused structural tests for completed-body invariants.
+
+### Step 2: Associated methods and `DbDropGuard::db`
+
+- [x] Give impl functions independent symbol, signature, and body queries.
+- [x] Complete the derive/item path needed to represent the local `Db: Clone`
+  impl.
+  - [x] Preserve the source item and append a parsed `Clone` impl for the
+    concrete non-generic struct shape used by `Db`.
+  - [x] Give generated derive text a distinct parse-source identity linked to
+    the source item.
+  - [x] Resolve the generated impl's external `Clone` trait and expose it
+    through trait-keyed candidate discovery.
+- [x] Supply the external `Clone` trait contract needed for the solver to
+  accept and prove the generated candidate.
+- [x] Resolve `Clone::clone`, prove `Db: Clone`, and consume receiver
+  adjustments into explicit tree nodes.
+- [x] Assert that call checking does not query the selected callee body.
+
+### Step 3: Oracle and coverage boundary
+
+- [x] Extend the shared reference model with resolved field owner/index
+  identity and explicit dereference expressions.
+- [x] Adapt rustc field definitions directly into shared owner/index identity
+  without consulting or rewriting Sage output.
+- [x] Adapt the rustc receiver adjustment used by `DbDropGuard::db` directly
+  into completed dereference and shared-borrow forms without consulting or
+  rewriting Sage output. Method owner/method substitutions and static-trait
+  dispatch are also represented for the isolated `Parse::next` slice; general
+  direct-call substitutions and adjustments remain.
+- [x] Remove paired output normalization and make pass/fail depend on
+  byte-for-byte identity of deterministic serialized output.
+- [x] Enumerate source-written associated bodies for this slice; generated
+  derive bodies remain outside the stated coverage boundary.
+- [x] Compare `DbDropGuard::db` and assert a stable semantic query trace.
+
+### Step 4: Trait-directed expression families
+
+- [ ] Land the separate normalization design needed to represent and solve
+  associated-type projections while preserving unnormalized alias bounds.
+- [ ] Elaborate overloaded operators, indexing, callable values, `for`, and
+  `?` into their resolved semantic operations.
+- [ ] Add one focused fixture and query-dependency assertion per family.
+
+### Step 5: Closures and async
+
+- [ ] Represent closure captures and nested typed bodies.
+- [ ] Represent async bodies and high-level `await` without state-machine
+  lowering.
+- [ ] Complete the `Shutdown::recv` vertical slice.
+
+### Step 6: Full mini-redis library coverage
+
+- [ ] Account for every item and body in the default-feature library target.
+- [ ] Reach zero unsupported successful nodes and zero unexpected diagnostics.
+- [ ] Produce byte-identical deterministic oracle output and pass focused
+  incremental-dependency tests.

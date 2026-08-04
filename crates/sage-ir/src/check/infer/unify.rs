@@ -72,6 +72,7 @@ pub fn try_set_bound<'db>(
             | Ty::Float(_)
             | Ty::Str
             | Ty::Adt(_, _)
+            | Ty::Alias(_)
             | Ty::Ref(_, _, _)
             | Ty::Tuple(_)
             | Ty::Slice(_)
@@ -170,6 +171,7 @@ pub(crate) fn unify_in_probe<'db>(
             | Ty::Float(_)
             | Ty::Str
             | Ty::Adt(_, _)
+            | Ty::Alias(_)
             | Ty::Ref(_, _, _)
             | Ty::Tuple(_)
             | Ty::Slice(_)
@@ -274,6 +276,7 @@ fn occurs_in<'db>(
         | Ty::Float(_)
         | Ty::Str
         | Ty::Adt(_, _)
+        | Ty::Alias(_)
         | Ty::Ref(_, _, _)
         | Ty::Tuple(_)
         | Ty::Slice(_)
@@ -328,14 +331,6 @@ fn make_accessible<'db>(
                 )?;
             }
         }
-        Ty::Ref(_, _, Lifetime::Param(param)) => {
-            if egraph.placeholder_universe(param) > ceiling {
-                return Err(UnifyError::UniverseLeak {
-                    variable: outer_variable,
-                    ceiling,
-                });
-            }
-        }
         Ty::Array(_, Const::Param(param)) => {
             if egraph.placeholder_universe(param) > ceiling {
                 return Err(UnifyError::UniverseLeak {
@@ -351,7 +346,8 @@ fn make_accessible<'db>(
         | Ty::Float(_)
         | Ty::Str
         | Ty::Adt(_, _)
-        | Ty::Ref(_, _, Lifetime::Static | Lifetime::Erased)
+        | Ty::Alias(_)
+        | Ty::Ref(_, _, Lifetime::Dummy)
         | Ty::Tuple(_)
         | Ty::Slice(_)
         | Ty::Array(_, Const::Literal(_) | Const::Other(_))
@@ -599,30 +595,22 @@ mod tests {
     }
 
     #[test]
-    fn lifetime_and_const_leaves_compare_structurally() {
-        let db = Database::default();
-        let lifetime_a =
-            GenericParam::AlphaEquiv(AlphaEquivParam::new(&db, GenericParamKind::Lifetime, 0));
-        let lifetime_b =
-            GenericParam::AlphaEquiv(AlphaEquivParam::new(&db, GenericParamKind::Lifetime, 1));
+    fn dummy_lifetimes_unify_and_const_leaves_compare_structurally() {
         let mut egraph = VersionedEGraph::new();
         let mut stash = Stash::new();
         let int = stash.alloc(Ty::Int(IntTy::I32));
         let left = stash.alloc(Ty::Ref(
             int,
             crate::cst::Mutability::Shared,
-            Lifetime::Param(lifetime_a),
+            Lifetime::Dummy,
         ));
         let right = stash.alloc(Ty::Ref(
             int,
             crate::cst::Mutability::Shared,
-            Lifetime::Param(lifetime_b),
+            Lifetime::Dummy,
         ));
 
-        assert!(matches!(
-            try_unify(&mut egraph, &mut stash, Version::ROOT, left, right),
-            Err(UnifyError::Mismatch { .. })
-        ));
+        assert!(try_unify(&mut egraph, &mut stash, Version::ROOT, left, right).is_ok());
 
         let array_left = stash.alloc(Ty::Array(int, Const::Literal(1)));
         let array_right = stash.alloc(Ty::Array(int, Const::Literal(2)));

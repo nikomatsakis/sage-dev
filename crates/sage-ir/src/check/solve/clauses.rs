@@ -1,11 +1,12 @@
-use rustc_hash::FxHashMap;
-use sage_stash::Slice;
+use rustc_hash::{FxHashMap, FxHashSet};
+use sage_stash::{Ptr, Slice, Stash, StashCopy};
 
 use crate::check::infer::version::Version;
 use crate::generic_param::GenericParamKind;
-use crate::local_syms::impls::{LocalImplSym, local_impls};
-use crate::symbol::TraitSymbol;
-use crate::ty::{SolverEligibility, TraitRef, Ty, WherePredicate};
+use crate::local_syms::impls::{LocalImplSym, local_impl_candidates};
+use crate::symbol::{StructSymbol, SymExt, Symbol, SymbolData, TraitSymbol};
+use crate::ty::{ImplSignature, SolverEligibility, TraitRef, TraitSemantics, Ty, WherePredicate};
+use crate::ty_fold::{SubstTarget, Substitute, TyFolder};
 
 use super::boundary::{IrCopier, QueryProofState};
 use super::{Assumption, Atom, Goal};
@@ -17,11 +18,18 @@ pub(crate) enum Candidate<'db> {
         body: Option<Slice<Goal<'db>>>,
     },
     LocalImpl(LocalImplSym<'db>),
+    ExternalImpl(SymExt<'db>),
 }
 
 pub(crate) struct InstantiatedCandidate<'db> {
     pub head: WherePredicate<'db>,
     pub body: Slice<Goal<'db>>,
+}
+
+pub(crate) struct PreparedValueCandidate<'db> {
+    pub instantiated: InstantiatedCandidate<'db>,
+    source: Candidate<'db>,
+    type_mapping: FxHashMap<crate::generic_param::GenericParam<'db>, Ptr<Ty<'db>>>,
 }
 
 // ANCHOR: example_assemble_candidates
@@ -61,7 +69,8 @@ pub(crate) fn assemble_candidates<'db>(
                     });
                 }
             }
-            Assumption::All(_) | Assumption::TraitImpl { .. } => {}
+            Assumption::All(_) | Assumption::TraitImpl { .. } | Assumption::NormalizesTo { .. } => {
+            }
         }
     }
 
@@ -70,37 +79,128 @@ pub(crate) fn assemble_candidates<'db>(
         return (candidates, true);
     }
 
-    let TraitSymbol::Local(target_trait) = trait_ref.trait_sym else {
+    let Some(target_signature) = trait_ref.trait_sym.sig(db) else {
         return (candidates, true);
     };
-    if !target_trait
-        .sig(db)
-        .root()
-        .value
-        .solver_eligibility
-        .is_eligible()
-    {
+    let target_data = target_signature.root().value;
+    if !target_data.solver_eligibility.is_eligible() {
         return (candidates, true);
     }
-
-    for &local_impl in local_impls(db, state.local_crate) {
-        let signature = local_impl.sig(db);
-        let signature_data = signature.root().value;
-        let Some(impl_ref) = signature_data.trait_ref else {
-            continue;
+    if target_data.semantics != TraitSemantics::Ordinary {
+        let certainty = match target_data.semantics {
+            TraitSemantics::Sized => {
+                sized_certainty(db, &state.stash, self_root, &mut FxHashSet::default())
+            }
+            TraitSemantics::MetaSized => {
+                meta_sized_certainty(db, &state.stash, self_root, &mut FxHashSet::default())
+            }
+            TraitSemantics::Ordinary => unreachable!(),
         };
-        if impl_ref.trait_sym != trait_ref.trait_sym {
-            continue;
+        match certainty {
+            SizedCertainty::Yes => candidates.push(Candidate::Environment {
+                head: WherePredicate { self_ty, trait_ref },
+                body: None,
+            }),
+            SizedCertainty::No => {}
+            SizedCertainty::Maybe => incomplete = true,
         }
-        if signature_data.solver_eligibility == SolverEligibility::Eligible {
-            candidates.push(Candidate::LocalImpl(local_impl));
-        } else {
-            incomplete = true;
+        return (candidates, incomplete);
+    }
+
+    if !local_impl_is_orphan_impossible(db, &state.stash, self_root, trait_ref) {
+        let local_source = local_impl_candidates(db, state.local_crate, trait_ref.trait_sym);
+        incomplete |= !local_source.complete;
+        for &local_impl in &local_source.impls {
+            let signature = local_impl.sig(db);
+            let signature_data = signature.root().value;
+            if signature_data.solver_eligibility == SolverEligibility::Eligible {
+                candidates.push(Candidate::LocalImpl(local_impl));
+            } else {
+                incomplete = true;
+            }
+        }
+    }
+
+    match trait_ref.trait_sym {
+        TraitSymbol::Local(_) => {}
+        TraitSymbol::Ext(external_trait) => {
+            let self_head = crate::external_syms::simplify_self_type(db, &state.stash, self_root);
+            let external_source =
+                crate::external_syms::external_relevant_impls(db, external_trait, self_head);
+            incomplete |= !external_source.complete;
+            for &external_impl in &external_source.impls {
+                let Some(signature) =
+                    crate::external_syms::external_impl_signature(db, external_impl)
+                else {
+                    incomplete = true;
+                    continue;
+                };
+                let signature_data = signature.root().value;
+                if signature_data.solver_eligibility == SolverEligibility::Eligible
+                    && signature_data
+                        .trait_ref
+                        .is_some_and(|impl_ref| impl_ref.trait_sym == trait_ref.trait_sym)
+                {
+                    candidates.push(Candidate::ExternalImpl(external_impl));
+                } else {
+                    incomplete = true;
+                }
+            }
         }
     }
     (candidates, incomplete)
 }
 // ANCHOR_END: example_assemble_candidates
+
+/// A local crate cannot implement a foreign trait with no trait arguments for
+/// a non-fundamental foreign nominal self type. Applying this orphan-rule fact
+/// before local discovery is both logically exact and avoids making an
+/// external/external goal depend on unrelated local impls or macro expansion.
+fn local_impl_is_orphan_impossible<'db>(
+    db: &'db dyn crate::Db,
+    stash: &Stash,
+    self_ty: Ptr<Ty<'db>>,
+    trait_ref: TraitRef<'db>,
+) -> bool {
+    let trait_is_external = matches!(trait_ref.trait_sym, TraitSymbol::Ext(_));
+    let trait_arguments_are_empty = stash[trait_ref.args].is_empty();
+    if !trait_is_external || !trait_arguments_are_empty {
+        return false;
+    }
+    let Ty::Adt(symbol, _) = stash[self_ty] else {
+        return false;
+    };
+    let Some(external) = symbol.external_adt(db) else {
+        return false;
+    };
+    orphan_rule_excludes_local_impl(
+        trait_is_external,
+        trait_arguments_are_empty,
+        crate::external_syms::external_adt_is_fundamental(db, external),
+    )
+}
+
+fn orphan_rule_excludes_local_impl(
+    trait_is_external: bool,
+    trait_arguments_are_empty: bool,
+    self_is_fundamental: Option<bool>,
+) -> bool {
+    trait_is_external && trait_arguments_are_empty && self_is_fundamental == Some(false)
+}
+
+#[cfg(test)]
+mod orphan_rule_tests {
+    use super::orphan_rule_excludes_local_impl;
+
+    #[test]
+    fn only_a_non_fundamental_external_self_without_trait_arguments_is_pruned() {
+        assert!(orphan_rule_excludes_local_impl(true, true, Some(false)));
+        assert!(!orphan_rule_excludes_local_impl(true, true, Some(true)));
+        assert!(!orphan_rule_excludes_local_impl(true, false, Some(false)));
+        assert!(!orphan_rule_excludes_local_impl(false, true, Some(false)));
+        assert!(!orphan_rule_excludes_local_impl(true, true, None));
+    }
+}
 
 pub(crate) fn instantiate_candidate<'db>(
     db: &'db dyn crate::Db,
@@ -114,6 +214,11 @@ pub(crate) fn instantiate_candidate<'db>(
             body: body.unwrap_or_else(|| state.stash.alloc_slice(&[])),
         },
         Candidate::LocalImpl(local_impl) => instantiate_local_impl(db, state, version, local_impl),
+        Candidate::ExternalImpl(external_impl) => {
+            let signature = crate::external_syms::external_impl_signature(db, external_impl)
+                .expect("eligible external candidate must retain its checked signature");
+            instantiate_impl_signature(db, state, version, &signature)
+        }
     }
 }
 
@@ -125,14 +230,43 @@ fn instantiate_local_impl<'db>(
     local_impl: LocalImplSym<'db>,
 ) -> InstantiatedCandidate<'db> {
     let signature = local_impl.sig(db);
+    instantiate_impl_signature(db, state, version, &signature)
+}
+
+fn instantiate_impl_signature<'db>(
+    db: &'db dyn crate::Db,
+    state: &mut QueryProofState<'db>,
+    version: Version,
+    signature: &sage_stash::Stashed<ImplSignature<'db>>,
+) -> InstantiatedCandidate<'db> {
+    instantiate_impl_signature_with_mapping(db, state, version, signature).0
+}
+
+fn instantiate_impl_signature_with_mapping<'db>(
+    db: &'db dyn crate::Db,
+    state: &mut QueryProofState<'db>,
+    version: Version,
+    signature: &sage_stash::Stashed<ImplSignature<'db>>,
+) -> (
+    InstantiatedCandidate<'db>,
+    FxHashMap<crate::generic_param::GenericParam<'db>, Ptr<Ty<'db>>>,
+) {
     let (source, binder) = signature.open();
     let mut mapping = FxHashMap::default();
     for generic in &source[binder.generics] {
-        assert_eq!(generic.kind(db), GenericParamKind::Type);
-        let index = state.egraph.alloc_var(version, state.canonical_universe);
-        let ty = state.stash.alloc(Ty::InferVar(index));
-        mapping.insert(*generic, ty);
+        match generic.kind(db) {
+            GenericParamKind::Type => {
+                let index = state.egraph.alloc_var(version, state.canonical_universe);
+                let ty = state.stash.alloc(Ty::InferVar(index));
+                mapping.insert(*generic, ty);
+            }
+            GenericParamKind::Lifetime => {}
+            GenericParamKind::Const => {
+                unreachable!("const-generic impls are not eligible candidates")
+            }
+        }
     }
+    let value_mapping = mapping.clone();
     let mut copier = IrCopier::new(source, &mut state.stash, mapping, None);
     let self_ty = copier.copy_ty(binder.value.self_ty);
     let trait_ref = copier.copy_trait_ref(
@@ -148,16 +282,17 @@ fn instantiate_local_impl<'db>(
         .collect();
     drop(copier);
 
-    let TraitSymbol::Local(local_trait) = trait_ref.trait_sym else {
-        unreachable!("external trait impls are not eligible candidates")
-    };
-    let trait_signature = local_trait.sig(db);
+    let trait_signature = trait_ref
+        .trait_sym
+        .sig(db)
+        .expect("eligible trait candidates must have a checked signature");
     let (trait_source, trait_binder) = trait_signature.open();
     let trait_generics = &trait_source[trait_binder.generics];
     let mut trait_mapping = FxHashMap::default();
     trait_mapping.insert(trait_binder.value.self_param, self_ty);
     for (generic, argument) in trait_generics[1..]
         .iter()
+        .filter(|generic| generic.kind(db) == GenericParamKind::Type)
         .zip(state.stash[trait_ref.args].iter())
     {
         trait_mapping.insert(*generic, *argument);
@@ -168,12 +303,292 @@ fn instantiate_local_impl<'db>(
     }
     let body = state.stash.alloc_slice(&body);
 
-    InstantiatedCandidate {
-        head: WherePredicate { self_ty, trait_ref },
-        body,
-    }
+    (
+        InstantiatedCandidate {
+            head: WherePredicate { self_ty, trait_ref },
+            body,
+        },
+        value_mapping,
+    )
 }
 // ANCHOR_END: example_instantiate_impl
+
+pub(crate) fn prepare_value_candidate<'db>(
+    db: &'db dyn crate::Db,
+    state: &mut QueryProofState<'db>,
+    version: Version,
+    candidate: Candidate<'db>,
+) -> Option<PreparedValueCandidate<'db>> {
+    let signature = match candidate {
+        Candidate::LocalImpl(local_impl) => local_impl.sig(db),
+        Candidate::ExternalImpl(external_impl) => {
+            crate::external_syms::external_impl_signature(db, external_impl)?
+        }
+        Candidate::Environment { .. } => return None,
+    };
+    let (instantiated, type_mapping) =
+        instantiate_impl_signature_with_mapping(db, state, version, &signature);
+    Some(PreparedValueCandidate {
+        instantiated,
+        source: candidate,
+        type_mapping,
+    })
+}
+
+pub(crate) fn load_prepared_associated_value<'db>(
+    db: &'db dyn crate::Db,
+    state: &mut QueryProofState<'db>,
+    candidate: &PreparedValueCandidate<'db>,
+    associated_ty: crate::symbol::TypeAliasSymbol<'db>,
+) -> Option<Ptr<Ty<'db>>> {
+    let value = match candidate.source {
+        Candidate::LocalImpl(local_impl) => {
+            crate::local_syms::impls::local_impl_associated_type_value(
+                db,
+                local_impl,
+                associated_ty,
+            )?
+        }
+        Candidate::ExternalImpl(external_impl) => {
+            let crate::symbol::TypeAliasSymbol::Ext(associated_ty) = associated_ty else {
+                return None;
+            };
+            crate::external_syms::external_associated_type_value(db, external_impl, associated_ty)?
+        }
+        Candidate::Environment { .. } => return None,
+    };
+    let (source, value) = value.open();
+    let mut copier = IrCopier::new(
+        source,
+        &mut state.stash,
+        candidate.type_mapping.clone(),
+        None,
+    );
+    Some(copier.copy_ty(value.value))
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum SizedCertainty {
+    Yes,
+    No,
+    Maybe,
+}
+
+fn sized_certainty<'db>(
+    db: &'db dyn crate::Db,
+    source: &Stash,
+    ty: sage_stash::Ptr<Ty<'db>>,
+    visiting: &mut FxHashSet<Symbol<'db>>,
+) -> SizedCertainty {
+    match source[ty] {
+        Ty::Bool
+        | Ty::Char
+        | Ty::Int(_)
+        | Ty::Uint(_)
+        | Ty::Float(_)
+        | Ty::Ref(_, _, _)
+        | Ty::FnPtr(_, _)
+        | Ty::Never => SizedCertainty::Yes,
+        Ty::Str | Ty::Slice(_) => SizedCertainty::No,
+        Ty::Array(element, _) => sized_certainty(db, source, element, visiting),
+        Ty::Tuple(elements) => source[elements]
+            .iter()
+            .map(|element| sized_certainty(db, source, *element, visiting))
+            .fold(SizedCertainty::Yes, combine_sized),
+        Ty::Adt(symbol, arguments) => match symbol.data(db) {
+            SymbolData::EnumSymbol(_) => SizedCertainty::Yes,
+            SymbolData::StructSymbol(StructSymbol::Ext(external)) => {
+                if crate::external_syms::external_adt_is_always_sized(db, external) == Some(true) {
+                    SizedCertainty::Yes
+                } else {
+                    SizedCertainty::Maybe
+                }
+            }
+            SymbolData::StructSymbol(StructSymbol::Local(local)) => {
+                if !visiting.insert(symbol) {
+                    return SizedCertainty::Maybe;
+                }
+                let result = local_struct_sized(db, source, arguments, local, visiting);
+                visiting.remove(&symbol);
+                result
+            }
+            SymbolData::FnSymbol(_)
+            | SymbolData::VariantSymbol(_)
+            | SymbolData::VariantCtorSymbol(_)
+            | SymbolData::TraitSymbol(_)
+            | SymbolData::TypeAliasSymbol(_)
+            | SymbolData::ConstSymbol(_)
+            | SymbolData::StaticSymbol(_)
+            | SymbolData::ImplSymbol(_)
+            | SymbolData::ModSymbol(_)
+            | SymbolData::MacroDefSymbol(_)
+            | SymbolData::IntrinsicTypeSymbol(_)
+            | SymbolData::MacroInvocationSymbol(_)
+            | SymbolData::UseSymbol(_) => SizedCertainty::Maybe,
+        },
+        Ty::Alias(_) => SizedCertainty::Maybe,
+        Ty::Param(_) | Ty::InferVar(_) | Ty::Error(_) => SizedCertainty::Maybe,
+    }
+}
+
+/// Conservatively evaluates rustc's structural `MetaSized` lang-item trait.
+///
+/// Every `Sized` type is `MetaSized`, and Rust's built-in DSTs (`str` and
+/// slices) are `MetaSized` as well. For types whose sizedness depends on a
+/// parameter or an opaque external tail, returning `Maybe` preserves
+/// soundness without pretending that an enumerable impl exists.
+fn meta_sized_certainty<'db>(
+    db: &'db dyn crate::Db,
+    source: &Stash,
+    ty: sage_stash::Ptr<Ty<'db>>,
+    visiting: &mut FxHashSet<Symbol<'db>>,
+) -> SizedCertainty {
+    match source[ty] {
+        Ty::Bool
+        | Ty::Char
+        | Ty::Int(_)
+        | Ty::Uint(_)
+        | Ty::Float(_)
+        | Ty::Ref(_, _, _)
+        | Ty::FnPtr(_, _)
+        | Ty::Never
+        | Ty::Str
+        | Ty::Slice(_) => SizedCertainty::Yes,
+        // Arrays require sized elements, so their MetaSized certainty is the
+        // ordinary Sized certainty of the element.
+        Ty::Array(element, _) => sized_certainty(db, source, element, visiting),
+        Ty::Tuple(elements) => {
+            let elements = &source[elements];
+            let Some((tail, prefix)) = elements.split_last() else {
+                return SizedCertainty::Yes;
+            };
+            let mut certainty = SizedCertainty::Yes;
+            for element in prefix {
+                certainty =
+                    combine_sized(certainty, sized_certainty(db, source, *element, visiting));
+            }
+            combine_sized(certainty, meta_sized_certainty(db, source, *tail, visiting))
+        }
+        Ty::Adt(symbol, arguments) => match symbol.data(db) {
+            SymbolData::EnumSymbol(_) => SizedCertainty::Yes,
+            SymbolData::StructSymbol(StructSymbol::Ext(external)) => {
+                if crate::external_syms::external_adt_is_always_sized(db, external) == Some(true) {
+                    SizedCertainty::Yes
+                } else {
+                    SizedCertainty::Maybe
+                }
+            }
+            SymbolData::StructSymbol(StructSymbol::Local(local)) => {
+                if !visiting.insert(symbol) {
+                    return SizedCertainty::Maybe;
+                }
+                let result = local_struct_meta_sized(db, source, arguments, local, visiting);
+                visiting.remove(&symbol);
+                result
+            }
+            SymbolData::FnSymbol(_)
+            | SymbolData::VariantSymbol(_)
+            | SymbolData::VariantCtorSymbol(_)
+            | SymbolData::TraitSymbol(_)
+            | SymbolData::TypeAliasSymbol(_)
+            | SymbolData::ConstSymbol(_)
+            | SymbolData::StaticSymbol(_)
+            | SymbolData::ImplSymbol(_)
+            | SymbolData::ModSymbol(_)
+            | SymbolData::MacroDefSymbol(_)
+            | SymbolData::IntrinsicTypeSymbol(_)
+            | SymbolData::MacroInvocationSymbol(_)
+            | SymbolData::UseSymbol(_) => SizedCertainty::Maybe,
+        },
+        Ty::Alias(_) | Ty::Param(_) | Ty::InferVar(_) | Ty::Error(_) => SizedCertainty::Maybe,
+    }
+}
+
+fn local_struct_sized<'db>(
+    db: &'db dyn crate::Db,
+    argument_source: &Stash,
+    arguments: Slice<sage_stash::Ptr<Ty<'db>>>,
+    local: crate::local_syms::structs::LocalStructSym<'db>,
+    visiting: &mut FxHashSet<Symbol<'db>>,
+) -> SizedCertainty {
+    let fields = local.fields(db);
+    let (field_source, fields) = fields.open();
+    let Some(last_field) = field_source[fields.fields].last() else {
+        return SizedCertainty::Yes;
+    };
+
+    let signature = local.sig(db);
+    let signature_source = signature.stash();
+    let type_parameters: Vec<_> = signature_source[signature.root().generics]
+        .iter()
+        .filter(|parameter| parameter.kind(db) == GenericParamKind::Type)
+        .copied()
+        .collect();
+    if type_parameters.len() != argument_source[arguments].len() {
+        return SizedCertainty::Maybe;
+    }
+
+    let mut target = Stash::new();
+    let mut mapping = FxHashMap::default();
+    for (parameter, argument) in type_parameters
+        .into_iter()
+        .zip(argument_source[arguments].iter())
+    {
+        let copied = argument_source[*argument].stash_copy(argument_source, &mut target);
+        mapping.insert(parameter, SubstTarget::Ty(copied));
+    }
+    let mut substitute = Substitute::new(field_source, &mut target, mapping);
+    let tail = substitute.fold_ty(field_source[last_field.ty]);
+    let tail = target.alloc(tail);
+    sized_certainty(db, &target, tail, visiting)
+}
+
+fn local_struct_meta_sized<'db>(
+    db: &'db dyn crate::Db,
+    argument_source: &Stash,
+    arguments: Slice<sage_stash::Ptr<Ty<'db>>>,
+    local: crate::local_syms::structs::LocalStructSym<'db>,
+    visiting: &mut FxHashSet<Symbol<'db>>,
+) -> SizedCertainty {
+    let fields = local.fields(db);
+    let (field_source, fields) = fields.open();
+    let Some(last_field) = field_source[fields.fields].last() else {
+        return SizedCertainty::Yes;
+    };
+
+    let signature = local.sig(db);
+    let signature_source = signature.stash();
+    let type_parameters: Vec<_> = signature_source[signature.root().generics]
+        .iter()
+        .filter(|parameter| parameter.kind(db) == GenericParamKind::Type)
+        .copied()
+        .collect();
+    if type_parameters.len() != argument_source[arguments].len() {
+        return SizedCertainty::Maybe;
+    }
+
+    let mut target = Stash::new();
+    let mut mapping = FxHashMap::default();
+    for (parameter, argument) in type_parameters
+        .into_iter()
+        .zip(argument_source[arguments].iter())
+    {
+        let copied = argument_source[*argument].stash_copy(argument_source, &mut target);
+        mapping.insert(parameter, SubstTarget::Ty(copied));
+    }
+    let mut substitute = Substitute::new(field_source, &mut target, mapping);
+    let tail = substitute.fold_ty(field_source[last_field.ty]);
+    let tail = target.alloc(tail);
+    meta_sized_certainty(db, &target, tail, visiting)
+}
+
+fn combine_sized(left: SizedCertainty, right: SizedCertainty) -> SizedCertainty {
+    match (left, right) {
+        (SizedCertainty::No, _) | (_, SizedCertainty::No) => SizedCertainty::No,
+        (SizedCertainty::Maybe, _) | (_, SizedCertainty::Maybe) => SizedCertainty::Maybe,
+        (SizedCertainty::Yes, SizedCertainty::Yes) => SizedCertainty::Yes,
+    }
+}
 
 fn predicate_goal<'db>(
     copier: &mut IrCopier<'_, '_, 'db>,

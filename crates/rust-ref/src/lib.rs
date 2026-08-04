@@ -76,6 +76,13 @@ pub struct FieldDef<Def> {
     pub ty: Type<Def>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound(serialize = "Def: Serialize", deserialize = "Def: Deserialize<'de>"))]
+pub struct FieldId<Def> {
+    pub owner: Def,
+    pub index: u32,
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Types
 // ═══════════════════════════════════════════════════════════════════════
@@ -90,12 +97,63 @@ pub enum Type<Def> {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         type_args: Vec<Type<Def>>,
     },
+    Alias {
+        kind: AliasKind,
+        target: Def,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        type_args: Vec<Type<Def>>,
+    },
     Ref {
         mutable: bool,
         ty: Box<Type<Def>>,
     },
     Unit,
     Tuple(Vec<Type<Def>>),
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AliasKind {
+    Named,
+    Associated,
+    Opaque,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+#[serde(bound(serialize = "Def: Serialize", deserialize = "Def: Deserialize<'de>"))]
+// ANCHOR: example_call_dispatch_schema
+pub enum CallDispatch<Def> {
+    #[default]
+    Direct,
+    StaticTrait {
+        self_ty: Type<Def>,
+        trait_target: Def,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        trait_type_args: Vec<Type<Def>>,
+    },
+}
+// ANCHOR_END: example_call_dispatch_schema
+
+impl<Def> CallDispatch<Def> {
+    fn is_direct(&self) -> bool {
+        matches!(self, Self::Direct)
+    }
+
+    fn map<Def2>(self, f: &mut impl FnMut(Def) -> Def2) -> CallDispatch<Def2> {
+        match self {
+            Self::Direct => CallDispatch::Direct,
+            Self::StaticTrait {
+                self_ty,
+                trait_target,
+                trait_type_args,
+            } => CallDispatch::StaticTrait {
+                self_ty: self_ty.map(f),
+                trait_target: f(trait_target),
+                trait_type_args: trait_type_args.into_iter().map(|ty| ty.map(f)).collect(),
+            },
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -120,11 +178,19 @@ pub enum Expr<Def> {
         rhs: Box<Expr<Def>>,
         ty: Type<Def>,
     },
+    // ANCHOR: example_call_substitution_schema
     Call {
         target: Def,
+        #[serde(default, skip_serializing_if = "CallDispatch::is_direct")]
+        dispatch: CallDispatch<Def>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        owner_type_args: Vec<Type<Def>>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        method_type_args: Vec<Type<Def>>,
         args: Vec<Expr<Def>>,
         ty: Type<Def>,
     },
+    // ANCHOR_END: example_call_substitution_schema
     StructLit {
         target: Def,
         fields: Vec<FieldExpr<Def>>,
@@ -132,7 +198,7 @@ pub enum Expr<Def> {
     },
     Field {
         expr: Box<Expr<Def>>,
-        field_name: String,
+        field: FieldId<Def>,
         ty: Type<Def>,
     },
     Block {
@@ -343,6 +409,15 @@ impl<Def> Type<Def> {
                 target: f(target),
                 type_args: type_args.into_iter().map(|t| t.map(f)).collect(),
             },
+            Type::Alias {
+                kind,
+                target,
+                type_args,
+            } => Type::Alias {
+                kind,
+                target: f(target),
+                type_args: type_args.into_iter().map(|ty| ty.map(f)).collect(),
+            },
             Type::Ref { mutable, ty } => Type::Ref {
                 mutable,
                 ty: Box::new((*ty).map(f)),
@@ -364,8 +439,18 @@ impl<Def> Expr<Def> {
                 rhs: Box::new((*rhs).map(f)),
                 ty: ty.map(f),
             },
-            Expr::Call { target, args, ty } => Expr::Call {
+            Expr::Call {
+                target,
+                dispatch,
+                owner_type_args,
+                method_type_args,
+                args,
+                ty,
+            } => Expr::Call {
                 target: f(target),
+                dispatch: dispatch.map(f),
+                owner_type_args: owner_type_args.into_iter().map(|ty| ty.map(f)).collect(),
+                method_type_args: method_type_args.into_iter().map(|ty| ty.map(f)).collect(),
                 args: args.into_iter().map(|a| a.map(f)).collect(),
                 ty: ty.map(f),
             },
@@ -374,13 +459,12 @@ impl<Def> Expr<Def> {
                 fields: fields.into_iter().map(|fe| fe.map(f)).collect(),
                 ty: ty.map(f),
             },
-            Expr::Field {
-                expr,
-                field_name,
-                ty,
-            } => Expr::Field {
+            Expr::Field { expr, field, ty } => Expr::Field {
                 expr: Box::new((*expr).map(f)),
-                field_name,
+                field: FieldId {
+                    owner: f(field.owner),
+                    index: field.index,
+                },
                 ty: ty.map(f),
             },
             Expr::Block { stmts, tail, ty } => Expr::Block {
@@ -492,6 +576,9 @@ mod tests {
                     return_ty: Type::Unit,
                     body: Some(Expr::Call {
                         target: 3,
+                        dispatch: CallDispatch::Direct,
+                        owner_type_args: vec![],
+                        method_type_args: vec![],
                         args: vec![Expr::Local {
                             name: "x".to_string(),
                             index: 0,
@@ -524,6 +611,59 @@ mod tests {
             }
             _ => panic!("expected Fn item"),
         }
+    }
+
+    #[test]
+    fn map_visits_call_dispatch_and_substitutions() {
+        let krate: Crate<u32> = Crate {
+            root: Module {
+                def: 0,
+                name: String::new(),
+                items: vec![Item::Fn(FnItem {
+                    def: 1,
+                    name: "call".to_string(),
+                    params: vec![],
+                    return_ty: Type::Unit,
+                    body: Some(Expr::Call {
+                        target: 2,
+                        dispatch: CallDispatch::StaticTrait {
+                            self_ty: Type::Def {
+                                target: 3,
+                                type_args: vec![Type::Def {
+                                    target: 4,
+                                    type_args: vec![],
+                                }],
+                            },
+                            trait_target: 5,
+                            trait_type_args: vec![Type::Def {
+                                target: 6,
+                                type_args: vec![],
+                            }],
+                        },
+                        owner_type_args: vec![Type::Def {
+                            target: 7,
+                            type_args: vec![],
+                        }],
+                        method_type_args: vec![Type::Def {
+                            target: 8,
+                            type_args: vec![],
+                        }],
+                        args: vec![],
+                        ty: Type::Def {
+                            target: 9,
+                            type_args: vec![],
+                        },
+                    }),
+                })],
+            },
+        };
+
+        let mut seen = Vec::new();
+        let _ = krate.map(|def| {
+            seen.push(def);
+            def
+        });
+        assert_eq!(seen, (0..=9).collect::<Vec<_>>());
     }
 
     #[test]
@@ -579,12 +719,18 @@ mod tests {
                                 },
                                 init: Some(Expr::Call {
                                     target: 3,
+                                    dispatch: CallDispatch::Direct,
+                                    owner_type_args: vec![],
+                                    method_type_args: vec![],
                                     args: vec![],
                                     ty: Type::Unit,
                                 }),
                             },
                             Stmt::Expr(Expr::Call {
                                 target: 4,
+                                dispatch: CallDispatch::Direct,
+                                owner_type_args: vec![],
+                                method_type_args: vec![],
                                 args: vec![],
                                 ty: Type::Unit,
                             }),
@@ -595,6 +741,9 @@ mod tests {
                                 name: "a".to_string(),
                                 value: Expr::Call {
                                     target: 6,
+                                    dispatch: CallDispatch::Direct,
+                                    owner_type_args: vec![],
+                                    method_type_args: vec![],
                                     args: vec![],
                                     ty: Type::Unit,
                                 },

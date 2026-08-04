@@ -10,13 +10,13 @@ use crate::resolve::{Namespace, Resolution};
 use crate::symbol::{SymbolData, TraitSymbol};
 use crate::ty::{SolverEligibility, TraitRef, Ty, WherePredicate};
 
-pub(crate) fn type_only_generics<'db>(
+pub(crate) fn solver_supported_generics<'db>(
     db: &'db dyn crate::Db,
     generics: &[GenericParam<'db>],
 ) -> SolverEligibility {
     if generics
         .iter()
-        .all(|generic| generic.kind(db) == GenericParamKind::Type)
+        .all(|generic| generic.kind(db) != GenericParamKind::Const)
     {
         SolverEligibility::Eligible
     } else {
@@ -36,7 +36,7 @@ pub(crate) fn source_generics_supported(
                 bounds: _,
                 default: None,
                 span: _,
-            }
+            } | GenericParamCst::Lifetime { name: _, span: _ }
         )
     }) {
         SolverEligibility::Eligible
@@ -52,7 +52,7 @@ pub(crate) fn lower_predicates<'db>(
     where_clauses: Slice<WhereClauseCst<'db>>,
 ) -> (Slice<WherePredicate<'db>>, SolverEligibility) {
     let mut predicates = Vec::new();
-    let mut eligibility = type_only_generics(cx.db, &cx.target_stash[checked_generics])
+    let mut eligibility = solver_supported_generics(cx.db, &cx.target_stash[checked_generics])
         .and(source_generics_supported(cx.source_stash, source_generics));
 
     let source_params = cx.source_stash[source_generics].to_vec();
@@ -96,9 +96,7 @@ fn lower_bounds<'db>(
                 }
                 Err(()) => *eligibility = SolverEligibility::Unsupported,
             },
-            TypeBoundCst::Lifetime(_) => {
-                *eligibility = SolverEligibility::Unsupported;
-            }
+            TypeBoundCst::Lifetime(_) => {}
         }
     }
 }
@@ -107,20 +105,11 @@ pub(crate) fn trait_ref_eligibility(
     db: &dyn crate::Db,
     trait_ref: TraitRef<'_>,
 ) -> SolverEligibility {
-    match trait_ref.trait_sym {
-        TraitSymbol::Local(local) => {
-            let (stash, cst) = local.cst(db).open_deref();
-            if source_generics_supported(stash, cst.generics).is_eligible()
-                && stash[cst.supertraits].is_empty()
-                && !cst.is_auto
-            {
-                SolverEligibility::Eligible
-            } else {
-                SolverEligibility::Unsupported
-            }
-        }
-        TraitSymbol::Ext(_) => SolverEligibility::Unsupported,
-    }
+    trait_ref
+        .trait_sym
+        .sig(db)
+        .map(|signature| signature.root().value.solver_eligibility)
+        .unwrap_or(SolverEligibility::Unsupported)
 }
 
 pub(crate) fn lower_trait_ref<'db>(
@@ -180,29 +169,4 @@ pub(crate) fn lower_trait_ref<'db>(
     }
 
     Ok(TraitRef { trait_sym, args })
-}
-
-pub(crate) fn contains_erased_lifetime(stash: &sage_stash::Stash, ty: Ptr<Ty<'_>>) -> bool {
-    match stash[ty] {
-        Ty::Ref(_, _, crate::ty::Lifetime::Erased) => true,
-        Ty::Bool
-        | Ty::Char
-        | Ty::Int(_)
-        | Ty::Uint(_)
-        | Ty::Float(_)
-        | Ty::Str
-        | Ty::Adt(_, _)
-        | Ty::Ref(_, _, crate::ty::Lifetime::Param(_) | crate::ty::Lifetime::Static)
-        | Ty::Tuple(_)
-        | Ty::Slice(_)
-        | Ty::Array(_, _)
-        | Ty::FnPtr(_, _)
-        | Ty::Param(_)
-        | Ty::InferVar(_)
-        | Ty::Never
-        | Ty::Error(_) => crate::check::infer::skeleton::decompose(stash, ty)
-            .children
-            .into_iter()
-            .any(|child| contains_erased_lifetime(stash, child)),
-    }
 }

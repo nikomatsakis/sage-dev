@@ -2,6 +2,13 @@
 
 **Status:** Proposed
 
+> **Current architecture:** This RFD records the original implementation and
+> its historical deviations. Its structural-comparison and paired-normalization
+> details are superseded by [D4](../../design/decisions.md#d4-oracle-test-harness)
+> and the [Oracle Test Harness](../../design/oracle-test-harness.md). The
+> destination is deterministic serialized output compared by exact textual
+> identity; paired normalization is technical debt to remove.
+
 ## Problem
 
 Sage needs a testing strategy that validates correctness against rustc — the canonical Rust implementation. Unit tests against internal APIs are brittle (they break on every refactor) and don't answer the question that matters: "does sage produce the same answer as rustc?"
@@ -642,7 +649,12 @@ Documented after initial implementation:
 ### Implementation deviations (Steps 4-7)
 
 - **No automated file discovery** — the RFD specified recursive directory walking to auto-discover fixtures. The implementation uses manually-written `#[test]` functions per fixture. Reasonable at 4 fixtures; will need a proc-macro or `datatest-stable` at scale.
-- **Paired normalization** — the RFD assumed direct `assert_json_eq!` comparison. The implementation uses a paired-normalization pass that erases known sage limitations (InferVar types → `"_"` on both sides, literal values → empty). This avoids false failures from known gaps while still catching real structural divergences.
-- **Two comparison modes** — the RFD specified one comparison. The implementation provides two: `compare_signatures_*` (strip bodies, always passes) and `compare_full_*` (bodies included, normalized). The signature tests catch regressions even when body emission has known gaps.
+- **Exact comparison** — the harness performs no paired normalization for
+  known Sage limitations such as inference variables or literal values.
+  Conformance is exact deterministic serialized text under D4.
+- **Two comparison modes** — the implementation provides
+  `compare_signatures_*` and `compare_full_*`. A signatures-only test may be a
+  useful focused test, but it cannot count as body conformance. Full
+  conformance requires exact complete output under D4.
 - **No error-case comparison** — the RFD mentioned "for error cases, both sides emit a sorted list of error spans." Not yet implemented; all current fixtures are valid programs. Deferred to future work.
 - **Oracle entry point for multi-file** — the RFD said "point at a directory." The implementation just passes the entry-point file path to the oracle (rustc resolves modules naturally). Sage uses `with_test_crate_files` to register all source files with the salsa database.

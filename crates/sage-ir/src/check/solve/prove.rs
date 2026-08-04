@@ -16,12 +16,16 @@ use crate::ty::{TraitRef, Ty, WherePredicate};
 
 use super::boundary::{
     AppliedCertainty, IrCopier, QueryProofState, apply_query_response, extract_query_result,
-    extract_query_result_at, instantiate_query,
+    extract_query_result_at, extract_query_result_with_output_at, instantiate_query,
 };
 use super::canonical::canonicalize_goal;
-use super::clauses::{assemble_candidates, instantiate_candidate};
+use super::clauses::{
+    Candidate, assemble_candidates, instantiate_candidate, load_prepared_associated_value,
+    prepare_value_candidate,
+};
 use super::merge::merge_candidate_results;
 use super::{Assumption, Atom, Goal, GoalQueryData, GoalResult, MAX_PROOF_DEPTH, QueryResult};
+use super::{GoalOutput, SolverGoal};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 struct FrameId(u32);
@@ -400,13 +404,26 @@ pub(crate) fn prove_query<'db>(
     db: &'db dyn crate::Db,
     query: &Stashed<GoalQueryData<'db>>,
 ) -> Stashed<QueryResult<'db>> {
+    assert!(matches!(query.root().goal, SolverGoal::Prove(_)));
+    solve_query(db, query)
+}
+
+pub(crate) fn solve_query<'db>(
+    db: &'db dyn crate::Db,
+    query: &Stashed<GoalQueryData<'db>>,
+) -> Stashed<QueryResult<'db>> {
     super::goal::validate_goal_query(db, query)
         .unwrap_or_else(|error| panic!("invalid canonical goal query: {error}"));
     let mut state = instantiate_query(query);
     let whiteboard = Whiteboard::default();
+    if matches!(state.goal, SolverGoal::Normalize(_)) {
+        return whiteboard.drive(whiteboard.request(db, query.clone(), None, 0));
+    }
     let version = state.version;
     let assumptions = state.assumptions;
-    let goal = state.goal;
+    let SolverGoal::Prove(goal) = state.goal else {
+        unreachable!()
+    };
     let result = whiteboard.drive(prove_goal(
         db,
         &whiteboard,
@@ -549,7 +566,14 @@ async fn prove_atom<'db>(
         &response,
     ) {
         Ok(applied) => match applied.certainty {
-            AppliedCertainty::Yes { modulo } => GoalResult::Yes { modulo },
+            AppliedCertainty::Yes {
+                output: GoalOutput::Proven,
+                modulo,
+            } => GoalResult::Yes { modulo },
+            AppliedCertainty::Yes {
+                output: GoalOutput::Type(_),
+                ..
+            } => unreachable!("proof operation returned a type output"),
             AppliedCertainty::Maybe => GoalResult::Maybe,
             AppliedCertainty::No => GoalResult::No,
         },
@@ -566,8 +590,15 @@ async fn solve_atomic_frame<'db>(
     depth: u32,
 ) -> Stashed<QueryResult<'db>> {
     let mut frame = instantiate_query(query);
-    let Goal::Atom(atom) = frame.goal else {
-        panic!("atomic frame received a structural goal")
+    let SolverGoal::Prove(goal) = frame.goal else {
+        let SolverGoal::Normalize(alias) = frame.goal else {
+            unreachable!()
+        };
+        return solve_normalize_frame(db, whiteboard, query, &mut frame, alias, frame_id, depth)
+            .await;
+    };
+    let Goal::Atom(atom) = goal else {
+        return extract_query_result(db, &frame, GoalResult::Maybe);
     };
     match atom {
         Atom::Equals(left, right) => {
@@ -595,6 +626,310 @@ async fn solve_atomic_frame<'db>(
     }
 }
 
+async fn solve_normalize_frame<'db>(
+    db: &'db dyn crate::Db,
+    whiteboard: &Whiteboard<'db>,
+    query: &Stashed<GoalQueryData<'db>>,
+    frame: &mut QueryProofState<'db>,
+    alias: crate::ty::AliasTy<'db>,
+    frame_id: FrameId,
+    depth: u32,
+) -> Stashed<QueryResult<'db>> {
+    let crate::ty::AliasTy::Associated(projection) = alias else {
+        return extract_query_result(db, frame, GoalResult::Maybe);
+    };
+    if !frame.stash[projection.args].is_empty() {
+        return extract_query_result(db, frame, GoalResult::Maybe);
+    }
+    let atom = Atom::TraitImpl {
+        self_ty: projection.self_ty,
+        trait_ref: projection.trait_ref,
+    };
+    let (all_candidates, incomplete) =
+        assemble_candidates(db, frame, frame.version, frame.assumptions, atom);
+    let environment_candidate_count = all_candidates
+        .iter()
+        .filter(|candidate| matches!(candidate, Candidate::Environment { .. }))
+        .count();
+    let candidates: Vec<_> = all_candidates
+        .into_iter()
+        .filter(|candidate| {
+            matches!(
+                candidate,
+                Candidate::LocalImpl(_) | Candidate::ExternalImpl(_)
+            )
+        })
+        .collect();
+    let normalization_fact_count = normalization_facts(frame, projection).len();
+    let input_universes = input_universes(frame);
+    let next_response_param = frame.next_response_param;
+
+    let mut tasks = ScopedTasks::new();
+    for candidate_index in 0..candidates.len() {
+        let query = query.clone();
+        let whiteboard = whiteboard.clone();
+        tasks.spawn(async move {
+            let mut candidate_state = instantiate_query(&query);
+            let SolverGoal::Normalize(crate::ty::AliasTy::Associated(projection)) =
+                candidate_state.goal
+            else {
+                unreachable!()
+            };
+            let atom = Atom::TraitImpl {
+                self_ty: projection.self_ty,
+                trait_ref: projection.trait_ref,
+            };
+            let (all_candidates, _) = assemble_candidates(
+                db,
+                &candidate_state,
+                candidate_state.version,
+                candidate_state.assumptions,
+                atom,
+            );
+            let candidates: Vec<_> = all_candidates
+                .into_iter()
+                .filter(|candidate| {
+                    matches!(
+                        candidate,
+                        Candidate::LocalImpl(_) | Candidate::ExternalImpl(_)
+                    )
+                })
+                .collect();
+            let candidate = candidates[candidate_index];
+            let parent = candidate_state.version;
+            let child = candidate_state.egraph.branch_from(parent);
+            let Some(candidate) =
+                prepare_value_candidate(db, &mut candidate_state, child, candidate)
+            else {
+                let answer =
+                    extract_query_result_at(db, &candidate_state, child, GoalResult::Maybe);
+                candidate_state.egraph.discard(child);
+                return answer;
+            };
+            let result = match match_candidate_head(
+                &mut candidate_state,
+                child,
+                atom,
+                candidate.instantiated.head,
+            ) {
+                Ok(()) => {
+                    let body_goals = candidate_state.stash[candidate.instantiated.body].to_vec();
+                    let body = Goal::all(&mut candidate_state.stash, body_goals);
+                    let environment = candidate_state.assumptions;
+                    prove_goal(
+                        db,
+                        &whiteboard,
+                        &mut candidate_state,
+                        child,
+                        environment,
+                        body,
+                        depth,
+                        Some(frame_id),
+                    )
+                    .await
+                }
+                Err(_) => GoalResult::No,
+            };
+            let answer = match result {
+                GoalResult::Yes { .. } => {
+                    let Some(value) = load_prepared_associated_value(
+                        db,
+                        &mut candidate_state,
+                        &candidate,
+                        projection.associated_ty,
+                    ) else {
+                        let answer =
+                            extract_query_result_at(db, &candidate_state, child, GoalResult::Maybe);
+                        candidate_state.egraph.discard(child);
+                        return answer;
+                    };
+                    extract_query_result_with_output_at(
+                        db,
+                        &candidate_state,
+                        child,
+                        GoalOutput::Type(value),
+                        result,
+                    )
+                }
+                GoalResult::Maybe | GoalResult::No => {
+                    extract_query_result_at(db, &candidate_state, child, result)
+                }
+            };
+            candidate_state.egraph.discard(child);
+            answer
+        });
+    }
+    for candidate_index in 0..environment_candidate_count {
+        let query = query.clone();
+        let whiteboard = whiteboard.clone();
+        tasks.spawn(async move {
+            let mut candidate_state = instantiate_query(&query);
+            let SolverGoal::Normalize(crate::ty::AliasTy::Associated(projection)) =
+                candidate_state.goal
+            else {
+                unreachable!()
+            };
+            let atom = Atom::TraitImpl {
+                self_ty: projection.self_ty,
+                trait_ref: projection.trait_ref,
+            };
+            let (all_candidates, _) = assemble_candidates(
+                db,
+                &candidate_state,
+                candidate_state.version,
+                candidate_state.assumptions,
+                atom,
+            );
+            let candidates: Vec<_> = all_candidates
+                .into_iter()
+                .filter(|candidate| matches!(candidate, Candidate::Environment { .. }))
+                .collect();
+            let parent = candidate_state.version;
+            let child = candidate_state.egraph.branch_from(parent);
+            let candidate =
+                instantiate_candidate(db, &mut candidate_state, child, candidates[candidate_index]);
+            let result =
+                match match_candidate_head(&mut candidate_state, child, atom, candidate.head) {
+                    Ok(()) => {
+                        let body_goals = candidate_state.stash[candidate.body].to_vec();
+                        let body = Goal::all(&mut candidate_state.stash, body_goals);
+                        let environment = candidate_state.assumptions;
+                        prove_goal(
+                            db,
+                            &whiteboard,
+                            &mut candidate_state,
+                            child,
+                            environment,
+                            body,
+                            depth,
+                            Some(frame_id),
+                        )
+                        .await
+                    }
+                    Err(_) => GoalResult::No,
+                };
+            // A matching trait fact establishes only truth. Even when all of
+            // its conditions hold, it contributes uncertainty rather than an
+            // invented associated value.
+            let result = match result {
+                GoalResult::No => GoalResult::No,
+                GoalResult::Yes { .. } | GoalResult::Maybe => GoalResult::Maybe,
+            };
+            let answer = extract_query_result_at(db, &candidate_state, child, result);
+            candidate_state.egraph.discard(child);
+            answer
+        });
+    }
+    for fact_index in 0..normalization_fact_count {
+        let query = query.clone();
+        tasks.spawn(async move {
+            let mut candidate_state = instantiate_query(&query);
+            let SolverGoal::Normalize(crate::ty::AliasTy::Associated(projection)) =
+                candidate_state.goal
+            else {
+                unreachable!()
+            };
+            let facts = normalization_facts(&candidate_state, projection);
+            let (fact_alias, fact_value) = facts[fact_index];
+            let parent = candidate_state.version;
+            let child = candidate_state.egraph.branch_from(parent);
+            let query_alias = candidate_state
+                .stash
+                .alloc(Ty::Alias(crate::ty::AliasTy::Associated(projection)));
+            let fact_alias = candidate_state.stash.alloc(Ty::Alias(fact_alias));
+            let result = if try_unify(
+                &mut candidate_state.egraph,
+                &mut candidate_state.stash,
+                child,
+                query_alias,
+                fact_alias,
+            )
+            .is_ok()
+            {
+                GoalResult::Yes {
+                    modulo: Goal::true_(&mut candidate_state.stash),
+                }
+            } else {
+                GoalResult::No
+            };
+            let answer = extract_query_result_with_output_at(
+                db,
+                &candidate_state,
+                child,
+                GoalOutput::Type(fact_value),
+                result,
+            );
+            candidate_state.egraph.discard(child);
+            answer
+        });
+    }
+    let mut answers = Vec::new();
+    while let Some((_task, answer)) = tasks.next_completed().await {
+        answers.push(answer);
+    }
+    merge_candidate_results(
+        db,
+        next_response_param,
+        &input_universes,
+        answers,
+        incomplete,
+    )
+}
+
+fn normalization_facts<'db>(
+    state: &QueryProofState<'db>,
+    projection: crate::ty::ProjectionTy<'db>,
+) -> Vec<(crate::ty::AliasTy<'db>, Ptr<Ty<'db>>)> {
+    state.stash[state.assumptions]
+        .iter()
+        .filter_map(|assumption| match *assumption {
+            Assumption::NormalizesTo {
+                alias: alias @ crate::ty::AliasTy::Associated(fact),
+                ty,
+            } if fact.associated_ty == projection.associated_ty
+                && fact.trait_ref.trait_sym == projection.trait_ref.trait_sym =>
+            {
+                Some((alias, ty))
+            }
+            Assumption::NormalizesTo { .. }
+            | Assumption::TraitImpl { .. }
+            | Assumption::Implies(..)
+            | Assumption::All(_) => None,
+        })
+        .collect()
+}
+
+fn input_universes<'db>(
+    frame: &QueryProofState<'db>,
+) -> FxHashMap<crate::generic_param::AlphaEquivParam<'db>, u32> {
+    frame
+        .inputs
+        .iter()
+        .map(|input| {
+            let universe = match frame.stash[input.ty] {
+                Ty::InferVar(index) => frame.egraph.current_universe(frame.version, index),
+                Ty::Param(param) => frame.egraph.placeholder_universe(param),
+                Ty::Bool
+                | Ty::Char
+                | Ty::Int(_)
+                | Ty::Uint(_)
+                | Ty::Float(_)
+                | Ty::Str
+                | Ty::Adt(_, _)
+                | Ty::Alias(_)
+                | Ty::Ref(_, _, _)
+                | Ty::Tuple(_)
+                | Ty::Slice(_)
+                | Ty::Array(_, _)
+                | Ty::FnPtr(_, _)
+                | Ty::Never
+                | Ty::Error(_) => unreachable!("canonical input is not a variable"),
+            };
+            (input.param, universe.0)
+        })
+        .collect()
+}
+
 async fn solve_trait_frame<'db>(
     db: &'db dyn crate::Db,
     whiteboard: &Whiteboard<'db>,
@@ -620,6 +955,7 @@ async fn solve_trait_frame<'db>(
                 | Ty::Float(_)
                 | Ty::Str
                 | Ty::Adt(_, _)
+                | Ty::Alias(_)
                 | Ty::Ref(_, _, _)
                 | Ty::Tuple(_)
                 | Ty::Slice(_)
@@ -640,7 +976,7 @@ async fn solve_trait_frame<'db>(
         let whiteboard = whiteboard.clone();
         tasks.spawn(async move {
             let mut candidate_state = instantiate_query(&query);
-            let Goal::Atom(candidate_atom) = candidate_state.goal else {
+            let SolverGoal::Prove(Goal::Atom(candidate_atom)) = candidate_state.goal else {
                 unreachable!("candidate query is not atomic")
             };
             let (candidates, _) = assemble_candidates(
@@ -707,8 +1043,11 @@ fn is_unconditional_answer(answer: &Stashed<QueryResult<'_>>) -> bool {
     let (stash, result) = answer.open();
     matches!(
         result.value,
-        super::QueryResultData::Yes { subst, modulo }
-            if stash[subst].is_empty() && modulo.is_trivially_true(stash)
+        super::QueryResultData::Yes {
+            output: GoalOutput::Proven,
+            subst,
+            modulo,
+        } if stash[subst].is_empty() && modulo.is_trivially_true(stash)
     )
 }
 
@@ -954,6 +1293,10 @@ fn reabstract_assumption<'db>(
             self_ty: reabstract_ty(state, version, self_ty, roots, memo),
             trait_ref: reabstract_trait_ref(state, version, trait_ref, roots, memo),
         },
+        Assumption::NormalizesTo { alias, ty } => Assumption::NormalizesTo {
+            alias: reabstract_alias(state, version, alias, roots, memo),
+            ty: reabstract_ty(state, version, ty, roots, memo),
+        },
         Assumption::Implies(conditions, consequence) => {
             let conditions = state.stash[conditions].to_vec();
             let conditions: Vec<_> = conditions
@@ -976,6 +1319,21 @@ fn reabstract_assumption<'db>(
             Assumption::All(Assumption::flatten(&mut state.stash, assumptions))
         }
     }
+}
+
+fn reabstract_alias<'db>(
+    state: &mut QueryProofState<'db>,
+    version: Version,
+    alias: crate::ty::AliasTy<'db>,
+    roots: &FxHashMap<Ptr<Ty<'db>>, GenericParam<'db>>,
+    memo: &mut FxHashMap<Ptr<Ty<'db>>, Ptr<Ty<'db>>>,
+) -> crate::ty::AliasTy<'db> {
+    let ty = state.stash.alloc(Ty::Alias(alias));
+    let ty = reabstract_ty(state, version, ty, roots, memo);
+    let Ty::Alias(alias) = state.stash[ty] else {
+        unreachable!("reabstracting an alias preserves its outer constructor")
+    };
+    alias
 }
 
 fn reabstract_predicate<'db>(
@@ -1063,6 +1421,7 @@ fn contains_error(state: &QueryProofState<'_>, ty: sage_stash::Ptr<Ty<'_>>) -> b
         | Ty::Float(_)
         | Ty::Str
         | Ty::Adt(_, _)
+        | Ty::Alias(_)
         | Ty::Ref(_, _, _)
         | Ty::Tuple(_)
         | Ty::Slice(_)
@@ -1097,6 +1456,7 @@ mod whiteboard_tests {
         let root = LocalModSym::new(
             db,
             Name::new(db, String::new()),
+            crate::scope::Edition::Rust2021,
             None,
             ModBodySource::File(file),
             Stashed::new(attrs, empty),
@@ -1136,7 +1496,7 @@ mod whiteboard_tests {
                 next_response_param: 0,
                 assumptions_complete: true,
                 assumptions,
-                goal: Goal::Atom(Atom::Equals(ty, ty)),
+                goal: SolverGoal::Prove(Goal::Atom(Atom::Equals(ty, ty))),
             },
         )
     }

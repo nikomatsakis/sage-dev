@@ -1,6 +1,7 @@
 use sage_stash::StashDirect;
 
 use crate::cst::consts::ConstCst;
+use crate::local_syms::LocalAssociatedOwner;
 use crate::name::Name;
 use crate::scope::ScopeSymbol;
 use crate::span::AbsoluteSpan;
@@ -9,12 +10,16 @@ use crate::span::AbsoluteSpan;
 pub struct LocalConstSym<'db> {
     pub name: Name<'db>,
     pub scope: ScopeSymbol<'db>,
+    pub owner: Option<LocalAssociatedOwner<'db>>,
 
     #[returns(ref)]
     pub cst: ConstCst<'db>,
 
     #[tracked]
     pub span: AbsoluteSpan<'db>,
+
+    #[tracked]
+    pub cst_base: AbsoluteSpan<'db>,
 }
 
 impl StashDirect for LocalConstSym<'_> {}

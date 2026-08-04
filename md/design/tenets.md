@@ -130,6 +130,20 @@ generics, params, and return type from the CST. The body expression is
 ignored. A change to a function body does not re-execute the sig query,
 and downstream items that only read the sig are unaffected.
 
+## Oracle conformance
+
+**Emit a common form, then compare exact text.** The rustc and Sage emitters
+independently translate their native IR into the shared reference schema and
+serialize it deterministically. The conformance decision is byte-for-byte
+identity of those serialized outputs.
+
+Adapters perform only the representation changes required by the shared
+schema. The comparison path never applies paired normalization, erases a
+difference, strips unsupported content, reorders output, or attempts semantic
+equivalence. Rich diffs may explain a mismatch after exact comparison fails;
+they cannot turn it into a pass. See [Oracle Test
+Harness](./oracle-test-harness.md#thin-adapters-and-exact-comparison).
+
 ## Naming conventions
 
 - `*Cst` — CST nodes (stash-allocated, per-item): `TypeCst`, `ExprCst`,

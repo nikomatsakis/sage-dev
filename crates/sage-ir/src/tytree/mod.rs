@@ -5,8 +5,8 @@ use crate::cst::expr::{BinaryOp, Literal, UnaryOp};
 use crate::diagnostic::{Diagnostic, ErrorReported};
 use crate::name::Name;
 use crate::span::RelativeSpan;
-use crate::symbol::Symbol;
-use crate::ty::Ty;
+use crate::symbol::{FnSymbol, StructSymbol, Symbol, VariantSymbol};
+use crate::ty::{TraitRef, Ty};
 use crate::types::TokenTree;
 
 /// Placeholder for an expression that hasn't been checked yet.
@@ -42,6 +42,35 @@ pub struct LocalVar<'db> {
     pub span: RelativeSpan,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub enum FieldOwner<'db> {
+    Struct(StructSymbol<'db>),
+    Variant(VariantSymbol<'db>),
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub struct ResolvedField<'db> {
+    pub owner: FieldOwner<'db>,
+    pub index: u32,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub enum CallDispatch<'db> {
+    Direct,
+    StaticTrait {
+        self_ty: Ptr<Ty<'db>>,
+        trait_ref: TraitRef<'db>,
+    },
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub struct ResolvedCallTarget<'db> {
+    pub function: FnSymbol<'db>,
+    pub dispatch: CallDispatch<'db>,
+    pub owner_type_args: Slice<Ptr<Ty<'db>>>,
+    pub method_type_args: Slice<Ptr<Ty<'db>>>,
+}
+
 // ---------------------------------------------------------------------------
 // Typed tree
 // ---------------------------------------------------------------------------
@@ -56,6 +85,9 @@ pub struct CheckedBody<'db> {
 
 unsafe impl salsa::Update for CheckedBody<'_> {
     unsafe fn maybe_update(old_pointer: *mut Self, new_value: Self) -> bool {
+        // SAFETY: Salsa passes a valid, uniquely writable pointer to the old
+        // value for the duration of `maybe_update`. We only read it for
+        // equality and replace it in place when the semantic value changed.
         let old = unsafe { &*old_pointer };
         if *old == new_value {
             false
@@ -86,10 +118,12 @@ pub enum TyExprData<'db> {
     Path(Res<'db>),
     Block(Slice<TyStmt<'db>>, Option<Ptr<TyExpr<'db>>>),
     Call(Ptr<TyExpr<'db>>, Slice<Ptr<TyExpr<'db>>>),
+    ResolvedCall(ResolvedCallTarget<'db>, Slice<Ptr<TyExpr<'db>>>),
     MethodCall(Ptr<TyExpr<'db>>, Name<'db>, Slice<Ptr<TyExpr<'db>>>),
-    Field(Ptr<TyExpr<'db>>, Name<'db>),
+    Field(Ptr<TyExpr<'db>>, ResolvedField<'db>),
     Binary(Ptr<TyExpr<'db>>, BinaryOp, Ptr<TyExpr<'db>>),
     Unary(UnaryOp, Ptr<TyExpr<'db>>),
+    Deref(Ptr<TyExpr<'db>>),
     Ref(Ptr<TyExpr<'db>>, Mutability),
     If(Ptr<TyExpr<'db>>, Ptr<TyExpr<'db>>, Option<Ptr<TyExpr<'db>>>),
     IfLet(

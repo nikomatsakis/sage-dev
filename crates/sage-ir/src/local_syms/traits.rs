@@ -75,16 +75,34 @@ impl<'db> LocalTraitSym<'db> {
         if cst.is_auto || !source[cst.supertraits].is_empty() {
             solver_eligibility = crate::ty::SolverEligibility::Unsupported;
         }
+        let parameter_env = cx.complete_parameter_env(where_clauses, solver_eligibility);
         let mut all_generics = vec![self_param];
         all_generics.extend_from_slice(&cx.target_stash[explicit_generics]);
         let generics = cx.target_stash.alloc_slice(&all_generics);
         cx.finish(Binder::new(
             TraitSignatureData {
                 self_param,
-                where_clauses,
-                solver_eligibility,
+                where_clauses: parameter_env.where_clauses,
+                solver_eligibility: parameter_env.solver_eligibility,
+                semantics: crate::ty::TraitSemantics::Ordinary,
             },
             generics,
         ))
+    }
+
+    #[salsa::tracked]
+    pub fn items(self, db: &'db dyn crate::Db) -> sage_stash::Stashed<crate::ty::TraitItems<'db>> {
+        use crate::ty::BinderExt;
+
+        let (source, cst) = self.cst(db).open_deref();
+        crate::local_syms::associated::lower_items(
+            db,
+            crate::local_syms::LocalAssociatedOwner::Trait(self),
+            self.scope(db),
+            self.span(db),
+            source,
+            cst.items,
+            self.sig(db).iter_symbols(),
+        )
     }
 }

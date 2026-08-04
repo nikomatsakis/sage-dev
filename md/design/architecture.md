@@ -20,7 +20,7 @@ crates/sage-ir/src/
   lib.rs              — module declarations and public re-exports
   db.rs               — concrete database support
   symbol/mod.rs       — Symbol wrappers and external symbol handles
-  scope.rs            — ScopeSymbol and LocalCrateSymbol
+  scope.rs            — ScopeSymbol, LocalCrateSymbol, and Rust edition
   ty.rs               — Ty, Binder<T>, signatures, lifetime and const leaves
   ty_fold.rs          — type substitution/folding
   span.rs             — AbsoluteSpan and RelativeSpan
@@ -39,6 +39,7 @@ crates/sage-ir/src/
     attrs.rs        — AttrCst
 
   local_syms/       — per-kind tracked structs and item queries
+    associated.rs   — stable trait/impl item symbols linked to their owner
     fns.rs          — LocalFnSym (sig, body)
     structs.rs      — LocalStructSym (sig, fields)
     enums.rs        — LocalEnumSym
@@ -72,11 +73,19 @@ crates/sage-ir/src/
       merge.rs        — order-independent answer reduction and subsumption
       anti_unify.rs   — hard-hint intersection
 
-  tytree/           — Typed tree (output of body checking)
+  tytree/           — Typed tree (output of body checking; elaboration is planned)
     mod.rs          — CheckedBody, TyBody, TyExpr, TyStmt, TyPat, Res
 
   tcx/              — TcxDb trait (interface to rustc metadata)
 ```
+
+The top-level `metadata.rs` selects a non-proc-macro Cargo library target and
+records its root source, edition, enabled features, host-target cfg values, and
+direct dependency world. `driver.rs` gives the edition, features, and
+dependency world to the rustc metadata stub; Sage's source loader uses the
+selected root and edition. General source-side `cfg` evaluation is not built
+yet. The edition is retained on both the local crate and its modules;
+file-backed items use the file module itself as their resolution scope.
 
 ## Data flow
 
@@ -89,14 +98,23 @@ flowchart TD
     Resolve --> FnSig[LocalFnSym::sig]
     Resolve --> StructSig[LocalStructSym::sig]
     Resolve --> EnumSig[LocalEnumSym::sig]
+    Resolve --> OwnerItems[LocalTraitSym::items / LocalImplSym::items]
+    OwnerItems --> Associated[owner-linked function, type, and const symbols]
+    Associated --> FnSig
     FnSig --> FnBinder[Stashed Binder of FnSig]
     StructSig --> StructBinder[Stashed Binder of StructSig]
     EnumSig --> EnumBinder[Stashed Binder of EnumSig]
-    FnBinder --> FnBody[LocalFnSym::body]
+    FnBinder --> FnBody[LocalFnSym::body: resolve, infer, elaborate]
     StructBinder --> Fields[LocalStructSym::fields]
     FnBody --> Checked[CheckedBody]
     Fields --> StructFields[Stashed StructFields]
 ```
+
+`CheckedBody` is intended to contain the fully resolved, elaborated tree
+specified by [Typed IR](./typed-ir.md). The current tree still preserves some
+source forms such as method calls and implicit adjustments; completing that
+transition is planned work. Temporary checking state remains inside the
+single-keyed body query rather than becoming a public incremental boundary.
 
 ## The salsa layer
 
@@ -114,6 +132,7 @@ flowchart TD
 
 - `LocalFnSym::sig`, `LocalFnSym::body`
 - `LocalStructSym::sig`, `LocalStructSym::fields`
+- `LocalTraitSym::items`, `LocalImplSym::items`
 - `unexpanded_items`, `local_expanded_module_items` (with cycle recovery)
 
 **Interned:**
@@ -124,18 +143,127 @@ flowchart TD
 ## Trait-system and solver flow
 
 The positive, inductive, type-only solver and its body-obligation integration
-exist. Method resolution, external impl discovery, normalization, higher-ranked
-reasoning, and the other explicitly deferred extensions remain planned; their
-status is tracked in the [Build-Out Roadmap](../implementation/roadmap.md).
+exist. A conservative trait-method path discovers represented external
+trait items, proves one fixed-trait goal, and elaborates a selected call. The
+common named, associated, and opaque alias type family is represented through
+inference and solver boundaries. Input-only associated-type normalization is
+operational at the canonical solver boundary: it merges isolated local,
+external, and explicit environment value candidates and returns a type output.
+The caller-side alias relation applies that merged output before relating it to
+an expected type. After selecting a represented trait method, checking replaces
+associated projections in its instantiated signature with caller inference
+variables and registers input-only normalization operations in the retained
+body-obligation lifecycle. Completed IR is returned only after those outputs
+have been imported, related to the caller variables, and any residual proof
+goals have terminated. For a rigid external ADT, the current method path also
+prioritizes a unique visible receiver-bearing inherent method from complete
+name-keyed metadata. It opens owner and method type generics together, binds
+the owner self type from the receiver and method generics from arguments in a
+short-lived inference transaction, and publishes the instantiated parameter
+environment only after that transaction commits. Complete method resolution,
+named-alias expansion,
+opaque reveal, higher-ranked reasoning, and the other explicitly deferred
+extensions remain planned; their status is tracked in the [Build-Out
+Roadmap](../implementation/roadmap.md).
 The destination-level soundness, completeness, candidate-discovery, progress,
 scheduling, and resource contract is recorded in
 [Trait Solver Design](./trait-solver.md).
 
-Checked local trait and impl signatures live on their owning symbols. A
-`local_impls(LocalCrateSymbol)` query provides deterministic per-crate enumeration; the
-first solver implementation linearly scans it for impls of a fixed trait. Method-name
-discovery remains in method resolution and submits one fixed-trait goal per candidate
-trait.
+Checked local trait and impl signatures live on their owning symbols.
+`local_impls(LocalCrateSymbol)` remains deterministic per-crate enumeration for
+consumers such as inherent-method discovery. The solver consumes the narrower
+`local_impl_candidates(LocalCrateSymbol, TraitSymbol)` query. Its current
+implementation still scans the expanded local module tree internally, but the
+fixed trait is part of the semantic query key and the result carries whether
+unresolved macros, unsupported derives, active item attributes, or unresolved
+trait impl headers could still change the relevant impl set. Attributed impls
+whose transformation is not represented are excluded from definite candidates.
+The same exclusion applies to an attributed module subtree or macro expansion,
+and an item's attached derives are not published while another active
+attribute on that item remains unexpanded. A uniquely resolved, successfully
+parsed item macro remains complete. Failed,
+ambiguous, or depth-limited expansion is omitted and makes the source
+incomplete. A `use` with an unrepresented active attribute does not participate
+in name resolution. Unsupported or malformed item nodes are retained as error
+items and make discovery incomplete rather than disappearing before the
+completeness audit. Known lint-only inner module attributes (`allow`, `deny`,
+`warn`, and `forbid`) do not affect completeness; other inner attributes remain
+incomplete until module-attribute semantics are represented.
+An incomplete source cannot justify logical `No`. The backing scan still reads
+all expanded local impl identities, but it lowers a full header only after the
+impl's separately resolved trait identity matches the requested trait.
+Unrelated-trait edits can still reexecute the identity scan; trait-partitioned
+source dependencies and their edit-invalidation test remain required.
+Foreign-trait goals with no trait arguments and a non-fundamental foreign
+nominal self type skip local discovery by the exact orphan rule, so those
+external/external goals do not depend on unrelated local impls or macro
+expansion.
+Method-name discovery remains in method resolution and submits one fixed-trait
+goal per candidate trait.
+
+External trait signatures, ADT signatures, associated-item lists, function
+signatures, trait-keyed relevant-impl identities, impl headers, requested
+associated-type values, name-keyed inherent-method identities, and structural
+sizedness facts cross `TcxDb` as owned raw metadata and are lowered by separate
+tracked queries. The external
+candidate operation is keyed by the fixed trait
+and an optional conservative rigid self head. It retains blanket and
+unclassifiable impls, returns deterministic identities plus explicit
+completeness, and never loads an associated value or body. Each selected impl
+header is then lowered into the same checked binder representation as a local
+impl and enters the same candidate proof path. Compiler-built-in `Sized` and
+`MetaSized` obligations use structural Sage candidates rather than pretending
+that explicit impls exist; unavailable structure produces uncertainty. The
+Trait proof stops after headers. Normalization separately asks
+`external_associated_type_value(impl, associated_type)` only for the requested
+value of a surviving candidate; local normalization has an equivalent tracked
+operation and does not first lower `LocalImplSym::items`. The ADT-signature
+query contains only ordered generics, aligned type defaults, represented
+ordinary predicates and separate
+ordinary/deferred completeness; it does not
+read fields, associated values, impls, or bodies. Source type lowering applies
+omitted type defaults in declaration order and instantiates the ADT predicate
+environment.
+Absent and unsupported defaults remain distinct, so an unsupported declaration
+cannot be misdiagnosed as a missing required argument. Predicates introduced by
+local struct field types remain attached to the checked field query and are
+instantiated when the field is constructed or projected.
+Name discovery reads associated-item metadata first;
+it does not load every trait signature speculatively. The selected candidate
+then reads only its function and defining-trait signatures. The current lookup
+scope includes traits in the current module, traits introduced by resolved
+explicit imports or external glob imports, and traits from the crate's actual
+edition prelude. Local glob imports remain conservative because their
+reexport/macro provider edges are not recursively enumerated. Unresolved
+imports retain uncertainty. For a rigid
+external ADT receiver, a separate lookup keyed by ADT identity and method name
+enumerates receiver-bearing inherent identities without loading signatures or
+unrelated method names. Trait lookup uses an empty complete result to rule out
+inherent shadowing. A nonempty complete result enters the higher-priority
+external inherent tier, which loads only the uniquely selected visible
+signature. External function metadata separates owner generics from method
+generics and ordinary-call completeness from const-only completeness; an
+unrepresented ordinary predicate blocks selection, while a recognized
+const-only host effect does not invalidate a non-const call. A completeness
+audit prevents selection when imports are unresolved, unresolved/failed
+macros, active attributes, or a matching unhandled inherent
+provider could contribute another candidate.
+Local and builtin inherent-method selection, explicit-bound provider
+discovery, and generic trait-method behavior remain in the
+Method Resolution RFD. Missing or unrepresented metadata contributes
+uncertainty rather than a false `NotFound`.
+
+Structured external definition paths also cross `TcxDb` as owned metadata.
+Every named segment retains its actual `SymExtKind`; type/value namespace alone
+is insufficient because modules, traits, and types share the type namespace.
+The Sage emitter maps each segment kind independently into the shared reference
+IR instead of deriving ancestor kinds from the leaf definition.
+
+`LocalTraitSym::items` and `LocalImplSym::items` lazily mint stable function,
+type, and const symbols linked to their owner. Associated function signatures
+open the owner binder and reuse its generic identities; their independent body
+queries inherit the same owner predicates and `Self` type without depending on
+another associated body.
 
 Function and ADT signatures use the same checked type-predicate representation.
 A body solver environment opens the function predicates together with any
@@ -144,7 +272,15 @@ well-formedness obligations. Ordinary calls, selected methods, and ADT use
 instantiate their callee/type predicate environments into the body obligation
 store rather than dropping declared bounds after generic substitution.
 Free-function uses and struct/enum construction or explicit type use are wired
-today. Selected-method submission remains owned by the Method Resolution RFD.
+today. External nominal type use also imports declared defaults and ordinary
+predicates through `external_syms::external_adt_signature`; a missing required
+type argument is an arity error rather than a fresh inference variable. The
+represented external trait-method slice submits the selected method's
+parameter environment. Its completed call retains static-trait `Self` and
+trait arguments as well as separate owner/method type substitutions. The
+represented rigid external inherent slice retains the same substitution split
+with direct dispatch. General selected-method submission and other dispatch
+forms remain owned by the Method Resolution RFD.
 
 Canonicalization preserves the logical role and scope of every input variable:
 

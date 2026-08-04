@@ -1,0 +1,208 @@
+{
+  "root": {
+    "def": {
+      "local": 0
+    },
+    "name": "",
+    "items": [
+      {
+        "struct": {
+          "def": {
+            "local": 1
+          },
+          "name": "Db",
+          "fields": [
+            {
+              "name": "shared",
+              "ty": {
+                "primitive": "bool"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "struct": {
+          "def": {
+            "local": 2
+          },
+          "name": "DbDropGuard",
+          "fields": [
+            {
+              "name": "db",
+              "ty": {
+                "def": {
+                  "target": {
+                    "local": 1
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "fn": {
+          "def": {
+            "local": 3
+          },
+          "name": "db",
+          "params": [
+            {
+              "name": "self",
+              "ty": {
+                "ref": {
+                  "mutable": false,
+                  "ty": {
+                    "def": {
+                      "target": {
+                        "local": 2
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ],
+          "return_ty": {
+            "def": {
+              "target": {
+                "local": 1
+              }
+            }
+          },
+          "body": {
+            "block": {
+              "stmts": [],
+              "tail": {
+                "call": {
+                  "target": {
+                    "external": {
+                      "krate": "core",
+                      "segments": [
+                        {
+                          "kind": "mod",
+                          "name": "clone"
+                        },
+                        {
+                          "kind": "trait",
+                          "name": "Clone"
+                        },
+                        {
+                          "kind": "fn",
+                          "name": "clone"
+                        }
+                      ]
+                    }
+                  },
+                  "dispatch": {
+                    "static_trait": {
+                      "self_ty": {
+                        "def": {
+                          "target": {
+                            "local": 1
+                          }
+                        }
+                      },
+                      "trait_target": {
+                        "external": {
+                          "krate": "core",
+                          "segments": [
+                            {
+                              "kind": "mod",
+                              "name": "clone"
+                            },
+                            {
+                              "kind": "trait",
+                              "name": "Clone"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "owner_type_args": [
+                    {
+                      "def": {
+                        "target": {
+                          "local": 1
+                        }
+                      }
+                    }
+                  ],
+                  "args": [
+                    {
+                      "ref": {
+                        "mutable": false,
+                        "expr": {
+                          "field": {
+                            "expr": {
+                              "deref": {
+                                "expr": {
+                                  "local": {
+                                    "name": "self",
+                                    "index": 0
+                                  }
+                                },
+                                "ty": {
+                                  "def": {
+                                    "target": {
+                                      "local": 2
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            "field": {
+                              "owner": {
+                                "local": 2
+                              },
+                              "index": 0
+                            },
+                            "ty": {
+                              "def": {
+                                "target": {
+                                  "local": 1
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "ty": {
+                          "ref": {
+                            "mutable": false,
+                            "ty": {
+                              "def": {
+                                "target": {
+                                  "local": 1
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "ty": {
+                    "def": {
+                      "target": {
+                        "local": 1
+                      }
+                    }
+                  }
+                }
+              },
+              "ty": {
+                "def": {
+                  "target": {
+                    "local": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}

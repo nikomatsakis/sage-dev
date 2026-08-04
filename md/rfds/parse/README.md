@@ -512,8 +512,11 @@ compile before this work either). They need a separate pass to add
    since the parser already set up the module correctly. The old
    "mint a new LocalModSym with resolved file" pattern is gone.
 
-6. **Attribute parsing is real** (not a no-op). Parses path segments and
-   token-tree arguments. Does NOT yet handle doc comments or inner attrs.
+6. **Attribute parsing is real** (not a no-op). Outer attributes parse path
+   segments and token-tree arguments. Known lint-only inner attributes are
+   recognized as inert at module scope; other inner attributes are retained as
+   explicit incompleteness until module attributes are represented. Doc
+   comments are not yet retained as `AttrCst` values.
 
 7. **Expression parser handles most common forms** but uses `Missing` for
    unrecognized node kinds rather than erroring. This matches the RFD's
@@ -525,15 +528,16 @@ compile before this work either). They need a separate pass to add
    handles duplicate identity keys internally — no disambiguation needed.
 
 2. **Error recovery.** tree-sitter produces `ERROR` nodes for malformed
-   input. Current strategy: skip ERROR nodes in `parse_item_list`.
-   For partial items (e.g., function missing a body), we parse what's
-   available and use `None`/`Missing` for absent parts. Could emit
-   `LocalModItemSym::Error(span)` for ERROR nodes in the future.
+   input. `parse_item_list` retains item-level `ERROR` nodes, unsupported
+   item kinds, and dangling attributes as `LocalModItemSym::Error(span)` so
+   later completeness checks cannot mistake erased syntax for an exhaustive
+   item set. For partial expressions and items, parsing still uses
+   `None`/`Missing` where the corresponding CST permits recovery.
 
-3. **Inner attributes (`#![...]`).** The parser does not yet handle
-   inner attributes. They'll appear inside `declaration_list` bodies
-   and would need special handling in `parse_item_list`. Not in scope
-   for the initial implementation.
+3. **Inner attributes (`#![...]`).** `parse_item_list` recognizes lint-only
+   `allow`, `warn`, `deny`, and `forbid` attributes as inert at crate and inline
+   module scope. Other inner attributes produce an error item and conservatively
+   make trait candidate discovery incomplete until their semantics are modeled.
 
 4. **Symbol API gap.** The `define_kind_symbols!` macro needs companion
    `impl` blocks to provide the convenience constructors and accessors

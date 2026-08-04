@@ -30,26 +30,27 @@ The MVP provides the checked data consumed by the trait solver and method resolv
 - deterministic enumeration of every local impl in a `LocalCrateSymbol`.
 
 The MVP does not perform proof search, choose a method, or check coherence. It also defers
-lifetime/outlives predicates, const trait arguments, higher-ranked bounds, associated type
+meaningful lifetime/outlives semantics, const trait arguments, higher-ranked bounds, associated type
 bindings and normalization, supertrait elaboration, external and builtin impl discovery,
 auto and negative impls, specialization, and overlap/orphan checking. Unsupported syntax
 must be diagnosed or represented as unsupported; it must not be silently dropped from an
 impl's applicability conditions.
 
-The type-only consumers cannot instantiate lifetime or const candidate
-variables. A trait or impl whose header contains lifetime/const generics, or
-whose applicability depends on any other deferred predicate form, is retained
-for diagnostics and item ownership but marked `Unsupported` for solver and
-method-candidate exposure. Supporting lifetime/const leaves structurally in
-`Ty` does not make those binders inferable.
+The type-only consumers do not instantiate lifetime or const candidate
+variables. Const generics, const predicates, and other deferred applicability
+forms therefore make a trait or impl `Unsupported`. Lifetime syntax is
+different under [D12](../../design/decisions.md#d12-lifetimes-collapse-to-dummy-and-borrow-checking-is-deferred):
+the binder remains in the source model, but every occurrence lowers directly
+to `Lifetime::Dummy`, and lifetime/outlives predicates are trivially true.
+Consumers skip lifetime binders rather than opening inference variables for
+them.
 
-This gate includes implicit lifetime binders. An impl header such as
-`impl<T> Trait for &T` is effectively generic over the reference lifetime and
-is `Unsupported` for candidate matching; an erased lifetime must not be used as
-a wildcard. A fully concrete lifetime such as `'static` may still be compared
-structurally. The special elided borrow in supported `&self`/`&mut self`
-receivers is represented by `MethodReceiver` and does not become an impl-head
-lifetime variable.
+Consequently, reference lifetimes do not gate candidate eligibility. Headers
+such as `impl<T> Trait for &T`, `impl<'a, T> Trait for &'a T`, and a
+`'static` spelling all carry `Lifetime::Dummy` in checked types. `Dummy` is a
+single deliberate lifetime abstraction, not a matching wildcard or a rigid
+`'static` leaf. The same rule applies to the borrow represented by
+`MethodReceiver`.
 
 Eligibility requires source fidelity before checked lowering. The CST/parser
 must preserve every header feature which can change applicability or candidate
@@ -129,7 +130,8 @@ pub struct TraitSignatureData<'db> {
     pub self_param: GenericParam<'db>,
     pub where_clauses: Slice<WherePredicate<'db>>,
     /// `Eligible` only when the complete defining-predicate set was lowered and
-    /// every source generic is a type parameter supported by the MVP.
+    /// every source generic is either a supported type parameter or a
+    /// lifetime binder erased to `Dummy`.
     pub solver_eligibility: SolverEligibility,
 }
 
@@ -159,13 +161,14 @@ pub struct CheckedReceiver<'db> {
 
 The owner binder supplies `owner_self_ty`: the trait `Self` parameter for a
 trait item or the opened impl self type for an impl item. A function signature
-stores `Option<CheckedReceiver>` separately from ordinary parameters, so an
-associated function with no receiver cannot become a dot-call candidate.
-Explicit-lifetime and typed receivers such as `&'a self` or
-`self: Box<Self>` are preserved but marked unsupported by the method MVP; only
-`self`, `mut self`, `&self`, and `&mut self` are lowered to the forms above.
-Region matching for the reference forms is deferred with lifetime inference;
-the receiver form, not a fabricated lifetime variable, drives autoref lookup.
+retains that owner self type independently of its receiver, so a receiverless
+associated body can still resolve `Self`. It stores `Option<CheckedReceiver>`
+separately from ordinary parameters, so an associated function with no
+receiver cannot become a dot-call candidate.
+An explicit lifetime on a reference receiver, such as `&'a self`, lowers to
+the same reference receiver form because `'a` becomes `Dummy`. Typed receivers
+such as `self: Box<Self>` remain preserved but unsupported by the method MVP.
+The receiver form, not a fabricated lifetime variable, drives autoref lookup.
 
 An owner-item function signature also records
 `method_candidate_eligibility: SolverEligibility`. It is `Eligible` only when
@@ -244,7 +247,7 @@ environment as well-formedness obligations. Silently discarding either would
 make a generic call or `Container<T>` appear usable without its declared
 bounds.
 
-An owner with an unsupported lifetime, const, higher-ranked, or projection
+An owner with an unsupported const, higher-ranked, or projection
 predicate is marked unsupported and diagnosed. The MVP may preserve any
 independently represented positive type predicates for diagnostics, but it may
 not finalize that owner as successfully checked while the rest of its
@@ -261,8 +264,13 @@ contributing an incomplete set of facts.
 
 ### Symbol queries
 
-Queries are keyed by the symbol that owns the checked data. Local queries are the MVP;
-external symbols will use the `TcxDb` metadata boundary later.
+Queries are keyed by the symbol that owns the checked data. Local symbols own
+their tracked lowering directly. Represented external trait and function
+signatures and associated-item lists cross the `TcxDb` metadata boundary as
+owned raw values, then enter the same checked representation through tracked
+lowering queries. External function metadata is eligible only for safe,
+non-variadic Rust-ABI signatures; other calling contracts remain incomplete
+until the checked IR represents their requirements.
 
 ```rust
 impl<'db> LocalTraitSym<'db> {
@@ -290,8 +298,8 @@ impl signature's binder and binds `Self` to that opening's substituted
 
 ### Per-crate impl enumeration
 
-The solver and method resolver need a complete, deterministic set of local impl symbols.
-The crate, not a `SourceRoot`, is the semantic key:
+The method resolver needs deterministic per-crate impl enumeration, while the
+solver also needs a fixed-trait key and an explicit completeness result:
 
 ```rust
 #[salsa::tracked(returns(ref))]
@@ -299,22 +307,44 @@ pub fn local_impls<'db>(
     db: &'db dyn Db,
     krate: LocalCrateSymbol<'db>,
 ) -> Vec<LocalImplSym<'db>>;
+
+#[salsa::tracked(returns(ref))]
+pub fn local_impl_candidates<'db>(
+    db: &'db dyn Db,
+    krate: LocalCrateSymbol<'db>,
+    target_trait: TraitSymbol<'db>,
+) -> LocalImplCandidates<'db>;
 ```
 
-`local_impls` walks the expanded module tree rooted at `krate.root_mod(db)`, including
-inline modules and macro-produced impls, and returns each impl once in deterministic module
-and item order. The MVP consumers linearly scan this list:
+Both queries walk the expanded module tree rooted at `krate.root_mod(db)`,
+including inline modules and macro-produced impls. `local_impl_candidates`
+filters to the fixed trait and returns `complete: false` when unresolved item
+or attribute macros, ambiguous or unsupported derives, or unresolved trait
+impl headers could still change the relevant impl set. An impl carrying an
+active attribute transformation which Sage has not represented is excluded
+from definite candidates, since the attribute may delete or replace it. This
+also excludes an affected module subtree or macro expansion, and withholds
+derives attached to an item whose other active attributes remain unexpanded. A
+uniquely resolved item macro whose output parses successfully remains complete.
+Failed, ambiguous, or depth-limited expansion is omitted and marks the source
+incomplete.
+The MVP consumers use them as follows:
 
-- the trait solver keeps positive trait impls whose `trait_ref.trait_sym` matches the fixed
-  trait goal, whose impl and referenced local-trait signatures are both
-  `SolverEligibility::Eligible`, then opens each impl binder freshly;
+- the trait solver consumes `local_impl_candidates`, keeps eligible positive
+  impls, and treats an incomplete source as logical uncertainty rather than
+  `No`, then opens each impl binder freshly;
 - inherent method lookup keeps impls with `trait_ref: None`, a matching self-type
-  head, and an `Eligible` type-only opening;
+  head, and an `Eligible` supported opening;
 - trait method discovery enumerates traits separately and asks the solver a
   fixed post-deref `LookupSelfTy: Trait<Args>` question. The solver does not
   return an impl or discover a trait by method name.
 
-The linear local scan is an MVP source, not the destination query boundary.
+The trait key is part of the query boundary. The linear local scan behind
+it remains an MVP implementation rather than the destination global index. In
+particular, it still reads the complete expanded module vector and every impl
+signature, so an unrelated-trait impl edit may reexecute the query. A
+trait-partitioned source dependency and a query-trace test proving isolation
+are still required.
 The [Trait Impl Candidate Discovery RFD](../trait-impl-candidate-discovery/README.md)
 requires complete local and external discovery keyed first by trait, with an
 eventual conservative self-type-head refinement, without changing the checked
@@ -325,17 +355,18 @@ consumer which encounters a potentially relevant unsupported trait or impl
 marks its candidate source incomplete (and ultimately reports the earlier
 unsupported-feature diagnostic); it must not expose an unconditional clause or
 conclude `NotFound`/`No` from the remaining subset. Local impls of external
-traits are likewise ineligible until metadata supplies the external trait's
-complete defining predicates.
+traits become eligible only when metadata supplies the external trait's
+complete represented defining predicates. That path is built for the type-only
+contracts used by the first `Clone` slice; unavailable or unsupported external
+contracts remain incomplete.
 
 ## Deferred work
 
-- External trait and impl signatures and per-crate enumeration through `TcxDb`.
-- Exposing local impls of external traits to the solver; this requires the
-  external trait's checked defining predicates rather than assuming none.
-- Lifetime/outlives and const predicates.
-- Solver and method-candidate exposure for lifetime/const-generic trait and impl
-  headers.
+- External impl signatures and per-crate relevant-impl enumeration through
+  `TcxDb`; represented external trait signatures and items are available.
+- Meaningful lifetime/outlives semantics and const predicates.
+- Solver and method-candidate exposure for const-generic trait and impl
+  headers; lifetime-generic headers already participate with `Dummy`.
 - Associated type bindings, projections, normalization, and associated item values.
 - Higher-ranked bounds and universe-bearing binders.
 - Supertrait elaboration and implied predicates.

@@ -76,16 +76,114 @@ impl<'db> ExprCst<'db> {
                 for a in cx.source_stash[*args].iter() {
                     rargs.push(a.check_with(cx, scope).await);
                 }
-                let args_slice = cx.stash_mut().alloc_slice(&rargs);
-                let ty = cx.fresh_ty_var();
-                (TyExprData::MethodCall(ro, *name, args_slice), ty)
+                let receiver_ty = cx.await_concrete(cx.stash()[ro].ty).await;
+                if let Some(error) = cx.error_in_ty(receiver_ty) {
+                    let ty = cx.alloc_ty(Ty::Error(error));
+                    (TyExprData::Error(error), ty)
+                } else {
+                    let method_arguments: Vec<_> = rargs
+                        .iter()
+                        .map(|argument| {
+                            let argument = cx.stash()[*argument];
+                            (argument.ty, argument.span)
+                        })
+                        .collect();
+                    match super::method::resolve_method(
+                        cx,
+                        scope,
+                        receiver_ty,
+                        *name,
+                        &method_arguments,
+                        span,
+                    ) {
+                        // ANCHOR: example_elaborate_trait_method_call
+                        Ok(method) => {
+                            let checked_receiver = method
+                                .signature
+                                .receiver
+                                .expect("resolved dot-call method must have a receiver");
+                            cx.require_eq(receiver_ty, checked_receiver.owner_self_ty, span)
+                                .record_err(cx);
+                            let receiver = match checked_receiver.form {
+                                crate::ty::MethodReceiver::Value { .. } => ro,
+                                crate::ty::MethodReceiver::Ref { mutability } => {
+                                    let reference_ty = cx.alloc_ty(Ty::Ref(
+                                        receiver_ty,
+                                        mutability,
+                                        crate::ty::Lifetime::Dummy,
+                                    ));
+                                    cx.alloc_expr(
+                                        TyExprData::Ref(ro, mutability),
+                                        reference_ty,
+                                        span,
+                                    )
+                                }
+                            };
+
+                            let params = cx.stash()[method.signature.params].to_vec();
+                            if params.len() != rargs.len() {
+                                cx.record(Diagnostic::error(
+                                    cx.span(span),
+                                    "method argument count does not match its signature",
+                                ));
+                            }
+                            for (index, (param, argument)) in
+                                params.into_iter().zip(rargs.iter().copied()).enumerate()
+                            {
+                                let argument_ty = cx.stash()[argument].ty;
+                                let argument_span = cx.stash()[argument].span;
+                                cx.require_eq(argument_ty, param, argument_span)
+                                    .map_err(|error| {
+                                        error.with_context(ErrorContext::Argument {
+                                            index,
+                                            call_span: span,
+                                        })
+                                    })
+                                    .record_err(cx);
+                            }
+                            if !method.parameter_env_published {
+                                cx.submit_parameter_env(
+                                    method.signature.parameter_env,
+                                    span,
+                                    crate::check::infer::obligations::ObligationReason::FunctionCall,
+                                );
+                            }
+                            let mut call_args = Vec::with_capacity(rargs.len() + 1);
+                            call_args.push(receiver);
+                            call_args.extend(rargs);
+                            let call_args = cx.stash_mut().alloc_slice(&call_args);
+                            (
+                                TyExprData::ResolvedCall(method.target, call_args),
+                                method.signature.ret,
+                            )
+                        }
+                        // ANCHOR_END: example_elaborate_trait_method_call
+                        Err(error) => {
+                            let ty = cx.alloc_ty(Ty::Error(error));
+                            (TyExprData::Error(error), ty)
+                        }
+                    }
+                }
             }
             // ANCHOR: example_check_field_expression
             ExprCstKind::Field(obj, name) => {
-                let ro = cx.source_stash[*obj].check_with(cx, scope).await;
-                let obj_ty = cx.find_mut(cx.stash()[ro].ty);
-                let ty = lookup_field_ty(cx, obj_ty, *name, span);
-                (TyExprData::Field(ro, *name), ty)
+                let mut base = cx.source_stash[*obj].check_with(cx, scope).await;
+                let base_span = cx.stash()[base].span;
+                let mut obj_ty = cx.await_concrete(cx.stash()[base].ty).await;
+                loop {
+                    let Ty::Ref(inner, _, _) = cx.stash()[obj_ty] else {
+                        break;
+                    };
+                    base = cx.alloc_expr(TyExprData::Deref(base), inner, base_span);
+                    obj_ty = cx.await_concrete(inner).await;
+                }
+                match lookup_field(cx, obj_ty, *name, span) {
+                    Ok((field, ty)) => (TyExprData::Field(base, field), ty),
+                    Err(error) => {
+                        let ty = cx.alloc_ty(Ty::Error(error));
+                        (TyExprData::Error(error), ty)
+                    }
+                }
             }
             // ANCHOR_END: example_check_field_expression
             ExprCstKind::Binary(lhs, op, rhs) => {
@@ -104,7 +202,7 @@ impl<'db> ExprCst<'db> {
             ExprCstKind::Ref(inner, m) => {
                 let ri = cx.source_stash[*inner].check_with(cx, scope).await;
                 let inner_ty = cx.stash()[ri].ty;
-                let ty = cx.alloc_ty(Ty::Ref(inner_ty, *m, crate::ty::Lifetime::Erased));
+                let ty = cx.alloc_ty(Ty::Ref(inner_ty, *m, crate::ty::Lifetime::Dummy));
                 (TyExprData::Ref(ri, *m), ty)
             }
             ExprCstKind::If(cond, then, else_) => {
@@ -646,10 +744,48 @@ impl<'db> TypeCst<'db> {
                             );
                             Ty::Adt(sym, type_args)
                         }
-                        SymbolData::StructSymbol(crate::symbol::StructSymbol::Ext(_))
-                        | SymbolData::EnumSymbol(crate::symbol::EnumSymbol::Ext(_))
-                        | SymbolData::TraitSymbol(_)
-                        | SymbolData::TypeAliasSymbol(_) => Ty::Adt(sym, type_args),
+                        SymbolData::TypeAliasSymbol(def) => {
+                            Ty::Alias(crate::ty::AliasTy::Named(crate::ty::NamedAliasTy {
+                                def,
+                                args: type_args,
+                            }))
+                        }
+                        SymbolData::StructSymbol(crate::symbol::StructSymbol::Ext(external))
+                        | SymbolData::EnumSymbol(crate::symbol::EnumSymbol::Ext(external)) => {
+                            let applied = {
+                                let mut stash = cx.stash_mut();
+                                crate::external_syms::apply_external_adt_signature(
+                                    cx.db,
+                                    &mut stash,
+                                    external,
+                                    &type_arguments,
+                                )
+                            };
+                            match applied {
+                                Ok(applied) => {
+                                    cx.submit_parameter_env(
+                                        applied.parameter_env,
+                                        self.span,
+                                        crate::check::infer::obligations::ObligationReason::AdtWellFormedness,
+                                    );
+                                    Ty::Adt(sym, applied.args)
+                                }
+                                Err(error) => {
+                                    let message = match error {
+                                        crate::external_syms::ApplyExternalAdtError::MetadataUnavailable => {
+                                            "external type declaration metadata is unavailable"
+                                        }
+                                        crate::external_syms::ApplyExternalAdtError::IncorrectTypeArgumentCount => {
+                                            "incorrect number of type arguments"
+                                        }
+                                    };
+                                    Ty::Error(
+                                        cx.record(Diagnostic::error(cx.span(self.span), message)),
+                                    )
+                                }
+                            }
+                        }
+                        SymbolData::TraitSymbol(_) => Ty::Adt(sym, type_args),
                         SymbolData::FnSymbol(_)
                         | SymbolData::VariantSymbol(_)
                         | SymbolData::VariantCtorSymbol(_)
@@ -676,14 +812,8 @@ impl<'db> TypeCst<'db> {
             TypeCstKind::Reference(inner, m, lifetime) => {
                 let inner_ty = cx.source_stash[inner].check_ty(cx, scope);
                 let inner_ptr = cx.stash_mut().alloc(inner_ty);
-                let lifetime = match lifetime {
-                    crate::cst::ty::LifetimeCst::Named(name) if name.text(cx.db) == "'static" => {
-                        Lifetime::Static
-                    }
-                    crate::cst::ty::LifetimeCst::Named(_)
-                    | crate::cst::ty::LifetimeCst::Anonymous => Lifetime::Erased,
-                };
-                Ty::Ref(inner_ptr, m, lifetime)
+                let _ = lifetime;
+                Ty::Ref(inner_ptr, m, Lifetime::Dummy)
             }
             TypeCstKind::Tuple(elems) => {
                 let tys: Vec<_> = cx.source_stash[elems]
@@ -761,7 +891,7 @@ fn check_literal_ty<'db>(cx: &InferCtx<'_, 'db>, lit: Literal<'db>) -> Ptr<Ty<'d
             cx.alloc_ty(Ty::Ref(
                 str_ty,
                 Mutability::Shared,
-                crate::ty::Lifetime::Static,
+                crate::ty::Lifetime::Dummy,
             ))
         }
         Literal::Char(_) => cx.alloc_ty(Ty::Char),
@@ -1076,7 +1206,7 @@ fn check_struct_lit_fields<'db>(
     fields: Slice<TyFieldInit<'db>>,
 ) {
     use crate::ty::BinderExt;
-    use crate::ty_fold::{SubstTarget, Substitute, TyFolder};
+    use crate::ty_fold::{SubstTarget, Substitute, TyFolder, fold_parameter_env};
     use rustc_hash::FxHashMap;
 
     let sig = local.sig(cx.db);
@@ -1097,6 +1227,25 @@ fn check_struct_lit_fields<'db>(
     let field_sigs = &fields_stash[struct_fields.fields];
 
     let init_fields: Vec<_> = cx.stash()[fields].to_vec();
+    let parameter_env = if subst.is_empty() {
+        use sage_stash::StashCopy;
+        let mut stash = cx.stash_mut();
+        struct_fields
+            .parameter_env
+            .stash_copy(fields_stash, &mut *stash)
+    } else {
+        let mut stash = cx.stash_mut();
+        let mut folder = Substitute::new(fields_stash, &mut *stash, subst.clone());
+        fold_parameter_env(&mut folder, struct_fields.parameter_env)
+    };
+    let obligation_span = init_fields
+        .first()
+        .map_or(RelativeSpan { start: 0, end: 0 }, |field| field.span);
+    cx.submit_parameter_env(
+        parameter_env,
+        obligation_span,
+        crate::check::infer::obligations::ObligationReason::AdtWellFormedness,
+    );
     for field_init in &init_fields {
         for field_sig in field_sigs {
             if field_sig.name == field_init.name {
@@ -1147,24 +1296,25 @@ fn check_instantiated_struct_lit_fields<'db>(
 }
 
 // ANCHOR: example_lookup_field_type
-fn lookup_field_ty<'db>(
+fn lookup_field<'db>(
     cx: &InferCtx<'_, 'db>,
     obj_ty_ptr: Ptr<Ty<'db>>,
     field_name: crate::name::Name<'db>,
     span: RelativeSpan,
-) -> Ptr<Ty<'db>> {
+) -> Result<(crate::tytree::ResolvedField<'db>, Ptr<Ty<'db>>), crate::diagnostic::ErrorReported> {
     use crate::symbol::SymbolData;
     use crate::ty::BinderExt;
-    use crate::ty_fold::{SubstTarget, Substitute, TyFolder};
+    use crate::ty_fold::{SubstTarget, Substitute, TyFolder, fold_parameter_env};
     use rustc_hash::FxHashMap;
 
     let obj_ty = cx.stash()[obj_ty_ptr];
 
     let (sym, type_args) = match obj_ty {
         Ty::Adt(sym, type_args) => (sym, type_args),
-        Ty::InferVar(_) => return cx.fresh_ty_var(),
-        Ty::Error(_) => return obj_ty_ptr,
-        Ty::Bool
+        Ty::Error(error) => return Err(error),
+        Ty::InferVar(_)
+        | Ty::Alias(_)
+        | Ty::Bool
         | Ty::Char
         | Ty::Int(_)
         | Ty::Uint(_)
@@ -1177,11 +1327,10 @@ fn lookup_field_ty<'db>(
         | Ty::FnPtr(_, _)
         | Ty::Param(_)
         | Ty::Never => {
-            let error = cx.record(Diagnostic::error(
+            return Err(cx.record(Diagnostic::error(
                 cx.span(span),
                 "field access requires a struct value",
-            ));
-            return cx.alloc_ty(Ty::Error(error));
+            )));
         }
     };
 
@@ -1201,7 +1350,7 @@ fn lookup_field_ty<'db>(
             let struct_fields = fields_stashed.root();
             let field_sigs = &fields_stash[struct_fields.fields];
 
-            for field_sig in field_sigs {
+            for (index, field_sig) in field_sigs.iter().enumerate() {
                 if field_sig.name == field_name {
                     let mut subst = FxHashMap::default();
                     for (param, &arg_ptr) in generic_params.iter().zip(type_arg_ptrs.iter()) {
@@ -1209,18 +1358,39 @@ fn lookup_field_ty<'db>(
                     }
                     let mut stash = cx.stash_mut();
                     let mut folder = Substitute::new(fields_stash, &mut *stash, subst);
+                    let parameter_env =
+                        fold_parameter_env(&mut folder, struct_fields.parameter_env);
                     let field_ty_data = folder.fold_ty(fields_stash[field_sig.ty]);
                     drop(folder);
-                    return stash.alloc(field_ty_data);
+                    let ty = stash.alloc(field_ty_data);
+                    drop(stash);
+                    cx.submit_parameter_env(
+                        parameter_env,
+                        span,
+                        crate::check::infer::obligations::ObligationReason::AdtWellFormedness,
+                    );
+                    return Ok((
+                        crate::tytree::ResolvedField {
+                            owner: crate::tytree::FieldOwner::Struct(
+                                crate::symbol::StructSymbol::Local(local),
+                            ),
+                            index: u32::try_from(index).expect("field index exceeds u32"),
+                        },
+                        ty,
+                    ));
                 }
             }
-            let error = cx.record(Diagnostic::error(
+            Err(cx.record(Diagnostic::error(
                 cx.span(span),
                 format!("unknown field `{}`", field_name.text(cx.db)),
-            ));
-            cx.alloc_ty(Ty::Error(error))
+            )))
         }
-        SymbolData::StructSymbol(crate::symbol::StructSymbol::Ext(_)) => cx.fresh_ty_var(),
+        SymbolData::StructSymbol(crate::symbol::StructSymbol::Ext(_)) => {
+            Err(cx.record(Diagnostic::error(
+                cx.span(span),
+                "external struct field metadata is unavailable",
+            )))
+        }
         SymbolData::FnSymbol(_)
         | SymbolData::EnumSymbol(_)
         | SymbolData::VariantSymbol(_)
@@ -1234,13 +1404,10 @@ fn lookup_field_ty<'db>(
         | SymbolData::MacroDefSymbol(_)
         | SymbolData::IntrinsicTypeSymbol(_)
         | SymbolData::MacroInvocationSymbol(_)
-        | SymbolData::UseSymbol(_) => {
-            let error = cx.record(Diagnostic::error(
-                cx.span(span),
-                "field access requires a struct value",
-            ));
-            cx.alloc_ty(Ty::Error(error))
-        }
+        | SymbolData::UseSymbol(_) => Err(cx.record(Diagnostic::error(
+            cx.span(span),
+            "field access requires a struct value",
+        ))),
     }
 }
 // ANCHOR_END: example_lookup_field_type
@@ -1273,6 +1440,7 @@ fn check_call_ty<'db>(
         | Ty::Float(_)
         | Ty::Str
         | Ty::Adt(_, _)
+        | Ty::Alias(_)
         | Ty::Ref(_, _, _)
         | Ty::Tuple(_)
         | Ty::Slice(_)

@@ -25,8 +25,19 @@ us error recovery, incremental re-parsing, and avoids duplicating grammar mainte
 ## D4: Oracle test harness
 
 End-to-end correctness is validated by an "oracle" harness that compiles test programs
-with both sage and rustc, then compares diagnostics. This ensures sage's behavior
-converges with the reference compiler.
+with both Sage and rustc. Each side independently emits the same shared,
+deterministically serialized reference IR. The conformance decision is exact
+textual identity of those outputs.
+
+The per-side adapters perform only representation changes required to reach
+the shared schema. The comparator does not normalize a pair of outputs, erase
+known differences, reorder values, strip bodies, or otherwise attempt semantic
+equivalence. Validation may reject incomplete output before comparison, and a
+diagnostic diff may explain an exact mismatch afterward, but neither changes
+the equality rule. Stable external identity includes the actual definition kind
+of every path segment; an adapter may not reconstruct ancestor kinds from the
+leaf kind or from namespace alone. The detailed contract is [Oracle Test
+Harness](./oracle-test-harness.md#thin-adapters-and-exact-comparison).
 
 ## D5: Symbols as the uniform IR unit
 
@@ -110,6 +121,11 @@ annotations in every non-ground inference case.
 
 The detailed contract lives in [Trait Solver Design](./trait-solver.md).
 
+This soundness contract is modulo the explicit temporary lifetime and borrow
+checking omission in D12. Type-only and trait-selection uncertainty must still
+be represented soundly; D12 does not permit a non-lifetime ambiguity to be
+guessed.
+
 ## D10: Trait impl discovery is global and trait-keyed
 
 Trait candidate discovery covers every impl visible in the current compilation
@@ -121,10 +137,110 @@ A simplified self-type key may refine lookup when its rigid outer shape is
 known. Such an index is conservative: it may return extra candidates but never
 omit an applicable specific, blanket, or unclassifiable impl. Indexed and
 exhaustive discovery have identical solver meaning. The trait key, and
-eventually compatible self-type partitions, also form the incremental
-invalidation boundary so unrelated impl changes do not reexecute the query.
+eventually compatible self-type partitions, also form the semantic lookup
+boundary.
 
-The current `local_impls(LocalCrateSymbol)` scan is an MVP source. The
-destination and required conformance tests live in
+The local incremental firewall has two layers. A crate-owned tracked index has
+stable identity and a private tracked map containing deterministic trait
+buckets plus explicit completeness hazards. Keyed tracked lookup methods are
+the only readers of that map. An unrelated impl edit may rebuild the index and
+reexecute a cheap lookup for another trait; when that lookup returns the same
+bucket, Salsa backdates it. The edit must not propagate into unrelated impl
+signature lowering, solver evaluation, normalization, or body checking.
+Unknown expansion which could emit an impl for any trait is a global hazard and
+legitimately affects every lookup.
+
+The current `local_impl_candidates(LocalCrateSymbol, TraitSymbol)` query is a
+trait-keyed local source backed by a provisional linear module-tree scan. It
+resolves each impl's trait identity first and lowers a full header only for the
+requested trait. Its result carries conservative expansion/header completeness,
+and it excludes impls with unrepresented active attribute transformations from
+definite candidates. Exact orphan-rule pruning also skips local discovery for
+a foreign trait with no trait arguments on a non-fundamental foreign nominal
+self type. Because the backing identity scan still depends on the expanded
+module tree, the destination incremental firewall is not yet built: an
+unrelated trait impl edit can propagate through the current candidate query
+despite producing the same candidates.
+Reachable external-crate coverage and conservative external self-head
+partitioning are built; trait-partitioned local source dependencies and their
+edit-invalidation matrix remain outstanding. The destination and required
+conformance tests live in
 [Trait Solver Design](./trait-solver.md) and the
 [Trait Impl Candidate Discovery RFD](../rfds/trait-impl-candidate-discovery/README.md).
+
+## D11: Completed bodies are elaborated typed trees
+
+`LocalFnSym::body` returns a fully typed, fully resolved, tree-structured IR.
+Implicit type-directed operations such as receiver dereference, autoref,
+coercion, and unsizing are materialized as nodes. Method syntax, unresolved
+field names, inference variables, and adjustment lists do not survive in a
+successful completed body.
+
+Structured control flow, closures, and async bodies remain above MIR: the IR
+does not introduce basic blocks, drop schedules, or coroutine state-machine
+layout. Candidate selection may use source-shaped nodes and adjustment recipes
+internally, but those are consumed inside the body query. The full destination
+contract is [Typed IR](./typed-ir.md).
+
+## D12: Lifetimes collapse to `Dummy` and borrow checking is deferred
+
+Every explicit, elided, universal, existential, imported, and synthesized
+lifetime immediately becomes `Lifetime::Dummy` during checking. Sage does not
+create lifetime inference variables. `Outlives(Dummy, Dummy)` is true, and
+lifetime relationships cannot reject a program.
+
+Borrow and dereference operations remain explicit in typed IR because they
+affect ordinary types and calls, but their validity is not checked. This is a
+known temporary soundness hole. A dedicated variant is used instead of
+`'static` or post-analysis erasure so the omission is visible and its eventual
+removal is mechanically enforced. A future unified type-and-lifetime
+inference design supersedes this decision.
+
+## D13: Named, associated, and opaque aliases share one semantic family
+
+The type representation distinguishes rigid types from alias types. Rigid
+constructors such as `Vec` are structural and do not normalize. `AliasTy` has
+three semantic variants: `Named` for a user-defined type alias, `Associated`
+for an associated-type projection, and `Opaque` for an opaque type. Every
+alias retains its definition identity and generic arguments.
+
+Normalization is a semantic operation, not an eager erasure pass. Named aliases
+reveal their substituted right-hand sides infallibly. Associated types normalize
+through trait matching. Opaques reveal only within their definition boundary
+or in a future code-generation mode. The typing/reveal context is consequently
+part of the normalization query's semantic input. D14 specifies how that
+operation returns its result.
+
+An unrevealed alias is not devoid of facts. Bounds declared on associated and
+opaque types may prove predicates without normalization, and identical alias
+applications may be related structurally. The complete destination contract
+is split between [Typed IR](./typed-ir.md#rigid-and-alias-types) and [Trait
+Solver Design](./trait-solver.md#alias-types-and-normalization).
+
+## D14: Solver operations return goal-specific semantic outputs
+
+The solver distinguishes value-producing operations from the proposition
+language used for assumptions and residual conditions. A proof operation
+returns `GoalOutput::Proven`; normalization takes only an alias as input and
+returns `GoalOutput::Type`. A successful response carries that output alongside
+its substitution and residual proof goal.
+
+Normalization is therefore modeled as `Normalize(alias) -> Type`, not as the
+predicate `NormalizesTo(alias, caller_output)` and not as a convention where a
+fresh output inference variable must be recovered from the response
+substitution. The caller relates the returned type to any expected type only
+after candidate answers have been merged, so its expectation cannot select an
+otherwise ambiguous candidate.
+
+The output is part of the canonical response: its response-local variables are
+bound, copied, occurs-checked, universe-checked, cached, compared, and merged.
+An unconditional `Proven` answer can absorb sibling proofs, but an unconditional
+type result cannot absorb a sibling which may return a different type unless
+candidate priority or output equivalence justifies it.
+
+`GoalOutput` is extensible for future non-type operations such as callable
+instance resolution or vtable construction. Those representations remain
+unsettled; this decision only prevents them from being forced through the type
+variant. Trait implementation proof continues to return `Proven`, never a
+selected impl identity. See [Trait Solver Design](./trait-solver.md#knowledge-returned-by-the-solver)
+and the [Associated Type Normalization RFD](../rfds/associated-type-normalization/README.md).

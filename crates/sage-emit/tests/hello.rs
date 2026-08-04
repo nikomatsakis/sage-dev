@@ -190,6 +190,9 @@ fn get_x(p: Point) -> u32 {
     }
 
     // fn get_x(p: Point) -> u32 { p.x }
+    let Item::Struct(point) = &items[2] else {
+        panic!("expected struct");
+    };
     let Item::Fn(get_x) = &items[4] else {
         panic!("expected fn");
     };
@@ -198,11 +201,36 @@ fn get_x(p: Point) -> u32 {
         Expr::Block {
             tail: Some(tail), ..
         } => match tail.as_ref() {
-            Expr::Field { field_name, .. } => {
-                assert_eq!(field_name, "x");
+            Expr::Field { field, .. } => {
+                assert_eq!(field.owner, point.def);
+                assert_eq!(field.index, 0);
             }
             other => panic!("expected Field in get_x body, got {:?}", other),
         },
         other => panic!("expected Block for get_x body, got {:?}", other),
     }
+}
+
+#[test]
+fn named_aliases_remain_semantic_types_in_emitted_ir() {
+    let krate = analyze_source(
+        r#"
+type Id<T> = T;
+
+fn keep(value: Id<bool>) -> Id<bool> {
+    value
+}
+"#,
+    );
+
+    let [Item::Fn(keep)] = krate.root.items.as_slice() else {
+        panic!("expected one emitted function")
+    };
+    let expected = Type::Alias {
+        kind: AliasKind::Named,
+        target: NormalizedDef::Local(1),
+        type_args: vec![Type::Primitive("bool".to_string())],
+    };
+    assert_eq!(keep.params[0].ty, expected);
+    assert_eq!(keep.return_ty, expected);
 }

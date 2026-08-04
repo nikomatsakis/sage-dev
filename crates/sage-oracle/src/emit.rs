@@ -2,7 +2,8 @@ use rustc_ast::LitKind as AstLitKind;
 use rustc_hir as hir;
 use rustc_hir::def::{DefKind as HirDefKind, Res};
 use rustc_middle::ty::{self, TyCtxt};
-use rustc_span::def_id::{CRATE_DEF_ID, DefId, LocalDefId, LocalModDefId};
+use rustc_span::def_id::{CRATE_DEF_ID, CRATE_DEF_INDEX, DefId, LocalDefId, LocalModDefId};
+use rustc_span::hygiene::{ExpnKind, MacroKind};
 
 use rust_ref::*;
 
@@ -66,11 +67,64 @@ impl<'tcx> Emitter<'tcx> {
         }
     }
 
-    fn assign_local_id(&mut self, def_id: DefId) -> u32 {
+    fn register_local_def(&mut self, def_id: DefId) {
+        assert!(
+            !self
+                .local_def_map
+                .iter()
+                .any(|(registered, _)| *registered == def_id),
+            "local definition registered twice: {def_id:?}"
+        );
         let id = self.local_def_counter;
         self.local_def_counter += 1;
         self.local_def_map.push((def_id, id));
-        id
+    }
+
+    fn local_id(&self, def_id: DefId) -> u32 {
+        self.local_def_map
+            .iter()
+            .find_map(|(registered, id)| (*registered == def_id).then_some(*id))
+            .expect("emitted local definition must be pre-registered")
+    }
+
+    fn pre_register_module(&mut self, module_def_id: LocalDefId) {
+        self.register_local_def(module_def_id.to_def_id());
+
+        let module = LocalModDefId::new_unchecked(module_def_id);
+        let item_ids: Vec<_> = self.tcx.hir_module_items(module).free_items().collect();
+        for item_id in item_ids {
+            let item = self.tcx.hir_item(item_id);
+            match &item.kind {
+                hir::ItemKind::Fn { .. }
+                | hir::ItemKind::Struct(..)
+                | hir::ItemKind::TyAlias(..) => {
+                    self.register_local_def(item.owner_id.to_def_id());
+                }
+                hir::ItemKind::Enum(_, _, enum_def) => {
+                    self.register_local_def(item.owner_id.to_def_id());
+                    for variant in enum_def.variants {
+                        self.register_local_def(variant.def_id.to_def_id());
+                    }
+                }
+                hir::ItemKind::Mod(..) => self.pre_register_module(item.owner_id.def_id),
+                hir::ItemKind::Impl(impl_block) => {
+                    for impl_item in self.source_impl_functions(impl_block) {
+                        if matches!(impl_item.kind, hir::ImplItemKind::Fn(..)) {
+                            self.register_local_def(impl_item.owner_id.to_def_id());
+                        }
+                    }
+                }
+                hir::ItemKind::Trait(.., trait_items) => {
+                    for trait_item_ref in *trait_items {
+                        let trait_item = self.tcx.hir_trait_item(*trait_item_ref);
+                        if matches!(trait_item.kind, hir::TraitItemKind::Type(..)) {
+                            self.register_local_def(trait_item.owner_id.to_def_id());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     fn normalize_def(&self, def_id: DefId) -> NormalizedDef {
@@ -81,39 +135,89 @@ impl<'tcx> Emitter<'tcx> {
         }
     }
 
+    fn emit_builtin_deref_adjustments(
+        &self,
+        expr: &'tcx hir::Expr<'tcx>,
+        typeck: &'tcx ty::TypeckResults<'tcx>,
+        locals: &mut LocalMap,
+    ) -> Expr<NormalizedDef> {
+        let mut emitted = self.emit_expr_with_locals(expr, typeck, locals);
+        for adjustment in typeck.expr_adjustments(expr) {
+            match adjustment.kind {
+                ty::adjustment::Adjust::Deref(ty::adjustment::DerefAdjustKind::Builtin) => {
+                    emitted = Expr::Deref {
+                        expr: Box::new(emitted),
+                        ty: self.emit_type(adjustment.target),
+                    };
+                }
+                ref other => {
+                    panic!("unsupported field-base adjustment in oracle: {other:?}")
+                }
+            }
+        }
+        emitted
+    }
+
+    fn emit_method_receiver_adjustments(
+        &self,
+        expr: &'tcx hir::Expr<'tcx>,
+        typeck: &'tcx ty::TypeckResults<'tcx>,
+        locals: &mut LocalMap,
+    ) -> Expr<NormalizedDef> {
+        let mut emitted = self.emit_expr_with_locals(expr, typeck, locals);
+        for adjustment in typeck.expr_adjustments(expr) {
+            match adjustment.kind {
+                ty::adjustment::Adjust::Deref(ty::adjustment::DerefAdjustKind::Builtin) => {
+                    emitted = Expr::Deref {
+                        expr: Box::new(emitted),
+                        ty: self.emit_type(adjustment.target),
+                    };
+                }
+                ty::adjustment::Adjust::Borrow(ty::adjustment::AutoBorrow::Ref(mutability)) => {
+                    emitted = Expr::Ref {
+                        mutable: matches!(
+                            mutability,
+                            ty::adjustment::AutoBorrowMutability::Mut { .. }
+                        ),
+                        expr: Box::new(emitted),
+                        ty: self.emit_type(adjustment.target),
+                    };
+                }
+                ref other => panic!("unsupported method receiver adjustment in oracle: {other:?}"),
+            }
+        }
+        emitted
+    }
+
     fn def_path_for(&self, def_id: DefId) -> DefPath {
         let crate_name = self.tcx.crate_name(def_id.krate).to_string();
-        let def_path = self.tcx.def_path(def_id);
-
-        let leaf_kind = match self.tcx.def_kind(def_id) {
-            HirDefKind::Fn | HirDefKind::AssocFn => rust_ref::DefKind::Fn,
-            HirDefKind::Struct => rust_ref::DefKind::Struct,
-            HirDefKind::Enum => rust_ref::DefKind::Enum,
-            HirDefKind::Variant | HirDefKind::Ctor(..) => rust_ref::DefKind::Enum,
-            HirDefKind::Trait | HirDefKind::TraitAlias => rust_ref::DefKind::Trait,
-            HirDefKind::TyAlias | HirDefKind::AssocTy => rust_ref::DefKind::TypeAlias,
-            HirDefKind::Mod => rust_ref::DefKind::Mod,
-            HirDefKind::Const { .. } | HirDefKind::AssocConst { .. } => rust_ref::DefKind::Const,
-            HirDefKind::Static { .. } => rust_ref::DefKind::Static,
-            _ => rust_ref::DefKind::Struct,
-        };
-
-        let segments = def_path
-            .data
-            .iter()
-            .filter_map(|elem| {
-                let name = elem.data.get_opt_name()?;
-                let kind = match &elem.data {
-                    rustc_hir::definitions::DefPathData::TypeNs(_) => leaf_kind.clone(),
-                    rustc_hir::definitions::DefPathData::ValueNs(_) => rust_ref::DefKind::Fn,
-                    _ => return None,
-                };
-                Some(DefPathSegment {
+        let mut segments = Vec::new();
+        let mut current = def_id.index;
+        while current != CRATE_DEF_INDEX {
+            let segment_def_id = DefId {
+                krate: def_id.krate,
+                index: current,
+            };
+            let key = self.tcx.def_key(segment_def_id);
+            if let Some(name) = key.disambiguated_data.data.get_opt_name() {
+                let kind =
+                    oracle_def_kind(self.tcx.def_kind(segment_def_id)).unwrap_or_else(|| {
+                        panic!(
+                            "oracle cannot represent definition kind {:?} in external path {}",
+                            self.tcx.def_kind(segment_def_id),
+                            self.tcx.def_path_str(def_id)
+                        )
+                    });
+                segments.push(DefPathSegment {
                     kind,
                     name: name.to_string(),
-                })
-            })
-            .collect();
+                });
+            }
+            current = key
+                .parent
+                .expect("non-root definition path segment must have a parent");
+        }
+        segments.reverse();
         DefPath {
             krate: crate_name,
             segments,
@@ -122,7 +226,7 @@ impl<'tcx> Emitter<'tcx> {
 
     fn emit_module(&mut self, module_def_id: LocalDefId) -> Module<NormalizedDef> {
         let def_id = module_def_id.to_def_id();
-        let local_id = self.assign_local_id(def_id);
+        let local_id = self.local_id(def_id);
 
         let name = if module_def_id == CRATE_DEF_ID {
             String::new()
@@ -136,6 +240,18 @@ impl<'tcx> Emitter<'tcx> {
 
         for item_id in hir_mod.free_items() {
             let item = self.tcx.hir_item(item_id);
+            if let hir::ItemKind::Impl(impl_block) = item.kind {
+                for impl_item in self.source_impl_functions(&impl_block) {
+                    if let hir::ImplItemKind::Fn(sig, body) = impl_item.kind {
+                        items.push(Item::Fn(self.emit_fn_item(
+                            impl_item.owner_id.def_id,
+                            &sig,
+                            body,
+                        )));
+                    }
+                }
+                continue;
+            }
             if let Some(ref_item) = self.emit_item(item) {
                 items.push(ref_item);
             }
@@ -147,6 +263,25 @@ impl<'tcx> Emitter<'tcx> {
             items,
         }
     }
+
+    // ANCHOR: example_oracle_source_impl_functions
+    fn source_impl_functions(
+        &self,
+        impl_block: &hir::Impl<'tcx>,
+    ) -> Vec<&'tcx hir::ImplItem<'tcx>> {
+        impl_block
+            .items
+            .iter()
+            .map(|item| self.tcx.hir_impl_item(*item))
+            .filter(|item| {
+                !matches!(
+                    item.span.ctxt().outer_expn_data().kind,
+                    ExpnKind::Macro(MacroKind::Derive, _)
+                )
+            })
+            .collect()
+    }
+    // ANCHOR_END: example_oracle_source_impl_functions
 
     fn emit_item(&mut self, item: &'tcx hir::Item<'tcx>) -> Option<Item<NormalizedDef>> {
         match &item.kind {
@@ -172,7 +307,7 @@ impl<'tcx> Emitter<'tcx> {
         sig: &hir::FnSig<'tcx>,
         body_id: hir::BodyId,
     ) -> FnItem<NormalizedDef> {
-        let local_id = self.assign_local_id(def_id.to_def_id());
+        let local_id = self.local_id(def_id.to_def_id());
         let name = self.tcx.item_name(def_id.to_def_id()).to_string();
 
         let body = self.tcx.hir_body(body_id);
@@ -228,7 +363,7 @@ impl<'tcx> Emitter<'tcx> {
         def_id: LocalDefId,
         variant: &hir::VariantData<'tcx>,
     ) -> StructItem<NormalizedDef> {
-        let local_id = self.assign_local_id(def_id.to_def_id());
+        let local_id = self.local_id(def_id.to_def_id());
         let name = self.tcx.item_name(def_id.to_def_id()).to_string();
 
         let fields = variant
@@ -256,7 +391,7 @@ impl<'tcx> Emitter<'tcx> {
         def_id: LocalDefId,
         enum_def: &hir::EnumDef<'tcx>,
     ) -> EnumItem<NormalizedDef> {
-        let local_id = self.assign_local_id(def_id.to_def_id());
+        let local_id = self.local_id(def_id.to_def_id());
         let name = self.tcx.item_name(def_id.to_def_id()).to_string();
 
         let variants = enum_def
@@ -264,7 +399,7 @@ impl<'tcx> Emitter<'tcx> {
             .iter()
             .map(|variant| {
                 let variant_def_id = variant.def_id.to_def_id();
-                let variant_local_id = self.assign_local_id(variant_def_id);
+                let variant_local_id = self.local_id(variant_def_id);
                 let variant_name = variant.ident.name.to_string();
                 VariantDef {
                     def: NormalizedDef::Local(variant_local_id),
@@ -294,6 +429,17 @@ impl<'tcx> Emitter<'tcx> {
                 let type_args: Vec<_> = args.types().map(|t| self.emit_type(t)).collect();
                 Type::Def { target, type_args }
             }
+            ty::TyKind::Alias(kind, alias) => Type::Alias {
+                kind: match kind {
+                    ty::AliasTyKind::Projection | ty::AliasTyKind::Inherent => {
+                        AliasKind::Associated
+                    }
+                    ty::AliasTyKind::Opaque => AliasKind::Opaque,
+                    ty::AliasTyKind::Free => AliasKind::Named,
+                },
+                target: self.normalize_def(alias.def_id),
+                type_args: alias.args.types().map(|ty| self.emit_type(ty)).collect(),
+            },
             ty::TyKind::Ref(_, inner_ty, mutability) => Type::Ref {
                 mutable: mutability.is_mut(),
                 ty: Box::new(self.emit_type(*inner_ty)),
@@ -335,6 +481,9 @@ impl<'tcx> Emitter<'tcx> {
                     }
                     Res::Def(HirDefKind::Fn | HirDefKind::AssocFn, def_id) => Expr::Call {
                         target: self.normalize_def(def_id),
+                        dispatch: CallDispatch::Direct,
+                        owner_type_args: vec![],
+                        method_type_args: vec![],
                         args: vec![],
                         ty: self.emit_type(expr_ty),
                     },
@@ -342,6 +491,9 @@ impl<'tcx> Emitter<'tcx> {
                         let variant_def_id = self.tcx.parent(def_id);
                         Expr::Call {
                             target: self.normalize_def(variant_def_id),
+                            dispatch: CallDispatch::Direct,
+                            owner_type_args: vec![],
+                            method_type_args: vec![],
                             args: vec![],
                             ty: self.emit_type(expr_ty),
                         }
@@ -379,6 +531,9 @@ impl<'tcx> Emitter<'tcx> {
                             .collect();
                         return Expr::Call {
                             target: self.normalize_def(target_def_id),
+                            dispatch: CallDispatch::Direct,
+                            owner_type_args: vec![],
+                            method_type_args: vec![],
                             args: emitted_args,
                             ty: self.emit_type(expr_ty),
                         };
@@ -393,6 +548,59 @@ impl<'tcx> Emitter<'tcx> {
                         krate: "?".to_string(),
                         segments: vec![],
                     }),
+                    dispatch: CallDispatch::Direct,
+                    owner_type_args: vec![],
+                    method_type_args: vec![],
+                    args: emitted_args,
+                    ty: self.emit_type(expr_ty),
+                }
+            }
+            hir::ExprKind::MethodCall(_, receiver, args, _) => {
+                let target = typeck
+                    .type_dependent_def_id(expr.hir_id)
+                    .expect("type-checked method call must name its selected function");
+                let generics = self.tcx.generics_of(target);
+                let owner_type_count = (0..generics.parent_count)
+                    .filter(|&index| {
+                        matches!(
+                            generics.param_at(index, self.tcx).kind,
+                            ty::GenericParamDefKind::Type { .. }
+                        )
+                    })
+                    .count();
+                let type_arguments: Vec<_> = typeck
+                    .node_args(expr.hir_id)
+                    .types()
+                    .map(|ty| self.emit_type(ty))
+                    .collect();
+                let (owner_type_args, method_type_args) = type_arguments.split_at(owner_type_count);
+                let owner_type_args = owner_type_args.to_vec();
+                let method_type_args = method_type_args.to_vec();
+                let dispatch = self
+                    .tcx
+                    .associated_item(target)
+                    .trait_container(self.tcx)
+                    .map_or(CallDispatch::Direct, |trait_def_id| {
+                        let [self_ty, trait_type_args @ ..] = owner_type_args.as_slice() else {
+                            panic!("trait method call must retain its Self substitution")
+                        };
+                        CallDispatch::StaticTrait {
+                            self_ty: self_ty.clone(),
+                            trait_target: self.normalize_def(trait_def_id),
+                            trait_type_args: trait_type_args.to_vec(),
+                        }
+                    });
+                let mut emitted_args = Vec::with_capacity(args.len() + 1);
+                emitted_args.push(self.emit_method_receiver_adjustments(receiver, typeck, locals));
+                emitted_args.extend(
+                    args.iter()
+                        .map(|argument| self.emit_expr_with_locals(argument, typeck, locals)),
+                );
+                Expr::Call {
+                    target: self.normalize_def(target),
+                    dispatch,
+                    owner_type_args,
+                    method_type_args,
                     args: emitted_args,
                     ty: self.emit_type(expr_ty),
                 }
@@ -425,11 +633,20 @@ impl<'tcx> Emitter<'tcx> {
                     ty: self.emit_type(expr_ty),
                 }
             }
-            hir::ExprKind::Field(base, field) => Expr::Field {
-                expr: Box::new(self.emit_expr_with_locals(base, typeck, locals)),
-                field_name: field.name.to_string(),
-                ty: self.emit_type(expr_ty),
-            },
+            hir::ExprKind::Field(base, _) => {
+                let owner = match typeck.expr_ty_adjusted(base).kind() {
+                    ty::Adt(adt, _) => self.normalize_def(adt.did()),
+                    other => panic!("unsupported field owner type in oracle: {other:?}"),
+                };
+                Expr::Field {
+                    expr: Box::new(self.emit_builtin_deref_adjustments(base, typeck, locals)),
+                    field: FieldId {
+                        owner,
+                        index: typeck.field_index(expr.hir_id).as_u32(),
+                    },
+                    ty: self.emit_type(expr_ty),
+                }
+            }
             hir::ExprKind::Block(block, _) => {
                 let stmts: Vec<_> = block
                     .stmts
@@ -533,6 +750,24 @@ impl<'tcx> Emitter<'tcx> {
     }
 }
 
+fn oracle_def_kind(kind: HirDefKind) -> Option<rust_ref::DefKind> {
+    use rustc_hir::def::CtorOf;
+
+    Some(match kind {
+        HirDefKind::Fn | HirDefKind::AssocFn => rust_ref::DefKind::Fn,
+        HirDefKind::Struct | HirDefKind::Ctor(CtorOf::Struct, _) => rust_ref::DefKind::Struct,
+        HirDefKind::Enum => rust_ref::DefKind::Enum,
+        HirDefKind::Variant | HirDefKind::Ctor(CtorOf::Variant, _) => rust_ref::DefKind::Variant,
+        HirDefKind::Trait | HirDefKind::TraitAlias => rust_ref::DefKind::Trait,
+        HirDefKind::Impl { .. } => rust_ref::DefKind::Impl,
+        HirDefKind::TyAlias | HirDefKind::AssocTy => rust_ref::DefKind::TypeAlias,
+        HirDefKind::Mod => rust_ref::DefKind::Mod,
+        HirDefKind::Const { .. } | HirDefKind::AssocConst { .. } => rust_ref::DefKind::Const,
+        HirDefKind::Static { .. } => rust_ref::DefKind::Static,
+        _ => return None,
+    })
+}
+
 pub fn emit_crate(tcx: TyCtxt<'_>) -> Result<Crate<NormalizedDef>, OracleError> {
     if tcx.dcx().has_errors().is_some() {
         return Err(OracleError::CompileError(
@@ -541,6 +776,7 @@ pub fn emit_crate(tcx: TyCtxt<'_>) -> Result<Crate<NormalizedDef>, OracleError> 
     }
 
     let mut emitter = Emitter::new(tcx);
+    emitter.pre_register_module(CRATE_DEF_ID);
     let root = emitter.emit_module(CRATE_DEF_ID);
 
     Ok(Crate { root })

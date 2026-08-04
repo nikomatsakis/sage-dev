@@ -3,7 +3,8 @@ use sage_stash::{Slice, Stashed};
 use crate::check::solve::{Assumption, CanonicalMapping, Goal, GoalQueryData};
 use crate::scope::LocalCrateSymbol;
 use crate::span::RelativeSpan;
-use crate::ty::{CheckedParameterEnv, InferVarIndex};
+use crate::ty::{AliasTy, CheckedParameterEnv, InferVarIndex, Ty};
+use sage_stash::Ptr;
 
 /// Why a body-checking obligation was introduced.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -36,9 +37,18 @@ pub(crate) enum ObligationState {
     Terminal,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ObligationGoal<'db> {
+    Prove(Goal<'db>),
+    Normalize {
+        alias: AliasTy<'db>,
+        expected: Ptr<Ty<'db>>,
+    },
+}
+
 /// One retained caller-side proof request.
 pub(crate) struct Obligation<'db> {
-    pub goal: Goal<'db>,
+    pub goal: ObligationGoal<'db>,
     pub assumptions: Slice<Assumption<'db>>,
     pub assumptions_complete: bool,
     pub local_crate: LocalCrateSymbol<'db>,

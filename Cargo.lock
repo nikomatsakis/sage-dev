@@ -943,6 +943,7 @@ dependencies = [
  "sage-ir",
  "sage-oracle",
  "sage-rustc-bridge",
+ "sage-stash",
  "sage-test-harness",
  "serde_json",
 ]
@@ -980,6 +981,7 @@ name = "sage-test-harness"
 version = "0.1.0"
 dependencies = [
  "expect-test",
+ "rustc-hash",
  "sage-ir",
  "sage-stash",
  "salsa",

@@ -28,6 +28,7 @@ pub fn default_fold_ty<'db>(folder: &mut impl TyFolder<'db>, ty: Ty<'db>) -> Ty<
             let args = fold_ptr_slice(folder, args);
             Ty::Adt(sym, args)
         }
+        Ty::Alias(alias) => Ty::Alias(fold_alias_ty(folder, alias)),
         Ty::Ref(inner, m, lt) => {
             let inner_ty = folder.fold_ty(folder.source()[inner]);
             let inner = folder.target().alloc(inner_ty);
@@ -66,6 +67,28 @@ pub fn default_fold_ty<'db>(folder: &mut impl TyFolder<'db>, ty: Ty<'db>) -> Ty<
     }
 }
 
+pub fn fold_alias_ty<'db>(folder: &mut impl TyFolder<'db>, alias: AliasTy<'db>) -> AliasTy<'db> {
+    match alias {
+        AliasTy::Named(alias) => AliasTy::Named(NamedAliasTy {
+            def: alias.def,
+            args: fold_ptr_slice(folder, alias.args),
+        }),
+        AliasTy::Associated(projection) => {
+            let self_ty = folder.fold_ty(folder.source()[projection.self_ty]);
+            AliasTy::Associated(ProjectionTy {
+                associated_ty: projection.associated_ty,
+                self_ty: folder.target().alloc(self_ty),
+                trait_ref: fold_trait_ref(folder, projection.trait_ref),
+                args: fold_ptr_slice(folder, projection.args),
+            })
+        }
+        AliasTy::Opaque(alias) => AliasTy::Opaque(OpaqueAliasTy {
+            def: alias.def,
+            args: fold_ptr_slice(folder, alias.args),
+        }),
+    }
+}
+
 pub fn fold_ptr_slice<'db>(
     folder: &mut impl TyFolder<'db>,
     slice: Slice<Ptr<Ty<'db>>>,
@@ -86,14 +109,27 @@ pub fn fold_ptr_slice<'db>(
 // ---------------------------------------------------------------------------
 
 pub fn fold_fn_sig<'db>(folder: &mut impl TyFolder<'db>, sig: FnSig<'db>) -> FnSig<'db> {
+    let owner_self_ty = sig.owner_self_ty.map(|owner_self_ty| {
+        let ty = folder.fold_ty(folder.source()[owner_self_ty]);
+        folder.target().alloc(ty)
+    });
+    let receiver = sig.receiver.map(|receiver| CheckedReceiver {
+        owner_self_ty: owner_self_ty.expect("a receiver must have an associated owner type"),
+        form: receiver.form,
+    });
     let params = fold_ptr_slice(folder, sig.params);
     let ret_ty = folder.fold_ty(folder.source()[sig.ret]);
     let ret = folder.target().alloc(ret_ty);
     let parameter_env = fold_parameter_env(folder, sig.parameter_env);
     FnSig {
+        owner_generic_count: sig.owner_generic_count,
+        owner_self_ty,
+        receiver,
         params,
         ret,
         parameter_env,
+        method_candidate_eligibility: sig.method_candidate_eligibility,
+        const_call_complete: sig.const_call_complete,
     }
 }
 
@@ -177,7 +213,6 @@ pub fn fold_parameter_env<'db>(
 #[derive(Copy, Clone, Debug)]
 pub enum SubstTarget<'db> {
     Ty(Ty<'db>),
-    Lifetime(Lifetime<'db>),
     Const(Const<'db>),
 }
 

@@ -17,6 +17,12 @@ source rather than retaining a stale copy.
    solver response.
 5. [A nested trait proof](./examples/nested-trait-proof.md) adds a generic impl,
    a where-clause body, concurrent alternatives, and a child proof frame.
+6. [An external trait method call](./examples/external-trait-method.md) follows
+   `self.db.clone()` through prelude trait discovery, owned rustc metadata, a
+   fixed-trait proof, and explicit receiver elaboration.
+7. [An oracle-checked method body](./examples/oracle-checked-method.md) shows
+   how Sage and rustc independently project that completed body before an exact
+   serialized comparison.
 
 The [architecture pages](./README.md) specify the system as a whole. These
 examples are the code-reading path into that specification.

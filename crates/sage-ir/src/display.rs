@@ -4,7 +4,7 @@ use std::fmt;
 
 use sage_stash::{Ptr, Stash};
 
-use crate::ty::{TraitRef, Ty, WherePredicate};
+use crate::ty::{AliasTy, TraitRef, Ty, WherePredicate};
 
 /// Wrapper that implements `Display` for a stash-allocated type.
 ///
@@ -162,6 +162,19 @@ fn fmt_ty(
             }
             Ok(())
         }
+        Ty::Alias(AliasTy::Named(alias)) => fmt_alias_name(f, db, alias.def, stash, alias.args),
+        Ty::Alias(AliasTy::Associated(projection)) => {
+            f.write_str("<")?;
+            fmt_ty(f, db, stash, projection.self_ty)?;
+            f.write_str(" as ")?;
+            fmt::Display::fmt(&TraitRefDisplay::new(db, stash, projection.trait_ref), f)?;
+            f.write_str(">::")?;
+            fmt_alias_name(f, db, projection.associated_ty, stash, projection.args)
+        }
+        Ty::Alias(AliasTy::Opaque(alias)) => {
+            f.write_str("opaque ")?;
+            fmt_alias_name(f, db, alias.def, stash, alias.args)
+        }
         Ty::Slice(inner) => {
             f.write_str("[")?;
             fmt_ty(f, db, stash, inner)?;
@@ -184,4 +197,31 @@ fn fmt_ty(
             fmt_ty(f, db, stash, ret)
         }
     }
+}
+
+fn fmt_alias_name(
+    f: &mut fmt::Formatter<'_>,
+    db: &dyn crate::Db,
+    def: crate::symbol::TypeAliasSymbol<'_>,
+    stash: &Stash,
+    args: sage_stash::Slice<Ptr<Ty<'_>>>,
+) -> fmt::Result {
+    use crate::symbol::TypeAliasSymbol;
+
+    let name = match def {
+        TypeAliasSymbol::Local(local) => local.name(db).text(db),
+        TypeAliasSymbol::Ext(external) => external.name(db).map_or("?", |(name, _)| name.text(db)),
+    };
+    f.write_str(name)?;
+    if !stash[args].is_empty() {
+        f.write_str("<")?;
+        for (index, argument) in stash[args].iter().enumerate() {
+            if index > 0 {
+                f.write_str(", ")?;
+            }
+            fmt_ty(f, db, stash, *argument)?;
+        }
+        f.write_str(">")?;
+    }
+    Ok(())
 }

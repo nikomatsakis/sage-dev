@@ -96,7 +96,9 @@ impl<'a, 'db> Parser<'a, 'db> {
         let cst = Stashed::new(stash, root);
         let abs_span = absolute_span(self.source, node, start);
 
-        LocalModItemSym::Function(LocalFnSym::new(self.db, name, self.scope, cst, abs_span))
+        LocalModItemSym::Function(LocalFnSym::new(
+            self.db, name, self.scope, None, cst, abs_span, abs_span,
+        ))
     }
 
     fn parse_fn_params(
@@ -659,6 +661,7 @@ impl<'a, 'db> Parser<'a, 'db> {
             let mod_sym = LocalModSym::new(
                 self.db,
                 name,
+                self.scope.local_crate(self.db).edition(self.db),
                 Some(self.scope),
                 ModBodySource::Inline,
                 attrs_cst,
@@ -692,6 +695,7 @@ impl<'a, 'db> Parser<'a, 'db> {
             let mod_sym = LocalModSym::new(
                 self.db,
                 name,
+                self.scope.local_crate(self.db).edition(self.db),
                 Some(self.scope),
                 body_source,
                 attrs_cst,
@@ -760,7 +764,9 @@ impl<'a, 'db> Parser<'a, 'db> {
         let cst: ConstCst = Stashed::new(stash, root);
         let abs_span = absolute_span(self.source, node, start);
 
-        LocalModItemSym::Const(LocalConstSym::new(self.db, name, self.scope, cst, abs_span))
+        LocalModItemSym::Const(LocalConstSym::new(
+            self.db, name, self.scope, None, cst, abs_span, abs_span,
+        ))
     }
 
     // -----------------------------------------------------------------------
@@ -844,7 +850,7 @@ impl<'a, 'db> Parser<'a, 'db> {
         let abs_span = absolute_span(self.source, node, start);
 
         LocalModItemSym::TypeAlias(LocalTypeAliasSym::new(
-            self.db, name, self.scope, cst, abs_span,
+            self.db, name, self.scope, None, cst, abs_span, abs_span,
         ))
     }
 
@@ -860,6 +866,10 @@ impl<'a, 'db> Parser<'a, 'db> {
         let start = item_start(node, pending_attrs);
         let abs_span = absolute_span(self.source, node, start);
 
+        let mut attr_stash = Stash::new();
+        let attrs = self.parse_attr_nodes(&mut attr_stash, pending_attrs, start);
+        let attrs = Stashed::new(attr_stash, attrs);
+
         let mut stash = Stash::new();
         let mut imports = Vec::new();
 
@@ -874,7 +884,13 @@ impl<'a, 'db> Parser<'a, 'db> {
         let imports_slice = stash.alloc_slice(&imports);
         let use_imports = Stashed::new(stash, imports_slice);
 
-        LocalModItemSym::Use(LocalUseSym::new(self.db, self.scope, use_imports, abs_span))
+        LocalModItemSym::Use(LocalUseSym::new(
+            self.db,
+            self.scope,
+            attrs,
+            use_imports,
+            abs_span,
+        ))
     }
 
     fn collect_use_tree(
@@ -972,8 +988,15 @@ impl<'a, 'db> Parser<'a, 'db> {
             }
             "use_wildcard" => {
                 let mut full = prefix.clone();
-                if let Some(path_node) = node.child_by_field_name("path") {
+                let path_node = node.child_by_field_name("path").or_else(|| {
+                    let mut cursor = node.walk();
+                    node.named_children(&mut cursor).next()
+                });
+                if let Some(path_node) = path_node {
                     self.collect_use_scoped_parts(stash, path_node, item_start, &mut full);
+                }
+                if full.anchor.is_none() && full.segments.is_empty() {
+                    return;
                 }
                 let path = full.alloc(stash);
                 out.push(UseImportCst {
@@ -1108,8 +1131,11 @@ impl<'a, 'db> Parser<'a, 'db> {
         node: tree_sitter::Node<'a>,
         pending_attrs: &[tree_sitter::Node<'a>],
     ) -> LocalModItemSym<'db> {
+        let mut stash = Stash::new();
         let start = item_start(node, pending_attrs);
         let name = node_name(self.db, node, self.text);
+        let attrs = self.parse_attr_nodes(&mut stash, pending_attrs, start);
+        let attrs = Stashed::new(stash, attrs);
         let abs_span = absolute_span(self.source, node, start);
         let body_tokens = ts_helpers::extract_macro_body_tokens(node, self.text);
 
@@ -1117,6 +1143,7 @@ impl<'a, 'db> Parser<'a, 'db> {
             self.db,
             name,
             self.scope,
+            attrs,
             body_tokens,
             abs_span,
         ))
@@ -1147,6 +1174,7 @@ impl<'a, 'db> Parser<'a, 'db> {
         let abs_span = absolute_span(self.source, node, start);
 
         let mut stash = Stash::new();
+        let attrs = self.parse_attr_nodes(&mut stash, pending_attrs, start);
         let macro_name_node = node.child_by_field_name("macro").unwrap_or(node);
         let path = self.parse_path(&mut stash, macro_name_node, start);
         let input_text = ts_helpers::extract_macro_invocation_tokens(node, self.text);
@@ -1157,6 +1185,7 @@ impl<'a, 'db> Parser<'a, 'db> {
             end: node.end_byte() as u32 - start,
         };
         let cst_data = crate::cst::macro_invocations::MacroInvocationCstData {
+            attrs,
             path,
             input_tokens,
             span,

@@ -27,7 +27,8 @@ pub enum Ty<'db> {
 
     // --- compound ---
     Adt(Symbol<'db>, Slice<Ptr<Ty<'db>>>),
-    Ref(Ptr<Ty<'db>>, Mutability, Lifetime<'db>),
+    Alias(AliasTy<'db>),
+    Ref(Ptr<Ty<'db>>, Mutability, Lifetime),
     Tuple(Slice<Ptr<Ty<'db>>>),
     Slice(Ptr<Ty<'db>>),
     Array(Ptr<Ty<'db>>, Const<'db>),
@@ -43,6 +44,39 @@ pub enum Ty<'db> {
     // --- other ---
     Never,
     Error(ErrorReported),
+}
+
+// ---------------------------------------------------------------------------
+// Alias types
+// ---------------------------------------------------------------------------
+
+/// A semantic type alias application. Alias identity is retained until a
+/// caller explicitly requests normalization.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub enum AliasTy<'db> {
+    Named(NamedAliasTy<'db>),
+    Associated(ProjectionTy<'db>),
+    Opaque(OpaqueAliasTy<'db>),
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub struct NamedAliasTy<'db> {
+    pub def: TypeAliasSymbol<'db>,
+    pub args: Slice<Ptr<Ty<'db>>>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub struct ProjectionTy<'db> {
+    pub associated_ty: TypeAliasSymbol<'db>,
+    pub self_ty: Ptr<Ty<'db>>,
+    pub trait_ref: TraitRef<'db>,
+    pub args: Slice<Ptr<Ty<'db>>>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub struct OpaqueAliasTy<'db> {
+    pub def: TypeAliasSymbol<'db>,
+    pub args: Slice<Ptr<Ty<'db>>>,
 }
 
 /// Sequential counter for inference variables. Dense, monotonically increasing.
@@ -87,11 +121,10 @@ pub enum FloatTy {
 // ---------------------------------------------------------------------------
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
-pub enum Lifetime<'db> {
-    /// Invariant: param.kind() == Lifetime.
-    Param(GenericParam<'db>),
-    Static,
-    Erased,
+pub enum Lifetime {
+    /// Lifetime semantics are intentionally deferred until Sage introduces
+    /// unified type-and-lifetime inference and borrow checking.
+    Dummy,
 }
 
 // ---------------------------------------------------------------------------
@@ -172,9 +205,18 @@ where
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct FnSig<'db> {
+    /// Number of leading entries in the enclosing binder which belong to the
+    /// owning trait or impl; remaining entries are function-level generics.
+    pub owner_generic_count: u32,
+    pub owner_self_ty: Option<Ptr<Ty<'db>>>,
+    pub receiver: Option<CheckedReceiver<'db>>,
     pub params: Slice<Ptr<Ty<'db>>>,
     pub ret: Ptr<Ty<'db>>,
     pub parameter_env: CheckedParameterEnv<'db>,
+    pub method_candidate_eligibility: SolverEligibility,
+    /// Whether const-only call conditions are fully represented. Ordinary
+    /// body checking does not require this bit to be true.
+    pub const_call_complete: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
@@ -182,9 +224,30 @@ pub struct StructSig<'db> {
     pub parameter_env: CheckedParameterEnv<'db>,
 }
 
+/// The declaration data needed to form an external nominal type. Defaults are
+/// aligned with `Binder::generics`; only type parameters can contain a value.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub struct ExternalAdtSignatureData<'db> {
+    pub defaults: Slice<GenericDefault<'db>>,
+    pub parameter_env: CheckedParameterEnv<'db>,
+    pub ordinary_complete: bool,
+    pub deferred_complete: bool,
+}
+
+pub type ExternalAdtSignature<'db> = Binder<'db, ExternalAdtSignatureData<'db>>;
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub enum GenericDefault<'db> {
+    Absent,
+    Type(Ptr<Ty<'db>>),
+    Unsupported,
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
 pub struct StructFields<'db> {
     pub fields: Slice<FieldSig<'db>>,
+    /// Well-formedness predicates introduced by the declared field types.
+    pub parameter_env: CheckedParameterEnv<'db>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
@@ -257,6 +320,14 @@ pub struct TraitSignatureData<'db> {
     pub self_param: GenericParam<'db>,
     pub where_clauses: Slice<WherePredicate<'db>>,
     pub solver_eligibility: SolverEligibility,
+    pub semantics: TraitSemantics,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+pub enum TraitSemantics {
+    Ordinary,
+    Sized,
+    MetaSized,
 }
 
 pub type ImplSignature<'db> = Binder<'db, ImplSignatureData<'db>>;

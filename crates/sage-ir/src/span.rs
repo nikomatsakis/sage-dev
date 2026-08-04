@@ -6,8 +6,9 @@ use crate::symbol::MacroDefSymbol;
 
 /// The source of parseable text — either a real file or a macro expansion.
 ///
-/// This is a plain enum (NOT a salsa tracked struct). The tracked identity
-/// for macro expansions lives on `LocalMacroInvocationSym::parse_output`.
+/// This is a plain enum (NOT a salsa tracked struct). Bang-macro output uses
+/// `LocalMacroInvocationSym::parse_output` as its tracked identity boundary;
+/// derive output carries an explicit `DeriveExpansion` identity.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub enum ParseSource<'db> {
     /// A real source file on disk.
@@ -15,6 +16,9 @@ pub enum ParseSource<'db> {
 
     /// Output of a `foo!(...)` macro invocation, linked back to the macro definition.
     BangMacro(MacroDefSymbol<'db>, LocalMacroInvocationSym<'db>),
+
+    /// Output synthesized by a `#[derive(...)]` invocation.
+    Derive(crate::derive::DeriveExpansion<'db>),
 }
 
 /// Byte offset range within a source (file or macro expansion), together
@@ -41,7 +45,7 @@ impl<'db> AbsoluteSpan<'db> {
     pub fn file(&self) -> Option<SourceFile> {
         match self.source {
             ParseSource::SourceFile(f) => Some(f),
-            ParseSource::BangMacro(..) => None,
+            ParseSource::BangMacro(..) | ParseSource::Derive(..) => None,
         }
     }
 }

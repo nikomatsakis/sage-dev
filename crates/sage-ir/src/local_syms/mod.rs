@@ -5,6 +5,14 @@ use crate::source::SourceFile;
 use crate::span::{AbsoluteSpan, ParseSource};
 use crate::symbol::Symbol;
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub enum LocalAssociatedOwner<'db> {
+    Trait(traits::LocalTraitSym<'db>),
+    Impl(impls::LocalImplSym<'db>),
+}
+
+impl sage_stash::StashDirect for LocalAssociatedOwner<'_> {}
+
 /// Thin enum over all item kinds. `Copy` because salsa tracked struct
 /// handles are just IDs.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, salsa::Update)]
@@ -44,6 +52,24 @@ impl<'db> LocalModItemSym<'db> {
         }
     }
 
+    pub fn relative_span_base(self, db: &'db dyn crate::Db) -> AbsoluteSpan<'db> {
+        match self {
+            LocalModItemSym::Function(f) => f.cst_base(db),
+            LocalModItemSym::Struct(s) => s.span(db),
+            LocalModItemSym::Enum(e) => e.span(db),
+            LocalModItemSym::Trait(t) => t.span(db),
+            LocalModItemSym::Impl(i) => i.span(db),
+            LocalModItemSym::TypeAlias(t) => t.cst_base(db),
+            LocalModItemSym::Const(c) => c.cst_base(db),
+            LocalModItemSym::Static(s) => s.span(db),
+            LocalModItemSym::Mod(m) => m.span(db),
+            LocalModItemSym::Use(u) => u.span(db),
+            LocalModItemSym::MacroDef(m) => m.span(db),
+            LocalModItemSym::MacroInvocation(m) => m.span(db),
+            LocalModItemSym::Error(span) => span,
+        }
+    }
+
     pub fn parse_source(&self, db: &'db dyn crate::Db) -> ParseSource<'db> {
         self.absolute_span(db).source
     }
@@ -63,10 +89,10 @@ impl<'db> LocalModItemSym<'db> {
             LocalModItemSym::Const(s) => Some(s.attrs(db)),
             LocalModItemSym::Static(s) => Some(s.attrs(db)),
             LocalModItemSym::Mod(s) => Some(s.get_attrs(db)),
-            LocalModItemSym::Use(_)
-            | LocalModItemSym::MacroDef(_)
-            | LocalModItemSym::MacroInvocation(_)
-            | LocalModItemSym::Error(_) => None,
+            LocalModItemSym::Use(s) => Some(s.get_attrs(db)),
+            LocalModItemSym::MacroDef(s) => Some(s.get_attrs(db)),
+            LocalModItemSym::MacroInvocation(s) => Some(s.attrs(db)),
+            LocalModItemSym::Error(_) => None,
         }
     }
 }
@@ -91,6 +117,7 @@ impl<'db> From<LocalModItemSym<'db>> for Symbol<'db> {
     }
 }
 
+pub mod associated;
 pub mod consts;
 pub mod enums;
 pub mod fns;

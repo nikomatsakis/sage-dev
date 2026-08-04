@@ -152,6 +152,13 @@ The key difference from a naive skip-N model: attr macros consume and replace, w
 derives append alongside. And the input to a derive is the item with *all* derive
 lines removed, not just the current one.
 
+Current implementation status: Sage preserves the source item and parses
+the represented builtin `Clone` output as sibling impl items with a distinct
+`DeriveExpansion` parse-source identity. Removing derive attributes from the
+retained source item, complete builtin coverage, attribute replacement, and
+proc-macro derive integration still remain; the four steps above continue to
+define the destination behavior.
+
 ## Key Source Files
 
 | File | Key Function | Role |

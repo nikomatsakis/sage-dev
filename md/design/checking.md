@@ -32,21 +32,43 @@ from callers.
 other items need to type-check against this one: generics, parameter types,
 return type, field types. It is the minimal public surface.
 
+**Associated-item identity is a separate narrow boundary.**
+`LocalTraitSym::items` and `LocalImplSym::items` return stable owner-linked
+symbols. A consumer then queries only the selected item's signature; item
+enumeration does not check any associated body.
+
 **Detail queries are lazy.** `body()`, `fields()`, and similar queries compute
 information that is either not needed from other items or only needed some of
 the time. They depend on `sig()` but are not depended on by other items'
 signatures.
 
-**Generic parameters are minted exactly once.** The `sig()` query mints
-`GenericParam` symbols via `cst.generics.check(db, cx, parent)` and stores
-them in a `Binder`. All other queries (`fields`, `body`) open that binder and
-bring the same param symbols into scope via `ribs.add_generic_params`. No
-re-minting, no identity confusion.
+**Symbols and generic parameters are minted exactly once.** An owner `sig()`
+query mints its `GenericParam` symbols via
+`cst.generics.check(db, cx, parent)` and stores them in a `Binder`.
+`LocalTraitSym::items` and `LocalImplSym::items` mint stable owner-linked item
+symbols; an associated function's `sig()` reuses the owner binder before
+minting method-level generics. Detail queries such as `fields()` and `body()`
+open those binders and bring the same parameter symbols and owner `Self` type
+into scope. No query remints an existing identity.
 
 **Sequential layering inside a query.** `body()` calls `sig()` → opens
-binder → resolves names → runs inference. Each step builds on the prior.
-From outside: one query, one result. Intermediates (`ResolvedBody`) are not
-separately queryable.
+binder → resolves names → runs inference → elaborates the completed typed
+tree. Each step builds on the prior. From outside: one query, one result.
+Intermediates (`ResolvedBody`, method candidates, adjustment recipes, and
+partially inferred expressions) are not separately queryable.
+
+## Completed body output
+
+The result of successful body checking is the [elaborated typed
+IR](./typed-ir.md), not a typed copy of source syntax. Resolved definitions,
+substitutions, borrows, dereferences, and coercions are materialized in the
+tree. A method resolver may describe an autoref or autoderef while selecting a
+candidate, but body elaboration consumes that description before returning
+`CheckedBody`.
+
+Checking one body may query callee signatures, associated items, impl headers,
+and trait-solver results. It does not query callee bodies. This is both a
+layering rule and an incremental dependency requirement.
 
 ## Data flow: the two-stash pattern
 
@@ -66,7 +88,8 @@ re-execution.
 
 ## Trait obligations
 
-Trait and type-equality goals are handled by the `check::solve` subsystem under
+Trait proof and type-producing normalization operations are handled by the
+`check::solve` subsystem under
 the [trait-solver semantic contract](./trait-solver.md). The
 body checker keeps an obligation registry rather
 than treating a conditional solver answer as final: substitutions are applied,
@@ -94,12 +117,36 @@ be reinterpreted outside their owning ancestry.
 The body environment contains opened function predicates and the deduplicated
 defining predicates of referenced local traits. Generic function uses and
 struct/enum construction or explicit type uses submit their instantiated
-parameter environments. Obligations retain source provenance, deduplicate after
-canonicalization, retry only after relevant inference wakes, and receive a
-mandatory terminal proof pass after inference fallback. `CheckedBody` creation
-asserts that the obligation registry, runtime, wake queue, and root egraph have
-no live work. Selected-method predicates will use the same staged-batch API when
-method resolution lands.
+parameter environments. Once trait method selection is complete, associated
+projections in its instantiated signature are replaced by caller inference
+variables and registered as input-only normalization operations; the caller's
+expected type is related only after the solver output is imported. Obligations
+retain source provenance, proof obligations deduplicate after canonicalization,
+retry only after relevant inference wakes, and receive a mandatory terminal
+pass after inference fallback. `CheckedBody` creation asserts that the
+obligation registry, runtime, wake queue, and root egraph have no live work.
+
+The implemented external-inherent slice opens owner and method type generics
+in one synchronous child egraph version. Receiver and argument compatibility
+must all succeed before the child collapses into the body root. Its instantiated
+parameter environment is accumulated in `StagedObligationBatch` and published
+only after commit, so a rejected call cannot leak generic equalities, wakeups,
+or obligations. This transaction does not cross an await point. The broader
+method algorithm will extend the same boundary to result compatibility,
+autoderef, conditional candidate responses, and local inherent methods.
+
+## Deferred lifetime and borrow semantics
+
+Lifetime syntax remains in the CST, but checking currently maps every
+explicit, elided, universal, existential, external, and synthesized lifetime
+directly to `Lifetime::Dummy`. No lifetime inference variables are introduced.
+The only lifetime relation is `Outlives(Dummy, Dummy)`, which succeeds.
+
+References and dereferences remain ordinary typed operations. Sage does not
+currently validate liveness, uniqueness, overlap, or any other borrow
+property. This deliberate soundness hole avoids committing to a separate
+region-inference subsystem before Sage's unified type-and-lifetime inference
+design is settled.
 
 ## Resolution model
 
