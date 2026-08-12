@@ -119,3 +119,25 @@ The semantic unit test catches regressions in Sage's elaborated body, while
 the structural checks, exact snapshot, and exact cross-emitter comparison
 establish this fixture's current coverage and representation boundary. The
 broader destination contract is specified in [Oracle Test Harness](../oracle-test-harness.md).
+
+## Review packet
+
+This example has one inspectable artifact for each review question:
+
+| Question | Evidence |
+|---|---|
+| What Rust is checked? | `test-fixtures/oracle/mini_redis/db_drop_guard.rs`, excerpted above |
+| What semantic body was produced? | `clone_method_call_is_elaborated_to_a_resolved_trait_call` walks the readable Sage tree; `crates/sage-oracle-harness/tests/snapshots/db_drop_guard.json` records the shared projection |
+| Did checking complete cleanly? | the semantic assertion requires an empty diagnostic set and the oracle coverage assertion requires the resolved body shape |
+| Which incremental dependencies ran? | `clone_method_body_has_a_narrow_reusable_semantic_query_trace` asserts the selected interface reads, absence of callee-body reads, and warm reuse |
+| What happens after an unrelated edit? | `unrelated_body_edit_exposes_current_body_invalidation` records the current gap: this body and module/derive discovery reexecute, while cached callee interfaces do not |
+| Does rustc agree? | `oracle_compare` independently emits both sides, requires the snapshot, and compares deterministic text exactly |
+
+Reproduce the packet with:
+
+```bash
+cargo test -p sage-test-harness clone_method_call_is_elaborated_to_a_resolved_trait_call
+cargo test -p sage-test-harness clone_method_body_has_a_narrow_reusable_semantic_query_trace
+cargo test -p sage-test-harness unrelated_body_edit_exposes_current_body_invalidation
+cargo test -p sage-oracle-harness --test oracle_compare -- mini_redis/db_drop_guard.rs
+```

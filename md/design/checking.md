@@ -1,7 +1,10 @@
-# Checking
+# Shared Checking Design
 
-Design tenets for the CST checking layer — guides all new code in
-`cst/`, `local_syms/`, and related modules.
+This chapter records mechanisms shared by the [signature-checking
+phase](./pipeline/signature-checking.md) and [body-checking
+phase](./pipeline/body-checking.md). Begin with those phase contracts for
+inputs, outputs, failure modes, incremental boundaries, and evidence; use this
+page as the deeper reference for their common query and stash design.
 
 ## Code organization
 
@@ -16,9 +19,9 @@ Avoid monolithic files. One struct or closely-related cluster per file.
 
 **Shared infra lives in pass-named modules.** Contexts, helpers, and traits
 shared across item kinds live in a module named after the pass:
-- `cst::check` — `CstLowerCtx`, `BodyCheckCtx`
-- `resolve` — `Resolver`, `Namespace`
-- `ribs` — `Ribs`, `RibEntry`
+- `check::sig` — `Check`, the signature-lowering context
+- `check::infer_ctx` — `InferCtx` and `Scope`, the body-checking context
+- `resolve` — `Resolver`, `Namespace`, and lexical ribs
 
 Item-specific logic imports from these; it doesn't redefine its own plumbing.
 
@@ -161,3 +164,12 @@ with content-addressed (hash-consed) allocation. CST type aliases follow the
 pattern `type FnCst<'db> = Stashed<Ptr<FnCstData<'db>>>`. The CST captures
 all syntactic detail needed for later phases. No back-pointers to tree-sitter
 nodes.
+
+## Current status
+
+The single-keyed signature/body queries, two-stash boundary, transactional
+inference, obligation finalization, elaborated output, and Dummy-lifetime
+policy described above are implemented for the Rust subset recorded in the
+two phase chapters. Their **Current Status** sections own concrete capability,
+limitation, evidence, and roadmap information so this shared mechanism page
+does not duplicate it.

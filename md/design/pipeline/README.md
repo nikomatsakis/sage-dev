@@ -17,3 +17,9 @@ signature and body checking while the phase-specific chapters are built out.
 - [Module and Macro Expansion](./module-expansion.md) documents the
   module-level represented-symbol result, recursive output expansion, the
   narrower same-module fixed point, and terminal incompleteness.
+- [Parsing and Stable Symbol Creation](./parsing.md) explains how source and
+  generated text become stable local identities with self-contained CST.
+- [Signature Checking](./signature-checking.md) defines the item interface
+  boundary that other items may depend upon.
+- [Body Checking and Typed-IR Elaboration](./body-checking.md) defines the
+  completed per-body semantic output and its dependency rules.

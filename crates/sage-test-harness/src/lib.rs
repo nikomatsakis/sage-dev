@@ -1541,6 +1541,62 @@ mod derive_expansion_tests {
     }
 
     #[test]
+    fn unrelated_body_edit_exposes_current_body_invalidation() {
+        use sage_ir::symbol::FnSymbol;
+        use sage_ir::ty::TraitItemDef;
+        use salsa::Setter as _;
+
+        fn force_db_method(db: &dyn Db, source_file: SourceFile) {
+            let (_, root) = setup_root_module(db, source_file);
+            for symbol in root.expanded_module_items(db) {
+                let SymbolData::ImplSymbol(ImplSymbol::Local(local_impl)) = symbol.data(db) else {
+                    continue;
+                };
+                let items = local_impl.items(db);
+                for item in &items.stash()[items.root().value] {
+                    let TraitItemDef::Function(FnSymbol::Local(function)) = *item else {
+                        continue;
+                    };
+                    if function.name(db).text(db) == "db" {
+                        assert!(function.body(db).diagnostics.is_empty());
+                        return;
+                    }
+                }
+            }
+            panic!("DbDropGuard::db method not found");
+        }
+
+        let (tcx, tcx_calls) = BuiltinDeriveTcx::tracing();
+        let mut database = Database::new(tcx);
+        let before = "#[derive(Clone)]\nstruct Db { shared: bool }\nstruct DbDropGuard { db: Db }\nimpl DbDropGuard { fn db(&self) -> Db { self.db.clone() } }\nfn unrelated() -> bool { false }";
+        let source_file = database.add_source_file("lib.rs".to_owned(), before.to_owned());
+
+        database.attach(|db| force_db_method(db, source_file));
+        database.take_query_log();
+        tcx_calls.lock().unwrap().clear();
+
+        source_file
+            .set_text(&mut database)
+            .to(before.replace("{ false }", "{ true }"));
+        database.attach(|db| force_db_method(db, source_file));
+        let salsa_trace = database.take_query_log();
+        let metadata_trace = std::mem::take(&mut *tcx_calls.lock().unwrap());
+
+        assert!(
+            salsa_trace.contains("LocalFnSym < 'db >::body_"),
+            "record this limitation until DbDropGuard::db is reused: {salsa_trace}"
+        );
+        assert!(
+            metadata_trace.iter().all(|call| {
+                !call.starts_with("associated_items")
+                    && !call.starts_with("trait_signature")
+                    && !call.starts_with("fn_signature")
+            }),
+            "cached callee interfaces should survive the coarse body invalidation: {metadata_trace:?}"
+        );
+    }
+
+    #[test]
     fn external_adt_default_and_predicate_have_one_narrow_reusable_dependency() {
         use sage_ir::generic_param::GenericParamKind;
         use sage_ir::ty::{BinderExt, SolverEligibility, TraitRef, Ty};

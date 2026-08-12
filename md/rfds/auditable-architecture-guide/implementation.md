@@ -86,13 +86,13 @@ the navigation benefit outweighs broken historical links.
 
 ## Step 6: Document the remaining Rust compilation phases
 
-- [ ] Add or reshape the parsing and stable-symbol chapter.
-- [ ] Refocus signature checking as an item-granularity phase.
-- [ ] Refocus body checking and elaboration as a body-granularity phase.
-- [ ] Give each phase its contract, entry points, construction, terminal
+- [x] Add or reshape the parsing and stable-symbol chapter.
+- [x] Refocus signature checking as an item-granularity phase.
+- [x] Refocus body checking and elaboration as a body-granularity phase.
+- [x] Give each phase its contract, entry points, construction, terminal
   failures, incremental boundary, example, anchors, and Current Status
   section.
-- [ ] Preserve detailed Typed IR, Stash, Spans, and Trait Solver contracts by
+- [x] Preserve detailed Typed IR, Stash, Spans, and Trait Solver contracts by
   linking rather than duplicating them.
 
 ## Step 7: Complete subsystem and infrastructure entry guides

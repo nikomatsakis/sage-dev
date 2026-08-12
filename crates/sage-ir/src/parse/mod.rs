@@ -18,6 +18,7 @@ pub(crate) struct Parser<'a, 'db> {
     pub text: &'a str,
 }
 
+// ANCHOR: architecture_parse_module_entry
 pub fn parse_str_to_cst<'db>(
     db: &'db dyn Db,
     source: ParseSource<'db>,
@@ -33,6 +34,7 @@ pub fn parse_str_to_cst<'db>(
     let tree = tree_sitter_parse(text);
     parser.parse_item_list(tree.root_node())
 }
+// ANCHOR_END: architecture_parse_module_entry
 
 fn tree_sitter_parse(text: &str) -> tree_sitter::Tree {
     let mut parser = tree_sitter::Parser::new();
@@ -44,6 +46,7 @@ fn tree_sitter_parse(text: &str) -> tree_sitter::Tree {
 }
 
 impl<'a, 'db> Parser<'a, 'db> {
+    // ANCHOR: architecture_parse_item_dispatch
     pub(crate) fn parse_item_list(
         &self,
         list_node: tree_sitter::Node<'a>,
@@ -140,6 +143,7 @@ impl<'a, 'db> Parser<'a, 'db> {
         }
         items
     }
+    // ANCHOR_END: architecture_parse_item_dispatch
 
     fn error_item(
         &self,
