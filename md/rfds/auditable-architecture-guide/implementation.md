@@ -97,14 +97,14 @@ the navigation benefit outweighs broken historical links.
 
 ## Step 7: Complete subsystem and infrastructure entry guides
 
-- [ ] Add a destination-oriented name-resolution subsystem chapter.
-- [ ] Separate the type-inference subsystem account from the body-checking
+- [x] Add a destination-oriented name-resolution subsystem chapter.
+- [x] Separate the type-inference subsystem account from the body-checking
   phase that uses it.
-- [ ] Ensure the trait-solver chapter is linked from every phase that submits
+- [x] Ensure the trait-solver chapter is linked from every phase that submits
   goals without presenting it as a linear compilation phase.
-- [ ] Document the external-metadata boundary and what rustc may authoritatively
+- [x] Document the external-metadata boundary and what rustc may authoritatively
   supply without solving Sage semantic questions.
-- [ ] Add an incrementality entry guide covering Salsa query granularity,
+- [x] Add an incrementality entry guide covering Salsa query granularity,
   stable identity, backdating, and evidence expectations.
 
 ## Step 8: Connect review workflows and the Semantic Inspector

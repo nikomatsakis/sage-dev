@@ -11,4 +11,11 @@ dependencies, important algorithms, and the phases that invoke it. Its final
 **Current Status** section records implemented behavior, limitations, and
 inspectable evidence.
 
-The [Trait Solver](../trait-solver.md) is the first focused subsystem chapter.
+- [Name Resolution](./name-resolution.md) maps scoped Rust syntax to symbols
+  and preserves ambiguity or incompleteness.
+- [Type Inference](./type-inference.md) owns body-local constraints,
+  speculative versions, obligations, and finalization.
+- [Trait Solver](../trait-solver.md) proves canonical propositions and
+  produces goal-specific outputs such as normalized types.
+- [External Metadata](./external-metadata.md) imports narrow authoritative
+  dependency facts without delegating Sage semantic decisions.

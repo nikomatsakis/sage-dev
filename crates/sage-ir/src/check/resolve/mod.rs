@@ -121,6 +121,7 @@ impl<'db> Resolver<'db> {
         self.scope.local_crate(self.db)
     }
 
+    // ANCHOR: architecture_resolve_path
     pub fn resolve_path(
         &mut self,
         stash: &Stash,
@@ -161,6 +162,7 @@ impl<'db> Resolver<'db> {
             }
         }
     }
+    // ANCHOR_END: architecture_resolve_path
 
     pub fn resolve_name_from_scope(
         &mut self,

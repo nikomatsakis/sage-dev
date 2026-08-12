@@ -14,6 +14,7 @@ pub struct Database {
 }
 
 impl Database {
+    // ANCHOR: architecture_query_execution_log
     pub fn new(tcx: impl TcxDb + 'static) -> Self {
         let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let log_clone = log.clone();
@@ -31,6 +32,7 @@ impl Database {
             files: HashMap::new(),
         }
     }
+    // ANCHOR_END: architecture_query_execution_log
 
     /// Create a database with a `ProxyTcxDb`, sharing the query log.
     pub fn with_proxy(req_tx: std::sync::mpsc::Sender<crate::tcx::TcxRequest>) -> Self {

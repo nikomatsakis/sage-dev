@@ -249,6 +249,7 @@ pub enum RawGenericDefault {
 /// Returns only owned, `'static` data. The caller is responsible for
 /// interning into salsa types (`Name`, `Symbol`). This keeps the trait
 /// free of salsa lifetimes, enabling channel-based implementations.
+// ANCHOR: architecture_external_metadata_interface
 pub trait TcxDb: Send + Sync {
     fn extern_crate(&self, name: &str) -> Option<CrateNum>;
 
@@ -268,6 +269,7 @@ pub trait TcxDb: Send + Sync {
     fn is_module(&self, crate_num: CrateNum, def_index: DefIndex) -> bool;
 
     fn is_builtin_derive(&self, crate_num: CrateNum, def_index: DefIndex) -> bool;
+    // ANCHOR_END: architecture_external_metadata_interface
 
     /// Human-readable path for an external definition, e.g. `"core::option::Option::Some"`.
     fn def_path(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<String>;

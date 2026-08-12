@@ -510,31 +510,49 @@ normalization, monotone intermediate information, logically justified early
 cancellation, and deterministic resource accounting. Tests should perturb
 ready-queue ordering and assert an identical `Stashed<QueryResult>`.
 
-## Current and planned state
+## Current status
 
-| Area | State |
+### Current frontier
+
+The solver performs positive local and reachable-external explicit-impl proof,
+associated-type normalization with a type output, isolated asynchronous
+candidate evaluation, order-independent completed-answer reduction, final hard
+hints, conservative candidate-source completeness, a provisional inductive
+cycle cutoff, and a proof-depth limit.
+
+### Implemented capabilities and evidence
+
+| Claim | Evidence |
 |---|---|
-| Positive, type-only local proving | Built |
-| Isolated candidate futures and active atomic frames | Built |
-| Order-independent completed-answer reduction | Built |
-| Final hard substitution hints | Built |
-| Trait-keyed local impl discovery with conservative expansion/header completeness | Built, provisional linear scan |
-| External trait signatures and local/external explicit impl headers | Built |
-| Unrelated-trait invalidation isolation and query-trace proof | External queries are trait/head keyed with cold/warm trace; edit-invalidation proof and local partitioning planned |
-| Global trait-keyed impl discovery | Built for explicit impls in the visible local and reachable-external world |
-| Conservative simplified-self-type index | Built for external metadata; local refinement planned |
-| Parent-chain inductive cycle cutoff and depth limit | Built, provisional |
-| Groundness-sensitive result causes | Planned |
-| Term-size and deterministic work limits | Planned |
-| Polling rounds and intentional yields | Planned |
-| Concurrent conjunction | Planned |
-| Candidate and frame progress envelopes | Planned |
-| Provisional cycle fixpoints and coinductive paths | Planned |
-| Goal-specific outputs (`Proven` and `Type`) | Built |
+| Goal-specific `Proven` and `Type` outputs cross the canonical boundary | `local_associated_type_normalization_produces_a_type_output` and `response_local_type_output_round_trips_with_sharing` |
+| Nested local impl obligations are proved | `generic_impl_where_clause_is_proved_by_nested_impl` |
+| Completed candidate order does not change answer reduction | `incompatible_normalization_outputs_are_ambiguous_but_identical_outputs_merge` |
+| Incomplete expansion/header sources cannot manufacture `No` | `unresolved_item_macro_prevents_ground_no` and `unresolved_trait_impl_head_prevents_ground_no` |
+| External candidate discovery is trait/head keyed and reusable | the `Parse::next` query-trace evidence linked from the [Mini-redis roadmap](../implementation/mini-redis.md#slice-2-parsenext) |
+| Associated normalization reads one value rather than all impl items | `local_normalization_reads_one_keyed_value_without_impl_item_enumeration` |
 
-The planned work is split across the
-[Cycle Semantics](../rfds/trait-solver-cycle-semantics/README.md),
-[Scheduling and Fairness](../rfds/trait-solver-scheduling/README.md), and
-[Incremental Results](../rfds/incremental-trait-results/README.md) RFDs.
-Candidate enumeration and its incremental boundary are specified separately by
-the [Trait Impl Candidate Discovery RFD](../rfds/trait-impl-candidate-discovery/README.md).
+### Current limitations
+
+- Local trait-keyed discovery is a provisional linear scan over expanded local
+  impl identities; the stable private index and edit-invalidation firewall are
+  not built.
+- Groundness-sensitive ambiguity causes, term-size limits, deterministic work
+  limits, polling rounds, and intentional yield points are not implemented.
+- Conjunctions are sequential. Candidate and frame progress envelopes are not
+  published.
+- Cycle handling uses parent-chain inductive cutoff and depth overflow rather
+  than the destination provisional fixpoint/coinductive path semantics.
+- General negative reasoning, specialization, GATs, named-alias expansion,
+  opaque reveal, and method/vtable output operations are outside the current
+  frontier.
+
+### Related roadmap slices
+
+- [Trait-partitioned impl
+  discovery](../implementation/roadmap.md#planned-slice-trait-partitioned-impl-discovery)
+  owns the local incremental firewall.
+- [Solver recursion, scheduling, and monotone
+  progress](../implementation/roadmap.md#planned-slice-solver-recursion-scheduling-and-monotone-progress)
+  coordinates the [Cycle Semantics](../rfds/trait-solver-cycle-semantics/README.md),
+  [Scheduling and Fairness](../rfds/trait-solver-scheduling/README.md), and
+  [Incremental Results](../rfds/incremental-trait-results/README.md) RFDs.

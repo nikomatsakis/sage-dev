@@ -9,8 +9,9 @@ the compilation pipeline. They are not sequential phases.
 - [Stash](../stash.md) owns compact hash-consed trees at query boundaries.
 - [Spans](../spans.md) retain source provenance without making unrelated text
   movement invalidate semantic content.
-- Salsa memoizes symbol-keyed computations and propagates changes through the
-  dependencies actually observed.
+- [Incrementality and Query Boundaries](./incrementality.md) explains how
+  Salsa identities, query keys, backdating, and execution traces isolate
+  changes.
 
-The dedicated symbols and incrementality chapters are added by the accepted
-architecture-guide RFD.
+Together these pages define the reusable data and computation boundaries used
+by every pipeline phase.

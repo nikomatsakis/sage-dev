@@ -189,6 +189,7 @@ impl<'db> RecordErr<'db> for Result<(), TypeError<'db>> {
 /// Shared inference state — one per function body, eventually shared by all
 /// concurrent tasks. Protected by `RefCell` since the executor is
 /// single-threaded and cooperative.
+// ANCHOR: architecture_infer_context
 pub struct InferCtx<'check, 'db> {
     pub db: &'db dyn crate::Db,
     pub(crate) source_stash: &'check Stash,
@@ -217,6 +218,7 @@ pub struct InferCtx<'check, 'db> {
     // Diagnostic accumulator
     diagnostics: RefCell<Vec<Diagnostic<'db>>>,
 }
+// ANCHOR_END: architecture_infer_context
 
 impl<'check, 'db> InferCtx<'check, 'db> {
     pub fn new(
