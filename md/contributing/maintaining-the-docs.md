@@ -99,6 +99,23 @@ When a change touches more than one row, update all of them in the same change.
 - **Style** (inherited from the RFD process): no promotional or dramatic language; be factual
   and brief; lead with concrete concepts, then generalize; include examples.
 
+## Evidence maintenance checklist
+
+When a change affects an architecture claim or worked example:
+
+- update the chapter's Current Status claim, limitation, and roadmap link;
+- keep the Rust input and readable expected output in its review packet
+  accurate;
+- update focused test names and reproduction commands;
+- update snapshots only after reviewing the semantic change;
+- verify query-trace assertions still name the intended semantic boundary;
+- update edit experiments when identity, keys, or invalidation changes;
+- keep every ezanchor small, unique, and attached to the load-bearing code;
+- distinguish human-readable inspector evidence from exact Oracle
+  conformance; and
+- build the book so missing anchors, orphaned pages, and available link checks
+  run before commit.
+
 ## Verify before you commit
 
 Build the book locally — this is the same check CI runs on the PR, so it catches problems

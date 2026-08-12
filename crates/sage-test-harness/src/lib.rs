@@ -356,6 +356,35 @@ mod macro_expansion_tests {
             },
         );
     }
+
+    #[test]
+    fn expanded_module_query_has_a_cold_and_warm_trace() {
+        let (_, cold, warm) = with_test_crate_files_twice_using_db(
+            Database::default(),
+            &[(
+                "lib.rs",
+                "macro_rules! make { () => { struct Generated; } }\nmake!();",
+            )],
+            |db, root| {
+                assert!(root.expanded_module_items(db).iter().any(|symbol| {
+                    matches!(
+                        symbol.data(db),
+                        SymbolData::StructSymbol(StructSymbol::Local(strukt))
+                            if strukt.name(db).text(db) == "Generated"
+                    )
+                }));
+            },
+        );
+
+        assert!(
+            cold.contains("local_expanded_module_items"),
+            "cold expansion must execute the module query: {cold}"
+        );
+        assert!(
+            !warm.contains("local_expanded_module_items"),
+            "unchanged expansion must reuse the module query: {warm}"
+        );
+    }
 }
 
 #[cfg(test)]

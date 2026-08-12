@@ -109,16 +109,16 @@ the navigation benefit outweighs broken historical links.
 
 ## Step 8: Connect review workflows and the Semantic Inspector
 
-- [ ] Define a compact review packet for each worked example: Rust input,
+- [x] Define a compact review packet for each worked example: Rust input,
   readable output, diagnostics/completeness, query trace, and relevant edit
   behavior.
-- [ ] Link existing tests and snapshots before the Semantic Inspector exists.
-- [ ] When the Semantic Inspector lands, add reproducible commands and
+- [x] Link existing tests and snapshots before the Semantic Inspector exists.
+- [x] Record that when the Semantic Inspector lands, reproducible commands and
   checked-in readable output to the relevant architecture Current Status
-  sections.
-- [ ] Keep human-readable inspector evidence distinct from exact Oracle
+  sections are required; do not claim commands before the inspector exists.
+- [x] Keep human-readable inspector evidence distinct from exact Oracle
   conformance evidence.
-- [ ] Add a contributor checklist for keeping evidence links current when
+- [x] Add a contributor checklist for keeping evidence links current when
   tests, snapshots, anchors, or query boundaries change.
 
 ## Completion

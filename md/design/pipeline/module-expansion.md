@@ -222,6 +222,27 @@ Inspector lands, these focused assertions and the anchored implementation are
 the review trail; there is not yet a human-readable persistent query trace for
 module expansion.
 
+### Review packet
+
+| Question | Evidence |
+|---|---|
+| What Rust is expanded? | the fixed-point source under [Worked example](#worked-example) |
+| What readable output is expected? | the three-symbol direct-member sequence shown below that source |
+| Is the represented result complete? | the fixed-point test requires `Generated`; the `successful_item_macro_keeps_ground_negative_search_complete` test establishes exhaustive downstream use |
+| What happens on failure or a limit? | the unresolved, malformed-output, and recursive-limit tests listed above require conservative `Maybe` rather than false `No` |
+| Which query runs? | `expanded_module_query_has_a_cold_and_warm_trace` requires the module query on a cold request and its reuse on an unchanged warm request |
+| What happens after an edit? | `moving_source_item_preserves_derive_expansion_identity` checks offset movement; `unrelated_body_edit_exposes_current_body_invalidation` records that same-file edits currently rerun module/derive discovery |
+| Where does implementation detail begin? | the entry, cycle-initial, recursive expansion, and completeness anchors above |
+
+Reproduce the focused packet with:
+
+```bash
+cargo test -p sage-test-harness same_module_macro_resolution_reaches_a_fixed_point
+cargo test -p sage-test-harness expanded_module_query_has_a_cold_and_warm_trace
+cargo test -p sage-test-harness item_macro
+cargo test -p sage-test-harness moving_source_item_preserves_derive_expansion_identity
+```
+
 ### Current limitations
 
 - `local_expanded_module_items` returns only `Vec<Symbol>`. Terminal

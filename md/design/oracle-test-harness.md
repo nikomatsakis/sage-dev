@@ -267,7 +267,7 @@ omitted from JSON.
 
 | Pattern | Meaning | Where to fix |
 |---------|---------|--------------|
-| sage has `"?InferVar(...)"` where oracle has a concrete type | sage's type inference didn't resolve | `sage-ir/src/check/body.rs` or the unification engine |
+| sage has `"?InferVar(...)"` where oracle has a concrete type | sage's type inference didn't resolve | `sage-ir/src/check/infer_ctx.rs` or `check/infer/` |
 | sage literal has `value: "0"` where oracle has `value: "42"` | sage doesn't store literal values | `sage-ir/src/cst/expr.rs` → need to thread literal text through |
 | sage `Call` target is `External { krate: "?" }` | sage couldn't resolve the callee | `sage-ir/src/check/resolve/` |
 | Item count differs | sage dropped or duplicated items during expansion | `sage-ir/src/local_syms/mods.rs` |
@@ -283,3 +283,39 @@ omitted from JSON.
 - **Deterministic ordering** — both sides emit items in source order. Defs are numbered sequentially. No hash-map iteration order or pointer addresses.
 - **Rich diff is diagnostic only** — after exact comparison fails, a JSON diff
   may report a precise structural path. It never determines equality.
+
+## Current status
+
+### Current frontier and evidence
+
+The harness independently emits rustc and Sage reference IR, validates
+fixture-specific coverage for the two pinned mini-redis slices, requires their
+checked-in exact snapshots, and then compares deterministic serialized text.
+The [oracle-checked method review
+packet](./examples/oracle-checked-method.md#review-packet) links the source,
+structural Sage assertion, snapshot, exact comparison, query trace, and edit
+experiment.
+
+Run all fixtures with `cargo test -p sage-oracle-harness`, or the pinned body
+with:
+
+```bash
+cargo test -p sage-oracle-harness --test oracle_compare -- mini_redis/db_drop_guard.rs
+```
+
+### Current limitations
+
+- General coverage accounting is not yet schema-wide; each new vertical slice
+  must add explicit structural coverage checks so paired omission cannot pass.
+- The shared `rust-ref` schema covers only the currently represented Typed IR
+  families.
+- Oracle JSON is exact and reviewable but not the intended ergonomic
+  human-facing semantic inspection format.
+
+### Related roadmap slices
+
+- [Shutdown::recv](../implementation/roadmap.md#next-application-slice-shutdownrecv)
+  will add the next exact vertical fixture.
+- [Semantic inspector and persistent edit
+  testing](../implementation/roadmap.md#planned-slice-semantic-inspector-and-persistent-edit-testing)
+  adds readable Sage-only inspection without relaxing oracle equality.

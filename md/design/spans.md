@@ -64,3 +64,30 @@ diagnostics; tooling may follow their origin link in the future.
 | Signature CST | `RelativeSpan` | `TypeCst`, `ParamCst`, `AttrCst` |
 | Body CST | `RelativeSpan` | `ExprCst`, `StmtCst`, `PatCst` |
 | Typed body | `RelativeSpan` | `TyExpr`, `TyStmt`, `TyPat`, `TyBodyData` |
+
+## Current status
+
+### Current frontier and evidence
+
+Real source files, bang-macro output, and derive output carry distinct
+`ParseSource` identities. CST and Typed IR use relative spans within an item;
+diagnostics resolve them through the current absolute item span.
+`moving_source_item_preserves_derive_expansion_identity` verifies that moving
+a derived item updates its origin coordinates without reminting the expansion,
+and `duplicate_derive_occurrences_have_distinct_generated_source_identity`
+verifies occurrence identity.
+
+### Current limitations
+
+- Generated-source diagnostics have less source-snippet support than real
+  files, and tooling does not yet expose a provenance backtrace.
+- Identity/edit evidence covers selected generated moves rather than every
+  local item and nested expansion shape.
+- Lifetime `Dummy` is a semantic type representation and is unrelated to span
+  provenance; meaningful lifetime tracking remains deferred.
+
+### Related roadmap slices
+
+The [Semantic Inspector and persistent edit-testing
+slice](../implementation/roadmap.md#planned-slice-semantic-inspector-and-persistent-edit-testing)
+will expose source/expansion provenance and identity changes across edits.

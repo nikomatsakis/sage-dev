@@ -79,10 +79,10 @@ layering rule and an incremental dependency requirement.
 `src: &Stash` (the CST) and `dst: Stash` (output types or resolved exprs).
 At the end, `cx.finish(root)` wraps `dst` into `Stashed<T>`.
 
-**Purpose-specific contexts.** `CstLowerCtx` for signatures (produces `Ty`
-into `dst`). `BodyCheckCtx` for bodies (produces `CheckedExpr` into `out`).
-Same ingredients (resolver, ribs, src/dst stash pair), different output
-domain.
+**Purpose-specific contexts.** `Check` lowers signatures and their parameter
+environments into a target stash. `InferCtx` owns the body target stash plus
+inference, obligations, diagnostics, and cooperative tasks. Both treat the
+source CST stash as read-only and return self-contained semantic output.
 
 **`Stashed<T>` is the memoization boundary.** Salsa compares fingerprints
 (content hashes of the output stash) for change detection. Deterministic

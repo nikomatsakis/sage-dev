@@ -1,18 +1,8 @@
 # Typed IR
 
-This page defines the destination representation produced by body checking. The
-current `TyExprData` is still partly source-shaped; the transition to this
-representation is tracked by the [Typed IR Elaboration
-RFD](../rfds/typed-ir-elaboration/README.md) and the [Build-Out
-Roadmap](../implementation/roadmap.md). The completed method-call paths now
-include `DbDropGuard::db`, the isolated `Parse::next` fixture, and the real
-pinned mini-redis `Parse::next` body from its selected library root and edition.
-Their field identities, reference dereferences, `Dummy` borrows, selected
-functions, dispatch, and type substitutions are explicit. Other expression
-families remain at the statuses below.
-The common alias representation and its first operational associated-type
-normalization path are built, as recorded by the completed [Associated Type
-Normalization RFD](../rfds/associated-type-normalization/README.md).
+This page defines the destination representation produced by body checking.
+Implementation coverage and evidence are recorded in **Current status** rather
+than weakening the representation contract below.
 
 ## Role
 
@@ -235,3 +225,52 @@ Conformance also reports coverage. Equality is not meaningful if both sides
 omit an associated body or replace a construct with the same unsupported
 placeholder. A conformance run therefore accounts for every body in scope and
 rejects unsupported nodes or non-semantic debug types in successful output.
+
+## Current status
+
+### Current frontier
+
+The `DbDropGuard::db` and `Parse::next` mini-redis slices produce explicit
+field identities, dereferences, `Dummy` borrows, selected functions, static or
+direct dispatch, owner/method substitutions, and associated-type normalization
+results. The common rigid/alias family survives inference, canonical solver
+boundaries, display, and both semantic emitters.
+
+### Implemented capabilities and evidence
+
+- [Function body and field access](./examples/function-body.md) inspects a
+  resolved local field and substituted final type.
+- [An oracle-checked method body](./examples/oracle-checked-method.md) inspects
+  the resolved `Clone::clone` tree and its exact checked-in snapshot.
+- The `Parse::next` evidence in the [Mini-redis
+  roadmap](../implementation/mini-redis.md#slice-2-parsenext) checks direct and
+  static-trait calls, substitutions, and normalized iterator item type.
+- `alias_variants_copy_fold_and_display_without_erasing_identity` and
+  `aliases_round_trip_through_canonical_query_and_response_stashes` exercise
+  the shared alias representation.
+
+### Current limitations
+
+- `TyExprData` still contains source-shaped variants for constructs whose
+  general elaboration is not implemented. Such variants are not permitted in
+  a successful oracle slice that claims their semantics.
+- Closures/captures, async/coroutine bodies, overloaded operators, indexing,
+  callable dispatch, general coercions/unsizing, `for`, `?`, and fully
+  elaborated `.await` remain planned.
+- Method resolution is limited to the conservative external trait/inherent
+  slices and selected local obligations.
+- Named-alias expansion and opaque reveal are planned; associated projection
+  normalization covers the pinned first slice rather than GATs in general.
+- `Lifetime::Dummy` and the absence of borrow checking remain the deliberate
+  temporary soundness hole described above.
+
+### Related roadmap slices
+
+- [Shutdown::recv](../implementation/roadmap.md#next-application-slice-shutdownrecv)
+  is the next Typed-IR application target.
+- [Mini-redis library
+  coverage](../implementation/roadmap.md#future-slice-mini-redis-library-coverage)
+  expands the construct table through vertical acceptance slices.
+- [Semantic inspector and persistent edit
+  testing](../implementation/roadmap.md#planned-slice-semantic-inspector-and-persistent-edit-testing)
+  will provide a readable typed-tree view independent of oracle JSON.

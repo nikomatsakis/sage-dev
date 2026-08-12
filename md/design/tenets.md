@@ -32,9 +32,8 @@ One struct or closely-related cluster per file.
 traits shared across item kinds live in a module named after the pass:
 
 - `check/sig.rs` — `Check` (signature-lowering context)
-- `check/body.rs` — `BodyCheck` (body-checking context)
-- `resolve/` — `Resolver`, `Namespace`, resolution helpers
-- `ribs/` — `Ribs`, `RibEntry`
+- `check/infer_ctx.rs` — `InferCtx` and `Scope` (body-checking context)
+- `check/resolve/` — `Resolver`, `Namespace`, and lexical ribs
 
 Item-specific logic imports from these; it does not redefine its own
 plumbing.
@@ -86,10 +85,10 @@ pub struct Check<'a, 'db> {
 }
 ```
 
-**Purpose-specific contexts.** `Check` for signatures (produces `Ty`
-into `target_stash`). `BodyCheck` for bodies (produces `TyExpr` into
-its inherited `target_stash`). Same ingredients (resolver, ribs,
-src/dst stash pair), different output domain.
+**Purpose-specific contexts.** `Check` lowers signatures into its target
+stash. `InferCtx` owns a body target stash plus inference, obligations,
+diagnostics, and cooperative tasks. Both keep source CST storage read-only and
+return self-contained semantic output.
 
 **`Stashed<T>` is the memoization boundary.** Salsa compares
 fingerprints (content hashes of the output stash) for change detection.
@@ -108,12 +107,12 @@ if let Some(entry) = cx.resolver.ribs.lookup(first.name, ns) {
     // found in rib — generic param, local, or Self
 } else {
     // fall through to module-level resolution
-    cx.resolver.resolve_segments(&names, ns)
+    cx.resolver.resolve_path(stash, path, ns)
 }
 ```
 
-Module-level resolution walks the MEM-map (`expanded_module`) for local
-modules and queries `TcxDb::module_children` for external crates.
+Module-level resolution walks direct expanded module symbols for local modules
+and queries `TcxDb::module_children` for external crates.
 
 ## Incrementality
 
@@ -125,10 +124,10 @@ that whitespace edits before an item do not change its content hash.
 — one tracked struct per top-level item. Tracked fields store the CST,
 the absolute span, and the computed sig/body.
 
-**Body changes do not invalidate signatures.** `sig()` reads only
-generics, params, and return type from the CST. The body expression is
-ignored. A change to a function body does not re-execute the sig query,
-and downstream items that only read the sig are unaffected.
+**Body changes do not propagate through unchanged signatures.** `sig()`
+semantically uses only generics, parameters, return type, and predicates. A
+coarse CST or module dependency may currently cause it to reexecute, but an
+equal checked signature is backdated before downstream interface consumers.
 
 ## Oracle conformance
 
