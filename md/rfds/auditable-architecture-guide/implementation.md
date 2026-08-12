@@ -1,24 +1,24 @@
 # Implementation plan and status
 
-This RFD is a draft. No documentation reorganization should begin until the
-ownership split between architecture Current Status sections, cross-cutting
-roadmap slices, and RFD implementation plans is accepted.
+This RFD is accepted. The ownership split between architecture Current Status
+sections, cross-cutting roadmap slices, and RFD implementation plans governs
+the implementation below.
 
 Each step is independently reviewable. Page moves should be minimized unless
 the navigation benefit outweighs broken historical links.
 
 ## Step 1: Establish the documentation contract and navigation
 
-- [ ] Update `md/design/README.md` with the pipeline, subsystem,
+- [x] Update `md/design/README.md` with the pipeline, subsystem,
   representation/infrastructure, and validation taxonomy.
-- [ ] Reshape `md/SUMMARY.md` to make those groups visible while preserving
+- [x] Reshape `md/SUMMARY.md` to make those groups visible while preserving
   useful existing chapters.
-- [ ] Update `md/contributing/maintaining-the-docs.md` with architecture
+- [x] Update `md/contributing/maintaining-the-docs.md` with architecture
   Current Status ownership, cross-cutting roadmap-slice ownership, and RFD
   checkpoint ownership.
-- [ ] Define stable terminology for phase, subsystem, representation,
+- [x] Define stable terminology for phase, subsystem, representation,
   capability, evidence, and terminal incompleteness.
-- [ ] Build the book and verify that existing incoming links remain valid.
+- [x] Build the book and verify that existing incoming links remain valid.
 
 ## Step 2: Reshape the maximally zoomed-out architecture page
 

@@ -25,6 +25,7 @@ one or more RFDs. Status is one of:
 
 | Group | RFDs | Notes |
 |---|---|---|
+| Auditable architecture guide | [auditable-architecture-guide] | Phase-oriented destination/status chapters and a cross-cutting slice roadmap |
 | Async type checker | [async-type-checker] | Phases A-D plus solver-ready scoped tasks and body quiescence recovery landed |
 | Stash hardening | [stash-safety], [stash-faster-collision-chains] | |
 | Signatures & resolution | [symbol-signatures], [resolve-at-position] | |
@@ -38,7 +39,6 @@ one or more RFDs. Status is one of:
 
 | Group | RFDs | Notes |
 |---|---|---|
-| Auditable architecture guide | [auditable-architecture-guide] | Draft design for phase-oriented destination/status chapters and a cross-cutting slice roadmap |
 | Trait impl candidate discovery | [trait-impl-candidate-discovery] | Draft design for global visible-impl discovery, mandatory trait keys, conservative self-type refinement, and incremental reuse |
 | Trait solver search architecture | [trait-solver-cycle-semantics], [trait-solver-scheduling], [incremental-trait-results] | Draft design for recursive semantics and limits, fair future scheduling, and monotone progress envelopes |
 

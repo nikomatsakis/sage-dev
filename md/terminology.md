@@ -14,6 +14,13 @@ Key terms used throughout sage's design and code.
 | **BodyCheck** | The per-function type-checking context; runs async and independently per function body. |
 | **Salsa** | The incremental computation framework; all major queries are salsa tracked functions. |
 | **RFD** | Request for Discussion — a design document proposing a change (see [RFDs](./rfds/README.md)). |
+| **Compilation phase** | A demand-driven transformation with a stated semantic input, output, granularity, and downstream guarantees. |
+| **Semantic subsystem** | A service, such as name resolution or trait solving, used by more than one compilation phase rather than one step in a linear pipeline. |
+| **Representation** | A shared semantic data model, such as symbols or Typed IR, that is produced or consumed across phase boundaries. |
+| **Capability** | One reviewable portion of an architecture chapter's destination contract whose current implementation state can be evidenced independently. |
+| **Evidence** | An inspectable artifact tied to a design claim: a focused test, snapshot, query trace, edit experiment, oracle result, inspector command, or code anchor. |
+| **Terminal incompleteness** | A completed computation whose result cannot provide the full phase guarantee because of invalid input, unsupported Sage functionality, a resource limit, or unavailable external information; it is not pending work that more polling will finish. |
+| **Roadmap slice** | A cross-cutting, reviewable implementation outcome with an acceptance target, scope, dependencies, and ordered plan that may touch several phases and subsystems. |
 | **Ground query** | A canonical solver query with no flexible existential inputs. Rigid generic placeholders count as ground. |
 | **Conditional answer** | A solver `Yes` whose substitution and residual form a sufficient condition for the original goal. |
 | **Progress envelope** | A necessary condition guaranteed to subsume every final answer still possible from the represented work. |

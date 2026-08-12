@@ -1,6 +1,6 @@
 # RFD: Phase-Oriented, Auditable Architecture Guide
 
-**Status:** Draft
+**Status:** Accepted
 
 **Depends on:**
 

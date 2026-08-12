@@ -1,25 +1,26 @@
 # Design
 
-This section documents sage's architecture and key design decisions.
-Start with the [tenets](./tenets.md) for the principles that guide
-all new code; then read [architecture](./architecture.md) for the
-structural overview.
+This section is a reference and guide to Sage's architecture. Start with the
+[tenets](./tenets.md), then use the [architecture overview](./architecture.md)
+to see the whole compilation pipeline and the concepts shared across it.
 
-- [Tenets](./tenets.md) — design principles: code organization,
-  query design, two-stash data flow, resolution model, incrementality.
-- [Architecture](./architecture.md) — crate layout, module map, data
-  flow diagram, salsa layer, symbol system, testing strategy.
-- [Examples](./examples.md) — progressive, source-linked walkthroughs from a
-  struct signature through body checking, macro expansion, and trait solving.
-- [Checking](./checking.md) — detailed design of the CST checking
-  layer: contexts, type lowering, body inference.
-- [Typed IR](./typed-ir.md) — destination body representation: resolved calls,
-  explicit coercions, structured control flow, desugaring, and the temporary
-  lifetime/borrow-checking boundary.
-- [Trait Solver](./trait-solver.md) — semantic contract, proof-search
-  model, result knowledge, recursion, resource limits, and scheduling.
-- [Stash](./stash.md) — `sage-stash` arena: `Stash`, `Ptr<T>`,
-  `Slice<T>`, `Stashed<T>`, alloc vs intern, salsa integration.
-- [Spans](./spans.md) — two-level span model: `AbsoluteSpan` for
-  items, `RelativeSpan` within items, incremental reuse.
-- [Subsetting](./subsetting.md) — language subsetting approach.
+The detailed chapters are organized in four groups:
+
+- [Rust Compilation Pipeline](./pipeline/README.md) — the phases that transform
+  Rust source into checked signatures and elaborated typed bodies. Phase
+  chapters lead with their input, output, guarantees, granularity, and entry
+  queries.
+- [Semantic Subsystems](./subsystems/README.md) — services such as name
+  resolution, type inference, trait solving, and external metadata that are
+  used from more than one phase.
+- [Representations and Infrastructure](./infrastructure/README.md) — the
+  symbols, Typed IR, spans, Stash storage, and incremental identities that
+  connect the phases.
+- [Validation and Inspection](./validation/README.md) — oracle conformance,
+  worked examples, snapshots, query traces, and interactive inspection.
+
+Architecture chapters describe the destination in their main text. Their
+**Current Status** sections state what is implemented now, the current
+limitations, and inspectable evidence. The [Build-Out
+Roadmap](../implementation/roadmap.md) instead organizes future work into
+cross-cutting implementation slices.
