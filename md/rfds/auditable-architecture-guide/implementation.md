@@ -1,6 +1,6 @@
 # Implementation plan and status
 
-This RFD is accepted. The ownership split between architecture Current Status
+This RFD is complete. The ownership split between architecture Current Status
 sections, cross-cutting roadmap slices, and RFD implementation plans governs
 the implementation below.
 
@@ -123,21 +123,21 @@ the navigation benefit outweighs broken historical links.
 
 ## Completion
 
-- [ ] Every implemented phase and major subsystem has a destination-oriented
+- [x] Every implemented phase and major subsystem has a destination-oriented
   entry guide or a deliberate linked deferral.
-- [ ] Each phase and subsystem chapter has a Current Status section containing
+- [x] Each phase and subsystem chapter has a Current Status section containing
   concrete limitations and inspectable evidence for implemented behavior.
-- [ ] The build-out roadmap describes cross-cutting slices, acceptance targets,
+- [x] The build-out roadmap describes cross-cutting slices, acceptance targets,
   ordering, dependencies, and implementation-plan links without duplicating
   phase-local status or RFD checkpoints.
-- [ ] Existing focused representation and validation chapters remain
+- [x] Existing focused representation and validation chapters remain
   accessible and authoritative.
-- [ ] The symbols chapter provides the semantic vocabulary used by every phase
+- [x] The symbols chapter provides the semantic vocabulary used by every phase
   and subsystem chapter.
-- [ ] Every architecture chapter links to the roadmap slices relevant to its
+- [x] Every architecture chapter links to the roadmap slices relevant to its
   current limitations.
-- [ ] The module-expansion pilot and at least one body-checking example have
+- [x] The module-expansion pilot and at least one body-checking example have
   complete review packets.
-- [ ] `mdbook build` and repository-required documentation validation pass.
-- [ ] The accepted documentation structure and maintenance rules are reflected
+- [x] `mdbook build` and repository-required documentation validation pass.
+- [x] The accepted documentation structure and maintenance rules are reflected
   in the Architecture & Design index and contributor contract.

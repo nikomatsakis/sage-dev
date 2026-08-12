@@ -15,7 +15,7 @@ between the larger outcomes.
 ```mermaid
 flowchart TD
     Db[Complete: DbDropGuard::db] --> Parse[Complete: Parse::next]
-    Parse --> Docs[In flight: auditable architecture guide]
+    Parse --> Docs[Complete: auditable architecture guide]
     Docs --> Inspect[Planned: semantic inspector]
     Parse --> ImplIndex[Planned: trait-partitioned impl discovery]
     Parse --> SolverSearch[Planned: solver search semantics]
@@ -101,7 +101,7 @@ acceptance and query-trace evidence are recorded in [Mini-redis Slice 2][mini-2]
 The remaining local impl-index architecture is separated into the
 [Trait Impl Candidate Discovery RFD].
 
-## In-flight slice: auditable architecture and review evidence
+## Completed slice: auditable architecture and review evidence
 
 ### Goal and acceptance target
 
@@ -147,9 +147,12 @@ the documentation rewrite.
 
 ### Progress
 
-**In flight.** Navigation, ownership, the semantic overview, and the Symbols
-chapter have landed. Detailed progress is in the RFD's [implementation
-plan][auditable-plan].
+**Complete.** Phase and subsystem entry guides, destination/current-status
+separation, the Symbols and incrementality guides, module/body review packets,
+and the contributor evidence checklist have landed. The RFD's [implementation
+plan][auditable-plan] records the completed checkpoints. The audit also pinned
+the current coarse same-file body invalidation as evidence for later
+incremental work.
 
 ## Planned slice: semantic inspector and persistent edit testing
 

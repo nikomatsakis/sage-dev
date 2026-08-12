@@ -1486,32 +1486,32 @@ mod derive_expansion_tests {
         );
     }
 
-    #[test]
-    fn clone_method_body_has_a_narrow_reusable_semantic_query_trace() {
+    fn force_db_method(db: &dyn Db, source_file: SourceFile) {
         use sage_ir::symbol::FnSymbol;
         use sage_ir::ty::TraitItemDef;
 
-        fn force_db_method(db: &dyn Db, source_file: SourceFile) {
-            let (_, root) = setup_root_module(db, source_file);
-            for symbol in root.expanded_module_items(db) {
-                let SymbolData::ImplSymbol(ImplSymbol::Local(local_impl)) = symbol.data(db) else {
+        let (_, root) = setup_root_module(db, source_file);
+        for symbol in root.expanded_module_items(db) {
+            let SymbolData::ImplSymbol(ImplSymbol::Local(local_impl)) = symbol.data(db) else {
+                continue;
+            };
+            let items = local_impl.items(db);
+            for item in &items.stash()[items.root().value] {
+                let TraitItemDef::Function(FnSymbol::Local(function)) = *item else {
                     continue;
                 };
-                let items = local_impl.items(db);
-                for item in &items.stash()[items.root().value] {
-                    let TraitItemDef::Function(FnSymbol::Local(function)) = *item else {
-                        continue;
-                    };
-                    if function.name(db).text(db) == "db" {
-                        let checked = function.body(db);
-                        assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
-                        return;
-                    }
+                if function.name(db).text(db) == "db" {
+                    let checked = function.body(db);
+                    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+                    return;
                 }
             }
-            panic!("DbDropGuard::db method not found");
         }
+        panic!("DbDropGuard::db method not found");
+    }
 
+    #[test]
+    fn clone_method_body_has_a_narrow_reusable_semantic_query_trace() {
         let (tcx, tcx_calls) = BuiltinDeriveTcx::tracing();
         let mut database = Database::new(tcx);
         let source_file = database.add_source_file(
@@ -1571,29 +1571,7 @@ mod derive_expansion_tests {
 
     #[test]
     fn unrelated_body_edit_exposes_current_body_invalidation() {
-        use sage_ir::symbol::FnSymbol;
-        use sage_ir::ty::TraitItemDef;
         use salsa::Setter as _;
-
-        fn force_db_method(db: &dyn Db, source_file: SourceFile) {
-            let (_, root) = setup_root_module(db, source_file);
-            for symbol in root.expanded_module_items(db) {
-                let SymbolData::ImplSymbol(ImplSymbol::Local(local_impl)) = symbol.data(db) else {
-                    continue;
-                };
-                let items = local_impl.items(db);
-                for item in &items.stash()[items.root().value] {
-                    let TraitItemDef::Function(FnSymbol::Local(function)) = *item else {
-                        continue;
-                    };
-                    if function.name(db).text(db) == "db" {
-                        assert!(function.body(db).diagnostics.is_empty());
-                        return;
-                    }
-                }
-            }
-            panic!("DbDropGuard::db method not found");
-        }
 
         let (tcx, tcx_calls) = BuiltinDeriveTcx::tracing();
         let mut database = Database::new(tcx);

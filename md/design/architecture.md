@@ -171,12 +171,13 @@ associated-type normalization, and elaborated calls.
 
 ### Current limitations
 
-- The compilation phase chapters are being split out from the older combined
-  checking material; until then [Type Checking](./checking.md) remains the
-  detailed entry guide for signature and body checking.
 - Module expansion returns represented symbols while completeness is audited
   separately for particular consumers. The destination phase result makes
   terminal incompleteness explicit.
+- Same-file unrelated body edits currently cause coarse module/derive and body
+  reexecution; selected callee interfaces remain reusable. The
+  [incrementality guide](./infrastructure/incrementality.md) links the edit
+  evidence.
 - General method resolution, complete Typed IR coverage, source `cfg`
   evaluation, meaningful lifetime reasoning, and borrow checking are not yet
   implemented. Their local consequences are documented in the focused
