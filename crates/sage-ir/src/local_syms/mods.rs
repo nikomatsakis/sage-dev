@@ -101,6 +101,7 @@ pub fn local_expanded_module_items<'db>(
 // ANCHOR_END: example_expanded_module_query
 
 /// Cycle recovery initial value.
+// ANCHOR: architecture_expanded_module_cycle_initial
 fn expanded_module_initial<'db>(
     _db: &'db dyn Db,
     _id: salsa::Id,
@@ -108,6 +109,7 @@ fn expanded_module_initial<'db>(
 ) -> Vec<Symbol<'db>> {
     vec![]
 }
+// ANCHOR_END: architecture_expanded_module_cycle_initial
 
 // ANCHOR: example_expand_items
 fn expand_unexpanded_items<'db>(
@@ -392,6 +394,7 @@ fn symbol_macro_definition<'db>(
     }
 }
 
+// ANCHOR: architecture_macro_expansion_completeness
 fn bang_macro_expansion_complete<'db>(
     db: &'db dyn Db,
     module: LocalModSym<'db>,
@@ -437,6 +440,7 @@ fn bang_macro_expansion_complete<'db>(
         }
     })
 }
+// ANCHOR_END: architecture_macro_expansion_completeness
 
 /// Whether the module's represented expansion is known not to hide an impl
 /// of `target_trait`.

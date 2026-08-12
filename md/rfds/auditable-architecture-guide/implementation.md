@@ -66,22 +66,22 @@ the navigation benefit outweighs broken historical links.
 
 ## Step 5: Pilot the module and macro expansion phase chapter
 
-- [ ] Document the module-level input, successful output, and downstream
+- [x] Document the module-level input, successful output, and downstream
   guarantees.
-- [ ] Explain recursive output expansion and the narrower role of Salsa
+- [x] Explain recursive output expansion and the narrower role of Salsa
   fixed-point iteration in same-module macro resolution cycles.
-- [ ] Explain that terminal incompleteness arises from errors, unsupported
+- [x] Explain that terminal incompleteness arises from errors, unsupported
   constructs, unavailable expansion, or limits rather than pending work.
-- [ ] Distinguish direct expanded item symbols from all names visible through
+- [x] Distinguish direct expanded item symbols from all names visible through
   imports and resolution.
-- [ ] Document the current represented-symbol output and consumer-specific
+- [x] Document the current represented-symbol output and consumer-specific
   completeness audits as a current discrepancy from a unified phase result.
-- [ ] Add or verify anchors around the entry query, construction mechanism,
+- [x] Add or verify anchors around the entry query, construction mechanism,
   and completeness boundary.
-- [ ] Add focused expansion, failure, and incremental evidence to the
+- [x] Add focused expansion, failure, and incremental evidence to the
   phase chapter's Current Status section.
-- [ ] Link roadmap slices that would remove the documented limitations.
-- [ ] Reconcile the destination account with the completed tracked-expansion
+- [x] Link roadmap slices that would remove the documented limitations.
+- [x] Reconcile the destination account with the completed tracked-expansion
   RFD without rewriting that RFD's historical proposal.
 
 ## Step 6: Document the remaining Rust compilation phases

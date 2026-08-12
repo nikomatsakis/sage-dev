@@ -13,3 +13,7 @@ evidence without weakening the destination contract in the main text.
 The [Architecture](../architecture.md) page gives the maximally zoomed-out
 pipeline. The existing [Type Checking](../checking.md) chapter covers
 signature and body checking while the phase-specific chapters are built out.
+
+- [Module and Macro Expansion](./module-expansion.md) documents the
+  module-level represented-symbol result, recursive output expansion, the
+  narrower same-module fixed point, and terminal incompleteness.

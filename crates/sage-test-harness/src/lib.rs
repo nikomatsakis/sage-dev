@@ -326,6 +326,39 @@ mod file_module_scope_tests {
 }
 
 #[cfg(test)]
+mod macro_expansion_tests {
+    use super::*;
+    use sage_ir::symbol::{StructSymbol, SymbolData};
+
+    #[test]
+    fn same_module_macro_resolution_reaches_a_fixed_point() {
+        with_test_crate(
+            r#"
+                macro_rules! define_macro {
+                    () => {
+                        macro_rules! define_generated {
+                            () => { struct Generated; }
+                        }
+                    }
+                }
+
+                define_macro!();
+                define_generated!();
+            "#,
+            |db, root| {
+                assert!(root.expanded_module_items(db).iter().any(|symbol| {
+                    matches!(
+                        symbol.data(db),
+                        SymbolData::StructSymbol(StructSymbol::Local(strukt))
+                            if strukt.name(db).text(db) == "Generated"
+                    )
+                }));
+            },
+        );
+    }
+}
+
+#[cfg(test)]
 mod derive_expansion_tests {
     use super::*;
     use sage_ir::resolve::{MacroKind, Namespace};

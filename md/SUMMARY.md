@@ -12,6 +12,7 @@
   - [Tenets](./design/tenets.md)
   - [Architecture](./design/architecture.md)
   - [Rust Compilation Pipeline](./design/pipeline/README.md)
+    - [Module and Macro Expansion](./design/pipeline/module-expansion.md)
     - [Type Checking](./design/checking.md)
   - [Semantic Subsystems](./design/subsystems/README.md)
     - [Trait Solver](./design/trait-solver.md)
