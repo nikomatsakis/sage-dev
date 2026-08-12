@@ -16,6 +16,7 @@
   - [Semantic Subsystems](./design/subsystems/README.md)
     - [Trait Solver](./design/trait-solver.md)
   - [Representations and Infrastructure](./design/infrastructure/README.md)
+    - [Symbols and Semantic Identity](./design/infrastructure/symbols.md)
     - [Typed IR](./design/typed-ir.md)
     - [Stash](./design/stash.md)
     - [Spans](./design/spans.md)

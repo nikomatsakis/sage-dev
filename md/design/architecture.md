@@ -1,372 +1,190 @@
 # Architecture
 
-## Crate layout
+Sage is a demand-driven Rust semantic frontend. Its architecture is rooted in
+**symbols**: stable identities for definitions. Parsing and expansion create
+local symbols, resolution discovers symbols, checked types and Typed IR refer
+to symbols, and symbol-keyed Salsa queries compute semantic details only when
+a consumer asks for them.
 
-| Crate | Role |
-|-------|------|
-| `sage-ir` | Main crate: CST, symbols, macro expansion, type representation, checking, resolution |
-| `sage-stash` | Arena allocator: `Stash`, `Ptr<T>`, `Slice<T>`, `Stashed<T>`, derive macros |
+This page is the maximally zoomed-out map. Follow a phase chapter to understand
+a source-to-output transformation, or a subsystem/representation chapter to
+understand a facility shared across transformations.
 
-`sage-ir` defines the salsa database trait (`sage_ir::Db`) and all
-tracked structs/functions. `sage-stash` is a pure data-structure crate
-with no salsa dependency (salsa integration is behind a feature flag).
+## Design tenets
 
-## Module map
+The complete list is in [Tenets](./tenets.md). The architectural consequences
+most visible in the pipeline are:
 
-Paths below exist today unless marked **planned**.
+- **Stable semantic identity comes before semantic detail.** A symbol identifies
+  a definition; signatures, members, fields, and bodies are separate lazy
+  queries keyed by that identity.
+- **Queries expose semantic boundaries.** A consumer requests the narrowest
+  stable result it needs, such as one signature or one body, rather than an
+  eagerly checked crate.
+- **Bodies depend on interfaces, not other bodies.** Checking a call may read a
+  callee signature and trait metadata but must not read the callee body.
+- **Completed bodies are elaborated.** The body-checking output is the
+  tree-structured [Typed IR](./typed-ir.md), not source syntax plus adjustment
+  side tables.
+- **Incremental dependencies are architectural.** The key and fields of each
+  query determine which edits may cause downstream work to execute again.
+- **Conformance is exact.** Sage and rustc independently emit a shared oracle
+  representation; the adapters are thin and comparison is textual identity.
 
-```
-crates/sage-ir/src/
-  lib.rs              — module declarations and public re-exports
-  db.rs               — concrete database support
-  symbol/mod.rs       — Symbol wrappers and external symbol handles
-  scope.rs            — ScopeSymbol, LocalCrateSymbol, and Rust edition
-  ty.rs               — Ty, Binder<T>, signatures, lifetime and const leaves
-  ty_fold.rs          — type substitution/folding
-  span.rs             — AbsoluteSpan and RelativeSpan
-  name.rs             — Name (salsa-interned string)
-  generic_param.rs    — local, external, and alpha-equivalent generic params
-  source.rs           — SourceFile input
-  parse/              — tree-sitter source parsing into per-item CSTs
+## Symbols connect the pipeline
 
-  cst/              — Concrete Syntax Tree (per-item stash-allocated)
-    fns.rs          — FnCstData, ParamCst
-    structs.rs      — StructCstData, FieldCst
-    ty.rs           — TypeCst, TypeCstKind, TypeCst::check
-    paths.rs        — paths and path segments
-    generics.rs     — GenericParamCst, CheckGenerics trait
-    expr.rs         — ExprCst (body expressions)
-    attrs.rs        — AttrCst
+A path such as `crate::parse::Parse::next` is a way to *find* a definition. It
+is not the definition's identity. Resolution maps syntax, names, and namespaces
+to a symbol. Later phases use the symbol itself as their key:
 
-  local_syms/       — per-kind tracked structs and item queries
-    associated.rs   — stable trait/impl item symbols linked to their owner
-    fns.rs          — LocalFnSym (sig, body)
-    structs.rs      — LocalStructSym (sig, fields)
-    enums.rs        — LocalEnumSym
-    mods.rs         — LocalModSym and expanded local module items
-    traits.rs       — LocalTraitSym
-    impls.rs        — LocalImplSym
-    ...
-
-  check/              — checking infrastructure
-    sig.rs            — Check context for signature lowering
-    infer_ctx.rs      — body inference context and finalization
-    expr.rs           — expression checking
-    resolve/
-      mod.rs          — Resolver and namespaces
-      ribs.rs         — lexical ribs
-    infer/            — type inference engine
-      egraph.rs       — VersionedEGraph
-      skeleton.rs     — type decomposition/recomposition
-      version.rs      — version tree, Universe, and VarInfo
-      runtime.rs      — wake/sleep runtime for deferred constraints
-      bound.rs        — Bound (None, AtLeast, Exactly)
-      unify.rs        — transactional structural equality
-      obligations.rs  — body trait-obligation records and staged batches
-    solve/            — positive type-only trait solver
-      goal.rs         — canonical goals, assumptions, and query identity
-      canonical.rs    — caller-to-query canonicalization and reverse mappings
-      boundary.rs     — query import, response extraction, and caller application
-      result.rs       — response binders and validated substitutions
-      clauses.rs      — environment/local-impl candidate assembly
-      prove.rs        — structural proving and per-query proof frames
-      merge.rs        — order-independent answer reduction and subsumption
-      anti_unify.rs   — hard-hint intersection
-
-  tytree/           — Typed tree (output of body checking; elaboration is planned)
-    mod.rs          — CheckedBody, TyBody, TyExpr, TyStmt, TyPat, Res
-
-  tcx/              — TcxDb trait (interface to rustc metadata)
+```text
+LocalFnSym::sig(db)
+LocalFnSym::body(db)
+LocalTraitSym::items(db)
+TraitSymbol::sig(db)
 ```
 
-The top-level `metadata.rs` selects a non-proc-macro Cargo library target and
-records its root source, edition, enabled features, host-target cfg values, and
-direct dependency world. `driver.rs` gives the edition, features, and
-dependency world to the rustc metadata stub; Sage's source loader uses the
-selected root and edition. General source-side `cfg` evaluation is not built
-yet. The edition is retained on both the local crate and its modules;
-file-backed items use the file module itself as their resolution scope.
+Local symbols are Salsa tracked identities created from parsed or generated
+items. External symbols are compact handles for definitions supplied by
+dependency metadata. `Symbol` erases the item kind when a heterogeneous list
+is needed; `FnSymbol`, `TraitSymbol`, `ModSymbol`, and the other kind-specific
+wrappers recover the static distinction required by semantic operations.
 
-## Data flow
+The [Symbols and Semantic Identity](./infrastructure/symbols.md) chapter
+defines this model and its current incremental guarantees.
+
+## Rust compilation pipeline
+
+The pipeline is layered but not a mandatory batch sequence. Asking for one
+function body walks only the dependencies needed for that body. Asking for a
+module outline can stop after expansion.
 
 ```mermaid
 flowchart TD
-    Source[SourceFile] --> Parse[parse source into per-item CSTs]
-    Parse --> Symbols[Local per-kind symbols]
-    Symbols --> Expanded[local_expanded_module_items]
-    Expanded --> Resolve[Resolver name lookup]
-    Resolve --> FnSig[LocalFnSym::sig]
-    Resolve --> StructSig[LocalStructSym::sig]
-    Resolve --> EnumSig[LocalEnumSym::sig]
-    Resolve --> OwnerItems[LocalTraitSym::items / LocalImplSym::items]
-    OwnerItems --> Associated[owner-linked function, type, and const symbols]
-    Associated --> FnSig
-    FnSig --> FnBinder[Stashed Binder of FnSig]
-    StructSig --> StructBinder[Stashed Binder of StructSig]
-    EnumSig --> EnumBinder[Stashed Binder of EnumSig]
-    FnBinder --> FnBody[LocalFnSym::body: resolve, infer, elaborate]
-    StructBinder --> Fields[LocalStructSym::fields]
-    FnBody --> Checked[CheckedBody]
-    Fields --> StructFields[Stashed StructFields]
+    Source[SourceFile input] --> Parse[Parse and create local symbols]
+    Parse --> Expand[Expand one module]
+    Expand --> Resolve[Resolve names to symbols]
+    Resolve --> Sig[Check one item signature]
+    Sig --> Body[Check and elaborate one body]
+    Body --> Typed[Completed Typed IR]
+
+    Metadata[External metadata] --> Resolve
+    Metadata --> Sig
+    Metadata --> Solver
+    Resolve --> Body
+    Infer[Type inference] --> Body
+    Solver[Trait solver] --> Body
 ```
 
-`CheckedBody` is intended to contain the fully resolved, elaborated tree
-specified by [Typed IR](./typed-ir.md). The current tree still preserves some
-source forms such as method calls and implicit adjustments; completing that
-transition is planned work. Temporary checking state remains inside the
-single-keyed body query rather than becoming a public incremental boundary.
+| Phase | Granularity | Direct input | Successful output | Primary entry boundary |
+|---|---|---|---|---|
+| Parse and create symbols | source-backed module | `SourceFile`, module scope, edition | ordered unexpanded item symbols with per-item CST and provenance | `unexpanded_items(db, module)` |
+| Module and macro expansion | local module | unexpanded item symbols and macro-resolution environment | complete ordered direct expanded item symbols | `local_expanded_module_items(db, module)` |
+| Signature checking | one definition | symbol, its CST or external metadata, referenced signatures | checked signature and parameter environment under a binder | `sym.sig(db)` and kind-specific metadata queries |
+| Body checking and elaboration | one function or associated function | body CST, its signature, referenced interfaces | completed `CheckedBody` containing elaborated Typed IR or diagnostics | `LocalFnSym::body(db)` |
 
-## The salsa layer
+The phase contracts are described under [Rust Compilation
+Pipeline](./pipeline/README.md). A phase can terminate without its successful
+guarantee because of user errors, unsupported Sage functionality, unavailable
+external facts, or a resource limit. That is **terminal incompleteness**, not
+work that more polling will finish.
 
-**Inputs:**
+## Semantic subsystems
 
-- `SourceFile` — path + content string
+These facilities are invoked from multiple phases:
 
-**Tracked structs (stable identity):**
+| Subsystem | Semantic responsibility | Typical granularity |
+|---|---|---|
+| Name resolution | map paths and names in a namespace and scope to symbols; retain ambiguity or incompleteness | one path/name lookup |
+| Type inference | relate types transactionally, defer constraints, and finalize a body with no live inference work | one body, with isolated speculative versions |
+| Trait solver | prove a fixed trait goal or normalize an input alias while preserving canonical query semantics | one canonical solver goal |
+| External metadata | expose authoritative owned facts about reachable dependency definitions without asking rustc to solve Sage goals | one keyed external definition or lookup |
 
-- `LocalCrateSymbol`
-- `LocalFnSym`, `LocalStructSym`, `LocalEnumSym`, `LocalModSym`, ...
-- `AstGenericParam`
+See [Semantic Subsystems](./subsystems/README.md). Subsystems do not define
+additional source-to-source phases merely because their implementation uses
+tracked queries.
 
-**Tracked functions (memoized queries):**
+## Representations and infrastructure
 
-- `LocalFnSym::sig`, `LocalFnSym::body`
-- `LocalStructSym::sig`, `LocalStructSym::fields`
-- `LocalTraitSym::items`, `LocalImplSym::items`
-- `unexpanded_items`, `local_expanded_module_items` (with cycle recovery)
+| Concern | Role across the pipeline |
+|---|---|
+| [Symbols](./infrastructure/symbols.md) | stable local and external definition identity and symbol-keyed semantic operations |
+| [Typed IR](./typed-ir.md) | fully resolved, tree-structured output of completed body checking |
+| [Stash](./stash.md) | compact ownership and hash-consing for CST and semantic trees at query boundaries |
+| [Spans](./spans.md) | source and expansion provenance with relative locations inside an item |
+| Incrementality | Salsa inputs, tracked identities, interned leaves, and tracked functions that record observed dependencies |
 
-**Interned:**
+Temporary inference state, method candidates, and partially checked
+expressions remain inside the body query. They are not public incremental
+boundaries merely because they are important steps in the algorithm.
 
-- `Name` — string interning
-- `SymExt` — external symbol handle (CrateNum + DefIndex)
+## Validation and inspection
 
-## Trait-system and solver flow
+The architecture is meant to be reviewable at increasing depth:
 
-The positive, inductive, type-only solver and its body-obligation integration
-exist. A conservative trait-method path discovers represented external
-trait items, proves one fixed-trait goal, and elaborates a selected call. The
-common named, associated, and opaque alias type family is represented through
-inference and solver boundaries. Input-only associated-type normalization is
-operational at the canonical solver boundary: it merges isolated local,
-external, and explicit environment value candidates and returns a type output.
-The caller-side alias relation applies that merged output before relating it to
-an expected type. After selecting a represented trait method, checking replaces
-associated projections in its instantiated signature with caller inference
-variables and registers input-only normalization operations in the retained
-body-obligation lifecycle. Completed IR is returned only after those outputs
-have been imported, related to the caller variables, and any residual proof
-goals have terminated. For a rigid external ADT, the current method path also
-prioritizes a unique visible receiver-bearing inherent method from complete
-name-keyed metadata. It opens owner and method type generics together, binds
-the owner self type from the receiver and method generics from arguments in a
-short-lived inference transaction, and publishes the instantiated parameter
-environment only after that transaction commits. Complete method resolution,
-named-alias expansion,
-opaque reveal, higher-ranked reasoning, and the other explicitly deferred
-extensions remain planned; their status is tracked in the [Build-Out
-Roadmap](../implementation/roadmap.md).
-The destination-level soundness, completeness, candidate-discovery, progress,
-scheduling, and resource contract is recorded in
-[Trait Solver Design](./trait-solver.md).
+1. A chapter states its destination contract.
+2. Its **Current Status** section identifies limitations and maps implemented
+   claims to focused tests, snapshots, query traces, edit experiments, oracle
+   results, and source anchors.
+3. Anchored excerpts lead from the explanation into the load-bearing code.
+4. The [Oracle Test Harness](./oracle-test-harness.md) establishes exact
+   conformance for pinned semantic slices.
+5. The planned Semantic Inspector will expose readable semantic output and
+   structured query traces from a persistent workspace.
 
-Checked local trait and impl signatures live on their owning symbols.
-`local_impls(LocalCrateSymbol)` remains deterministic per-crate enumeration for
-consumers such as inherent-method discovery. The solver consumes the narrower
-`local_impl_candidates(LocalCrateSymbol, TraitSymbol)` query. Its current
-implementation still scans the expanded local module tree internally, but the
-fixed trait is part of the semantic query key and the result carries whether
-unresolved macros, unsupported derives, active item attributes, or unresolved
-trait impl headers could still change the relevant impl set. Attributed impls
-whose transformation is not represented are excluded from definite candidates.
-The same exclusion applies to an attributed module subtree or macro expansion,
-and an item's attached derives are not published while another active
-attribute on that item remains unexpanded. A uniquely resolved, successfully
-parsed item macro remains complete. Failed,
-ambiguous, or depth-limited expansion is omitted and makes the source
-incomplete. A `use` with an unrepresented active attribute does not participate
-in name resolution. Unsupported or malformed item nodes are retained as error
-items and make discovery incomplete rather than disappearing before the
-completeness audit. Known lint-only inner module attributes (`allow`, `deny`,
-`warn`, and `forbid`) do not affect completeness; other inner attributes remain
-incomplete until module-attribute semantics are represented.
-An incomplete source cannot justify logical `No`. The backing scan still reads
-all expanded local impl identities, but it lowers a full header only after the
-impl's separately resolved trait identity matches the requested trait.
-Unrelated-trait edits can still reexecute the identity scan; trait-partitioned
-source dependencies and their edit-invalidation test remain required.
-Foreign-trait goals with no trait arguments and a non-fundamental foreign
-nominal self type skip local discovery by the exact orphan rule, so those
-external/external goals do not depend on unrelated local impls or macro
-expansion.
-Method-name discovery remains in method resolution and submits one fixed-trait
-goal per candidate trait.
+See [Validation and Inspection](./validation/README.md).
 
-External trait signatures, ADT signatures, associated-item lists, function
-signatures, trait-keyed relevant-impl identities, impl headers, requested
-associated-type values, name-keyed inherent-method identities, and structural
-sizedness facts cross `TcxDb` as owned raw metadata and are lowered by separate
-tracked queries. The external
-candidate operation is keyed by the fixed trait
-and an optional conservative rigid self head. It retains blanket and
-unclassifiable impls, returns deterministic identities plus explicit
-completeness, and never loads an associated value or body. Each selected impl
-header is then lowered into the same checked binder representation as a local
-impl and enters the same candidate proof path. Compiler-built-in `Sized` and
-`MetaSized` obligations use structural Sage candidates rather than pretending
-that explicit impls exist; unavailable structure produces uncertainty. The
-Trait proof stops after headers. Normalization separately asks
-`external_associated_type_value(impl, associated_type)` only for the requested
-value of a surviving candidate; local normalization has an equivalent tracked
-operation and does not first lower `LocalImplSym::items`. The ADT-signature
-query contains only ordered generics, aligned type defaults, represented
-ordinary predicates and separate
-ordinary/deferred completeness; it does not
-read fields, associated values, impls, or bodies. Source type lowering applies
-omitted type defaults in declaration order and instantiates the ADT predicate
-environment.
-Absent and unsupported defaults remain distinct, so an unsupported declaration
-cannot be misdiagnosed as a missing required argument. Predicates introduced by
-local struct field types remain attached to the checked field query and are
-instantiated when the field is constructed or projected.
-Name discovery reads associated-item metadata first;
-it does not load every trait signature speculatively. The selected candidate
-then reads only its function and defining-trait signatures. The current lookup
-scope includes traits in the current module, traits introduced by resolved
-explicit imports or external glob imports, and traits from the crate's actual
-edition prelude. Local glob imports remain conservative because their
-reexport/macro provider edges are not recursively enumerated. Unresolved
-imports retain uncertainty. For a rigid
-external ADT receiver, a separate lookup keyed by ADT identity and method name
-enumerates receiver-bearing inherent identities without loading signatures or
-unrelated method names. Trait lookup uses an empty complete result to rule out
-inherent shadowing. A nonempty complete result enters the higher-priority
-external inherent tier, which loads only the uniquely selected visible
-signature. External function metadata separates owner generics from method
-generics and ordinary-call completeness from const-only completeness; an
-unrepresented ordinary predicate blocks selection, while a recognized
-const-only host effect does not invalidate a non-const call. A completeness
-audit prevents selection when imports are unresolved, unresolved/failed
-macros, active attributes, or a matching unhandled inherent
-provider could contribute another candidate.
-Local and builtin inherent-method selection, explicit-bound provider
-discovery, and generic trait-method behavior remain in the
-Method Resolution RFD. Missing or unrepresented metadata contributes
-uncertainty rather than a false `NotFound`.
+## Code map
 
-Structured external definition paths also cross `TcxDb` as owned metadata.
-Every named segment retains its actual `SymExtKind`; type/value namespace alone
-is insufficient because modules, traits, and types share the type namespace.
-The Sage emitter maps each segment kind independently into the shared reference
-IR instead of deriving ancestor kinds from the leaf definition.
+The semantic structure above maps to the current workspace as follows:
 
-`LocalTraitSym::items` and `LocalImplSym::items` lazily mint stable function,
-type, and const symbols linked to their owner. Associated function signatures
-open the owner binder and reuse its generic identities; their independent body
-queries inherit the same owner predicates and `Self` type without depending on
-another associated body.
+| Path | Responsibility |
+|---|---|
+| `crates/sage-ir/src/parse/` and `cst/` | parse source and retain per-item concrete syntax |
+| `crates/sage-ir/src/local_syms/` | local tracked symbols and their signature/body/member queries |
+| `crates/sage-ir/src/symbol/` | erased and kind-specific local/external symbol wrappers |
+| `crates/sage-ir/src/check/resolve/` | lexical and module-level name resolution |
+| `crates/sage-ir/src/check/infer/` | transactional inference, deferred constraints, and obligation lifecycle |
+| `crates/sage-ir/src/check/solve/` | canonical positive trait proof and alias normalization |
+| `crates/sage-ir/src/tytree/` | completed typed body representation |
+| `crates/sage-ir/src/tcx/` and `external_syms.rs` | typed external metadata boundary and tracked lowering |
+| `crates/sage-stash/` | stash storage and hashing infrastructure |
 
-Function and ADT signatures use the same checked type-predicate representation.
-A body solver environment opens the function predicates together with any
-owning trait/impl predicates; ADT predicates remain available for
-well-formedness obligations. Ordinary calls, selected methods, and ADT use
-instantiate their callee/type predicate environments into the body obligation
-store rather than dropping declared bounds after generic substitution.
-Free-function uses and struct/enum construction or explicit type use are wired
-today. External nominal type use also imports declared defaults and ordinary
-predicates through `external_syms::external_adt_signature`; a missing required
-type argument is an arity error rather than a fresh inference variable. The
-represented external trait-method slice submits the selected method's
-parameter environment. Its completed call retains static-trait `Self` and
-trait arguments as well as separate owner/method type substitutions. The
-represented rigid external inherent slice retains the same substitution split
-with direct dispatch. General selected-method submission and other dispatch
-forms remain owned by the Method Resolution RFD.
+## Current status
 
-Canonicalization preserves the logical role and scope of every input variable:
+### Current frontier
 
-- caller generic parameters become rigid placeholders;
-- caller inference variables become flexible canonical inputs;
-- canonical variable metadata records kind and the relative current universe
-  ceiling (distinct from immutable creation universe);
-- the cached query records the relative current universe, while the caller
-  mapping retains the absolute base (including for an input-free query);
-- only flexible inputs may be constrained by a response;
-- response existentials preserve sharing across substitutions and residual goals.
+The pipeline is operational for the two pinned mini-redis vertical slices
+`DbDropGuard::db` and `Parse::next`. Those slices exercise local/generated and
+external symbols, signature and body queries, method resolution, trait proof,
+associated-type normalization, and elaborated calls.
 
-Inference-variable IDs are globally unique within an egraph and record their
-owning version. Explicit-version operations reject access from sibling
-branches, so a branch-local type cannot be reinterpreted with another branch's
-variable identity.
+### Evidence
 
-Per-version writes are leaf-only. Creating a child freezes the parent's sparse
-state until its children are discarded or its sole child is collapsed, giving
-every speculative branch a stable ancestor snapshot without copying maps.
+- [Oracle-checked method body](./examples/oracle-checked-method.md) follows a
+  completed method body into exact Sage/rustc output.
+- [Mini-redis Conformance Roadmap](../implementation/mini-redis.md) records the
+  acceptance criteria and query-dependency evidence for both completed slices.
+- `clone_method_body_has_a_narrow_reusable_semantic_query_trace` proves the
+  requested body executes once, reads selected interface metadata, reads no
+  callee body, and is reused unchanged.
 
-Proof alternatives run in independent proof contexts and perform speculative
-matching in a local child egraph version. Nested transactional operations may
-collapse an exclusive successful probe within that context, but candidate
-state is never collapsed into a requester. Each candidate instead extracts a
-canonical response and drops its context. After answer merging, applying the
-aggregate response is a separate transaction against the caller: it commits
-only after the entire substitution, occurs check, and universe-leak check
-succeeds. Failed, cancelled, and losing candidates therefore publish none of
-their alternative-specific state. An ambiguous aggregate may still publish a
-merged hard hint: only equalities necessary for every still-possible
-alternative, never a candidate-specific near miss.
+### Current limitations
 
-Each actual tracked proof execution owns a parent-sensitive active frame table.
-Its canonical keys include the local crate, environment, variable metadata,
-and remaining depth; ancestor repeats are inductive `No`, while depth
-exhaustion is `Maybe`. In-progress duplicates share a producer through
-creation-time subscriptions and real wakers. Every producer and candidate owns
-an isolated proof context (D8); only validated branch-independent responses are
-shared, and completed responses are reusable only inside that execution.
+- The compilation phase chapters are being split out from the older combined
+  checking material; until then [Type Checking](./checking.md) remains the
+  detailed entry guide for signature and body checking.
+- Module expansion returns represented symbols while completeness is audited
+  separately for particular consumers. The destination phase result makes
+  terminal incompleteness explicit.
+- General method resolution, complete Typed IR coverage, source `cfg`
+  evaluation, meaningful lifetime reasoning, and borrow checking are not yet
+  implemented. Their local consequences are documented in the focused
+  chapters and roadmap slices.
 
-```mermaid
-flowchart TD
-    Infer[Body inference state] --> Canon[Canonicalize goal and assumptions]
-    Canon --> Query[Fixed-trait GoalQuery]
-    Query --> Assemble[Environment and local impl clauses]
-    Assemble --> Probes[Versioned candidate probes]
-    Probes --> Merge[Merge Yes, Maybe, and No answers]
-    Merge --> Apply[Atomically instantiate response]
-    Apply --> Infer
-    Apply --> Obligations[Residual obligation store]
-    Obligations --> Retry[Retry after inference changes]
-    Retry --> Canon
-    Obligations --> Finalize[Body finalization: all obligations must discharge]
-```
+### Related roadmap slices
 
-A successful answer with residual goals is conditional. Body checking may continue after
-registering those residuals, but `CheckedBody` finalization cannot silently accept a
-remaining `Maybe`, failed residual, or unsupported predicate. The detailed contracts live
-in the [Trait System](../rfds/trait-system/README.md),
-[Trait Solving](../rfds/trait-solving/README.md), and
-[Method Resolution](../rfds/method-resolution/README.md) RFDs.
-
-## Symbol system
-
-`Symbol<'db>` is a `Copy` wrapper-of-enum generated by the
-`define_kind_symbols!` macro. Each variant holds either a local
-tracked struct (`LocalFnSym`, `LocalStructSym`, ...) or an external
-handle (`SymExt`). The macro also generates per-kind enums
-(`FnSymbol`, `StructSymbol`) with `Local`/`Ext` variants.
-
-```rust
-define_kind_symbols! {
-    pub struct Symbol<'db> { data: SymbolDataPriv<'db> }
-    pub enum SymbolData<'db> { .. }
-
-    pub enum FnSymbol<'db> { Local(LocalFnSym<'db>), Ext(SymExtKind::Fn) }
-    pub enum StructSymbol<'db> { Local(LocalStructSym<'db>), Ext(SymExtKind::Struct) }
-    ...
-}
-```
-
-## Testing strategy
-
-Tests live in `crates/sage-ir/tests/`. They construct a `salsa::Database`
-with a noop `TcxDb` implementation, create `SourceFile` inputs, run
-queries, and assert on the output. The noop tcx returns empty results
-for all external-crate queries, allowing signature and body tests to
-run without real rustc metadata.
+The [Build-Out Roadmap](../implementation/roadmap.md) orders cross-cutting
+semantic outcomes. The [Mini-redis Conformance
+Roadmap](../implementation/mini-redis.md) supplies the current application-scale
+vertical slices.

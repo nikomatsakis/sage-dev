@@ -78,6 +78,7 @@ fn open_owner<'db>(
     }
 }
 
+// ANCHOR: architecture_local_function_symbol
 #[salsa::tracked(debug)]
 pub struct LocalFnSym<'db> {
     pub name: Name<'db>,
@@ -94,6 +95,7 @@ pub struct LocalFnSym<'db> {
     #[tracked]
     pub cst_base: AbsoluteSpan<'db>,
 }
+// ANCHOR_END: architecture_local_function_symbol
 
 impl StashDirect for LocalFnSym<'_> {}
 

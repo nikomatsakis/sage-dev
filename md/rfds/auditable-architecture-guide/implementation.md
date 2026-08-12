@@ -22,33 +22,33 @@ the navigation benefit outweighs broken historical links.
 
 ## Step 2: Reshape the maximally zoomed-out architecture page
 
-- [ ] Lead with the Rust compilation pipeline and its phase granularities.
-- [ ] Introduce symbols as the stable semantic identities flowing through the
+- [x] Lead with the Rust compilation pipeline and its phase granularities.
+- [x] Introduce symbols as the stable semantic identities flowing through the
   pipeline before using symbol-keyed queries in the phase table.
-- [ ] Add a compact input/output/entry-point table.
-- [ ] Map semantic subsystems and cross-cutting representations to the phases
+- [x] Add a compact input/output/entry-point table.
+- [x] Map semantic subsystems and cross-cutting representations to the phases
   that use them.
-- [ ] Move or condense crate-layout material so it follows the semantic model.
-- [ ] Move current implementation prose into clearly marked Current Status
+- [x] Move or condense crate-layout material so it follows the semantic model.
+- [x] Move current implementation prose into clearly marked Current Status
   sections, preserving destination design in the main text.
-- [ ] Link relevant cross-cutting roadmap slices from each status section.
+- [x] Link relevant cross-cutting roadmap slices from each status section.
 
 ## Step 3: Add the symbols and semantic identity chapter
 
-- [ ] Define symbols as stable definition identities rather than complete
+- [x] Define symbols as stable definition identities rather than complete
   checked item data.
-- [ ] Explain local, external, intrinsic, erased, and kind-specific symbol
+- [x] Explain local, external, intrinsic, erased, and kind-specific symbol
   representations.
-- [ ] Explain ownership, scope, associated-item identity, and the relationship
+- [x] Explain ownership, scope, associated-item identity, and the relationship
   between names, paths, resolution, and symbols.
-- [ ] Show how symbol-keyed lazy queries expose signatures, members, fields,
+- [x] Show how symbol-keyed lazy queries expose signatures, members, fields,
   and bodies.
-- [ ] Show how types and completed Typed IR refer to resolved symbols.
-- [ ] State the incremental identity guarantees and the edits that should not
+- [x] Show how types and completed Typed IR refer to resolved symbols.
+- [x] State the incremental identity guarantees and the edits that should not
   mint replacement identities.
-- [ ] Add focused ezanchor excerpts for the erased wrapper, a kind-specific
+- [x] Add focused ezanchor excerpts for the erased wrapper, a kind-specific
   wrapper, local tracked identity, and external structural identity.
-- [ ] Link symbol identity and invalidation tests as review evidence.
+- [x] Link symbol identity and invalidation tests as review evidence.
 
 ## Step 4: Reshape the build-out roadmap around implementation slices
 

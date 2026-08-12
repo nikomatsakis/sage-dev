@@ -50,12 +50,14 @@ pub enum SymExtKind {
 
 /// External symbol — a thin handle into rustc's metadata. Plain
 /// `Copy` struct, structural identity.
+// ANCHOR: architecture_external_symbol
 #[salsa::interned(debug)]
 pub struct SymExt<'db> {
     pub crate_num: CrateNum,
     pub def_index: DefIndex,
     pub kind: SymExtKind,
 }
+// ANCHOR_END: architecture_external_symbol
 
 impl<'db> StashDirect for SymExt<'db> {}
 impl StashDirect for SymExtKind {}
@@ -301,6 +303,7 @@ macro_rules! define_kind_symbols {
     };
 }
 
+// ANCHOR: architecture_symbol_family
 define_kind_symbols! {
     pub struct Symbol<'db> { data: SymbolDataPriv<'db> }
     pub enum SymbolData<'db> { .. }
@@ -326,6 +329,7 @@ define_kind_symbols! {
     pub enum IntrinsicTypeSymbol<'db> { Local(crate::local_syms::intrinsic_types::IntrinsicTypeSym<'db>) }
     pub enum MacroInvocationSymbol<'db> { Local(crate::local_syms::macro_invocations::LocalMacroInvocationSym<'db>) }
 }
+// ANCHOR_END: architecture_symbol_family
 
 impl<'db> Symbol<'db> {
     /// Returns the name of the item defined by this symbol, if any.
