@@ -52,16 +52,16 @@ the navigation benefit outweighs broken historical links.
 
 ## Step 4: Reshape the build-out roadmap around implementation slices
 
-- [ ] Replace broad RFD-completion groups with coherent cross-cutting slices.
-- [ ] Give every slice an observable goal and acceptance target.
-- [ ] Record why the slice is ordered where it is.
-- [ ] Record scope, non-goals, affected architecture, and dependencies.
-- [ ] Give each slice a high-level ordered implementation plan and link the
+- [x] Replace broad RFD-completion groups with coherent cross-cutting slices.
+- [x] Give every slice an observable goal and acceptance target.
+- [x] Record why the slice is ordered where it is.
+- [x] Record scope, non-goals, affected architecture, and dependencies.
+- [x] Give each slice a high-level ordered implementation plan and link the
   RFDs that own its detailed checkpoints without duplicating them.
-- [ ] Record concise slice-level progress.
-- [ ] Link completed acceptance evidence from affected architecture Current
+- [x] Record concise slice-level progress.
+- [x] Link completed acceptance evidence from affected architecture Current
   Status sections.
-- [ ] Preserve and align the Mini-redis roadmap as an application-specific
+- [x] Preserve and align the Mini-redis roadmap as an application-specific
   vertical-slice view.
 
 ## Step 5: Pilot the module and macro expansion phase chapter
