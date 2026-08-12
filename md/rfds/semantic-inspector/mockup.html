@@ -1,0 +1,1106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sage Semantic Inspector — interaction mockup</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17211d;
+      --muted: #66716c;
+      --faint: #f1f4f1;
+      --line: #dbe1dc;
+      --paper: #fbfcfa;
+      --panel: #ffffff;
+      --sage: #315c49;
+      --sage-dark: #234536;
+      --sage-soft: #e3eee7;
+      --amber: #a45c18;
+      --amber-soft: #fff0dd;
+      --blue: #355b8a;
+      --blue-soft: #e9f0fa;
+      --violet: #675083;
+      --violet-soft: #f0ebf7;
+      --shadow: 0 12px 36px rgba(36, 57, 47, 0.09);
+      --mono: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-width: 1040px;
+      background: var(--paper);
+      color: var(--ink);
+      font: 14px/1.45 var(--sans);
+    }
+
+    button, input, select { font: inherit; }
+    button { color: inherit; }
+
+    .prototype-banner {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 30px;
+      padding: 5px 18px;
+      background: #f7e8ca;
+      border-bottom: 1px solid #e7c98f;
+      color: #6b4818;
+      font-size: 12px;
+      letter-spacing: 0.01em;
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: 270px minmax(380px, 1fr) 330px;
+      align-items: center;
+      min-height: 62px;
+      padding: 0 18px;
+      background: var(--sage-dark);
+      color: #f8fbf9;
+      box-shadow: 0 2px 8px rgba(20, 38, 30, 0.16);
+    }
+
+    .brand { display: flex; align-items: center; gap: 11px; }
+    .mark {
+      display: grid;
+      width: 31px;
+      height: 31px;
+      place-items: center;
+      border: 1px solid rgba(255,255,255,.35);
+      border-radius: 8px;
+      background: rgba(255,255,255,.1);
+      font: 700 18px/1 Georgia, serif;
+    }
+    .brand strong { display: block; font-size: 15px; letter-spacing: .01em; }
+    .brand span { display: block; color: #bcd0c5; font-size: 11px; }
+
+    .command {
+      width: min(680px, 92%);
+      justify-self: center;
+      padding: 9px 13px;
+      border: 1px solid rgba(255,255,255,.18);
+      border-radius: 7px;
+      background: rgba(0,0,0,.16);
+      color: #dce8e1;
+      font: 12px var(--mono);
+    }
+
+    .session {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 9px;
+      color: #c7d8cf;
+      font-size: 12px;
+    }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: #79c692; box-shadow: 0 0 0 3px rgba(121,198,146,.14); }
+    .session-id { padding-left: 9px; border-left: 1px solid rgba(255,255,255,.2); font-family: var(--mono); }
+
+    .workspace {
+      --trace-width: 356px;
+      display: grid;
+      grid-template-columns: 270px minmax(520px, 1fr) var(--trace-width);
+      height: calc(100vh - 93px);
+      min-height: 670px;
+    }
+
+    .sidebar, .trace-panel { background: var(--panel); overflow: auto; }
+    .sidebar { border-right: 1px solid var(--line); }
+    .trace-panel { position: relative; border-left: 1px solid var(--line); }
+    .trace-resizer { position: absolute; z-index: 5; top: 0; bottom: 0; left: 0; width: 7px; cursor: col-resize; background: transparent; }
+    .trace-resizer:hover, .trace-resizer.dragging { background: rgba(49, 92, 73, .18); }
+    .main { min-width: 0; overflow: auto; padding: 24px 28px 38px; }
+
+    .panel-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 48px;
+      padding: 0 15px;
+      border-bottom: 1px solid var(--line);
+      color: #39443e;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .09em;
+      text-transform: uppercase;
+    }
+    .panel-actions { display: flex; align-items: center; gap: 6px; }
+    .panel-action { padding: 4px 7px; border: 1px solid var(--line); border-radius: 5px; background: white; color: #526058; cursor: pointer; font-size: 10px; font-weight: 650; letter-spacing: 0; text-transform: none; }
+    .panel-action:hover { border-color: #a9b9af; background: var(--faint); }
+    .growable:fullscreen, .growable.grown-panel { width: 100%; height: 100%; margin: 0; border: 0; border-radius: 0; background: var(--panel); overflow: auto; }
+    .growable.grown-panel { position: fixed; inset: 0; z-index: 100; box-shadow: 0 24px 80px rgba(20, 38, 30, .28); }
+    .grow-button { display: inline-grid; width: 25px; height: 25px; flex: 0 0 auto; place-items: center; border: 1px solid var(--line); border-radius: 5px; background: white; color: var(--sage); cursor: pointer; font: 700 14px/1 var(--sans); }
+    .grow-button:hover { border-color: #91aa9b; background: var(--sage-soft); }
+    .heading-controls { display: flex; align-items: center; gap: 7px; }
+
+    .count { color: var(--muted); font-weight: 500; letter-spacing: 0; }
+    .search-wrap { padding: 12px 12px 8px; }
+    .search {
+      width: 100%;
+      padding: 8px 9px 8px 31px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      outline: none;
+      background: var(--paper) no-repeat 9px center;
+      color: var(--ink);
+    }
+    .search:focus { border-color: #89a896; box-shadow: 0 0 0 3px var(--sage-soft); }
+    .search-wrap { position: relative; }
+    .search-wrap::before { content: "⌕"; position: absolute; z-index: 1; top: 19px; left: 22px; color: var(--muted); font-size: 17px; }
+
+    .tree { padding: 4px 8px 24px; }
+    .tree-group { margin-top: 7px; }
+    .tree-label {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 5px 7px;
+      color: #3d4942;
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .chevron { display: grid; width: 17px; height: 19px; flex: 0 0 17px; place-items: center; border-radius: 4px; color: #66766d; font: 10px var(--mono); cursor: pointer; }
+    .chevron:hover { background: #dfe8e2; color: var(--sage-dark); }
+    .tree-indent { margin-left: 13px; border-left: 1px solid #e6eae7; padding-left: 5px; }
+    .symbol-children.collapsed { display: none; }
+    .symbol {
+      display: flex;
+      width: 100%;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+    }
+    .symbol:hover { background: var(--faint); }
+    .symbol.active { background: var(--sage-soft); color: var(--sage-dark); }
+    .filter-hidden { display: none !important; }
+    .filter-status { min-height: 20px; padding: 1px 15px 7px; color: var(--muted); font-size: 10.5px; }
+    .filter-status.empty { color: #995322; }
+    .kind {
+      display: inline-grid;
+      width: 19px;
+      height: 19px;
+      flex: 0 0 auto;
+      place-items: center;
+      border-radius: 4px;
+      background: var(--faint);
+      color: #5c6b63;
+      font: 700 10px var(--mono);
+    }
+    .active .kind { background: #cadfd1; color: var(--sage-dark); }
+    .symbol-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px var(--mono); }
+
+    .eyebrow { color: var(--muted); font-size: 12px; }
+    .breadcrumbs { margin-bottom: 7px; color: var(--muted); font: 12px var(--mono); }
+    .breadcrumbs span { color: #9aa39e; padding: 0 5px; }
+    .item-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+    h1 { margin: 0; font: 650 26px/1.2 var(--mono); letter-spacing: -.03em; }
+    .item-meta { margin-top: 8px; color: var(--muted); font-size: 12px; }
+    .badge-row { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
+    .badge { padding: 4px 8px; border-radius: 999px; font-size: 11px; font-weight: 650; white-space: nowrap; }
+    .badge.complete { background: var(--sage-soft); color: var(--sage-dark); }
+    .badge.cold { background: var(--blue-soft); color: var(--blue); }
+    .badge.zero { background: var(--faint); color: #4f5d55; }
+
+    .source-card {
+      margin-top: 22px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .card-titlebar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 42px;
+      padding: 0 13px;
+      border-bottom: 1px solid var(--line);
+      background: #f7f9f7;
+      color: #536159;
+      font-size: 12px;
+    }
+    .card-titlebar code { font-family: var(--mono); color: #344139; }
+    .card-actions { display: flex; align-items: center; gap: 7px; }
+    .plain-button { border: 0; background: transparent; color: var(--sage); cursor: pointer; font-size: 12px; }
+
+    pre {
+      margin: 0;
+      overflow: auto;
+      tab-size: 2;
+      white-space: pre;
+      font: 12.5px/1.62 var(--mono);
+    }
+    .source-code { padding: 14px 17px; color: #26332c; }
+    .kw { color: #7a3e83; }
+    .fn { color: #285b75; }
+    .ty { color: #8a4f18; }
+    .method { background: #eef5f0; border-bottom: 2px solid #83a891; }
+
+    .artifact-card {
+      margin-top: 18px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .artifact-tabs { display: flex; align-items: center; gap: 2px; padding: 0 12px; border-bottom: 1px solid var(--line); background: #f7f9f7; }
+    .artifact-tab {
+      padding: 12px 10px 10px;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .artifact-tab.active { border-bottom-color: var(--sage); color: var(--sage-dark); font-weight: 650; }
+    .artifact-tab:hover { color: var(--ink); }
+    .artifact-tools { margin-left: auto; display: flex; align-items: center; gap: 7px; }
+    .segmented { display: flex; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
+    .segmented button { padding: 4px 7px; border: 0; border-right: 1px solid var(--line); background: white; color: var(--muted); cursor: pointer; font-size: 10px; }
+    .segmented button:last-child { border-right: 0; }
+    .segmented button.active { background: var(--sage-soft); color: var(--sage-dark); }
+
+    .artifact-heading { display: flex; align-items: center; justify-content: space-between; padding: 13px 17px 0; }
+    .artifact-heading h2 { margin: 0; font-size: 15px; font-weight: 650; }
+    .artifact-type { padding: 3px 6px; border-radius: 4px; background: var(--violet-soft); color: var(--violet); font: 10px var(--mono); }
+    .artifact-description { min-height: 20px; margin: 5px 17px 0; color: var(--muted); font-size: 12px; }
+    .artifact-code { min-height: 315px; max-height: 440px; padding: 15px 17px 20px; color: #26332c; }
+    .artifact-code[hidden], .ir-explorer[hidden] { display: none; }
+    .ir-explorer { display: grid; grid-template-columns: minmax(330px, 1.2fr) minmax(270px, .8fr); min-height: 390px; margin-top: 10px; border-top: 1px solid var(--line); }
+    .ir-tree-pane { min-width: 0; padding: 12px 10px 18px; overflow: auto; border-right: 1px solid var(--line); }
+    .ir-properties { min-width: 0; background: #fafbfa; }
+    .ir-pane-heading { display: flex; align-items: center; justify-content: space-between; min-height: 32px; padding: 3px 8px 10px; color: #748078; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    .ir-tree, .ir-tree ul { margin: 0; padding: 0; list-style: none; }
+    .ir-tree ul { margin-left: 17px; padding-left: 9px; border-left: 1px solid #dce4df; }
+    .ir-tree details { margin: 1px 0; }
+    .ir-tree summary, .ir-leaf { display: flex; align-items: baseline; gap: 6px; min-height: 27px; padding: 4px 7px; border: 1px solid transparent; border-radius: 5px; cursor: pointer; font: 11.5px/1.45 var(--mono); white-space: nowrap; }
+    .ir-tree summary { list-style: none; }
+    .ir-tree summary::-webkit-details-marker { display: none; }
+    .ir-tree summary::before { content: "▶"; width: 12px; flex: 0 0 12px; color: #66766d; font-size: 10px; transform-origin: 45% 55%; transition: transform 90ms ease; }
+    .ir-tree details[open] > summary::before { transform: rotate(90deg); }
+    .ir-leaf::before { content: "·"; width: 12px; flex: 0 0 12px; color: #a5aea9; font-size: 15px; line-height: 10px; text-align: center; }
+    .ir-tree summary:hover, .ir-leaf:hover { background: var(--faint); }
+    .ir-tree summary.selected, .ir-leaf.selected { border-color: #bdd1c4; background: var(--sage-soft); }
+    .ir-field { color: #66736c; }
+    .ir-node-kind { color: #60477c; font-weight: 650; }
+    .ir-node-type { margin-left: auto; padding-left: 14px; color: #8a4f18; font-size: 10.5px; }
+    .ir-value { color: #315b76; }
+    .property-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; padding: 14px 15px 11px; border-bottom: 1px solid var(--line); background: white; }
+    .property-header span { display: block; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    .property-header strong { display: block; grid-column: 1; margin-top: 4px; font: 650 14px var(--mono); color: #344139; }
+    #artifact-panel:fullscreen .ir-explorer, #artifact-panel.grown-panel .ir-explorer { min-height: calc(100vh - 155px); }
+    .property-list { display: grid; grid-template-columns: 104px minmax(0, 1fr); margin: 0; padding: 10px 15px 20px; font-size: 11.5px; }
+    .property-list dt, .property-list dd { margin: 0; padding: 7px 0; border-bottom: 1px solid #e5e9e6; }
+    .property-list dt { color: var(--muted); }
+    .property-list dd { overflow-wrap: anywhere; color: #2f3a34; font-family: var(--mono); }
+    .artifact-footer { display: flex; gap: 22px; padding: 11px 17px; border-top: 1px solid var(--line); background: #fafbfa; color: var(--muted); font-size: 11px; }
+    .artifact-footer strong { color: #344139; font-weight: 650; }
+
+    .trace-summary { padding: 13px 14px; border-bottom: 1px solid var(--line); }
+    .trace-summary strong { display: block; font-size: 13px; }
+    .trace-summary span { color: var(--muted); font-size: 11px; }
+    .trace-controls { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 11px; }
+    .trace-controls select { flex: 1; padding: 6px 7px; border: 1px solid var(--line); border-radius: 5px; background: white; color: #455149; font-size: 11px; }
+    .trace-search { flex: 1 0 100%; width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 5px; background: white; color: #455149; font-size: 11px; }
+    .trace-search:focus { border-color: #89a896; outline: none; box-shadow: 0 0 0 3px var(--sage-soft); }
+    .tree-action { padding: 6px 8px; border: 1px solid var(--line); border-radius: 5px; background: white; color: #526058; cursor: pointer; font-size: 10px; }
+    .tree-action:hover { border-color: #a9b9af; background: var(--faint); }
+    .trace-legend { display: flex; align-items: center; gap: 12px; margin-top: 9px; color: var(--muted); font-size: 10px; }
+    .legend-item { display: flex; align-items: center; gap: 5px; }
+    .legend-dot { width: 7px; height: 7px; border-radius: 50%; background: #779586; }
+    .legend-dot.cached { background: white; border: 2px solid #779586; }
+
+    .trace-section { padding: 10px 10px 3px; }
+    .trace-section-title { padding: 4px 5px 6px; color: #78837d; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    .execution-tree { padding: 10px 10px 2px; }
+    .event-children {
+      margin: 1px 0 3px 16px;
+      padding-left: 9px;
+      border-left: 1px solid #dce4df;
+    }
+    .event-children.collapsed { display: none; }
+    .event {
+      position: relative;
+      display: block;
+      width: 100%;
+      margin-bottom: 4px;
+      padding: 9px 9px 9px 34px;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+    }
+    .event::before { content: ""; position: absolute; top: 14px; left: 14px; width: 7px; height: 7px; border-radius: 50%; background: #779586; }
+    .event.has-children { padding-left: 48px; }
+    .event.has-children::before { left: 28px; }
+    .branch-toggle { position: absolute; top: 7px; left: 5px; display: grid; width: 19px; height: 22px; place-items: center; border-radius: 4px; color: #65736b; font: 12px var(--mono); }
+    .branch-toggle:hover { background: #dfe8e2; color: var(--sage-dark); }
+    .event:hover { background: var(--faint); }
+    .event.active { border-color: #bdd1c4; background: var(--sage-soft); }
+    .event.root { padding-top: 11px; padding-bottom: 11px; border-color: var(--line); background: #f7f9f7; }
+    .event.root::before { background: var(--sage-dark); box-shadow: 0 0 0 3px var(--sage-soft); }
+    .event.cached::before { width: 7px; height: 7px; top: 12px; left: 12px; border: 2px solid #779586; background: white; }
+    .event.semantic::before { background: var(--blue); }
+    .event.metadata::before { background: var(--amber); }
+    .event.solver::before { background: var(--violet); }
+    .event-name { display: block; color: #303c35; font-size: 12px; font-weight: 600; }
+    .event-key { display: block; margin-top: 2px; overflow: hidden; color: var(--muted); font: 10.5px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+    .event-kind { float: right; margin-left: 6px; padding: 2px 5px; border-radius: 4px; background: var(--faint); color: #69766f; font-size: 9px; font-weight: 700; text-transform: uppercase; }
+    .event.semantic .event-kind { background: var(--blue-soft); color: var(--blue); }
+    .event.metadata .event-kind { background: var(--amber-soft); color: var(--amber); }
+    .event.solver .event-kind { background: var(--violet-soft); color: var(--violet); }
+    .event-state { float: right; margin: 1px 5px 0 0; padding: 2px 5px; border-radius: 4px; background: #edf3ef; color: #496253; font-size: 9px; font-weight: 700; text-transform: uppercase; }
+    .event.cached .event-state { border: 1px solid #ccd9d1; background: white; color: #66766d; }
+    .event.filtered { display: none; }
+
+    .trace-note { margin: 12px 14px 18px; padding: 10px 11px; border: 1px solid #ead8bc; border-radius: 6px; background: #fff8ec; color: #6c5736; font-size: 10.5px; }
+
+    @media (max-height: 760px) {
+      .artifact-code { min-height: 230px; }
+      .source-code { max-height: 105px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="prototype-banner">
+    Interaction mockup · representative data only · no Sage backend is running
+  </div>
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="mark">S</div>
+      <div><strong>Sage Inspector</strong><span>Semantic workspace</span></div>
+    </div>
+    <div class="command">cargo sage inspect --package mini-redis</div>
+    <div class="session"><span class="dot"></span><span>mini-redis · lib</span><span class="session-id">request #1</span></div>
+  </header>
+
+  <div class="workspace">
+    <aside id="symbols-panel" class="sidebar growable">
+      <div class="panel-heading"><span>Symbols</span><span class="heading-controls"><span class="count">126 indexed</span><button class="grow-button" type="button" data-grow-target="symbols-panel" aria-label="Grow symbol panel" title="Grow panel">↗</button></span></div>
+      <div class="search-wrap"><input id="symbol-search" class="search" type="search" placeholder="Search paths and kinds" aria-label="Search symbols"></div>
+      <div id="symbol-filter-status" class="filter-status">Showing the example symbol tree</div>
+      <nav class="tree" aria-label="Symbol tree">
+        <div class="tree-group">
+          <div class="tree-label" data-search="crate mini_redis"><span class="chevron symbol-toggle" role="button" tabindex="0" aria-expanded="true" data-target="crate-symbols">▼</span><span class="kind">C</span><span>mini_redis</span></div>
+          <div id="crate-symbols" class="tree-indent symbol-children">
+            <div class="tree-label" data-search="module mini_redis db"><span class="chevron symbol-toggle" role="button" tabindex="0" aria-expanded="true" data-target="db-symbols">▼</span><span class="kind">M</span><span>db</span></div>
+            <div id="db-symbols" class="tree-indent symbol-children">
+              <button class="symbol" data-search="struct db mini_redis db"><span class="kind">S</span><span class="symbol-name">Db</span></button>
+              <button class="symbol" data-search="struct dbdropguard mini_redis db"><span class="kind">S</span><span class="symbol-name">DbDropGuard</span></button>
+              <div class="tree-indent">
+                <button class="symbol" data-search="function associated new dbdropguard"><span class="kind">F</span><span class="symbol-name">DbDropGuard::new</span></button>
+                <button class="symbol active" data-search="function associated db dbdropguard clone"><span class="kind">F</span><span class="symbol-name">DbDropGuard::db</span></button>
+                <button class="symbol" data-search="function drop dbdropguard"><span class="kind">F</span><span class="symbol-name">DbDropGuard::drop</span></button>
+              </div>
+              <button class="symbol" data-search="struct shared mini_redis db"><span class="kind">S</span><span class="symbol-name">Shared</span></button>
+            </div>
+            <div class="tree-label" data-search="module mini_redis parse"><span class="chevron symbol-toggle" role="button" tabindex="0" aria-expanded="false" data-target="parse-symbols">▶</span><span class="kind">M</span><span>parse</span></div>
+            <div id="parse-symbols" class="tree-indent symbol-children collapsed">
+              <button class="symbol" data-search="struct parse mini_redis parse parser"><span class="kind">S</span><span class="symbol-name">Parse</span></button>
+              <button class="symbol" data-search="function associated parse new mini_redis"><span class="kind">F</span><span class="symbol-name">Parse::new</span></button>
+              <button class="symbol" data-search="function associated parse next iterator item normalize mini_redis"><span class="kind">F</span><span class="symbol-name">Parse::next</span></button>
+            </div>
+            <div class="tree-label" data-search="module mini_redis server"><span class="chevron symbol-toggle" role="button" tabindex="0" aria-expanded="false" data-target="server-symbols">▶</span><span class="kind">M</span><span>server</span></div>
+            <div id="server-symbols" class="tree-indent symbol-children collapsed">
+              <button class="symbol" data-search="function server run mini_redis"><span class="kind">F</span><span class="symbol-name">server::run</span></button>
+              <button class="symbol" data-search="struct listener server mini_redis"><span class="kind">S</span><span class="symbol-name">Listener</span></button>
+            </div>
+            <div class="tree-label" data-search="module mini_redis cmd command"><span class="chevron symbol-toggle" role="button" tabindex="0" aria-expanded="false" data-target="cmd-symbols">▶</span><span class="kind">M</span><span>cmd</span></div>
+            <div id="cmd-symbols" class="tree-indent symbol-children collapsed">
+              <button class="symbol" data-search="module command get mini_redis"><span class="kind">M</span><span class="symbol-name">cmd::get</span></button>
+              <button class="symbol" data-search="module command set mini_redis"><span class="kind">M</span><span class="symbol-name">cmd::set</span></button>
+              <button class="symbol" data-search="module command publish mini_redis"><span class="kind">M</span><span class="symbol-name">cmd::publish</span></button>
+            </div>
+            <button class="symbol" data-search="trait command mini_redis"><span class="kind">T</span><span class="symbol-name">Command</span></button>
+            <button class="symbol" data-search="struct connection mini_redis"><span class="kind">S</span><span class="symbol-name">Connection</span></button>
+          </div>
+        </div>
+      </nav>
+    </aside>
+
+    <main class="main">
+      <div class="eyebrow">Associated function</div>
+      <div class="item-header">
+        <div>
+          <div class="breadcrumbs">mini_redis <span>›</span> db <span>›</span> DbDropGuard</div>
+          <h1>DbDropGuard::db</h1>
+          <div class="item-meta">test-fixtures/mini-redis/src/db.rs:106 · source-written · private(crate)</div>
+        </div>
+        <div class="badge-row">
+          <span class="badge complete">Complete</span>
+          <span class="badge zero">0 diagnostics</span>
+          <span class="badge cold">Cold execution</span>
+        </div>
+      </div>
+
+      <section id="source-panel" class="source-card growable">
+        <div class="card-titlebar"><code>src/db.rs:106–108</code><span class="card-actions"><button class="plain-button" type="button">Open source ↗</button><button class="grow-button" type="button" data-grow-target="source-panel" aria-label="Grow source panel" title="Grow panel">↗</button></span></div>
+        <pre class="source-code"><span class="kw">pub(crate) fn</span> <span class="fn">db</span>(&amp;self) -&gt; <span class="ty">Db</span> {
+    self.db.<span class="method">clone()</span>
+}</pre>
+      </section>
+
+      <section id="artifact-panel" class="artifact-card growable">
+        <div class="artifact-tabs">
+          <button class="artifact-tab active" data-artifact="body">Typed body</button>
+          <button class="artifact-tab" data-artifact="signature">Signature</button>
+          <button class="artifact-tab" data-artifact="diagnostics">Diagnostics</button>
+          <div class="artifact-tools">
+            <span class="eyebrow">View</span>
+            <div class="segmented">
+              <button id="tree-view" class="active" type="button">IR tree</button>
+              <button id="structural-view" type="button">Raw shape</button>
+            </div>
+            <button class="grow-button" type="button" data-grow-target="artifact-panel" aria-label="Grow typed result panel" title="Grow panel">↗</button>
+          </div>
+        </div>
+        <div class="artifact-heading"><h2 id="artifact-title">Completed typed body</h2><span id="artifact-type" class="artifact-type">CheckedBody</span></div>
+        <div id="artifact-description" class="artifact-description">Method syntax has been consumed; dispatch and receiver adjustments are explicit.</div>
+        <div id="body-tree" class="ir-explorer">
+          <div id="ir-tree-panel" class="ir-tree-pane growable">
+            <div class="ir-pane-heading"><span>Precise typed IR structure</span><button class="grow-button" type="button" data-grow-target="ir-tree-panel" aria-label="Grow IR tree panel" title="Grow panel">↗</button></div>
+            <ul class="ir-tree">
+              <li><details open><summary class="selected" data-ir-node="checked"><span class="ir-node-kind">CheckedBody</span></summary>
+                <ul>
+                  <li><div class="ir-leaf" data-ir-node="diagnostic-list"><span class="ir-field">diagnostics:</span><span class="ir-value">[]</span></div></li>
+                  <li><details open><summary data-ir-node="body-data"><span class="ir-field">body:</span><span class="ir-node-kind">TyBodyData</span></summary>
+                    <ul>
+                      <li><div class="ir-leaf" data-ir-node="locals"><span class="ir-field">locals:</span><span class="ir-value">[self]</span></div></li>
+                      <li><details open><summary data-ir-node="block"><span class="ir-field">root:</span><span class="ir-node-kind">Block</span><span class="ir-node-type">Db</span></summary>
+                        <ul>
+                          <li><div class="ir-leaf" data-ir-node="statements"><span class="ir-field">statements:</span><span class="ir-value">[]</span></div></li>
+                          <li><details open><summary data-ir-node="call"><span class="ir-field">tail:</span><span class="ir-node-kind">ResolvedCall</span><span class="ir-node-type">Db</span></summary>
+                            <ul>
+                              <li><details open><summary data-ir-node="target"><span class="ir-field">target:</span><span class="ir-node-kind">ResolvedCallTarget</span></summary>
+                                <ul>
+                                  <li><div class="ir-leaf" data-ir-node="function"><span class="ir-field">function:</span><span class="ir-value">core::clone::Clone::clone</span></div></li>
+                                  <li><details open><summary data-ir-node="dispatch"><span class="ir-field">dispatch:</span><span class="ir-node-kind">StaticTrait</span></summary>
+                                    <ul>
+                                      <li><div class="ir-leaf" data-ir-node="self-ty"><span class="ir-field">self_ty:</span><span class="ir-value">Db</span></div></li>
+                                      <li><div class="ir-leaf" data-ir-node="trait-ref"><span class="ir-field">trait_ref:</span><span class="ir-value">core::clone::Clone&lt;Db&gt;</span></div></li>
+                                    </ul>
+                                  </details></li>
+                                  <li><div class="ir-leaf" data-ir-node="owner-args"><span class="ir-field">owner_type_args:</span><span class="ir-value">[Db]</span></div></li>
+                                  <li><div class="ir-leaf" data-ir-node="method-args"><span class="ir-field">method_type_args:</span><span class="ir-value">[]</span></div></li>
+                                </ul>
+                              </details></li>
+                              <li><details open><summary data-ir-node="arguments"><span class="ir-field">arguments:</span><span class="ir-node-kind">Slice&lt;TyExpr&gt;</span></summary>
+                                <ul>
+                                  <li><details open><summary data-ir-node="ref"><span class="ir-field">[0]:</span><span class="ir-node-kind">Ref(Shared)</span><span class="ir-node-type">&amp;Dummy Db</span></summary>
+                                    <ul>
+                                      <li><div class="ir-leaf" data-ir-node="lifetime"><span class="ir-field">lifetime:</span><span class="ir-value">Dummy</span></div></li>
+                                      <li><details open><summary data-ir-node="field"><span class="ir-field">operand:</span><span class="ir-node-kind">Field</span><span class="ir-node-type">Db</span></summary>
+                                        <ul>
+                                          <li><div class="ir-leaf" data-ir-node="field-owner"><span class="ir-field">owner:</span><span class="ir-value">Struct(DbDropGuard)</span></div></li>
+                                          <li><div class="ir-leaf" data-ir-node="field-index"><span class="ir-field">index:</span><span class="ir-value">0</span></div></li>
+                                          <li><details open><summary data-ir-node="deref"><span class="ir-field">base:</span><span class="ir-node-kind">Deref</span><span class="ir-node-type">DbDropGuard</span></summary>
+                                            <ul><li><div class="ir-leaf" data-ir-node="local"><span class="ir-field">operand:</span><span class="ir-node-kind">Path(Local(self))</span><span class="ir-node-type">&amp;Dummy DbDropGuard</span></div></li></ul>
+                                          </details></li>
+                                        </ul>
+                                      </details></li>
+                                    </ul>
+                                  </details></li>
+                                </ul>
+                              </details></li>
+                            </ul>
+                          </details></li>
+                        </ul>
+                      </details></li>
+                    </ul>
+                  </details></li>
+                </ul>
+              </details></li>
+            </ul>
+          </div>
+          <aside id="ir-properties-panel" class="ir-properties growable">
+            <div class="property-header"><span>Selected node</span><button class="grow-button" type="button" data-grow-target="ir-properties-panel" aria-label="Grow node properties panel" title="Grow panel">↗</button><strong id="property-title">CheckedBody</strong></div>
+            <dl id="property-list" class="property-list"></dl>
+          </aside>
+        </div>
+        <pre id="artifact-code" class="artifact-code" hidden></pre>
+        <div class="artifact-footer">
+          <span>Completeness <strong id="footer-complete">complete</strong></span>
+          <span>Diagnostics <strong id="footer-diagnostics">0</strong></span>
+          <span>Selected from <strong id="footer-origin">LocalFnSym::body</strong></span>
+        </div>
+      </section>
+    </main>
+
+    <aside id="trace-panel" class="trace-panel growable">
+      <div id="trace-resizer" class="trace-resizer" title="Drag to resize the execution tree"></div>
+      <div class="panel-heading"><span>Execution tree</span><span class="panel-actions"><span class="count">cold request</span><button class="grow-button" type="button" data-grow-target="trace-panel" aria-label="Grow execution tree panel" title="Grow panel">↗</button></span></div>
+      <div class="trace-summary">
+        <strong>Which computation requested this work?</strong>
+        <span>Indentation records causal nesting. Select a node to inspect its output structure.</span>
+        <div class="trace-controls">
+          <input id="execution-search" class="trace-search" type="search" placeholder="Filter queries, keys, and operations" aria-label="Filter execution tree">
+          <select id="event-filter" aria-label="Filter execution events">
+            <option value="all">All recorded work</option>
+            <option value="salsa">Salsa executions</option>
+            <option value="semantic">Semantic lookups</option>
+            <option value="solver">Solver operations</option>
+            <option value="metadata">Metadata reads</option>
+          </select>
+          <button id="expand-all" class="tree-action" type="button">Expand all</button>
+          <button id="collapse-all" class="tree-action" type="button">Collapse all</button>
+        </div>
+        <div id="execution-filter-status" class="filter-status">10 operations in this request</div>
+        <div class="trace-legend"><span class="legend-item"><span class="legend-dot"></span> executed</span><span class="legend-item"><span class="legend-dot cached"></span> cache hit</span></div>
+      </div>
+
+      <div class="execution-tree">
+        <button class="event root has-children" data-kind="root" data-artifact="body"><span class="branch-toggle" role="button" tabindex="0" aria-expanded="true" data-target="request-children">▼</span><span class="event-kind">Request</span><span class="event-name">Inspect completed body</span><span class="event-key">crate::db::DbDropGuard::db</span></button>
+        <div id="request-children" class="event-children">
+          <button class="event semantic has-children" data-kind="semantic" data-artifact="selected"><span class="branch-toggle" role="button" tabindex="0" aria-expanded="true" data-target="selection-children">▼</span><span class="event-kind">Lookup</span><span class="event-name">Resolve semantic path</span><span class="event-key">crate::db::DbDropGuard::db</span></button>
+          <div id="selection-children" class="event-children">
+            <button class="event salsa cached" data-kind="salsa" data-artifact="selection"><span class="event-kind">Salsa</span><span class="event-state">cache hit</span><span class="event-name">Expand module symbols</span><span class="event-key">RootModule::expanded_module_items</span></button>
+          </div>
+          <button class="event salsa active has-children" data-kind="salsa" data-artifact="body"><span class="branch-toggle" role="button" tabindex="0" aria-expanded="true" data-target="body-children">▼</span><span class="event-kind">Salsa</span><span class="event-state">executed</span><span class="event-name">Check function body</span><span class="event-key">LocalFnSym::body(DbDropGuard::db)</span></button>
+          <div id="body-children" class="event-children">
+            <button class="event salsa" data-kind="salsa" data-artifact="signature"><span class="event-kind">Salsa</span><span class="event-state">executed</span><span class="event-name">Lower function signature</span><span class="event-key">LocalFnSym::sig(DbDropGuard::db)</span></button>
+            <button class="event semantic" data-kind="semantic" data-artifact="field"><span class="event-kind">Lookup</span><span class="event-name">Resolve receiver field</span><span class="event-key">DbDropGuard · field db</span></button>
+            <button class="event semantic has-children" data-kind="semantic" data-artifact="candidates"><span class="branch-toggle" role="button" tabindex="0" aria-expanded="true" data-target="candidate-children">▼</span><span class="event-kind">Lookup</span><span class="event-name">Discover method candidates</span><span class="event-key">receiver Db · method clone</span></button>
+            <div id="candidate-children" class="event-children">
+              <button class="event metadata" data-kind="metadata" data-artifact="metadata"><span class="event-kind">rustc</span><span class="event-name">Read candidate interfaces</span><span class="event-key">Clone · Clone::clone</span></button>
+              <button class="event solver" data-kind="solver" data-artifact="solver"><span class="event-kind">Solver</span><span class="event-name">Prove candidate applicability</span><span class="event-key">Prove(Db: Clone) → Proven</span></button>
+            </div>
+            <button class="event semantic" data-kind="semantic" data-artifact="call"><span class="event-kind">IR</span><span class="event-name">Elaborate resolved call</span><span class="event-key">ResolvedCallTarget · StaticTrait</span></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="trace-note">
+        This is a dynamic request tree: parent nodes requested their children during this cold run. Solid Salsa nodes executed; hollow nodes reused cached values. It is not the complete persistent Salsa dependency graph and does not yet explain invalidation.
+      </div>
+    </aside>
+  </div>
+
+  <script>
+    const irNodeProperties = {
+      checked: [["Rust structure", "CheckedBody"], ["Completeness", "complete"], ["Diagnostics", "0"], ["Children", "body, diagnostics"]],
+      "diagnostic-list": [["Field", "CheckedBody::diagnostics"], ["Rust type", "Vec<Diagnostic>"], ["Length", "0"]],
+      "body-data": [["Rust structure", "TyBodyData"], ["Root", "Block expression"], ["Span", "src/db.rs:106:35–108:6"], ["Children", "root, locals, span"]],
+      locals: [["Field", "TyBodyData::locals"], ["Rust type", "Slice<LocalVar>"], ["Entries", "self: &Dummy DbDropGuard"]],
+      block: [["IR variant", "TyExprData::Block"], ["Expression type", "Db"], ["Span", "src/db.rs:106:35–108:6"], ["Statements", "0"], ["Tail", "ResolvedCall"]],
+      statements: [["Field", "Block::statements"], ["Rust type", "Slice<TyStmt>"], ["Length", "0"]],
+      call: [["IR variant", "TyExprData::ResolvedCall"], ["Expression type", "Db"], ["Span", "src/db.rs:107:9–24"], ["Dispatch", "StaticTrait"], ["Callee", "core::clone::Clone::clone"], ["Arguments", "1"]],
+      target: [["Rust structure", "ResolvedCallTarget"], ["Function", "core::clone::Clone::clone"], ["Dispatch", "StaticTrait"], ["Owner arguments", "[Db]"], ["Method arguments", "[]"]],
+      function: [["Field", "ResolvedCallTarget::function"], ["Rust type", "FnSymbol"], ["Definition", "core::clone::Clone::clone"], ["Provenance", "external metadata"]],
+      dispatch: [["Rust variant", "CallDispatch::StaticTrait"], ["Self type", "Db"], ["Trait reference", "core::clone::Clone<Db>"], ["Selected impl", "not represented"]],
+      "self-ty": [["Field", "StaticTrait::self_ty"], ["Semantic type", "Db"], ["Type form", "Ty::Adt"]],
+      "trait-ref": [["Field", "StaticTrait::trait_ref"], ["Trait", "core::clone::Clone"], ["Self", "Db"], ["Arguments", "[]"]],
+      "owner-args": [["Field", "owner_type_args"], ["Rust type", "Slice<Ptr<Ty>>"], ["Values", "[Db]"]],
+      "method-args": [["Field", "method_type_args"], ["Rust type", "Slice<Ptr<Ty>>"], ["Values", "[]"]],
+      arguments: [["Field", "ResolvedCall::arguments"], ["Rust type", "Slice<Ptr<TyExpr>>"], ["Length", "1"]],
+      ref: [["IR variant", "TyExprData::Ref"], ["Expression type", "&Dummy Db"], ["Span", "src/db.rs:107:9–23"], ["Mutability", "Shared"], ["Lifetime", "Dummy"], ["Operand", "Field"]],
+      lifetime: [["Field", "Ty::Ref::lifetime"], ["Rust variant", "Lifetime::Dummy"], ["Policy", "borrow checking deferred"]],
+      field: [["IR variant", "TyExprData::Field"], ["Expression type", "Db"], ["Span", "src/db.rs:107:9–16"], ["Owner", "Struct(DbDropGuard)"], ["Field index", "0"], ["Base", "Deref"]],
+      "field-owner": [["Field", "ResolvedField::owner"], ["Rust variant", "FieldOwner::Struct"], ["Symbol", "crate::db::DbDropGuard"]],
+      "field-index": [["Field", "ResolvedField::index"], ["Rust type", "u32"], ["Value", "0"], ["Source name", "db"]],
+      deref: [["IR variant", "TyExprData::Deref"], ["Expression type", "DbDropGuard"], ["Span", "src/db.rs:107:9–13"], ["Operand type", "&Dummy DbDropGuard"], ["Operand", "Path(Local(self))"]],
+      local: [["IR variant", "TyExprData::Path"], ["Resolution", "PathResolution::Local(self)"], ["Expression type", "&Dummy DbDropGuard"], ["Span", "src/db.rs:107:9–13"]]
+    };
+
+    const artifacts = {
+      body: {
+        title: "Completed typed body",
+        type: "CheckedBody",
+        description: "Method syntax has been consumed; dispatch and receiver adjustments are explicit.",
+        origin: "LocalFnSym::body",
+        complete: "complete",
+        diagnostics: "0",
+        readable: `fn DbDropGuard::db(&self) -> Db {
+  <Db as core::clone::Clone>::clone(
+    &/* Dummy */ (*self).db
+  )
+}
+
+result type: Db
+dispatch: static trait call`,
+        structural: `CheckedBody {
+  diagnostics: [],
+  body: Block {
+    tail: ResolvedCall {
+      target: ResolvedCallTarget {
+        function: core::clone::Clone::clone,
+        dispatch: StaticTrait {
+          self_ty: Db,
+          trait_ref: Clone<Db>,
+        },
+        owner_type_args: [Db],
+        method_type_args: [],
+      },
+      arguments: [
+        Ref {
+          mutability: Shared,
+          lifetime: Dummy,
+          expr: Field {
+            owner: DbDropGuard,
+            index: 0,
+            name: db,
+            base: Deref(Path(Local(self))),
+          },
+        },
+      ],
+      ty: Db,
+    },
+  },
+}`
+      },
+      signature: {
+        title: "Checked function signature",
+        type: "Binder<FnSig>",
+        description: "Owner and receiver information are explicit; source lifetimes use Sage's Dummy policy.",
+        origin: "LocalFnSym::sig",
+        complete: "complete",
+        diagnostics: "0",
+        readable: `fn crate::db::DbDropGuard::db(
+  self: &/* Dummy */ DbDropGuard
+) -> Db
+
+where clauses: none
+solver eligibility: Eligible`,
+        structural: `Binder {
+  generics: [],
+  value: FnSig {
+    owner_self_ty: DbDropGuard,
+    receiver: Ref {
+      owner_self_ty: DbDropGuard,
+      mutability: Shared,
+      lifetime: Dummy,
+    },
+    params: [],
+    ret: Db,
+    parameter_env: [],
+    method_candidate_eligibility: Eligible,
+  },
+}`
+      },
+      diagnostics: {
+        title: "Checking diagnostics",
+        type: "Vec<Diagnostic>",
+        description: "Completeness is reported independently from the absence of diagnostics.",
+        origin: "CheckedBody::diagnostics",
+        complete: "complete",
+        diagnostics: "0",
+        readable: `No diagnostics.
+
+Body checking completed without unsupported syntax,
+candidate-source incompleteness, ambiguity, or overflow.`,
+        structural: `[]`
+      },
+      selection: {
+        title: "Expanded module items",
+        type: "Vec<Symbol>",
+        description: "The searchable symbol skeleton produced by module expansion; bodies are not checked to build it.",
+        origin: "expanded_module_items",
+        complete: "complete",
+        diagnostics: "0",
+        readable: `crate::db::Db                 struct
+crate::db::DbDropGuard        struct
+crate::db::DbDropGuard::new   function
+crate::db::DbDropGuard::db    function  ← selected
+crate::db::DbDropGuard::drop  function
+crate::db::Shared             struct
+…`,
+        structural: `[
+  Symbol::Struct(crate::db::Db),
+  Symbol::Struct(crate::db::DbDropGuard),
+  Symbol::Function(crate::db::DbDropGuard::new),
+  Symbol::Function(crate::db::DbDropGuard::db),
+  Symbol::Function(crate::db::DbDropGuard::drop),
+  Symbol::Struct(crate::db::Shared),
+  /* … */
+]`
+      },
+      selected: {
+        title: "Selected semantic item",
+        type: "SelectedItem",
+        description: "A stable user-facing path resolves to a local function without exposing an arena or Salsa identity.",
+        origin: "semantic selector",
+        complete: "complete",
+        diagnostics: "0",
+        readable: `path: crate::db::DbDropGuard::db
+kind: associated function
+owner: crate::db::DbDropGuard
+location: src/db.rs:106
+provenance: source-written`,
+        structural: `SelectedItem::Function {
+  path: "crate::db::DbDropGuard::db",
+  owner: Some("crate::db::DbDropGuard"),
+  source: SourceLocation {
+    file: "src/db.rs",
+    line: 106,
+  },
+}`
+      },
+      field: {
+        title: "Resolved field",
+        type: "ResolvedField",
+        description: "The field expression records its semantic owner and index instead of retaining only the written name.",
+        origin: "expression checking",
+        complete: "complete",
+        diagnostics: "0",
+        readable: `expression: (*self).db
+base type: DbDropGuard
+field owner: crate::db::DbDropGuard
+field index: 0
+field type: Db`,
+        structural: `TyExpr {
+  data: Field(
+    Deref(Path(Local(self))),
+    ResolvedField {
+      owner: Struct(DbDropGuard),
+      index: 0,
+    },
+  ),
+  ty: Db,
+}`
+      },
+      candidates: {
+        title: "Method candidate discovery",
+        type: "CandidateSet",
+        description: "Candidates are discovered from the receiver, written name, and traits in scope before one is classified as applicable.",
+        origin: "resolve_method",
+        complete: "complete",
+        diagnostics: "0",
+        readable: `receiver: Db
+method name: clone
+traits in scope: [core::clone::Clone]
+
+definite candidates:
+  core::clone::Clone::clone(&Self) -> Self
+
+unknown provider present: false`,
+        structural: `CandidateSet {
+  receiver_ty: Db,
+  method_name: clone,
+  definite: [
+    TraitMethod {
+      trait_ref: Clone<Db>,
+      function: Clone::clone,
+    },
+  ],
+  unknown: false,
+}`
+      },
+      metadata: {
+        title: "External interface reads",
+        type: "MetadataObservation[]",
+        description: "Only declarations needed for dispatch are read. External function bodies are not inputs.",
+        origin: "TcxDb",
+        complete: "complete",
+        diagnostics: "0",
+        readable: `read trait signature    core::clone::Clone
+read associated items   core::clone::Clone
+read function signature core::clone::Clone::clone
+
+external callee bodies read: none`,
+        structural: `[
+  TraitSignature(core::clone::Clone),
+  AssociatedItems(core::clone::Clone),
+  FnSignature(core::clone::Clone::clone),
+]`
+      },
+      solver: {
+        title: "Trait proof response",
+        type: "SolverResponse<Proven>",
+        description: "Proof returns the operation-specific Proven value. It deliberately does not expose a selected impl.",
+        origin: "solver::solve",
+        complete: "complete",
+        diagnostics: "0",
+        readable: `operation: Prove
+goal: Db: core::clone::Clone
+
+certainty: Yes
+output: Proven
+constraints: none`,
+        structural: `SolverResponse {
+  certainty: Yes,
+  output: GoalOutput::Proven,
+  substitutions: [],
+  external_constraints: [],
+}`
+      },
+      call: {
+        title: "Resolved call target",
+        type: "ResolvedCallTarget",
+        description: "The completed IR records static trait dispatch and instantiated owner arguments.",
+        origin: "resolve_trait_method",
+        complete: "complete",
+        diagnostics: "0",
+        readable: `function: core::clone::Clone::clone
+dispatch: static trait
+Self: Db
+trait reference: Clone<Db>
+owner arguments: [Db]
+method arguments: []`,
+        structural: `ResolvedCallTarget {
+  function: core::clone::Clone::clone,
+  dispatch: StaticTrait {
+    self_ty: Db,
+    trait_ref: Clone<Db>,
+  },
+  owner_type_args: [Db],
+  method_type_args: [],
+}`
+      }
+    };
+
+    let currentArtifact = { key: "body", view: "tree" };
+    const code = document.getElementById("artifact-code");
+    const bodyTree = document.getElementById("body-tree");
+
+    function showIrProperties(node) {
+      const properties = irNodeProperties[node] || [["Node", node]];
+      const selected = document.querySelector(`[data-ir-node="${node}"]`);
+      document.querySelectorAll("[data-ir-node]").forEach(element => element.classList.remove("selected"));
+      selected.classList.add("selected");
+      document.getElementById("property-title").textContent = selected.querySelector(".ir-node-kind")?.textContent || selected.querySelector(".ir-field")?.textContent.replace(":", "") || node;
+      const list = document.getElementById("property-list");
+      list.replaceChildren();
+      properties.forEach(([name, value]) => {
+        const term = document.createElement("dt");
+        term.textContent = name;
+        const description = document.createElement("dd");
+        description.textContent = value;
+        list.append(term, description);
+      });
+    }
+
+    document.querySelectorAll("[data-ir-node]").forEach(node => {
+      node.addEventListener("click", event => {
+        event.stopPropagation();
+        showIrProperties(node.dataset.irNode);
+      });
+    });
+
+    function showArtifact(key) {
+      const artifact = artifacts[key] || artifacts.body;
+      currentArtifact.key = key;
+      document.getElementById("artifact-title").textContent = artifact.title;
+      document.getElementById("artifact-type").textContent = artifact.type;
+      document.getElementById("artifact-description").textContent = artifact.description;
+      document.getElementById("footer-origin").textContent = artifact.origin;
+      document.getElementById("footer-complete").textContent = artifact.complete;
+      document.getElementById("footer-diagnostics").textContent = artifact.diagnostics;
+      const showTree = key === "body" && currentArtifact.view === "tree";
+      bodyTree.hidden = !showTree;
+      code.hidden = showTree;
+      code.textContent = artifact[currentArtifact.view === "structural" ? "structural" : "readable"];
+
+      document.querySelectorAll(".artifact-tab").forEach(tab => {
+        tab.classList.toggle("active", tab.dataset.artifact === key);
+      });
+    }
+
+    document.querySelectorAll("[data-artifact]").forEach(element => {
+      element.addEventListener("click", () => {
+        showArtifact(element.dataset.artifact);
+        if (element.classList.contains("event")) {
+          document.querySelectorAll(".event").forEach(event => event.classList.remove("active"));
+          element.classList.add("active");
+        }
+      });
+    });
+
+    function setView(view) {
+      currentArtifact.view = view;
+      document.getElementById("tree-view").classList.toggle("active", view === "tree");
+      document.getElementById("structural-view").classList.toggle("active", view === "structural");
+      showArtifact(currentArtifact.key);
+    }
+    document.getElementById("tree-view").addEventListener("click", () => setView("tree"));
+    document.getElementById("structural-view").addEventListener("click", () => setView("structural"));
+
+    const executionSearch = document.getElementById("execution-search");
+    const eventFilter = document.getElementById("event-filter");
+    function applyExecutionFilter() {
+      const terms = executionSearch.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      const kind = eventFilter.value;
+      const events = [...document.querySelectorAll(".event")];
+      const directMatches = [];
+      events.forEach(item => {
+        const textMatches = terms.every(term => item.textContent.toLowerCase().includes(term));
+        const kindMatches = kind === "all" || item.dataset.kind === kind;
+        const matches = textMatches && kindMatches;
+        item.classList.toggle("filter-hidden", !matches);
+        if (matches) directMatches.push(item);
+      });
+
+      directMatches.forEach(item => {
+        let group = item.parentElement;
+        while (group?.classList.contains("event-children")) {
+          group.classList.remove("collapsed");
+          const parent = group.previousElementSibling;
+          if (!parent?.classList.contains("event")) break;
+          parent.classList.remove("filter-hidden");
+          group = parent.parentElement;
+        }
+      });
+
+      const status = document.getElementById("execution-filter-status");
+      const filtering = terms.length > 0 || kind !== "all";
+      status.textContent = filtering ? `${directMatches.length} matching operation${directMatches.length === 1 ? "" : "s"}` : `${events.length} operations in this request`;
+      status.classList.toggle("empty", filtering && directMatches.length === 0);
+    }
+    executionSearch.addEventListener("input", applyExecutionFilter);
+    eventFilter.addEventListener("change", applyExecutionFilter);
+
+    function setBranch(toggle, expanded) {
+      const children = document.getElementById(toggle.dataset.target);
+      children.classList.toggle("collapsed", !expanded);
+      toggle.textContent = expanded ? "▼" : "▶";
+      toggle.setAttribute("aria-expanded", String(expanded));
+    }
+
+    document.querySelectorAll(".branch-toggle").forEach(toggle => {
+      const toggleBranch = event => {
+        event.stopPropagation();
+        setBranch(toggle, toggle.getAttribute("aria-expanded") !== "true");
+      };
+      toggle.addEventListener("click", toggleBranch);
+      toggle.addEventListener("keydown", event => {
+        if (event.key === "Enter" || event.key === " ") toggleBranch(event);
+      });
+    });
+
+    document.getElementById("expand-all").addEventListener("click", () => {
+      document.querySelectorAll(".branch-toggle").forEach(toggle => setBranch(toggle, true));
+    });
+    document.getElementById("collapse-all").addEventListener("click", () => {
+      document.querySelectorAll(".branch-toggle").forEach(toggle => setBranch(toggle, false));
+    });
+
+    const workspace = document.querySelector(".workspace");
+    const tracePanel = document.getElementById("trace-panel");
+    const traceResizer = document.getElementById("trace-resizer");
+    traceResizer.addEventListener("pointerdown", event => {
+      traceResizer.setPointerCapture(event.pointerId);
+      traceResizer.classList.add("dragging");
+    });
+    traceResizer.addEventListener("pointermove", event => {
+      if (!traceResizer.hasPointerCapture(event.pointerId)) return;
+      const bounds = workspace.getBoundingClientRect();
+      const width = Math.max(300, Math.min(bounds.width - 560, bounds.right - event.clientX));
+      workspace.style.setProperty("--trace-width", `${width}px`);
+    });
+    traceResizer.addEventListener("pointerup", event => {
+      traceResizer.releasePointerCapture(event.pointerId);
+      traceResizer.classList.remove("dragging");
+    });
+
+    function updateGrowButtons() {
+      document.querySelectorAll("[data-grow-target]").forEach(button => {
+        const target = document.getElementById(button.dataset.growTarget);
+        const grown = document.fullscreenElement === target || target.classList.contains("grown-panel");
+        button.textContent = grown ? "↙" : "↗";
+        button.title = grown ? "Restore panel" : "Grow panel";
+        button.setAttribute("aria-label", grown ? "Restore panel" : "Grow panel");
+      });
+    }
+
+    document.querySelectorAll("[data-grow-target]").forEach(button => {
+      button.addEventListener("click", async event => {
+        event.stopPropagation();
+        const target = document.getElementById(button.dataset.growTarget);
+        if (document.fullscreenElement === target) {
+          await document.exitFullscreen();
+        } else if (target.classList.contains("grown-panel")) {
+          target.classList.remove("grown-panel");
+        } else if (target.requestFullscreen) {
+          try {
+            await target.requestFullscreen();
+          } catch (_) {
+            document.querySelectorAll(".grown-panel").forEach(panel => panel.classList.remove("grown-panel"));
+            target.classList.add("grown-panel");
+          }
+        } else {
+          document.querySelectorAll(".grown-panel").forEach(panel => panel.classList.remove("grown-panel"));
+          target.classList.add("grown-panel");
+        }
+        updateGrowButtons();
+      });
+    });
+    document.addEventListener("fullscreenchange", updateGrowButtons);
+    document.addEventListener("keydown", event => {
+      if (event.key !== "Escape" || document.fullscreenElement) return;
+      document.querySelectorAll(".grown-panel").forEach(panel => panel.classList.remove("grown-panel"));
+      updateGrowButtons();
+    });
+
+    const symbolSearch = document.getElementById("symbol-search");
+    function setSymbolBranch(toggle, expanded) {
+      const children = document.getElementById(toggle.dataset.target);
+      children.classList.toggle("collapsed", !expanded);
+      toggle.textContent = expanded ? "▼" : "▶";
+      toggle.setAttribute("aria-expanded", String(expanded));
+    }
+
+    document.querySelectorAll(".symbol-toggle").forEach(toggle => {
+      const toggleBranch = event => {
+        event.stopPropagation();
+        setSymbolBranch(toggle, toggle.getAttribute("aria-expanded") !== "true");
+      };
+      toggle.addEventListener("click", toggleBranch);
+      toggle.addEventListener("keydown", event => {
+        if (event.key === "Enter" || event.key === " ") toggleBranch(event);
+      });
+    });
+
+    function applySymbolFilter() {
+      const terms = symbolSearch.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      const rows = [...document.querySelectorAll(".tree [data-search]")];
+      const matches = [];
+      rows.forEach(row => {
+        const visible = terms.every(term => row.dataset.search.includes(term));
+        row.classList.toggle("filter-hidden", !visible);
+        if (visible) matches.push(row);
+      });
+
+      if (terms.length) {
+        matches.forEach(row => {
+          let group = row.parentElement;
+          while (group?.classList.contains("symbol-children")) {
+            const parent = group.previousElementSibling;
+            if (!parent?.classList.contains("tree-label")) break;
+            parent.classList.remove("filter-hidden");
+            const toggle = parent.querySelector(".symbol-toggle");
+            if (toggle) setSymbolBranch(toggle, true);
+            group = parent.parentElement;
+          }
+        });
+      }
+
+      const status = document.getElementById("symbol-filter-status");
+      status.textContent = terms.length ? `${matches.length} matching symbol${matches.length === 1 ? "" : "s"}` : "Showing the example symbol tree";
+      status.classList.toggle("empty", terms.length > 0 && matches.length === 0);
+    }
+    symbolSearch.addEventListener("input", applySymbolFilter);
+
+    document.querySelectorAll(".symbol:not(.active)").forEach(symbol => {
+      symbol.addEventListener("click", () => {
+        symbolSearch.value = "";
+        applySymbolFilter();
+      });
+    });
+
+    showIrProperties("checked");
+    showArtifact("body");
+  </script>
+</body>
+</html>

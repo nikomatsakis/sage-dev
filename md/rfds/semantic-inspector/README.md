@@ -113,6 +113,30 @@ flowchart TD
 The observation contains everything needed for rendering. Rendering it must
 not execute additional semantic queries.
 
+### Interaction mockup
+
+An [interactive browser mockup](./mockup.html) explores the first, deliberately
+narrower review experience using representative `DbDropGuard::db` data. It
+focuses on a single cold execution: search for a symbol, inspect its completed
+result, and select the recorded operations to examine their intermediate
+structures. The mockup is not connected to Sage and does not claim that every
+displayed observation is implemented yet.
+
+The prototype intentionally leaves persistent edits, invalidation explanations,
+and revision comparison out of the primary interaction. Those remain later
+extensions after the initial execution and its semantic products are
+inspectable.
+
+<iframe
+  src="./mockup.html"
+  title="Semantic Inspector interaction mockup"
+  allowfullscreen
+  style="width: 100%; height: 900px; border: 1px solid #dbe1dc; border-radius: 8px; background: white;"
+></iframe>
+
+Use the [full-page mockup](./mockup.html) when the embedded viewport is too
+narrow.
+
 ## Detailed plans
 
 ### Persistent workspace host
@@ -215,7 +239,16 @@ that it can follow the typed IR and solver APIs already present.
 
 ### Human-readable typed IR
 
-The inspector gets a deterministic pretty-printer designed for review:
+The inspector gets a deterministic structural explorer designed for review.
+The default body view is an expandable tree which mirrors the completed typed
+IR: fields and collection elements are edges, expression variants are nodes,
+and every expression displays its semantic type. Selecting a node shows its
+complete review properties, including its Rust representation, precise type,
+span, resolved definition or field, dispatch form, substitutions, lifetime,
+and other variant-specific data. Source-like syntax and raw debug structure are
+secondary renderings, not the primary representation.
+
+The explorer and its optional pretty-printers follow these rules:
 
 - names are stable and sufficiently qualified to disambiguate;
 - inferred type and generic arguments can be shown without raw allocation
@@ -243,12 +276,17 @@ implementation log. Each event records at least:
 - a phase: workspace bootstrap, selection, requested analysis, or rendering;
 - a source: Salsa execution, Sage semantic lookup, or external metadata;
 - a stable operation family; and
-- a stable semantic key.
+- a stable semantic key; and
+- its dynamic parent operation, when it ran while servicing another recorded
+  operation.
 
 Useful event classes include:
 
-1. **Salsa execution:** a tracked function body actually ran. A memoized or
-   backdated value which did not execute emits no such event.
+1. **Salsa query request:** one tracked function was requested by its parent.
+   Its disposition distinguishes a function body which actually executed from
+   a memoized value which was reused. Reuse may include a memo validated in the
+   current request or a value already known to be valid for the current
+   revision.
 2. **Semantic lookup:** a public keyed boundary was requested, such as impl
    candidates for one trait and optional self head.
 3. **External metadata:** a typed `TcxDb` operation requested one stable
@@ -259,9 +297,37 @@ data but is not a durable assertion format. The recorder projects supported
 query families into stable keys. An optional raw mode may accompany the
 structured trace when debugging an unmapped query.
 
-The default presentation is grouped by phase and normalized as a set or
-multiset. Execution order is available only as an explicit diagnostic mode;
-concurrent scheduling order is not a semantic or incremental contract.
+The interactive presentation is a rooted dynamic execution tree. Its root is
+the user's inspection request; children are the Salsa queries, semantic
+operations, solver work, or metadata reads requested while executing their
+parent. This is the tree for one execution, not Salsa's complete persistent
+dependency graph. A flat `WillExecute` sequence is insufficient to recover the
+tree: the recorder must capture the active parent or use explicit nested Sage
+operation spans rather than inferring parentage from adjacent events.
+
+The tree must remain usable for deep executions. Every branch is independently
+collapsible, with expand-all and collapse-all actions. The execution pane can
+be widened with a draggable divider and promoted to a full-screen focused view;
+neither operation reruns semantic work or changes the recorded observation.
+
+Every major inspection panel—including symbol search, source, typed result, IR
+tree, selected-node properties, and execution tree—has the same grow/restore
+affordance. Growing a panel gives it the full available viewport so deeply
+nested or wide structures can be reviewed without changing the inspection
+request or executing additional semantic work.
+
+`WillExecute` and `DidValidateMemoizedValue` are useful evidence for executed
+and validated queries, respectively, but they are not a complete query-request
+API: in particular, an already-verified memo may be returned without either
+event describing the fetch. If the selected Salsa version does not expose a
+structured fetch hook, the inspector must add explicit request spans around
+the stable query families it promises to show (or contribute the required hook
+upstream). It must not silently present “no execution event” as proof that no
+query was requested.
+
+Test assertions normally normalize the same events as a set or multiset.
+Execution order and sibling order are available only as explicit diagnostic
+modes; concurrent scheduling order is not a semantic or incremental contract.
 
 Selection and requested analysis remain separate phases so a test can
 distinguish the cost of finding an item from the cost of checking it.
