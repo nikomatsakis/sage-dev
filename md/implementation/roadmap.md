@@ -158,13 +158,18 @@ incremental work.
 
 ### Goal and acceptance target
 
-Provide a persistent `cargo sage inspect` service and CLI that selects a
-semantic item, prints readable signatures or completed Typed IR, records
-structured semantic/Salsa/metadata queries, and reruns against edits in the
-same database.
+Provide a `cargo sage inspect` web application with an Axum backend connected
+to a live Sage database and a JavaScript frontend which fetches semantic
+products on demand from a reusable typed service. Its first review checkpoint
+browses the selected target's local symbol tree, shows concrete IR, signatures,
+Typed IR, and other supported semantic results, and follows retained semantic
+identities into a metadata-only external-symbol view with navigable parents and
+children.
 
-Acceptance includes cold, warm, relevant-edit, and unrelated-edit tests whose
-traces use stable semantic event keys rather than raw Salsa debug strings.
+Full-slice acceptance later adds complete structured query lifecycle capture
+and cold, warm, relevant-edit, and unrelated-edit tests in one persistent
+database. Traces use stable semantic event keys plus raw fallback rather than
+silently relying on Salsa debug strings.
 
 ### Why this slice is next
 
@@ -175,9 +180,13 @@ dependencies.
 
 ### Scope and non-goals
 
-The first client is a batch and interactive CLI over a reusable service. An
-LSP adapter is a later client. Human-readable rendering does not replace or
-normalize the exact oracle representation.
+The first client is an Axum loopback backend and JavaScript application over a
+reusable service. The choice of JavaScript framework remains an implementation
+detail.
+Salsa lifecycle integration, watch mode, persistent revisions, and invalidation
+explanations follow only after semantic results and cross-symbol navigation are
+usable. An LSP adapter is a later client. Human-readable rendering does not
+replace or normalize the exact oracle representation.
 
 ### Affected architecture
 
@@ -191,15 +200,24 @@ normalize the exact oracle representation.
 - the architecture evidence vocabulary from the in-flight slice;
 - stable semantic selectors, with source-position selection building on
   [Resolve at Position]; and
-- the existing query and metadata logging hooks.
+- the existing symbol-keyed semantic and external metadata boundaries.
+
+The first checkpoint does not depend on complete Salsa request hooks. Those are
+introduced with the later lifecycle-observation stage.
 
 ### High-level implementation plan
 
-1. Pin owned observation and stable trace-event contracts.
-2. Extract a persistent workspace host and read-only analysis view.
-3. Implement semantic selection and inspection operations.
-4. Add deterministic human rendering and CLI clients.
-5. Add watch/edit experiments and retain a clean future LSP boundary.
+1. Pin structural reflection, semantic-reference navigation, selectors, and
+   per-kind product availability.
+2. Implement the local symbol tree and core concrete/signature/Typed IR
+   products.
+3. Add deterministic structural rendering and the metadata-only external
+   symbol view.
+4. Add the Axum/JavaScript client over a live, one-revision inspection host,
+   fetching branches and products on demand.
+5. Add complete Salsa lifecycle observation, then persistent revisions and
+   edit experiments.
+6. Retain a clean future LSP boundary throughout.
 
 ### Progress
 
