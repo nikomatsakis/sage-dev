@@ -161,15 +161,18 @@ incremental work.
 Provide a `cargo sage inspect` web application with an Axum backend connected
 to a live Sage database and a JavaScript frontend which fetches semantic
 products on demand from a reusable typed service. Its first review checkpoint
-browses the selected target's local symbol tree, shows concrete IR, signatures,
-Typed IR, and other supported semantic results, and follows retained semantic
-identities into a metadata-only external-symbol view with navigable parents and
-children.
+is frontend-only: the complete page structure and navigation operate against
+one reviewed exact API fixture bundle through a strict dummy server. The next
+checkpoint independently implements typed Rust DTOs, scripted service values,
+Axum transport, embedded assets, and the inspector command. Later checkpoints
+replace those scripts in order: workspace symbols, selected-symbol products,
+then local/external navigation, metadata, and focused operations.
 
 Full-slice acceptance later adds complete structured query lifecycle capture
 and cold, warm, relevant-edit, and unrelated-edit tests in one persistent
-database. Traces use stable semantic event keys plus raw fallback rather than
-silently relying on Salsa debug strings.
+database. Checked traces use stable semantic event keys plus a stable unmapped
+category; raw Salsa debug strings remain failure artifacts rather than golden
+output.
 
 ### Why this slice is next
 
@@ -180,13 +183,15 @@ dependencies.
 
 ### Scope and non-goals
 
-The first client is an Axum loopback backend and JavaScript application over a
-reusable service. The choice of JavaScript framework remains an implementation
-detail.
-Salsa lifecycle integration, watch mode, persistent revisions, and invalidation
-explanations follow only after semantic results and cross-symbol navigation are
-usable. An LSP adapter is a later client. Human-readable rendering does not
-replace or normalize the exact oracle representation.
+The destination client is an Axum loopback backend and JavaScript application
+over a reusable service. Slice 1 deliberately has no Axum or Rust backend. The
+choice of JavaScript framework remains an implementation detail. Fixture data
+crosses the same JSON resource boundary as later real data; it is not embedded
+in view code. Salsa lifecycle integration follows only after real semantic
+products and cross-symbol navigation are usable. Watch mode, persistent
+revisions, and invalidation explanations follow lifecycle capture. An LSP
+adapter is a later client. Human-readable rendering does not replace or
+normalize the exact oracle representation.
 
 ### Affected architecture
 
@@ -202,22 +207,29 @@ replace or normalize the exact oracle representation.
   [Resolve at Position]; and
 - the existing symbol-keyed semantic and external metadata boundaries.
 
-The first checkpoint does not depend on complete Salsa request hooks. Those are
-introduced with the later lifecycle-observation stage.
+The fixture shell, symbol, product, and navigation checkpoints do not depend on
+complete Salsa request hooks. Those are introduced only after the operation
+surface they must observe is real.
 
 ### High-level implementation plan
 
-1. Pin structural reflection, semantic-reference navigation, selectors, and
-   per-kind product availability.
-2. Implement the local symbol tree and core concrete/signature/Typed IR
-   products.
-3. Add deterministic structural rendering and the metadata-only external
-   symbol view.
-4. Add the Axum/JavaScript client over a live, one-revision inspection host,
-   fetching branches and products on demand.
-5. Add complete Salsa lifecycle observation, then persistent revisions and
-   edit experiments.
-6. Retain a clean future LSP boundary throughout.
+1. Implement the complete React page, semantic URLs, and interactions against
+   one reviewed exact API fixture bundle and a strict dummy server. No Axum,
+   Rust DTO, inspector command, or Sage database exists in this slice.
+2. Add typed Rust DTOs and service boundaries, scripted values independent of
+   the expected JSON, exact Axum/Snapbox tests, embedded assets, the inspector
+   command, and one real-process smoke flow.
+3. Replace the scripted session and symbol resources with a live host, one
+   eager detail-free real local symbol index, browser-local search and
+   disclosure, and real absolute-path selection.
+4. Add real source, concrete, signature, body, and diagnostic products through
+   structural reflection, plus source-position selection.
+5. Activate opaque local/external navigation, dependency metadata, and focused
+   impl/solver operations.
+6. Add complete Salsa request/return lifecycle observation and the execution
+   tree across that operation surface.
+7. Add watching, coherent visible-demand refresh, persistent revision/input/run
+   history, and edit comparisons, retaining a clean future LSP boundary.
 
 ### Progress
 

@@ -13,8 +13,11 @@ every implementation detail.
 - The draft [Semantic Inspector
   RFD](../../rfds/semantic-inspector/README.md) proposes a web-backed local and
   external symbol browser for concrete IR, signatures, Typed IR, and other
-  semantic results. Persistent edits and incremental query traces follow after
-  that result-inspection slice; an LSP adapter remains a future client.
+  semantic results. A reviewed exact JSON contract first drives frontend tests
+  through a strict dummy server; independently constructed typed backend
+  values and Axum snapshots meet it at the same bytes in the following slice.
+  Persistent edits and incremental query traces follow after result
+  inspection; an LSP adapter remains a future client.
 
 Human-readable inspection supplements exact oracle conformance; it does not
 replace or relax it.

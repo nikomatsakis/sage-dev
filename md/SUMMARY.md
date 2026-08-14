@@ -54,6 +54,7 @@
   - [Implementation plan and status](./rfds/TEMPLATE/implementation.md)
 - [Draft](./rfds/draft.md)
   - [Semantic Inspector](./rfds/semantic-inspector/README.md)
+    - [JSON protocol](./rfds/semantic-inspector/protocol.md)
     - [Web application walkthrough](./rfds/semantic-inspector/web-application.md)
     - [Implementation plan and status](./rfds/semantic-inspector/implementation.md)
   - [Trait Impl Candidate Discovery](./rfds/trait-impl-candidate-discovery/README.md)

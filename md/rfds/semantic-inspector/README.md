@@ -18,8 +18,10 @@
 - [Trait Impl Candidate Discovery](../trait-impl-candidate-discovery/README.md)
   — a motivating consumer of edit-and-query dependency tests
 
-**Detailed sub-RFD:**
+**Detailed sub-RFDs:**
 
+- [JSON Protocol](./protocol.md) — the normative `/api/v1` routes, DTOs,
+  serialization rules, trace projection, and exact fixture format
 - [Web Application Walkthrough](./web-application.md) — follows each visible
   part of the mockup through its JavaScript assembly, JSON request, inspection
   service operation, and Sage/Salsa query
@@ -27,11 +29,15 @@
 ## TL;DR
 
 - Add a reusable semantic-inspection service, an Axum backend connected to a
-  live Sage database, and a JavaScript browser client opened by
+  live Sage database, and a React/TypeScript browser client opened by
   `cargo sage inspect`.
 - Browse the selected target's local symbol tree and inspect source concrete
   syntax, expanded concrete IR, signatures, Typed IR, and other supported
   symbol-keyed results on demand.
+- Have the typed backend advertise a complete product catalog for each selected
+  symbol; the browser never infers semantic availability from kind or origin.
+- Pin the `/api/v1` boundary with reviewed exact JSON fixtures which are
+  backend expectations and frontend test inputs.
 - Preserve semantic references in the reflected result so definitions named by
   signatures, types, and Typed IR are clickable navigation targets.
 - Keep external symbols out of the workspace tree. They remain reachable from
@@ -96,12 +102,15 @@ flowchart TD
     Select --> Inspect[Inspection operation]
     Inspect --> Observation[Owned structured observation]
     Observation --> Axum[Axum JSON API]
-    Axum --> Web[JavaScript browser client]
+    Axum --> Web[React browser client]
     Observation --> Tests[Test assertions]
     Observation -. future .-> Lsp[LSP adapter]
 ```
 
-The browser fetches symbol-tree branches and inspection products on demand. A
+The browser eagerly fetches one detail-free index of the selected target's
+represented local symbols so the complete workspace tree can be searched and
+filtered without further requests. Signatures, bodies, external metadata, and
+other semantic products remain separate and are fetched only when selected. A
 returned observation contains everything needed to render and expand that
 product; ordinary client-side rendering must not execute additional semantic
 queries.
@@ -130,6 +139,11 @@ narrow.
 This section describes the complete inspector, independent of the order in
 which it is implemented. [Implementation](./implementation.md) inventories all
 work required for this destination and then groups it into reviewable slices.
+
+The `SI-A<n>` callouts embedded below are stable **design anchors**. Each
+states a load-bearing rule and the evidence required to establish it. The
+explanatory text may move or grow without changing an anchor's identity;
+changing the rule or its required evidence is an explicit RFD revision.
 
 ### Persistent inspection host
 
@@ -169,10 +183,19 @@ present a reload as fine-grained incremental reuse.
 The rustc process supplies authoritative dependency metadata only. It does not
 type-check local Sage bodies or solve Sage trait goals.
 
+<a id="si-a1"></a>
+> **SI-A1 — One live host defines an incremental session.** Ordinary source
+> edits update inputs in the same Sage database. Cargo/dependency changes which
+> reconstruct the host are reported as reloads and never presented as
+> fine-grained reuse.
+>
+> **Required verification:** Cold, warm, relevant-edit, unrelated-edit, and
+> reload tests retain and identify the host used for every run.
+
 The complete browser-to-server update and history path, including the
 distinction between a filesystem edit batch and the Salsa revisions produced
 by its input setters, is defined by the [Web Application
-Walkthrough](./web-application.md#8-what-happens-when-source-changes).
+Walkthrough](./web-application.md#9-what-happens-when-source-changes).
 
 ### Axum backend and on-demand API
 
@@ -183,9 +206,9 @@ remote bind or source mutation through HTTP.
 
 The API is product-oriented rather than a serialized database dump:
 
-- opening or filtering the root view requests local symbol summaries;
-- expanding a module, trait, or impl requests that symbol's represented
-  children;
+- opening the workspace view requests one complete local `SymbolSummary`
+  index, with parent edges and no semantic detail;
+- expanding or filtering the local tree is then browser-local;
 - selecting a tab requests that symbol's concrete IR, signature, Typed IR, or
   other supported product;
 - following a semantic reference requests the destination symbol and its
@@ -195,9 +218,20 @@ The API is product-oriented rather than a serialized database dump:
   truncated.
 
 Responses use the same owned observation structures used by service tests,
-with an HTTP envelope for revision, success, unavailable, incomplete, and
-failure status. HTTP handlers do not implement semantic selection, reflection,
-or pretty-printing themselves.
+with an HTTP envelope for revision and `available`, `unavailable`,
+`incomplete`, `failed`, or `cancelled` result status. HTTP status remains a
+separate transport fact. HTTP handlers do not implement semantic selection,
+reflection, or pretty-printing themselves.
+
+<a id="si-a2"></a>
+> **SI-A2 — Axum is a transport over typed inspection.** Semantic selection,
+> product availability, reflection, and query execution live in the typed
+> inspection service. Axum decodes requests, invokes that service, and
+> serializes its owned results.
+>
+> **Required verification:** Service tests exercise the same response DTOs as
+> Axum contract tests, and handler tests prove that transport code performs no
+> independent Sage queries.
 
 Navigation references cross the JSON boundary as opaque, session-scoped
 handles for typed `NavigationTarget` values. The display path is a label, not
@@ -214,19 +248,76 @@ The concrete resources, response envelope, update coordinator, and retained
 revision/run records are specified in the [Web Application
 Walkthrough](./web-application.md).
 
-### JavaScript frontend
+<a id="si-a3"></a>
+> **SI-A3 — Exact JSON fixtures are the shared client/server contract.** A
+> reviewed, versioned API fixture is the exact expected output of backend tests
+> and the input of frontend tests. Neither side generates or maintains an
+> alternate semantic fixture model.
+>
+> **Required verification:** Snapbox compares the actual Axum response bytes
+> with the reviewed fixture; a strict static fixture server feeds the same
+> bytes to browser tests and rejects unexpected requests; a small real-process
+> smoke test crosses both implementations.
 
-The frontend is a JavaScript application served by Axum. It may use a small
-framework or browser APIs directly; the RFD does not select a framework. If a
-build step is used, Axum serves the resulting static assets and does not
-require a separate development server in normal `cargo sage inspect` use.
+Every request emits a concise structured audit log to the terminal running
+`cargo sage inspect`. Before complete Salsa tracing exists, this records the
+request identifier, route family, fixture or live provider, database revision,
+status, duration, and useful demand counts such as the number of symbol
+summaries returned. It must make unexpected product requests visible without
+dumping source text or full observations. Slice 6 enriches this coarse audit
+trail with the complete dynamic query tree; it does not retroactively make the
+earlier log a complete cache-hit trace.
 
-The frontend owns presentation state such as the selected symbol, open tabs,
-expanded tree nodes, filters, and back/forward navigation. It requests symbol
-branches and semantic products only when the user asks to see them, caches
-responses for their reported revision, and renders unavailable or incomplete
-status explicitly. It contains no Sage semantic logic and never infers a
-symbol identity from display text.
+### React frontend
+
+The frontend is a React and TypeScript application built with Vite, managed by
+npm with a committed lockfile, and served by Axum. The production bundle is
+embedded in the executable with
+`rust-embed`; a frontend development server may proxy to Axum during UI work,
+but normal `cargo sage inspect` use starts only the Rust process. React is an
+implementation choice made to get the first usable tool running quickly. It
+can be replaced without changing the typed inspection service or JSON API.
+
+React Router makes the URL the source of truth for the current semantic view.
+Selecting a local or external symbol, changing the selected semantic product,
+switching the top-level view, or growing a panel into the viewport creates a
+browser-history location as appropriate. Back, Forward, direct loading, and
+reload therefore restore that view. Rapidly changing filter text uses replace
+rather than creating one history entry per keystroke. Disclosure nodes,
+splitter widths, and other transient presentation details remain local state.
+
+The frontend eagerly requests the complete local symbol-summary index, then
+filters and expands that detail-free tree locally. It requests semantic
+products only when the user asks to see them, caches responses for their
+reported revision, and renders unavailable or incomplete status explicitly.
+It contains no Sage semantic logic and never infers a symbol identity from
+display text.
+
+<a id="si-a4"></a>
+> **SI-A4 — Product availability is server-authored.** A selected-symbol
+> response contains a complete, revision-tagged product catalog. The client
+> renders, disables, or omits views from `available`, `unavailable(reason)`,
+> and `not-applicable` entries; it never derives semantic availability from a
+> symbol's kind, origin, display text, or an empty product value.
+>
+> **Required verification:** Dummy-server browser tests cover representative
+> local and external catalogs and prove that an unavailable body is not
+> requested.
+
+<a id="si-a5"></a>
+> **SI-A5 — The URL identifies the current semantic view.** Selection, active
+> product, top-level view, grown panel, and search text survive reload and
+> browser navigation. Rapid filter changes replace history; disclosure and
+> sizing state remain local.
+>
+> **Required verification:** Browser tests cover direct load, reload,
+> Back/Forward, and push-versus-replace behavior.
+
+The initial testing stack is Vitest plus React Testing Library and browser
+tests against the strict static API-fixture server. Playwright also drives a
+small real-process smoke suite against Axum. Those tools are replaceable client
+details; the exact API bytes, observable URL, JSON demand, and rendering
+contracts are not.
 
 The [Web Application Walkthrough](./web-application.md) maps every mockup view
 through its JavaScript and API request to the semantic query which supplies it,
@@ -241,18 +332,18 @@ have explicit representations. A derive handles ordinary structure; semantic
 implementations give symbols, names, and spans stable readable forms and add
 summaries to recursively reflected types.
 
-The structural view is lossless with respect to the inspected Rust value. It
-uses the actual struct field names and enum variant payloads and does not
-replace them with a conceptual schema. `Option<T>`, `Ptr<T>`, `Slice<T>`, and
-other wrappers remain visible nodes; their contained values are recursively
-inspectable. A `Ptr<Ty>` therefore expands to the precise `Ty` variant and all
-of that variant's fields, and a `Slice<Ptr<Ty>>` expands each element in the
-same way. Raw addresses and process-specific allocation indexes are omitted;
-shared pointees may instead carry a display-local identity so repetition and
-cycles remain intelligible. Storage infrastructure is the other explicit
-exception: `Stashed<T>` exposes its semantic `root`, but the backing `Stash`
-and cached fingerprint are not part of the inspected language value and may be
-omitted.
+The structural view is faithful to the inspected Rust value modulo documented
+semantic projections and explicit truncation. It uses the actual struct field
+names and enum variant payloads and does not replace them with a conceptual
+schema. `Option<T>`, `Ptr<T>`, `Slice<T>`, and other wrappers remain visible
+nodes; their contained values are recursively inspectable. A `Ptr<Ty>`
+therefore expands to the precise `Ty` variant and all of that variant's fields,
+and a `Slice<Ptr<Ty>>` expands each element in the same way. Raw addresses and
+process-specific allocation indexes are omitted; shared pointees may instead
+carry a display-local identity so repetition and cycles remain intelligible.
+Storage infrastructure is the other explicit exception: `Stashed<T>` exposes
+its semantic `root`, but the backing `Stash` and cached fingerprint are not
+part of the inspected language value and may be omitted.
 
 Semantic summaries are additive. For example, a `Ty::Adt` node may show
 `DbDropGuard` beside the variant name and make its `Symbol` child navigable,
@@ -273,6 +364,32 @@ Reflection is bounded by depth and total node count, preserves truncation as an
 explicit node, and cannot invoke additional semantic operations after an
 observation is returned. The exact trait and enum names are implementation
 choices.
+
+<a id="si-a6"></a>
+> **SI-A6 — Reflection is structurally faithful and explicitly bounded.** Rust
+> fields, variants, wrappers, and semantic references remain inspectable.
+> Documented storage projections and explicit truncation are the only omitted
+> structure; readable summaries never replace it.
+>
+> **Required verification:** Coverage snapshots include every representative
+> field and `Ty` variant, semantic reference, shared value, cycle, and
+> truncation node, and fail when an unhandled field or variant is added.
+
+Structural reflection occurs while the database is available and is a named
+phase of the recorded inspection run: expanding interned or stashed semantic
+values may itself read tracked data, and those reads are dependencies of the
+observation. After reflection completes, the recorder is frozen. HTTP
+serialization, pretty-printing, and browser rendering consume only the owned
+observation and cannot execute Sage work.
+
+<a id="si-a7"></a>
+> **SI-A7 — Analysis, reflection, and rendering are distinct.** Analysis and
+> structural reflection are recorded server work. Transport serialization and
+> browser rendering occur after the observation and trace are frozen.
+>
+> **Required verification:** Trace tests assign reflection reads to the
+> reflection phase, while serialization and client expansion add no semantic
+> events.
 
 ### Semantic selectors
 
@@ -296,23 +413,47 @@ positions belongs at the client boundary. All selector forms resolve to the
 same internal `SelectedItem`; inspection operations do not care how it was
 selected.
 
-Stable display paths are user-facing identities. Internal Salsa IDs, arena
+Stable display paths are user-facing designators. Internal Salsa IDs, arena
 pointers, rustc `DefId` debug forms, and process-specific indexes must not be
 required in commands or expected output.
+
+<a id="si-a8"></a>
+> **SI-A8 — Semantic identity is retained, not reconstructed from labels.**
+> Paths and labels help users select and understand definitions; all subsequent
+> navigation and operation inputs use opaque session handles for retained typed
+> identities.
+>
+> **Required verification:** Changing a display label leaves the selected
+> symbol unchanged, and expired handles fail rather than being reparsed.
 
 ### Symbol tree and semantic navigation
 
 The main symbol tree contains represented local symbols in the selected Cargo
-target, including generated local symbols with expansion provenance. Building
-and expanding the tree may request module membership and associated-item
-queries, but it must not type-check every body. External dependency symbols do
-not appear in this tree and are not included in its search count.
+target, including generated local symbols with expansion provenance. One
+symbol-index operation eagerly walks the local module and associated-item
+membership needed to return every `SymbolSummary`, its parent edge, and its
+provenance. A represented field or associated item may have its own summary,
+but the index contains no checked signatures, field types, bodies, associated
+values, or external metadata. Expanding and filtering that index is local
+browser work. External dependency symbols do not appear in this tree and are
+not included in its search count.
+
+<a id="si-a9"></a>
+> **SI-A9 — Local discovery is eager but detail-free.** One operation returns
+> the complete represented local symbol index. Search and disclosure are then
+> browser-local; signatures, field types, bodies, associated values, impl
+> candidates, and external metadata remain on demand.
+>
+> **Required verification:** The index snapshot contains all represented local
+> symbols and provenance, while its demand trace forbids every semantic detail
+> operation named above.
 
 Signatures, semantic types, concrete and Typed IR, predicates, ownership
 relationships, and other inspected structures render every represented symbol
 reference as a navigation link. Following a link selects the retained semantic
-identity directly. Navigation provides ordinary back-to-previous and
-back-to-selected-local-symbol actions so moving through a type or call graph
+identity directly and writes its session-scoped handle to the current URL.
+Navigation provides ordinary browser Back/Forward behavior and a
+back-to-selected-local-symbol action so moving through a type or call graph
 does not lose the review context.
 
 Local and external identities have different views:
@@ -349,28 +490,42 @@ membership is the complete result of its keyed metadata query. If the client
 bounds a large rendering, it shows an explicit truncation or continuation node
 rather than relabelling the visited branch as the query result.
 
-Availability is determined by symbol origin and kind. The service reports an
-unsupported or unavailable product as structured status, allowing the client
-to disable or omit the corresponding tab without guessing from an empty value.
+The typed service constructs the selected symbol's product catalog from its
+retained identity, origin, kind, declaration shape, available metadata, and
+Sage's implementation coverage. It does not request the products to discover
+whether requesting them is meaningful. `available` means that the operation is
+supported, not that a later request is guaranteed to complete: an available
+product request can still return incomplete, failed, or cancelled after an
+edit or when analyzing erroneous input. The browser presentation follows
+[SI-A4](#si-a4).
+
+<a id="si-a15"></a>
+> **SI-A15 — Semantic product catalogs are narrow and non-eager.** The typed
+> service derives a real symbol's catalog from retained identity, origin, kind,
+> declaration shape, metadata capabilities, and implementation coverage. It
+> does not request any advertised product merely to decide availability.
+>
+> **Required verification:** Catalog snapshots cover representative local and
+> external kinds, while demand evidence forbids source, signature, body,
+> fields, items, associated-value, and impl-candidate reads not needed to
+> construct the selected-symbol summary itself.
 
 ### Inspection operations
 
-The operation set is:
+The API distinguishes four resource families:
 
-| Operation | Result |
-|---|---|
-| `item` | item kind, path, source location, and owner |
-| `concrete` | local source-written and effective expanded concrete representation plus provenance |
-| `signature` | checked semantic signature and predicates |
-| `body` | completed elaborated typed IR and diagnostics |
-| `impls` | relevant impl candidate identities and completeness |
-| `prove` | a trait proof result with `Proven` output |
-| `normalize` | an alias-normalization result with `Type` output |
+| Family | Operations or products | Result |
+|---|---|---|
+| selection | path, source position, retained symbol handle | one selected-symbol summary and product catalog |
+| symbol products | source, concrete, signature, body, fields, items | one independently requested reflected semantic value |
+| focused operations | `impls`, `prove`, `normalize` | candidate identities and completeness, `Proven`, or `Type` |
+| evidence and history | run, continuation, revision, comparison, rerun | retained observations and work records |
 
-`item`, `concrete`, `signature`, and `body` expose symbol products. `impls`,
-`prove`, and `normalize` expose focused semantic operations. `trace last`,
-revision comparison, and `rerun` expose the work and reuse behind either kind
-of inspection.
+Diagnostics are a view of the body product, not another Sage query. Immediate
+parent identity belongs to the selected-symbol summary; enumerating fields,
+items, or other children is an independent product. The concrete route and DTO
+contract for every family is specified in the [JSON
+Protocol](./protocol.md).
 
 `body` returns completed typed IR, not checking temporaries. Method syntax is
 therefore shown as its resolved call, adjustments are explicit operations,
@@ -379,6 +534,22 @@ and lifetimes follow the existing `Dummy` policy.
 `prove` and `normalize` use the solver's public operation boundary. Trait proof
 does not expose a selected impl, and normalization is input-only; the inspector
 must not invent a caller expected type as part of candidate selection.
+
+Focused operations receive opaque, typed operation-target handles emitted by
+eligible reflected nodes. The browser does not construct a trait goal or alias
+type by parsing display text. A later free-form query editor may mint the same
+typed targets through a server-side parser, but that is not required here.
+
+<a id="si-a10"></a>
+> **SI-A10 — Focused operations preserve typed inputs and solver boundaries.**
+> Reflected trait, goal, alias, and self-type nodes carry opaque operation
+> targets. `impls`, `prove`, and input-only `normalize` accept those targets;
+> proof does not reveal a selected impl and normalization has no expected-type
+> input.
+>
+> **Required verification:** Exact request snapshots contain only retained
+> typed handles, and service/query traces prove the public impl and solver
+> boundaries were used without extra caller inputs.
 
 The service returns a typed `InspectionResult` or equivalent observation
 value. HTTP, text, test, and future LSP adapters consume that result. The exact
@@ -421,15 +592,25 @@ Pretty-printer snapshots test readability and stability. Exact oracle tests
 continue to compare independently emitted shared IR by textual identity. A
 pretty-printer snapshot passing cannot make an oracle mismatch pass.
 
+<a id="si-a14"></a>
+> **SI-A14 — Inspection evidence cannot weaken conformance.** Inspector JSON,
+> reflection snapshots, and navigation transcripts are Sage debugging
+> artifacts. Rustc and Sage oracle adapters remain thin and their shared output
+> is compared independently by textual identity.
+>
+> **Required verification:** Inspector adapters are absent from the oracle
+> comparison path, and an inspector snapshot cannot update or filter an oracle
+> expectation.
+
 ### Structured query traces
 
 The trace answers “what work did this request cause?” rather than dumping an
 implementation log. Each event records at least:
 
-- a phase: workspace bootstrap, selection, requested analysis, or rendering;
+- a phase: workspace bootstrap, selection, requested analysis, or reflection;
 - a source: Salsa execution, Sage semantic lookup, or external metadata;
 - a stable operation family; and
-- a stable semantic key; and
+- a stable semantic key;
 - its dynamic parent operation, when it ran while servicing another recorded
   operation.
 
@@ -449,6 +630,17 @@ The current raw `Debug` rendering of a Salsa database key is useful diagnostic
 data but is not a durable assertion format. The recorder projects supported
 query families into stable keys. An optional raw mode may accompany the
 structured trace when debugging an unmapped query.
+
+<a id="si-a11"></a>
+> **SI-A11 — Promised semantic demand is completely observable.** Every
+> supported Salsa request, Sage semantic operation, solver operation, and
+> external metadata read appears under its dynamic parent with execution,
+> validation, or reuse disposition. Unmapped work remains visible through a
+> stable fallback category rather than disappearing.
+>
+> **Required verification:** Tests cover already-current memo fetches, balanced
+> request/return parentage, the unmapped fallback, and required and forbidden
+> semantic demand.
 
 The interactive presentation is a rooted dynamic execution tree. Its root is
 the user's inspection request; children are the Salsa queries, semantic
@@ -478,14 +670,32 @@ the stable query families it promises to show (or contribute the required hook
 upstream). It must not silently present “no execution event” as proof that no
 query was requested.
 
-Test assertions normally normalize the same events as a set or multiset.
-Execution order and sibling order are available only as explicit diagnostic
-modes; concurrent scheduling order is not a semantic or incremental contract.
+Checked evidence uses a defined deterministic projection. It preserves event
+parentage, multiplicity, stable operation families and keys, and disposition.
+Each producer marks its child group sequential or unordered. Sequential edges
+preserve capture order. Unordered child subtrees are recursively serialized
+and byte-sorted with duplicates retained, as specified by the [JSON
+protocol](./protocol.md#run-observations-and-traces). Unmapped events use a
+stable code-generated ingredient name when available. Raw arrival order,
+timing, and implementation-specific Salsa debug keys remain failure artifacts,
+not golden output. A trace containing an unknown fallback ingredient cannot
+claim a closed exact dependency contract until that family is mapped.
 
-Selection and requested analysis remain separate phases so a test can
-distinguish the cost of finding an item from the cost of checking it.
-Rendering consumes the already-owned observation after the analysis trace is
-frozen. A test fails if ordinary rendering needs an unreported semantic query.
+<a id="si-a12"></a>
+> **SI-A12 — Exact evidence does not pin non-semantic scheduling.** Reviewed
+> transcripts are compared by textual identity after the fixed projection
+> above. The projection may omit only fields declared non-contractual here; it
+> never adapts to a particular test result.
+>
+> **Required verification:** Concurrent sibling reorderings leave the checked
+> transcript unchanged, while changes to parentage, multiplicity, semantic
+> keys, dispositions, or required/forbidden demand fail it.
+
+Selection, requested analysis, and structural reflection remain separate
+phases so a test can distinguish the cost of finding an item, checking it, and
+turning the returned semantic value into an owned observation. Serialization
+and browser rendering consume that observation after the trace is frozen. A
+test fails if either needs an unreported semantic query.
 
 ### Incremental experiments
 
@@ -508,6 +718,16 @@ marks the previous result stale. It need not execute continuously after every
 keystroke: rerunning on an explicit command or after a debounce is sufficient.
 What matters is that the same database receives the edit.
 
+<a id="si-a13"></a>
+> **SI-A13 — Revisions record edits and demanded work separately.** Advancing
+> an input revision does not imply that a query ran. Runs are attached only to
+> actual user or visible-refresh demand, and a workspace reload starts a new
+> database epoch.
+>
+> **Required verification:** One retained host demonstrates revisions with
+> zero runs, multiple runs in one revision, relevant and unrelated edits, and
+> an explicitly separate reload epoch.
+
 The testing API supports the following matrix:
 
 | Run | Expected evidence |
@@ -523,20 +743,42 @@ event patterns when incidental setup may grow. Negative assertions such as
 “no associated value other than `Iterator::Item`” and “no callee body” are
 first-class test cases.
 
-Tests call the shared inspection service directly for speed and control. A
-small number of browser-facing integration snapshots verify the transport and
-rendering boundary. Tests which claim live incrementality must retain one host
-across all revisions; reconstructing the host between runs is not valid
-evidence.
+The primary browser/backend integration seam is the reviewed fixture bundle
+defined by the [JSON protocol](./protocol.md#exact-fixture-bundle). Slice 1 is
+frontend-only: a strict dummy server reads the route manifest and exact JSON,
+rejects unknown requests, and records expected and forbidden demand. It has no
+Rust DTO, Axum, or Sage database and therefore makes no backend claim.
+
+Slice 2 constructs independent typed scripted Rust values, serializes them
+through production DTOs and Axum, and uses Snapbox to compare status,
+contractual headers, exact pretty-printed JSON bytes, and provider demand with
+the bundle. Expected response bytes are never used as the values to serialize.
+Volatile data is deterministic at its source through injected test epochs,
+revisions, request IDs, and handle allocation; snapshots do not redact or
+rewrite actual responses. Later slices replace scripted values with real Sage
+operations over the Rust source fixture one resource at a time.
+
+From Slice 2 onward, a small real-process suite starts `cargo sage inspect` on
+`127.0.0.1:0`, waits for its machine-readable session URL, and drives the
+embedded application with Playwright. It covers the deployment seam—assets,
+session setup, security headers, URL routing, and one representative semantic
+navigation—rather than duplicating the complete frontend suite. Its combined
+navigation transcript correlates visible results with server-owned API,
+provider, and later Salsa/Sage evidence. `GET run(...)` appears explicitly as
+a retained-record request with no semantic work.
+
+Tests which claim live incrementality must retain one host across all
+revisions; reconstructing the host between runs is not valid evidence.
 
 ### Web and future LSP clients
 
-`cargo sage inspect` starts the Axum backend and JavaScript client as one
-loopback web application. The browser searches and expands the local symbol
-tree, fetches supported products for the selected identity on demand, expands
-returned reflected structures, and follows semantic references. Tests call the
-typed service directly; a small browser-facing test suite verifies that the
-same service backs the Axum boundary.
+`cargo sage inspect` starts the Axum backend and embedded React client as one
+loopback web application. The browser downloads and searches the detail-free
+local symbol index, fetches supported products for the selected identity on
+demand, expands returned reflected structures, and follows semantic
+references. Tests call the typed service directly; a small Playwright suite
+verifies the real-process seam, while the larger browser suite consumes the
+same exact API fixture used by Axum contract tests.
 
 The reusable service must not depend on terminal state, Clap types, JSON-RPC,
 or LSP position encodings. A future LSP server can own the same host, apply
@@ -581,19 +823,31 @@ The completed RFD must include:
   the others;
 - navigation from an external child to its parent and back to the original
   local symbol;
-- an Axum integration test proving that loading the symbol browser does not
-  eagerly request signatures or bodies and that selecting a product fetches
-  only that product;
+- an Axum integration test proving that loading the complete symbol index does
+  not request checked signatures, field types, bodies, associated values, or
+  external metadata and that selecting a product fetches only that product;
+- exact Snapbox comparisons of the actual Axum status, contractual headers,
+  JSON bytes, and provider demand against one reviewed API fixture bundle;
+- browser tests against a strict static server which serves that same bundle,
+  rejects unknown routes, and prove product availability, URL navigation,
+  Back/Forward, and routed reload behavior;
+- a black-box navigation transcript produced by a real
+  `cargo sage inspect` process on a random loopback port, combining the
+  reviewer-visible result with the exact semantic API and provider demand for
+  each browser action;
+- product-catalog snapshots proving that local and external availability is
+  server-authored and that catalog construction reads none of its products;
 - round-trip navigation through an opaque session handle, including proof that
   changing its display label does not change the selected identity;
 - coherent revision identifiers on independently fetched products;
 - proof that rendering and client-side expansion of an owned observation add
   no semantic operations;
 - explicit ambiguity, not-found, unavailable-product, truncation, and
-  incomplete-child results; and
-- one JavaScript-facing JSON integration test backed by the same service used
-  in unit tests;
-- a complete raw query tree with unmapped fallback;
+  incomplete-child results;
+- one representative real-process browser flow across the embedded assets and
+  actual Axum boundary;
+- a complete structured query tree with stable unmapped fallback and raw
+  diagnostic data retained only as a failure artifact;
 - cold and unchanged-warm execution in one session;
 - relevant and unrelated edits in one session;
 - a retained Salsa revision with exact input deltas and no fabricated work
@@ -602,7 +856,10 @@ The completed RFD must include:
   under the new revision;
 - comparison of aligned runs across revisions without presenting temporal
   correlation as an unrecorded invalidation edge;
-- required and forbidden structured trace events; and
+- required and forbidden structured trace events;
+- after slice 6, the same navigation transcript enriched with the correlated
+  Salsa/Sage operation tree and execution or reuse disposition, rather than a
+  separate unconnected trace fixture; and
 - a test distinguishing an input update from a workspace reload.
 
 The impl-index edit-invalidation matrix in the Trait Impl Candidate Discovery
@@ -615,22 +872,36 @@ The destination above is one design. Delivery is divided into vertical slices
 so each checkpoint produces a reviewer-visible capability and evidence, rather
 than landing one architectural layer at a time:
 
-1. **Local semantic browser.** Start `cargo sage inspect`, browse local symbols,
-   and inspect `DbDropGuard::db` source, concrete IR, signature, diagnostics,
-   and completed Typed IR as faithful expandable structures.
-2. **Semantic navigation.** Follow references between local and external
-   symbols, inspect independently requested external identities, signatures,
-   and member lists, and preserve history and product availability.
-3. **Focused semantic operations.** Inspect relevant impls, `prove`, and
-   input-only `normalize` using the same typed service and reflected result
-   model.
-4. **Execution evidence.** Record the complete dynamic request tree, including
-   Salsa execution/reuse, semantic lookups, and external metadata reads, with
-   stable required and forbidden assertions.
-5. **Live incremental experiments.** Watch source files, rerun inspections in
-   one database, automatically refresh visible demand, inspect input edits and
-   per-revision runs, compare repeated work, and distinguish ordinary input
-   updates from full workspace reloads.
+1. **Protocol and fixture-backed UI.** Implement the complete React mockup and
+   URL navigation against the reviewed JSON bundle and a strict dummy server.
+   This slice contains no Axum, Rust DTOs, embedded assets, inspector command,
+   or Sage database.
+2. **Axum transport and embedded application.** Define typed Rust DTOs and a
+   reusable service boundary, serve the application from Axum through
+   `rust-embed`, and launch it with `cargo sage inspect`. Independent typed
+   scripted values must reproduce the reviewed fixture bytes exactly; no live
+   Sage semantics are required yet.
+3. **Real workspace symbols.** Replace the scripted session and symbol
+   resources with a live Sage host and eagerly construct the detail-free local
+   symbol index. Implement absolute-path selection against those real handles.
+4. **Real selected-symbol products.** Add real source, concrete IR, signature,
+   diagnostics, and completed Typed IR products through structural reflection,
+   and adapt source-position selection to `SelectedItem`.
+5. **Navigation, metadata, and focused operations.** Navigate retained local
+   and external identities, inspect external products independently, and add
+   focused impl, `prove`, and input-only `normalize` operations through typed
+   handles.
+6. **Salsa event chain and execution tree.** Record the complete dynamic request
+   tree across the real operation surface, including execution/reuse, semantic
+   lookups, solver work, and external metadata reads.
+7. **Live updates and revision history.** Watch source files, rerun inspections
+   in one database, refresh visible demand, retain per-revision edits and runs,
+   compare repeated work, and distinguish input updates from workspace reloads.
+
+The pre-existing focused impl/proof/normalization scope is grouped with slice
+5 so all non-revision request families exist before slice 6 instruments them.
+It may be split into a smaller review checkpoint without moving the Salsa event
+chain ahead of symbol navigation.
 
 The complete work inventory, dependencies between workstreams, and per-slice
 acceptance checks live in [Implementation](./implementation.md). Slices may be
@@ -660,6 +931,27 @@ server would still need the same typed service. Both clients should share that
 service. An LSP-backed remote client can be added later if multi-client
 workspace sharing becomes valuable.
 
+### Why React rather than Topcoat or a smaller browser framework?
+
+React is the initial implementation choice because its routing, component
+testing, browser-testing integration, and familiar state model minimize the
+work needed to reach the first usable fixture-backed application. Bundle size
+is not a primary concern for a loopback developer tool. Solid and Preact remain
+credible replacements if experience with the recursive trees justifies a
+different reactivity model.
+
+[Topcoat](https://github.com/tokio-rs/topcoat) was evaluated directly. Its
+Rust-first views, procedures, and server-rendered shards are useful, but its
+current client runtime has a deliberately small data vocabulary and
+client-side navigation remains planned. Its natural HTML-replacement, router,
+and companion asset-bundle boundaries also differ from this RFD's Axum JSON
+API, browser-owned recursive renderer, and `rust-embed` executable. Adopting it
+now would require custom JavaScript in the most important parts of the
+inspector or would change durable boundaries merely to select a UI framework.
+
+The choice remains reversible because React code consumes owned JSON
+observations and never owns Sage selection, reflection, or query semantics.
+
 ### Why not print the oracle JSON more nicely?
 
 The oracle schema answers a different question: whether rustc and Sage
@@ -672,10 +964,11 @@ state.
 ### Does observing a trace change the trace?
 
 Starting and stopping the recorder is outside semantic queries. Selection and
-analysis may execute queries and are recorded in distinct phases. The
-inspection result is then converted to a self-contained observation before
-the analysis phase closes. Text or protocol rendering is pure. Tests enforce
-this non-perturbation rule.
+analysis may execute queries and are recorded in distinct phases. Structural
+reflection then converts the result to a self-contained observation while the
+recorder remains active, so any tracked reads it requires are visible in the
+reflection phase. The run is frozen before protocol serialization or browser
+rendering. Tests enforce this non-perturbation rule.
 
 ### Are exact trace snapshots required?
 
@@ -686,13 +979,17 @@ presentation details while still detecting broadened semantic dependencies.
 
 ### Which parts are deliberately unspecified?
 
-The JavaScript framework, exact Rust enum names, route spelling, page layout,
-database-worker synchronization mechanism, filesystem-watcher crate, Salsa
-snapshot ownership mechanism, raw diagnostic format, and future LSP request
-names are implementation choices. Axum, a live same-process database,
-on-demand JSON products, server-sent revision notifications,
-semantic-reference handles,
-origin/kind-based availability, a local-only workspace tree, a navigable
+Exact internal Rust enum names, component syntax, CSS system, page layout,
+database-worker synchronization mechanism, filesystem-watcher crate,
+Salsa snapshot ownership mechanism, raw diagnostic format, and future LSP
+request names are implementation choices. React, TypeScript, Vite, npm, React
+Router, and the selected testing tools are provisional implementation choices:
+they may be replaced without changing the durable service and protocol
+contracts. Axum, a live same-process database, one eager detail-free local
+symbol index, on-demand JSON semantic products, URL-addressable semantic
+views, server-sent revision notifications, semantic-reference handles,
+service-authored, origin/kind-sensitive availability, a local-only workspace
+tree, a navigable
 external metadata view, coherent result revisions, a typed inspection service,
 pure rendering, complete trace capture, retained revision/run history, and
 oracle separation are architectural constraints.
