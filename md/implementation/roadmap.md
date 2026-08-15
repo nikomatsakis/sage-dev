@@ -166,7 +166,7 @@ one reviewed exact API fixture bundle through a strict dummy server. The next
 checkpoint independently implements typed Rust DTOs, scripted service values,
 Axum transport, embedded assets, and the inspector command. Later checkpoints
 replace those scripts in order: workspace symbols, selected-symbol products,
-then local/external navigation, metadata, and focused operations.
+then canonical local/external navigation and metadata.
 
 Full-slice acceptance later adds complete structured query lifecycle capture
 and cold, warm, relevant-edit, and unrelated-edit tests in one persistent
@@ -183,15 +183,16 @@ dependencies.
 
 ### Scope and non-goals
 
-The destination client is an Axum loopback backend and JavaScript application
-over a reusable service. Slice 1 deliberately has no Axum or Rust backend. The
-choice of JavaScript framework remains an implementation detail. Fixture data
-crosses the same JSON resource boundary as later real data; it is not embedded
-in view code. Salsa lifecycle integration follows only after real semantic
-products and cross-symbol navigation are usable. Watch mode, persistent
-revisions, and invalidation explanations follow lifecycle capture. An LSP
-adapter is a later client. Human-readable rendering does not replace or
-normalize the exact oracle representation.
+The destination client is an Axum loopback backend and generic React
+application over a reusable service. Slice 1 deliberately has no Axum or Rust
+backend. Fixture data crosses the same JSON resource boundary as later real
+data; it is not embedded in view code. The frontend interprets a symbol
+directory, positive product descriptors, and server-owned render trees without
+encoding Sage symbol kinds or product meanings. Salsa lifecycle integration
+follows only after real semantic products and cross-symbol navigation are
+usable. Watch mode, persistent revisions, and invalidation explanations follow
+lifecycle capture. An LSP adapter is a later client. Human-readable rendering
+does not replace or normalize the exact oracle representation.
 
 ### Affected architecture
 
@@ -203,8 +204,8 @@ normalize the exact oracle representation.
 ### Dependencies
 
 - the architecture evidence vocabulary from the in-flight slice;
-- stable semantic selectors, with source-position selection building on
-  [Resolve at Position]; and
+- stable backend-authored canonical symbol paths supplied by the complete local
+  symbol directory and reflected semantic references; and
 - the existing symbol-keyed semantic and external metadata boundaries.
 
 The fixture shell, symbol, product, and navigation checkpoints do not depend on
@@ -219,17 +220,20 @@ surface they must observe is real.
 2. Add typed Rust DTOs and service boundaries, scripted values independent of
    the expected JSON, exact Axum/Snapbox tests, embedded assets, the inspector
    command, and one real-process smoke flow.
-3. Replace the scripted session and symbol resources with a live host, one
-   eager detail-free real local symbol index, browser-local search and
-   disclosure, and real absolute-path selection.
+3. Replace the scripted session and symbol resources with a database-owning
+   actor reached through a typed client, one eager detail-free real local
+   symbol index, browser-local search and disclosure, and canonical-path
+   selection with no backend search text.
 4. Add real source, concrete, signature, body, and diagnostic products through
-   structural reflection, plus source-position selection.
-5. Activate opaque local/external navigation, dependency metadata, and focused
-   impl/solver operations.
-6. Add complete Salsa request/return lifecycle observation and the execution
-   tree across that operation surface.
+   derive-driven structural reflection, with custom implementations only for
+   symbol links, spans, stashed values, sharing, cycles, and limits.
+5. Activate canonical local/external navigation and dependency metadata.
+6. Temporarily fork Salsa to add balanced spans for every tracked-query
+   invocation before memo lookup, then expose the complete execution tree.
 7. Add watching, coherent visible-demand refresh, persistent revision/input/run
-   history, and edit comparisons, retaining a clean future LSP boundary.
+   history, and edit comparisons. A revision mismatch discards all
+   response-derived client state, bootstraps the current directory, and replays
+   URL intent, retaining a clean future LSP boundary.
 
 ### Progress
 
@@ -433,7 +437,6 @@ file when one of its detailed checkpoints lands.
 [Auditable Architecture Guide RFD]: ../rfds/auditable-architecture-guide/README.md
 [auditable-plan]: ../rfds/auditable-architecture-guide/implementation.md
 [Semantic Inspector RFD]: ../rfds/semantic-inspector/README.md
-[Resolve at Position]: ../rfds/resolve-at-position/README.md
 [Method Resolution]: ../rfds/method-resolution/README.md
 [Typed IR Elaboration]: ../rfds/typed-ir-elaboration/README.md
 [Cycle Semantics]: ../rfds/trait-solver-cycle-semantics/README.md

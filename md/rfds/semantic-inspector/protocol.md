@@ -24,123 +24,85 @@ remote API compatibility promise.
 - Semantic maps cross the protocol as ordered entry arrays. JSON object-key
   order is never used to encode semantic order.
 - Enum and union variants use the exact lowercase kebab-case tags shown here.
-- IDs and handles are case-sensitive JSON strings. A session-scoped handle has
-  one of the URL-safe forms `nav_<token>`, `op_<token>`, `cont_<token>`,
-  `run_<token>`, or `rev_<token>`, where `<token>` contains only ASCII letters,
-  digits, `_`, and `-`. Clients treat the entire value as opaque.
-- Handles therefore require no percent-encoding when substituted into the
-  path templates below. Other query values use ordinary UTF-8 percent
-  encoding.
+- Product IDs and ephemeral handles are case-sensitive URL-safe strings.
+  Product IDs contain ASCII letters, digits, `_`, and `-`; continuation, run,
+  and revision handles use the prefixes `cont_`, `run_`, and `rev_` followed by
+  that same alphabet. Clients treat every value as opaque.
+- A `SymbolPath` is a canonical slash-separated sequence of backend-authored,
+  URL-safe ownership segments. The frontend treats the complete string as
+  opaque. When used as a query value it is percent-encoded normally; clients
+  do not parse or construct its segments.
 - Exact fixture tests compare response bytes directly. They do not parse and
   reserialize, redact, or filter the actual response.
 
 The DTO notation below uses these string aliases:
 
 ```text
-NavigationHandle = String  // nav_<token>
-OperationHandle = String   // op_<token>
+SymbolPath = String         // canonical backend-authored ownership path
+ProductId = String          // opaque URL-safe product identifier
 ContinuationHandle = String // cont_<token>
 RunHandle = String         // run_<token>
-RevisionHandle = String    // rev_<token>
+RevisionId = String        // rev_<token>
 ```
 
-The comments constrain the prefix; all five values remain opaque strings to
-the client.
+The comments constrain serialization; all five values remain opaque strings
+to the client.
 
 ## Contractual HTTP behavior
 
-Every `/api/v1` request sends:
+Every `/api/v1` JSON request sends:
 
 ```text
 Accept: application/json
-X-Sage-Session: <unguessable session token>
 ```
 
-Every request after session bootstrap also sends:
-
-```text
-X-Sage-Expected-Epoch: <database_epoch>
-X-Sage-Expected-Revision: <revision>
-X-Sage-Action: <opaque browser-action identifier>
-```
-
-`X-Sage-Action` correlates requests caused by one user action. It has no
-semantic meaning. The fixture server validates its scenario-defined value; the
-production server records it without trusting it as authorization.
+Requests do not send a session token, expected revision, or browser-action
+header. A browser action correlates its requests using the `request_id`
+returned in each response.
 
 Ordinary JSON responses send:
 
 ```text
 Content-Type: application/json; charset=utf-8
 Cache-Control: no-store
-X-Content-Type-Options: nosniff
 ```
 
 The event stream instead sends `Content-Type: text/event-stream` and
-`Cache-Control: no-store`. Static application assets and their content-security
-headers are specified by the web application rather than this JSON protocol.
+`Cache-Control: no-store`. Static application assets are specified by the web
+application rather than this JSON protocol.
 
-All well-formed requests to a known semantic resource return HTTP 200,
-including semantic `unavailable`, `incomplete`, and `failed` results. Transport
-and session failures use:
+Successful resource requests return HTTP 200. Missing resources and protocol
+or server failures use:
 
 | HTTP status | Meaning |
 |---:|---|
 | 400 | malformed JSON, invalid tag, or invalid path/query parameter |
-| 403 | invalid session or rejected origin |
-| 404 | unknown API route |
-| 409 | expected epoch or revision is stale |
-| 410 | a well-formed session handle has expired |
+| 404 | unknown route, unresolved symbol path, invalid ephemeral handle, or a product not listed for that symbol |
+| 500 | unexpected inspector failure |
 
-These failures return `ProtocolError` rather than a semantic envelope:
+Every successful response has this field order:
 
 ```text
-ProtocolError {
-  code: String,
-  message: String,
+Response<T> {
+  revision_id: RevisionId,
+  request_id: String,
+  run_id: RunHandle | null,
+  value: T,
 }
 ```
 
-Clients branch on `code` and display `message`; they never parse message text.
-
-## Common semantic envelope
-
-Every ordinary semantic response has this field order:
+Every error response, including an unresolved path or invalid ephemeral handle,
+repeats the backend's current revision:
 
 ```text
-Envelope<T> {
-  database_epoch: String,
-  revision: String,
+ErrorResponse {
+  revision_id: RevisionId,
   request_id: String,
   run_id: RunHandle | null,
-  result: Result<T>,
+  error: ApiError,
 }
 
-Result<T> =
-    {
-      status: "available",
-      value_version: String,
-      value: T,
-    }
-  | {
-      status: "unavailable",
-      reason: Issue,
-    }
-  | {
-      status: "incomplete",
-      reason: Issue,
-      partial: T | null,
-    }
-  | {
-      status: "failed",
-      error: Issue,
-    }
-  | {
-      status: "cancelled",
-      reason: Issue,
-    }
-
-Issue {
+ApiError {
   code: String,
   message: String,
 }
@@ -148,76 +110,52 @@ Issue {
 
 `run_id` is always present. It is `null` when satisfying the request performed
 no recordable semantic work, including reads of retained run, continuation, or
-revision data. `value_version` identifies the complete available value within
-one database epoch; it is not an incremental revision.
+revision data. The service assigns `revision_id` from one process-wide
+sequence, including across a database reconstruction, so the browser never
+needs a separate database-lifetime identifier.
 
-`available` means a complete value was produced. `unavailable` means the
-operation is meaningful but cannot be supplied for this target, for example an
-external body. `incomplete` preserves an explicit terminally incomplete result
-and optional partial value. `failed` reports an analysis failure. `cancelled`
-reports work abandoned because its coherent read could not finish.
+For a success, `revision_id` identifies the coherent state which produced the
+value and is still current when the owned response is frozen. For an error, it
+is the backend's current revision when the error is constructed. A later
+update is announced through the revision event stream. The browser never
+installs a response whose ID differs from the revision it is displaying. It
+discards every response-derived value, bootstraps a fresh directory, and
+replays the current URL instead.
+
+Domain outcomes do not use `ErrorResponse`: selection ambiguity, solver
+ambiguity or overflow, candidate incompleteness, diagnostics from erroneous
+Rust, and explicit unsupported Sage features remain variants or fields of the
+corresponding value DTO. Cancellation caused by a concurrent update is retried
+internally; it is not a public result status.
 
 ## Shared scalar DTOs
 
 ```text
-Origin = "local" | "external"
-
-SymbolKind =
-    "module"
-  | "function"
-  | "struct"
-  | "enum"
-  | "variant"
-  | "field"
-  | "trait"
-  | "impl"
-  | "associated-function"
-  | "associated-type"
-  | "associated-const"
-  | "type-alias"
-  | "opaque-type"
-  | "const"
-  | "static"
-  | "macro"
-  | "unsupported"
-
-Position {
-  line: u32,
-  column: u32,
+Issue {
+  code: String,
+  message: String,
 }
 
-SourceLocation {
-  file: String,
-  start: Position,
-  end: Position,
-  encoding: "utf-8",
-}
-
-NavigationReference {
-  handle: NavigationHandle,
+Badge {
   label: String,
-  origin: Origin,
-  symbol_kind: SymbolKind,
+  tone: "neutral" | "accent" | "success" | "warning" | "danger",
 }
 
-Provenance =
-    {
-      kind: "source",
-      location: SourceLocation,
-    }
-  | {
-      kind: "generated",
-      location: SourceLocation,
-      generated_by: NavigationReference | null,
-    }
-  | {
-      kind: "external-metadata",
-      crate_name: String,
-    }
+SymbolPresentation {
+  eyebrow: String | null,
+  badges: [Badge],
+}
+
+SymbolReference {
+  path: SymbolPath,
+  label: String,
+  presentation: SymbolPresentation,
+}
 ```
 
-Positions are zero-based UTF-8 byte columns. An LSP adapter converts UTF-16
-positions at its boundary.
+Symbol kind, origin, source location, and provenance may be reflected inside
+product content, but they are not frontend control enums. Directory and header
+styling uses only the generic presentation fields above.
 
 ## Session
 
@@ -242,24 +180,32 @@ CargoTarget {
 
 Capability =
     "symbol-index"
-  | "path-selection"
-  | "position-selection"
   | "products"
-  | "focused-operations"
   | "runs"
   | "events"
   | "revisions"
   | "revision-comparison"
 
 RetainedRevisionRange {
-  first: RevisionHandle | null,
-  last: RevisionHandle | null,
+  first: RevisionId | null,
+  last: RevisionId | null,
 }
 ```
 
 Capabilities appear in the order listed above. A delivery slice advertises
 only implemented capabilities; fixture data never claims a capability whose
 route is intentionally absent in that slice.
+
+## Current revision
+
+```http
+GET /api/v1/revision
+```
+
+This returns `Response<null>`. Its top-level `revision_id` is the backend's
+current coherent revision. The browser requests it during bootstrap and may
+request it again whenever it wants to check whether the view it is displaying
+is current.
 
 ## Complete local symbol index
 
@@ -269,18 +215,17 @@ GET /api/v1/symbols
 
 ```text
 SymbolIndex {
-  root: NavigationHandle,
+  root: SymbolPath,
   symbols: [SymbolSummary],
 }
 
 SymbolSummary {
-  handle: NavigationHandle,
-  parent: NavigationHandle | null,
-  name: String,
+  path: SymbolPath,
+  parent: SymbolPath | null,
+  label: String,
   display_path: String,
-  origin: "local",
-  symbol_kind: SymbolKind,
-  provenance: Provenance,
+  search_text: String,
+  presentation: SymbolPresentation,
   children: ChildCompleteness,
 }
 
@@ -296,156 +241,120 @@ complete local tree; there is no branch-fetch resource. `children` reports
 whether the index's represented children are complete and is not a list or an
 invitation to fetch another local resource. External symbols never appear.
 
-## Selecting a symbol
+## Selecting a known symbol
 
-An existing handle is selected with:
-
-```http
-GET /api/v1/symbols/{navigation-handle}
-```
-
-Path and source-position selection use:
+The browser selects a local symbol using the canonical path already present in
+the complete symbol index. It selects an external symbol using a path from a
+reflected semantic reference:
 
 ```http
-POST /api/v1/select
+GET /api/v1/symbol?path={symbol-path}
 ```
 
-```text
-SelectRequest {
-  selector: Selector,
-}
+This returns `Response<SelectedSymbol>`. The query value uses ordinary percent
+encoding; the frontend does not parse the path before sending it.
 
-Selector =
-    {
-      kind: "path",
-      path: String,
-    }
-  | {
-      kind: "source-position",
-      file: String,
-      line: u32,
-      column: u32,
-      encoding: "utf-8",
-    }
-
-SelectionOutcome =
-    {
-      kind: "selected",
-      symbol: SelectedSymbol,
-    }
-  | {
-      kind: "ambiguous",
-      selector: Selector,
-      candidates: [SelectionCandidate],
-    }
-  | {
-      kind: "not-found",
-      selector: Selector,
-    }
-
-SelectionCandidate {
-  handle: NavigationHandle,
-  display_path: String,
-  origin: Origin,
-  symbol_kind: SymbolKind,
-}
-```
-
-`POST /select` returns `Envelope<SelectionOutcome>`. An ambiguity or not-found
-result is an available, complete selection outcome, not a transport error or
-semantic failure. `GET /symbols/{handle}` returns `Envelope<SelectedSymbol>`.
+Local search text never crosses the API boundary. The browser filters the
+complete local index and sends the chosen row's path. External symbols are
+not text-searchable in this RFD and remain reachable through semantic links.
+Source-position selection is deferred until an editor-facing client requires
+it.
 
 ```text
 SelectedSymbol {
-  handle: NavigationHandle,
-  name: String,
+  path: SymbolPath,
+  label: String,
   display_path: String,
-  origin: Origin,
-  symbol_kind: SymbolKind,
-  parent: NavigationReference | null,
-  source_location: SourceLocation | null,
-  provenance: Provenance,
+  presentation: SymbolPresentation,
+  parent: SymbolReference | null,
   products: [ProductDescriptor],
 }
 
-ProductKind =
-    "source"
-  | "concrete"
-  | "signature"
-  | "body"
-  | "fields"
-  | "items"
-
 ProductDescriptor {
-  kind: ProductKind,
-  availability: ProductAvailability,
+  id: ProductId,
+  label: String,
+  href: String,
 }
-
-ProductAvailability =
-    {
-      state: "available",
-      href: String,
-    }
-  | {
-      state: "unavailable",
-      reason: Issue,
-    }
-  | {
-      state: "not-applicable",
-    }
 ```
 
-The product array always contains all six kinds in the order listed above.
-The browser may reorder known views for presentation, but it does not infer
-availability. An available `href` is an exact same-origin `/api/v1` path. The
-server revalidates a product request, so a stale direct request can still
-return unavailable, incomplete, failed, or cancelled.
+The product array contains only the pages valid for this symbol, in display
+order. IDs are opaque and are not a frontend enum. The browser creates tabs
+directly from this array and labels them from `label`; it does not maintain a
+symbol-kind, origin, or product table. Each `href` is an exact relative
+`/api/v1` path. The server revalidates a product request. A direct request for
+a product which the current list does not contain returns HTTP 404 with error
+code `product-not-found`.
 
 ## Symbol products
 
 ```http
-GET /api/v1/symbols/{navigation-handle}/products/{product-kind}
+GET /api/v1/product?symbol={symbol-path}&product={product-id}
 ```
 
-The response is `Envelope<ProductValue>`:
+The response is `Response<ProductPage>`:
 
 ```text
-ProductValue =
-    {
-      product: "source",
-      source: SourceProduct,
-    }
-  | {
-      product: "concrete",
-      value: ValueNode,
-    }
-  | {
-      product: "signature",
-      value: ValueNode,
-    }
-  | {
-      product: "body",
-      value: ValueNode,
-    }
-  | {
-      product: "fields",
-      value: ValueNode,
-    }
-  | {
-      product: "items",
-      value: ValueNode,
-    }
-
-SourceProduct {
-  location: SourceLocation,
-  text: String,
-  highlight_start: u32,
-  highlight_end: u32,
+ProductPage {
+  id: ProductId,
+  title: String,
+  content: RenderNode,
 }
 ```
 
-Source highlight offsets are UTF-8 byte offsets into `text`. Diagnostics are a
-browser view of the body product; there is no diagnostics route.
+The browser neither branches on `id` nor interprets the semantic meaning of
+`title`. A source page, a diagnostic page, and a reflected typed body all use
+the same response shape.
+
+## Generic rendering tree
+
+```text
+RenderNode =
+    {
+      kind: "group",
+      layout: "block" | "row" | "columns",
+      children: [RenderNode],
+    }
+  | {
+      kind: "heading",
+      level: 1 | 2 | 3,
+      text: String,
+    }
+  | {
+      kind: "text",
+      text: String,
+    }
+  | {
+      kind: "code",
+      language: String,
+      text: String,
+      highlights: [CodeHighlight],
+    }
+  | {
+      kind: "notice",
+      tone: "neutral" | "info" | "warning" | "error",
+      title: String | null,
+      text: String,
+    }
+  | {
+      kind: "navigation",
+      target: SymbolReference,
+    }
+  | {
+      kind: "value",
+      value: ValueNode,
+    }
+
+CodeHighlight {
+  start: u32,
+  end: u32,
+  role: String,
+}
+```
+
+Code highlight offsets are UTF-8 byte offsets into `text`. The rendering union
+is the complete frontend page vocabulary. An unknown node is a visible
+protocol error. Product identifiers never select a renderer; the page's tree
+does.
 
 ## Reflected value tree
 
@@ -474,17 +383,7 @@ ValueNode =
     }
   | {
       kind: "reference",
-      label: String,
-      navigation_target: NavigationHandle,
-      origin: Origin,
-      symbol_kind: SymbolKind,
-    }
-  | {
-      kind: "operation-target",
-      label: String,
-      operation_target: OperationHandle,
-      operations: [OperationDescriptor],
-      value: ValueNode,
+      target: SymbolReference,
     }
   | {
       kind: "shared",
@@ -505,64 +404,17 @@ ValueField {
   name: String,
   value: ValueNode,
 }
-
-OperationDescriptor {
-  kind: "impls" | "prove" | "normalize",
-  href: String,
-}
 ```
 
 Records, variants, wrappers, options, and map-entry projections use these
-ordinary nodes. Summaries are additive: an `operation-target` wraps the full
-reflected `value`, and a reference retains both its label and typed navigation
-handle. The client matches this union exhaustively; an unknown `kind` is a
-visible protocol error rather than a silently omitted subtree.
+ordinary nodes. Summaries are additive, and a reference retains both its
+display label and canonical symbol path. The client matches this union
+exhaustively; an unknown `kind` is a visible protocol error rather than a
+silently omitted subtree.
 
 `shared.identity` and `shared-reference.identity` are display-local IDs, not
 process addresses. The first occurrence carries the value. Truncation is
 explicit and can be continued without executing Sage work.
-
-## Focused semantic operations
-
-```http
-POST /api/v1/operations/impls
-POST /api/v1/operations/prove
-POST /api/v1/operations/normalize
-```
-
-```text
-ImplsRequest {
-  trait: OperationHandle,
-  self_head: OperationHandle | null,
-}
-
-ProveRequest {
-  goal: OperationHandle,
-}
-
-NormalizeRequest {
-  alias: OperationHandle,
-}
-
-OperationValue =
-    {
-      operation: "impls",
-      value: ValueNode,
-    }
-  | {
-      operation: "prove",
-      value: ValueNode,
-    }
-  | {
-      operation: "normalize",
-      value: ValueNode,
-    }
-```
-
-Responses are `Envelope<OperationValue>`. The handles recover typed inputs
-retained by the service. `NormalizeRequest` has no expected-type field. The
-reflected proof value is `Proven`, not a selected impl. Impls reflects candidate
-identities and completeness.
 
 ## Continuations
 
@@ -578,7 +430,7 @@ ContinuationValue {
 }
 ```
 
-The response is `Envelope<ContinuationValue>` with `run_id: null` and reads
+The response is `Response<ContinuationValue>` with `run_id: null` and reads
 only the retained owned observation. `next` is always present.
 
 ## Run observations and traces
@@ -590,21 +442,18 @@ GET /api/v1/runs/{run-handle}
 ```text
 RunObservation {
   run_id: RunHandle,
-  action_id: String | null,
   request: RunRequest,
   root: TraceNode,
 }
 
 RunRequest =
     { kind: "symbol-index" }
-  | { kind: "selection", selector: Selector }
-  | { kind: "symbol", target: NavigationHandle }
-  | { kind: "product", target: NavigationHandle, product: ProductKind }
-  | { kind: "operation", operation: "impls" | "prove" | "normalize" }
+  | { kind: "symbol", target: SymbolPath }
+  | { kind: "product", target: SymbolPath, product: ProductId }
   | { kind: "automatic-refresh", resource: String }
 
 TraceNode {
-  phase: "bootstrap" | "selection" | "analysis" | "reflection",
+  phase: "bootstrap" | "selection" | "analysis" | "reflection" | "view-assembly",
   source: "salsa" | "sage" | "solver" | "external-metadata",
   operation: String,
   key: TraceKey,
@@ -624,8 +473,14 @@ TraceKey =
     }
 ```
 
-The response is `Envelope<RunObservation>` with `run_id: null`: reading an
+The response is `Response<RunObservation>` with `run_id: null`: reading an
 already-retained run is not a child of the run being displayed.
+
+Every tracked-query invocation is represented by the balanced span emitted by
+the temporary Salsa fork, including an already-current memo fetch. Its
+disposition is `executed`, `validated`, or `reused`; nested spans determine the
+tree rather than arrival adjacency. Sage and metadata spans use `observed` when
+none of the Salsa dispositions applies.
 
 `child_order` is recorded by the producer of the parent span. `sequential`
 preserves capture order. `unordered` declares that sibling order is not part of
@@ -660,16 +515,14 @@ data: WorkspaceReloaded
 
 ```text
 RevisionAdvanced {
-  database_epoch: String,
-  revision: RevisionHandle,
+  revision_id: RevisionId,
   edit_batch: String,
   changed_inputs: [InputIdentity],
 }
 
 WorkspaceReloaded {
-  previous_database_epoch: String,
-  database_epoch: String,
-  revision: RevisionHandle,
+  previous_revision_id: RevisionId,
+  revision_id: RevisionId,
   reason: Issue,
 }
 
@@ -687,12 +540,12 @@ for reconnect. Keepalive comments carry no semantic data.
 
 ```http
 GET /api/v1/revisions?cursor={cursor}
-GET /api/v1/revisions/{revision-handle}
-GET /api/v1/revisions/compare?from={revision-handle}&to={revision-handle}&selector={selector-token}&product={product-kind}
+GET /api/v1/revisions/{revision-id}
+GET /api/v1/revisions/compare?from={revision-id}&to={revision-id}&symbol={symbol-path}&product={product-id}
 ```
 
-`cursor` and `selector-token` are opaque URL-safe strings using the same token
-alphabet as handles.
+`cursor` is an opaque URL-safe string. The symbol path uses ordinary query
+percent-encoding.
 
 ```text
 RevisionPage {
@@ -701,8 +554,7 @@ RevisionPage {
 }
 
 RevisionSummary {
-  revision: RevisionHandle,
-  database_epoch: String,
+  revision_id: RevisionId,
   input_delta_count: u32,
   run_count: u32,
 }
@@ -721,10 +573,10 @@ InputDelta {
 }
 
 RunComparison {
-  from_revision: RevisionHandle,
-  to_revision: RevisionHandle,
-  selector: String,
-  product: ProductKind,
+  from_revision: RevisionId,
+  to_revision: RevisionId,
+  symbol: SymbolPath,
+  product: ProductId,
   value_changed: bool,
   executed_only_before: [TraceIdentity],
   executed_only_after: [TraceIdentity],
@@ -739,7 +591,7 @@ TraceIdentity {
 }
 ```
 
-These resources return their matching `Envelope<T>` with `run_id: null`.
+These resources return their matching `Response<T>` with `run_id: null`.
 Comparison reports observed differences; it does not invent a causal
 invalidation edge.
 

@@ -233,9 +233,6 @@
 
     .external-notice { margin-top: 20px; padding: 13px 15px; border: 1px solid #e7cfaa; border-radius: 8px; background: #fff8ec; color: #654f30; }
     .external-notice strong { display: block; margin-bottom: 3px; }
-    .availability { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
-    .availability span { padding: 3px 7px; border-radius: 999px; background: white; color: #526058; font-size: 10px; }
-    .availability .unavailable { color: #8d8171; text-decoration: line-through; }
     .relationship-card { margin-top: 18px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 9px; background: white; box-shadow: var(--shadow); }
     .relationship-card h2 { margin: 0 0 10px; font-size: 14px; }
     .relationship-grid { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 9px 14px; align-items: baseline; }
@@ -760,7 +757,7 @@
           <div>
             <div id="external-breadcrumbs" class="breadcrumbs"></div>
             <h1 id="external-title">Clone::clone</h1>
-            <div id="external-meta" class="item-meta">dependency metadata · source unavailable</div>
+            <div id="external-meta" class="item-meta">dependency metadata</div>
           </div>
           <div class="badge-row">
             <span class="badge external">External symbol</span>
@@ -771,7 +768,6 @@
         <div class="external-notice">
           <strong>Dependency metadata view</strong>
           External definitions do not appear in the workspace symbol tree. This page shows only facts Sage can request from dependency metadata.
-          <div id="external-availability" class="availability"></div>
         </div>
 
         <section class="relationship-card">
@@ -1243,7 +1239,7 @@ method arguments: []`,
   shared: alloc::sync::Arc<crate::db::Shared>,
 }
 
-available products: source, Concrete IR, fields, signature`
+products: source, Concrete IR, fields, signature`
       },
       "local-guard": {
         path: "crate::db::DbDropGuard",
@@ -1523,8 +1519,6 @@ represented child:
             tree: [externalFnSignature("clone-method", "core::clone::Clone::clone", "Shared", "none", true)],
           },
         },
-        available: ["identity", "signature", "navigation edges"],
-        unavailable: ["source", "Concrete IR", "Typed IR body"],
       },
       "clone-from-method": {
         path: "core::clone::Clone::clone_from",
@@ -1545,7 +1539,7 @@ represented child:
             query: "retained NavigationTarget::External",
             title: "External symbol identity",
             type: "SymExt",
-            description: "The metadata handle remains separate from all products requested for it.",
+            description: "The metadata identity remains separate from all products requested for it.",
             tree: [externalIdentity("Fn", "core::clone::Clone::clone_from")],
           },
           signature: {
@@ -1557,8 +1551,6 @@ represented child:
             tree: [externalFnSignature("clone-from-method", "core::clone::Clone::clone_from", "Mut", "ref-self", false)],
           },
         },
-        available: ["identity", "signature", "navigation edges"],
-        unavailable: ["source", "Concrete IR", "Typed IR body"],
       },
       "clone-trait": {
         path: "core::clone::Clone",
@@ -1603,8 +1595,6 @@ represented child:
             tree: [externalTraitItems()],
           },
         },
-        available: ["identity", "signature", "associated items", "navigation edges"],
-        unavailable: ["source", "Concrete IR", "Typed IR body"],
       },
       "clone-module": {
         path: "core::clone",
@@ -1614,17 +1604,17 @@ represented child:
         breadcrumbs: [{ text: "core", target: "core-crate" }],
         parent: [{ text: "core", target: "core-crate" }],
         children: [{ text: "core::clone::Clone", target: "clone-trait" }],
-        defaultProduct: "children",
+        defaultProduct: "items",
         products: {
           identity: {
             label: "Identity",
             query: "retained NavigationTarget::External",
             title: "External symbol identity",
             type: "SymExt",
-            description: "The module is represented by the same external handle shape as every other dependency definition.",
+            description: "The module is represented by the same external reference shape as every other dependency definition.",
             tree: [externalIdentity("Mod", "core::clone")],
           },
-          children: {
+          items: {
             label: "Module items",
             query: "SymExt::expanded_module_items",
             title: "Expanded external module items",
@@ -1635,8 +1625,6 @@ represented child:
             ])],
           },
         },
-        available: ["identity", "module items", "navigation edges"],
-        unavailable: ["signature", "source", "Concrete IR", "Typed IR body"],
       },
       "sized-trait": {
         path: "core::marker::Sized",
@@ -1665,8 +1653,6 @@ represented child:
             tree: [externalTraitSignature("sized-trait", "core::marker::Sized", [], "Sized")],
           },
         },
-        available: ["identity", "signature", "navigation edges"],
-        unavailable: ["source", "Concrete IR", "Typed IR body"],
       },
       "core-crate": {
         path: "core",
@@ -1676,7 +1662,7 @@ represented child:
         breadcrumbs: [],
         parent: [],
         children: [{ text: "core::clone", target: "clone-module" }],
-        defaultProduct: "children",
+        defaultProduct: "items",
         products: {
           identity: {
             label: "Identity",
@@ -1686,7 +1672,7 @@ represented child:
             description: "Sage represents an external crate root as DefIndex(0) with module kind; the crate number remains session-local.",
             tree: [externalIdentity("Mod", "core")],
           },
-          children: {
+          items: {
             label: "Root items",
             query: "SymExt::expanded_module_items",
             title: "Expanded external root items",
@@ -1697,8 +1683,6 @@ represented child:
             ])],
           },
         },
-        available: ["identity", "root module items", "navigation edges"],
-        unavailable: ["signature", "source", "Concrete IR", "Typed IR body"],
       }
     };
 
@@ -1856,19 +1840,6 @@ represented child:
         productTabs.append(tab);
       });
       showExternalProduct(symbol, symbol.defaultProduct);
-      const availability = document.getElementById("external-availability");
-      availability.replaceChildren();
-      symbol.available.forEach(label => {
-        const item = document.createElement("span");
-        item.textContent = label;
-        availability.append(item);
-      });
-      symbol.unavailable.forEach(label => {
-        const item = document.createElement("span");
-        item.className = "unavailable";
-        item.textContent = label;
-        availability.append(item);
-      });
       appendSymbolLinks(document.getElementById("external-parent"), symbol.parent, "No represented parent");
       appendSymbolLinks(document.getElementById("external-children"), symbol.children, "No represented children");
 

@@ -18,41 +18,51 @@ not merely a planning edit.
 
 ### Typed inspection and reflection contracts
 
-- [ ] Define typed selectors, `SelectedItem`, inspection requests, product
-  catalogs with available/unavailable/not-applicable entries, coherent
-  revision identifiers, and structured available, unavailable, incomplete,
-  failed, and cancelled results ([SI-A4](./README.md#si-a4)).
-- [ ] Define the exact `/api/v1` route, request, tagged envelope, product
-  descriptor, reflected value, focused-operation, run, and revision DTOs below
-  Axum ([SI-A2](./README.md#si-a2), [SI-A3](./README.md#si-a3)).
-- [ ] Define an owned renderer-neutral value tree for records, enum variants,
-  sequences, scalar and semantic leaves, options, pointers, shared values,
-  cycles, and explicit truncation.
+- [ ] Define canonical symbol paths, opaque product IDs, positive product
+  lists, one process-wide revision ID, common responses, and structured errors
+  ([SI-A4](./README.md#si-a4)).
+- [ ] Define the exact `/api/v1` route, request, response, error, product,
+  generic rendering-tree, reflected-value, run, and revision DTOs below Axum
+  ([SI-A2](./README.md#si-a2), [SI-A3](./README.md#si-a3)).
+- [ ] Define an owned generic rendering tree for page composition and an
+  embedded structural value tree for records, variants, sequences, leaves,
+  options, pointers, sharing, cycles, and explicit truncation.
 - [ ] Make derived structural reflection preserve every struct field and enum
   payload while allowing only the documented semantic treatment of
   `Stashed<T>`, raw allocation identity, names, symbols, spans, and explicit
-  truncation ([SI-A6](./README.md#si-a6)).
-- [ ] Represent semantic references as typed `NavigationTarget` values with
-  separate display labels and opaque session handles.
+  truncation ([SI-A6](./README.md#si-a6), [SI-A16](./README.md#si-a16)).
+- [ ] Implement the custom `Reflect` derive for ordinary structs and enums and
+  explicit implementations for symbols, spans, stashed values, sharing,
+  cycles, and limits. Product code must not hand-serialize Sage structures
+  ([SI-A16](./README.md#si-a16)).
+- [ ] Represent semantic references with canonical symbol paths, separate
+  display labels, and generic presentation data.
 - [ ] Record structural reflection as a distinct server phase, bound it by
   depth and node count, then freeze the observation before serialization or
   client-side expansion ([SI-A7](./README.md#si-a7)).
 - [ ] Keep service and observation types independent of Axum, JavaScript,
   terminal state, Clap, JSON-RPC, LSP positions, and the oracle schema.
-- [ ] Test derived structure, semantic leaf overrides, retained reference
-  identity, truncation, shared values, and cycles.
+- [ ] Test derived structure, semantic leaf overrides, canonical cross-links,
+  truncation, shared values, and cycles.
 - [ ] Snapshot complete representative `Binder<FnSig>`, `FnCst`/`FnCstData`,
   `CheckedBody`/`TyBodyData`, `ExprCst`, and `TyExpr` values, plus every `Ty`
   variant, so representation changes cannot disappear silently.
 
 ### Persistent workspace host
 
-- [ ] Extract an `InspectionHost` which owns the selected Cargo target, one
-  live Sage database, source inputs, and reachable dependency metadata.
+- [ ] Implement a dedicated `DatabaseActor` which exclusively owns one
+  `InspectionHost`: the selected Cargo target, live Sage database, source
+  inputs, reachable dependency metadata, canonical-path index, recorder,
+  ephemeral handles, and history.
+- [ ] Expose a cloneable typed `InspectionClient` backed by a bounded mailbox
+  and per-message one-shot owned responses. Do not expose the database or its
+  lock to Axum.
 - [ ] Expose coherent read-only `Analysis` views while keeping mutation and
   workspace reloads at the host boundary.
-- [ ] Run synchronous Sage analysis without blocking Axum's asynchronous
-  executor or holding unrelated locks across `.await`.
+- [ ] Run the actor's synchronous Sage analysis away from Axum's asynchronous
+  executor. Process semantic requests, edit batches, and workspace reloads in
+  mailbox order. Axum awaits only the one-shot reply and holds no database
+  reference or lock.
 - [ ] Watch represented source files and update existing `SourceFile` inputs in
   the same database.
 - [ ] Debounce and classify filesystem changes, correlate every input write
@@ -60,29 +70,27 @@ not merely a planning edit.
   batch which is hidden from readers until complete.
 - [ ] Detect changes requiring Cargo/dependency reloads and report the reload
   boundary instead of claiming fine-grained reuse.
-- [ ] Tag every response and cached browser product with its coherent database
-  revision; mark older products stale after an update.
+- [ ] Tag every success and error with its process-wide revision ID. Make the
+  browser discard all response-derived state, bootstrap a fresh directory, and
+  replay its current URL on mismatch ([SI-A5](./README.md#si-a5)).
 - [ ] Test multiple inspections, input edits, and reloads against the same host.
 
 ### Selection, symbol browsing, and navigation
 
-- [ ] Resolve stable absolute semantic paths for modules, free items, and
-  associated items without exposing Salsa or arena identities; land this with
-  slice 3.
-- [ ] Adapt source-position selection from the Resolve at Position RFD to the
-  same `SelectedItem` type; land this with slice 4.
-- [ ] Return structured ambiguity and not-found results rather than choosing by
-  map or source order.
 - [ ] Build and filter the selected target's local symbol tree without checking
   every listed body; include generated local symbols and provenance. Return the
   complete detail-free local index in one eager operation so browser search and
   disclosure need no further semantic request.
+- [ ] Keep search text in the browser. Present every matching local row and
+  send only the chosen row's canonical path to the backend.
 - [ ] Exclude dependency symbols from the workspace tree and search count.
-- [ ] Navigate every represented local or external symbol reference by retained
-  identity, with history, parent/child edges, and return to the selected local
-  symbol.
-- [ ] Round-trip navigation targets through opaque session handles without
-  reparsing their display paths ([SI-A8](./README.md#si-a8)).
+- [ ] Navigate every represented local or external symbol reference by
+  canonical path, with history, parent/child edges, and return to the selected
+  local symbol.
+- [ ] Generate and resolve canonical ownership paths which remain stable across
+  unrelated edits, sibling reordering, and host reconstruction; distinguish
+  namespaces, unnamed impls, generated symbols, and duplicate external crates;
+  never reparse display labels ([SI-A8](./README.md#si-a8)).
 - [ ] Preserve incomplete or unsupported child kinds explicitly.
 
 ### Semantic inspection products
@@ -97,32 +105,29 @@ not merely a planning edit.
 - [ ] Keep `SymExt` identity separate from independently requested
   `FnSymbol::sig`, `TraitSymbol::sig`, `TraitSymbol::items`, and
   `SymExt::expanded_module_items` products.
-- [ ] Show source, concrete IR, and Typed IR as unavailable for external symbols
-  rather than as empty values.
-- [ ] Expose relevant impl discovery, trait `prove`, and input-only `normalize`
-  through their public Sage boundaries; do not return a selected impl from
-  proof or add an expected type to normalization. Accept only opaque typed
-  operation-target handles emitted by reflected semantic nodes
-  ([SI-A10](./README.md#si-a10)).
+- [ ] Omit source, concrete IR, and Typed IR from external-symbol product
+  catalogs rather than exposing empty or disabled pages.
 - [ ] Preserve diagnostics, ambiguity, overflow, terminal incompleteness, and
-  unsupported products rather than rendering plausible completed results.
+  unsupported semantic nodes inside listed products rather than rendering
+  plausible completed results.
 - [ ] Keep the exact oracle adapters and textual conformance comparison
   unchanged.
 
 ### Structured execution evidence
 
-- [ ] Capture every promised query request with its dynamic parent, balanced
-  completion, and execution or reuse disposition.
-- [ ] Add the required Salsa lifecycle hook in a temporary fork, with the intent
-  to upstream it, if existing events cannot observe already-verified memo
-  fetches.
+- [ ] Capture every promised query invocation with its dynamic parent, balanced
+  completion, and execution, validation, or reuse disposition.
+- [ ] Fork Salsa temporarily so every tracked-query invocation creates a
+  balanced span before memo lookup, including already-current memo fetches;
+  require no annotations on individual Sage queries and keep the change
+  upstreamable ([SI-A17](./README.md#si-a17)).
 - [ ] Retain a stable unmapped event category so checked tracing cannot
   silently omit work, with the raw debug payload available in diagnostics and
   failure artifacts.
 - [ ] Project supported Salsa queries, Sage semantic operations, solver work,
   and external metadata reads into stable operation families and semantic keys.
 - [ ] Separate workspace bootstrap, selection, requested analysis, structural
-  reflection, and post-trace serialization/browser rendering phases
+  reflection, pure render-tree assembly, and post-trace serialization/browser phases
   ([SI-A7](./README.md#si-a7)).
 - [ ] Present one request as a collapsible dynamic tree with filtering,
   execution/reuse state, a draggable width, and full-screen growth.
@@ -155,29 +160,33 @@ not merely a planning edit.
 ### Axum and React application
 
 - [ ] Start an Axum loopback server from `cargo sage inspect`, serve the
-  embedded React/TypeScript application, and open its session URL.
+  embedded React/TypeScript application, and open its application URL. Bind to
+  `127.0.0.1:2442` by default, permit an explicit port override, and reserve
+  port `0` for operating-system-assigned test isolation.
 - [ ] Build the frontend with Vite and embed its production assets with
   `rust-embed`; use npm with a committed lockfile and keep normal
   `cargo sage inspect` use to one process.
-- [ ] Expose JSON endpoints for the complete local symbol index and on-demand
-  selection, products, external membership, navigation, continuations, traces,
-  revision notifications, and comparison.
-- [ ] Emit a complete selected-symbol product catalog without requesting any
-  advertised product; make the browser render only that server-authored
-  availability ([SI-A4](./README.md#si-a4),
+- [ ] Expose JSON endpoints for the current revision, complete local symbol
+  index, and on-demand selection, products, external membership, navigation,
+  continuations, traces, revision notifications, and comparison.
+- [ ] Emit a complete selected-symbol product list without requesting any
+  advertised product; make the browser create tabs only from its opaque IDs,
+  labels, and URLs ([SI-A4](./README.md#si-a4),
   [SI-A15](./README.md#si-a15)).
 - [ ] Publish completed update batches over a reconnectable server-sent event
-  stream and refresh visible browser demand without eagerly fetching hidden
+  stream. A new revision ID reloads the current semantic URL, which fetches the
+  complete local index and current product without eagerly fetching hidden
   products.
-- [ ] Back HTTP handlers with the typed service; keep semantic selection,
-  reflection, and pretty-printing out of the transport layer.
-- [ ] Prevent unrelated web origins from reading an inspector session and do
-  not expose remote bind or source mutation over HTTP.
+- [ ] Back HTTP handlers only with `InspectionClient`; keep direct database
+  access, semantic selection, reflection, and pretty-printing out of the
+  transport layer.
+- [ ] Keep the listener loopback-only and do not expose source mutation over
+  HTTP.
 - [ ] Implement browser state for selection, tabs, filters, tree expansion,
-  navigation history, stale revisions, rerun, and revision comparison.
+  navigation history, current revision, rerun, and revision comparison.
 - [ ] Make the current semantic view URL-addressable with React Router; test
-  direct loading, reload, Back/Forward, push versus replace, and expired
-  session-scoped handles.
+  direct loading, Back/Forward, push versus replace, unresolved paths, and
+  full state reset/bootstrap/URL replay after a revision mismatch.
 - [ ] Add a revisions view showing input edits and the requested, executed,
   validated, or reused work recorded in each revision.
 - [ ] Fetch the complete detail-free local symbol index eagerly. Filter and
@@ -198,9 +207,10 @@ not merely a planning edit.
   Snapbox to compare their actual Axum bytes and provider demand with the
   bundle. Never deserialize an expected response as the value under test.
 - [ ] Run frontend tests against a strict static server for that same bundle;
-  reject unknown routes and record required and forbidden demand.
+  reject unknown routes, record required and forbidden demand, and render an
+  invented symbol kind and product ID without a TypeScript case.
 - [ ] Make the small Playwright evidence suite launch the real
-  `cargo sage inspect` command on a random loopback port and compare one stable
+  `cargo sage inspect` command with port `0` and compare one stable
   transcript containing browser actions, routed and rendered results, semantic
   API requests, provider operations, and later correlated Salsa/Sage events.
 
@@ -216,8 +226,8 @@ not merely a planning edit.
   bodies, associated values, impl candidates, or external metadata—selecting
   one product reads only that product, and rendering performs no semantic
   work.
-- [ ] Test coherent revisions, opaque handle identity, external
-  unavailability, explicit truncation, and incomplete metadata.
+- [ ] Test coherent revisions, canonical-path stability/failure, omitted
+  external products, explicit truncation, and incomplete metadata.
 - [ ] Record how an LSP host can reuse the service without choosing or
   implementing an LSP extension in this RFD.
 - [ ] Keep the accepted architecture pages, roadmap, and this status checklist
@@ -235,23 +245,24 @@ Every symbol is a link. A stop sign links to the anchor's destination rule, a
 yellow circle links to the transition which introduced it, and a checkmark
 links to the transition and evidence which established it.
 
-| Anchor | Baseline | [S1 UI](#slice-1-protocol-and-fixture-backed-ui) | [S2 Axum](#slice-2-axum-transport-and-embedded-application) | [S3 Symbols](#slice-3-real-workspace-symbols) | [S4 Products](#slice-4-real-selected-symbol-products) | [S5 Navigation](#slice-5-navigation-metadata-and-focused-operations) | [S6 Tracing](#slice-6-salsa-event-chain-and-execution-tree) | [S7 Revisions](#slice-7-live-updates-and-revision-history) |
+| Anchor | Baseline | [S1 UI](#slice-1-protocol-and-fixture-backed-ui) | [S2 Axum](#slice-2-axum-transport-and-embedded-application) | [S3 Symbols](#slice-3-real-workspace-symbols) | [S4 Products](#slice-4-real-selected-symbol-products) | [S5 Navigation](#slice-5-navigation-and-metadata) | [S6 Tracing](#slice-6-salsa-event-chain-and-execution-tree) | [S7 Revisions](#slice-7-live-updates-and-revision-history) |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| [SI-A1](./README.md#si-a1) live host | [🛑](./README.md#si-a1 "Not introduced") | [🛑](./README.md#si-a1 "Not introduced") | [🛑](./README.md#si-a1 "Not introduced") | [🟡](#si-a1-slice-3 "Introduced") | [🟡](#si-a1-slice-3 "Introduced") | [🟡](#si-a1-slice-3 "Introduced") | [🟡](#si-a1-slice-3 "Introduced") | [✅](#si-a1-slice-7 "Established") |
+| [SI-A1](./README.md#si-a1) database actor | [🛑](./README.md#si-a1 "Not introduced") | [🛑](./README.md#si-a1 "Not introduced") | [🛑](./README.md#si-a1 "Not introduced") | [🟡](#si-a1-slice-3 "Introduced") | [🟡](#si-a1-slice-3 "Introduced") | [🟡](#si-a1-slice-3 "Introduced") | [🟡](#si-a1-slice-3 "Introduced") | [✅](#si-a1-slice-7 "Established") |
 | [SI-A2](./README.md#si-a2) typed service below Axum | [🛑](./README.md#si-a2 "Not introduced") | [🛑](./README.md#si-a2 "Not introduced") | [✅](#si-a2-slice-2 "Established") | [✅](#si-a2-slice-2 "Established") | [✅](#si-a2-slice-2 "Established") | [✅](#si-a2-slice-2 "Established") | [✅](#si-a2-slice-2 "Established") | [✅](#si-a2-slice-2 "Established") |
 | [SI-A3](./README.md#si-a3) exact shared JSON | [🛑](./README.md#si-a3 "Not introduced") | [🟡](#si-a3-slice-1 "Introduced") | [✅](#si-a3-slice-2 "Established") | [✅](#si-a3-slice-2 "Established") | [✅](#si-a3-slice-2 "Established") | [✅](#si-a3-slice-2 "Established") | [✅](#si-a3-slice-2 "Established") | [✅](#si-a3-slice-2 "Established") |
-| [SI-A4](./README.md#si-a4) catalog-driven UI | [🛑](./README.md#si-a4 "Not introduced") | [✅](#si-a4-slice-1 "Established") | [✅](#si-a4-slice-1 "Established") | [✅](#si-a4-slice-1 "Established") | [✅](#si-a4-slice-1 "Established") | [✅](#si-a4-slice-1 "Established") | [✅](#si-a4-slice-1 "Established") | [✅](#si-a4-slice-1 "Established") |
-| [SI-A5](./README.md#si-a5) URL semantic view | [🛑](./README.md#si-a5 "Not introduced") | [✅](#si-a5-slice-1 "Established") | [✅](#si-a5-slice-1 "Established") | [✅](#si-a5-slice-1 "Established") | [✅](#si-a5-slice-1 "Established") | [✅](#si-a5-slice-1 "Established") | [✅](#si-a5-slice-1 "Established") | [✅](#si-a5-slice-1 "Established") |
+| [SI-A4](./README.md#si-a4) generic frontend | [🛑](./README.md#si-a4 "Not introduced") | [✅](#si-a4-slice-1 "Established") | [✅](#si-a4-slice-1 "Established") | [✅](#si-a4-slice-1 "Established") | [✅](#si-a4-slice-1 "Established") | [✅](#si-a4-slice-1 "Established") | [✅](#si-a4-slice-1 "Established") | [✅](#si-a4-slice-1 "Established") |
+| [SI-A5](./README.md#si-a5) URL intent and reset | [🛑](./README.md#si-a5 "Not introduced") | [✅](#si-a5-slice-1 "Established") | [✅](#si-a5-slice-1 "Established") | [✅](#si-a5-slice-1 "Established") | [✅](#si-a5-slice-1 "Established") | [✅](#si-a5-slice-1 "Established") | [✅](#si-a5-slice-1 "Established") | [✅](#si-a5-slice-1 "Established") |
 | [SI-A6](./README.md#si-a6) faithful bounded reflection | [🛑](./README.md#si-a6 "Not introduced") | [🟡](#si-a6-slice-1 "Introduced") | [🟡](#si-a6-slice-1 "Introduced") | [🟡](#si-a6-slice-1 "Introduced") | [✅](#si-a6-slice-4 "Established") | [✅](#si-a6-slice-4 "Established") | [✅](#si-a6-slice-4 "Established") | [✅](#si-a6-slice-4 "Established") |
-| [SI-A7](./README.md#si-a7) analysis/reflection/rendering split | [🛑](./README.md#si-a7 "Not introduced") | [🛑](./README.md#si-a7 "Not introduced") | [🛑](./README.md#si-a7 "Not introduced") | [🛑](./README.md#si-a7 "Not introduced") | [🟡](#si-a7-slice-4 "Introduced") | [🟡](#si-a7-slice-4 "Introduced") | [✅](#si-a7-slice-6 "Established") | [✅](#si-a7-slice-6 "Established") |
-| [SI-A8](./README.md#si-a8) retained identity | [🛑](./README.md#si-a8 "Not introduced") | [🟡](#si-a8-slice-1 "Introduced") | [🟡](#si-a8-slice-1 "Introduced") | [🟡](#si-a8-slice-1 "Introduced") | [🟡](#si-a8-slice-1 "Introduced") | [✅](#si-a8-slice-5 "Established") | [✅](#si-a8-slice-5 "Established") | [✅](#si-a8-slice-5 "Established") |
+| [SI-A7](./README.md#si-a7) semantic work before rendering | [🛑](./README.md#si-a7 "Not introduced") | [🛑](./README.md#si-a7 "Not introduced") | [🛑](./README.md#si-a7 "Not introduced") | [🛑](./README.md#si-a7 "Not introduced") | [🟡](#si-a7-slice-4 "Introduced") | [🟡](#si-a7-slice-4 "Introduced") | [✅](#si-a7-slice-6 "Established") | [✅](#si-a7-slice-6 "Established") |
+| [SI-A8](./README.md#si-a8) canonical symbol paths | [🛑](./README.md#si-a8 "Not introduced") | [🟡](#si-a8-slice-1 "Introduced") | [🟡](#si-a8-slice-1 "Introduced") | [🟡](#si-a8-slice-1 "Introduced") | [🟡](#si-a8-slice-1 "Introduced") | [✅](#si-a8-slice-5 "Established") | [✅](#si-a8-slice-5 "Established") | [✅](#si-a8-slice-5 "Established") |
 | [SI-A9](./README.md#si-a9) eager detail-free index | [🛑](./README.md#si-a9 "Not introduced") | [🟡](#si-a9-slice-1 "Introduced") | [🟡](#si-a9-slice-1 "Introduced") | [✅](#si-a9-slice-3 "Established") | [✅](#si-a9-slice-3 "Established") | [✅](#si-a9-slice-3 "Established") | [✅](#si-a9-slice-3 "Established") | [✅](#si-a9-slice-3 "Established") |
-| [SI-A10](./README.md#si-a10) typed focused operations | [🛑](./README.md#si-a10 "Not introduced") | [🟡](#si-a10-slice-1 "Introduced") | [🟡](#si-a10-slice-1 "Introduced") | [🟡](#si-a10-slice-1 "Introduced") | [🟡](#si-a10-slice-1 "Introduced") | [✅](#si-a10-slice-5 "Established") | [✅](#si-a10-slice-5 "Established") | [✅](#si-a10-slice-5 "Established") |
 | [SI-A11](./README.md#si-a11) complete demand observation | [🛑](./README.md#si-a11 "Not introduced") | [🛑](./README.md#si-a11 "Not introduced") | [🛑](./README.md#si-a11 "Not introduced") | [🛑](./README.md#si-a11 "Not introduced") | [🛑](./README.md#si-a11 "Not introduced") | [🛑](./README.md#si-a11 "Not introduced") | [✅](#si-a11-slice-6 "Established") | [✅](#si-a11-slice-6 "Established") |
 | [SI-A12](./README.md#si-a12) stable evidence projection | [🛑](./README.md#si-a12 "Not introduced") | [🟡](#si-a12-slice-1 "Introduced") | [🟡](#si-a12-slice-1 "Introduced") | [🟡](#si-a12-slice-1 "Introduced") | [🟡](#si-a12-slice-1 "Introduced") | [🟡](#si-a12-slice-1 "Introduced") | [✅](#si-a12-slice-6 "Established") | [✅](#si-a12-slice-6 "Established") |
 | [SI-A13](./README.md#si-a13) revisions versus runs | [🛑](./README.md#si-a13 "Not introduced") | [🛑](./README.md#si-a13 "Not introduced") | [🛑](./README.md#si-a13 "Not introduced") | [🛑](./README.md#si-a13 "Not introduced") | [🛑](./README.md#si-a13 "Not introduced") | [🛑](./README.md#si-a13 "Not introduced") | [🛑](./README.md#si-a13 "Not introduced") | [✅](#si-a13-slice-7 "Established") |
 | [SI-A14](./README.md#si-a14) oracle independence | [✅](#si-a14-baseline "Established") | [✅](#si-a14-baseline "Established") | [✅](#si-a14-baseline "Established") | [✅](#si-a14-baseline "Established") | [✅](#si-a14-baseline "Established") | [✅](#si-a14-baseline "Established") | [✅](#si-a14-baseline "Established") | [✅](#si-a14-baseline "Established") |
-| [SI-A15](./README.md#si-a15) narrow semantic catalogs | [🛑](./README.md#si-a15 "Not introduced") | [🛑](./README.md#si-a15 "Not introduced") | [🛑](./README.md#si-a15 "Not introduced") | [🟡](#si-a15-slice-3 "Introduced") | [🟡](#si-a15-slice-3 "Introduced") | [✅](#si-a15-slice-5 "Established") | [✅](#si-a15-slice-5 "Established") | [✅](#si-a15-slice-5 "Established") |
+| [SI-A15](./README.md#si-a15) positive non-eager products | [🛑](./README.md#si-a15 "Not introduced") | [🛑](./README.md#si-a15 "Not introduced") | [🛑](./README.md#si-a15 "Not introduced") | [🟡](#si-a15-slice-3 "Introduced") | [🟡](#si-a15-slice-3 "Introduced") | [✅](#si-a15-slice-5 "Established") | [✅](#si-a15-slice-5 "Established") | [✅](#si-a15-slice-5 "Established") |
+| [SI-A16](./README.md#si-a16) derive-driven reflection | [🛑](./README.md#si-a16 "Not introduced") | [🛑](./README.md#si-a16 "Not introduced") | [🟡](#si-a16-slice-2 "Introduced") | [🟡](#si-a16-slice-2 "Introduced") | [✅](#si-a16-slice-4 "Established") | [✅](#si-a16-slice-4 "Established") | [✅](#si-a16-slice-4 "Established") | [✅](#si-a16-slice-4 "Established") |
+| [SI-A17](./README.md#si-a17) Salsa invocation spans | [🛑](./README.md#si-a17 "Not introduced") | [🛑](./README.md#si-a17 "Not introduced") | [🛑](./README.md#si-a17 "Not introduced") | [🛑](./README.md#si-a17 "Not introduced") | [🛑](./README.md#si-a17 "Not introduced") | [🛑](./README.md#si-a17 "Not introduced") | [✅](#si-a17-slice-6 "Established") | [✅](#si-a17-slice-6 "Established") |
 
 A slice is complete only when every anchor which turns green in its column has
 the evidence named below and every already-green anchor remains green.
@@ -265,9 +276,11 @@ the evidence which first established the anchor.
 <a id="si-a1-slice-3"></a>
 ### SI-A1 — Slice 3: introduced
 
-The real workspace-symbol service first constructs an `InspectionHost` and
-keeps one Sage database alive across requests. The anchor remains yellow
-because this slice does not yet watch files or prove same-database edit reuse.
+The real workspace-symbol service first constructs a `DatabaseActor` which
+owns `InspectionHost` and keeps one Sage database alive across typed client
+messages. Handler tests prohibit direct Axum database access. The anchor
+remains yellow because this slice does not yet watch files or prove
+same-database edit reuse.
 
 <a id="si-a1-slice-7"></a>
 ### SI-A1 — Slice 7: established
@@ -280,9 +293,9 @@ and proves that coherent reads never observe a partially applied edit batch.
 ### SI-A2 — Slice 2: established
 
 Typed Rust service requests and results exist below Axum. Handler tests prove
-that Axum only parses protocol DTOs, invokes that service, maps transport
-status, and serializes the result; no semantic selection or rendering lives in
-the handler.
+that Axum only parses protocol DTOs, invokes the client boundary, maps
+transport status, and serializes the result; no database access, semantic
+selection, or rendering lives in the handler.
 
 <a id="si-a3-slice-1"></a>
 ### SI-A3 — Slice 1: introduced
@@ -302,23 +315,24 @@ deserializes its expected response to manufacture the value under test.
 <a id="si-a4-slice-1"></a>
 ### SI-A4 — Slice 1: established
 
-Browser tests prove that server-provided product catalogs alone determine
-which tabs and actions appear, how unavailable states are explained, and which
-resources are fetched. The client does not infer availability from an empty
-value or duplicate an origin/kind table.
+Browser tests prove that the directory, positive product lists, generic render
+trees, traces, and revisions alone determine behavior. An invented symbol kind
+and product ID render without a TypeScript case; omission removes a tab and
+request; local and external symbols use the same components.
 
 <a id="si-a5-slice-1"></a>
 ### SI-A5 — Slice 1: established
 
-Every semantic selection, tab, focused operation, and revision view has a
-canonical URL. Direct load, reload, Back, and Forward tests establish the
-push-versus-replace policy against the dummy server.
+Every semantic selection, product, and revision view has a canonical URL.
+Direct load, Back, and Forward tests establish push versus replace. Revision
+mismatch tests discard every response-derived value, bootstrap a new directory,
+replay the URL, and fall back explicitly if its symbol path no longer resolves.
 
 <a id="si-a6-slice-1"></a>
 ### SI-A6 — Slice 1: introduced
 
-One generic browser renderer handles the complete `ValueNode` protocol
-vocabulary, including references, sharing, cycles, and truncation. Fixture
+Generic browser interpreters handle the complete `RenderNode` and `ValueNode`
+vocabularies, including references, sharing, cycles, and truncation. Fixture
 tests establish the interaction model, but cannot yet prove faithful
 reflection of real Rust structures.
 
@@ -341,23 +355,24 @@ phase attribution is not yet observable without the tracing work.
 ### SI-A7 — Slice 6: established
 
 Execution evidence identifies selection, requested analysis, structural
-reflection, and post-trace serialization as separate phases. Tests prove that
-every semantic read used by reflection is inside the recorded boundary and
-that JSON and browser rendering add none.
+reflection, pure render-tree assembly, and post-trace serialization as separate
+phases. Tests prove that every semantic read used by reflection is inside the
+recorded boundary and that JSON and browser interpretation add none.
 
 <a id="si-a8-slice-1"></a>
 ### SI-A8 — Slice 1: introduced
 
-Fixture semantic references carry opaque navigation handles separately from
-display labels, and all browser navigation uses those handles. Real Sage
-identity and external metadata navigation are not connected yet.
+Fixture semantic references carry canonical paths separately from display
+labels, and all browser navigation uses those paths. Real Sage identity and
+external metadata navigation are not connected yet.
 
 <a id="si-a8-slice-5"></a>
 ### SI-A8 — Slice 5: established
 
-Local and external references round-trip through real retained identities.
-Tests cover parent and child navigation, handle expiry, and changing a display
-label without changing the selected symbol.
+Local and external references round-trip through backend ownership traversal.
+Tests cover path stability across unrelated edits, sibling reordering and host
+reconstruction; namespaces, unnamed/generated definitions, duplicate external
+crates, label changes, and explicit rename/move/delete failure.
 
 <a id="si-a9-slice-1"></a>
 ### SI-A9 — Slice 1: introduced
@@ -374,21 +389,6 @@ prove that the complete local index excludes dependencies and does not request
 signatures, field types, bodies, associated values, impl candidates, or
 external metadata.
 
-<a id="si-a10-slice-1"></a>
-### SI-A10 — Slice 1: introduced
-
-The fixture protocol and UI expose focused impl, proof, and normalization
-requests only through opaque typed operation-target handles. No real solver
-operation is invoked yet.
-
-<a id="si-a10-slice-5"></a>
-### SI-A10 — Slice 5: established
-
-Real reflected nodes mint the handles and invoke Sage's public impl-discovery,
-`Prove(P) -> Proven`, and input-only `Normalize(alias) -> Type` boundaries.
-Tests prove that proof exposes no selected impl and normalization accepts no
-expected type.
-
 <a id="si-a11-slice-6"></a>
 ### SI-A11 — Slice 6: established
 
@@ -401,8 +401,8 @@ of complete dependency observation.
 ### SI-A12 — Slice 1: introduced
 
 The fixture bundle establishes the checked transcript shape, action grouping,
-and required and forbidden API demand. Salsa and semantic-operation evidence
-is deliberately marked unavailable.
+and required and forbidden API demand. It makes no Salsa or semantic-operation
+evidence claim yet.
 
 <a id="si-a12-slice-6"></a>
 ### SI-A12 — Slice 6: established
@@ -431,16 +431,39 @@ adapters.
 ### SI-A15 — Slice 3: introduced
 
 The real service first constructs local-symbol product catalogs without
-requesting the advertised products. External catalogs and the complete
-focused-operation surface are not connected yet.
+requesting the advertised products. External product lists are not connected
+yet.
 
 <a id="si-a15-slice-5"></a>
 ### SI-A15 — Slice 5: established
 
-Representative local and external catalog snapshots establish server-authored
-availability for all supported products and operations. Forbidden-demand
-assertions prove that catalog construction reads no advertised product,
-associated value, impl candidate, callee body, or unrelated metadata.
+Representative local and external snapshots establish positive server-authored
+lists of opaque IDs, labels, and URLs. Forbidden-demand assertions prove that
+list construction reads no advertised product, associated value, impl
+candidate, callee body, or unrelated metadata.
+
+<a id="si-a16-slice-2"></a>
+### SI-A16 — Slice 2: introduced
+
+The custom derive and reflection context operate on scripted Rust DTO fixtures.
+They recursively expose ordinary fields and variants and support explicit
+semantic overrides, but no real Sage IR coverage exists yet.
+
+<a id="si-a16-slice-4"></a>
+### SI-A16 — Slice 4: established
+
+Real Concrete IR, signatures, types, and Typed IR use derived reflection.
+Mutation and coverage tests prove fields and variants appear automatically;
+custom symbol, span, stash, sharing, cycle, and limit implementations are
+explicit; and product producers perform no hand serialization.
+
+<a id="si-a17-slice-6"></a>
+### SI-A17 — Slice 6: established
+
+The temporary Salsa fork emits one balanced span per tracked-query invocation
+before memo lookup. Tests cover execution, validation, already-current reuse,
+nested parentage, termination paths, no per-query Sage annotations, stable
+ingredient projection, and the unmapped fallback.
 
 ## Delivery slices
 
@@ -453,27 +476,32 @@ is not duplicated or accidentally narrowed here.
 A React/TypeScript application implements the complete mockup against the
 reviewed protocol fixture bundle and a strict dummy server. There is no Axum,
 Rust DTO, `rust-embed`, `cargo sage inspect` command, or Sage database in this
-slice. The bundle is the server-provided dummy data; semantic values are never
-hard-coded in view components.
+slice. The bundle is the server-provided dummy data. The application is a
+generic interpreter for the symbol directory, positive product descriptors,
+`RenderNode`/`ValueNode` trees, and revision state; semantic values and product
+meanings are never hard-coded in view components.
 
 Anchors established: [SI-A4](#si-a4-slice-1) and
 [SI-A5](#si-a5-slice-1).
 
 Anchors introduced: [SI-A3](#si-a3-slice-1),
 [SI-A6](#si-a6-slice-1), [SI-A8](#si-a8-slice-1),
-[SI-A9](#si-a9-slice-1), [SI-A10](#si-a10-slice-1), and
-[SI-A12](#si-a12-slice-1).
+[SI-A9](#si-a9-slice-1), and [SI-A12](#si-a12-slice-1).
 
 Acceptance evidence:
 
 - browser panels are assembled only from protocol requests and responses;
 - the complete fixture symbol index is fetched once, then searched, filtered,
   and disclosed without further requests;
-- catalogs drive tabs, unavailability, and actions without client guessing;
-- local and external fixture links, products, focused operations, detailed
-  structures, resizing, and grow/restore interactions match the mockup;
+- positive product descriptors drive tabs without client guessing, and an
+  invented symbol presentation and product identifier render without a new
+  TypeScript case;
+- local and external fixture links, products, detailed structures, resizing,
+  and grow/restore interactions match the mockup;
 - every change of semantic view updates the URL, and direct load, reload,
-  Back, and Forward restore it;
+  Back, and Forward restore it by canonical symbol path and product ID;
+- a revision mismatch discards all response-derived state, bootstraps the
+  current revision and full directory, and replays the URL's durable intent;
 - the strict dummy server rejects an unlisted request and records exact
   required and forbidden demand; and
 - browser snapshots and action-grouped demand transcripts use the reviewed
@@ -483,11 +511,14 @@ Acceptance evidence:
 
 Typed Rust protocol DTOs and a reusable inspection-service boundary sit below
 an Axum loopback server. `cargo sage inspect` serves the Vite-built application
-through `rust-embed` and opens a session URL. The service returns independent
-typed scripted values; it does not yet construct a live Sage database.
+through `rust-embed` and opens the application URL. The service returns
+independent typed scripted values; it does not yet construct a live Sage
+database.
 
 Anchors established: [SI-A2](#si-a2-slice-2) and
 [SI-A3](#si-a3-slice-2). Every Slice 1 green anchor remains a regression gate.
+
+Anchor introduced: [SI-A16](#si-a16-slice-2).
 
 Acceptance evidence:
 
@@ -499,15 +530,17 @@ Acceptance evidence:
 - embedded production assets and direct routed loads work through Axum;
 - terminal logs group API and provider demand under the browser action which
   caused it; and
-- one black-box smoke test launches the real command on a random loopback port
+- one black-box smoke test launches the real command with port `0`
   and snapshots the visible result and server-owned demand together.
 
 ### Slice 3: Real workspace symbols
 
-The service constructs one live, read-only `InspectionHost` for the selected
-target. The session and complete detail-free local symbol index use real Sage
-data, and absolute-path selection resolves to those same retained handles.
-Detail products remain explicitly unavailable.
+The service constructs one `DatabaseActor` which owns the live
+`InspectionHost` for the selected target. Axum reaches it only through
+`InspectionClient`. The session and complete detail-free local symbol index use
+real Sage data. The browser searches that directory locally and selects its
+canonical paths. The catalogs list no detail products until those real
+products are connected.
 
 Anchor established: [SI-A9](#si-a9-slice-3).
 
@@ -522,17 +555,18 @@ Acceptance evidence:
   external metadata are forbidden while constructing the index and catalogs;
 - generated local symbols and provenance appear where represented;
 - dependency symbols are absent from the workspace tree and search count;
-- absolute paths select the same identities as tree rows; and
-- repeated requests use the same live host.
+- search sends no user text to the backend and selects the chosen row's
+  canonical path; and
+- repeated client messages use the same actor-owned live host.
 
 ### Slice 4: Real selected-symbol products
 
 Selecting `DbDropGuard::db` shows its real identity, source, Concrete IR,
 signature, diagnostics, and completed Typed IR. Each product is requested
 independently and rendered from faithful bounded structural reflection.
-Source-position selection resolves through the same `SelectedItem` boundary.
 
-Anchor established: [SI-A6](#si-a6-slice-4).
+Anchors established: [SI-A6](#si-a6-slice-4) and
+[SI-A16](#si-a16-slice-4).
 
 Anchors introduced or extended: [SI-A7](#si-a7-slice-4),
 [SI-A8](#si-a8-slice-1), and [SI-A15](#si-a15-slice-3).
@@ -543,34 +577,41 @@ Acceptance evidence:
   reusing the body product where designed;
 - structural snapshots expose actual wrappers, fields, variants, and every
   embedded `Ty` tree;
-- source-position and tree/path selection identify the same symbol;
+- reflection coverage and mutation tests prove ordinary derived fields and
+  variants appear automatically, while custom symbol cross-links and bounded
+  sharing, cycle, and truncation behavior remain explicit;
 - client expansion and formatting perform no semantic work;
-- availability, incompleteness, truncation, and diagnostics remain explicit;
+- incompleteness, truncation, and diagnostics remain explicit within returned
+  products;
   and
 - the exact oracle comparison remains independent and unchanged.
 
-### Slice 5: Navigation, metadata, and focused operations
+### Slice 5: Navigation and metadata
 
-Every reflected symbol reference is an opaque clickable navigation target. A
+Every reflected symbol reference carries a backend-authored canonical path. A
 reviewer can move between local symbols and metadata-backed external symbols,
-navigate their parent and children, and request each product independently.
-The service also exposes relevant impl candidates, `Prove(P) -> Proven`, and
-input-only `Normalize(alias) -> Type` through typed operation handles.
+navigate their parent and children, and request each listed product
+independently. The frontend treats paths and product identifiers as opaque;
+ownership traversal and positive product enumeration remain server
+responsibilities.
 
-Anchors established: [SI-A8](#si-a8-slice-5),
-[SI-A10](#si-a10-slice-5), and [SI-A15](#si-a15-slice-5).
+Anchors established: [SI-A8](#si-a8-slice-5) and
+[SI-A15](#si-a15-slice-5).
 
 Acceptance evidence:
 
-- links round-trip retained identity, and changing a display label does not
-  alter selection;
+- canonical paths distinguish namespaces, unnamed impls, generated symbols,
+  and duplicate external crate instances;
+- paths survive unrelated edits, declaration reordering, and database
+  reconstruction, while rename, move, and deletion fail explicitly;
+- changing a display label does not alter selection or navigation;
 - external symbols remain absent from the workspace tree;
 - requesting one external product does not read the others;
 - local and external catalogs request none of the products they advertise;
-- unavailable and incomplete products remain explicit;
-- proof exposes no selected impl and normalization has no expected-type input;
-- focused requests use retained typed handles rather than display strings; and
-- candidate completeness, ambiguity, and overflow are visible.
+- absent product pages are omitted, while incompleteness inside listed products
+  remains explicit; and
+- stale or forged paths and product identifiers return structured not-found
+  errors without causing semantic guessing in the client.
 
 ### Slice 6: Salsa event chain and execution tree
 
@@ -579,11 +620,16 @@ requests and execution/reuse disposition, Sage semantic operations, solver
 work, and external metadata reads.
 
 Anchors established: [SI-A7](#si-a7-slice-6),
-[SI-A11](#si-a11-slice-6), and [SI-A12](#si-a12-slice-6).
+[SI-A11](#si-a11-slice-6), [SI-A12](#si-a12-slice-6), and
+[SI-A17](#si-a17-slice-6).
 
 Acceptance evidence:
 
 - no promised request is omitted, including already-verified memo fetches;
+- the temporary Salsa fork emits one balanced span for every tracked-query
+  invocation before memo lookup, covering execution, validation,
+  already-current reuse, nested parentage, and every termination path without
+  per-query Sage annotations;
 - unmapped work uses the stable fallback and retains raw diagnostic payload;
 - earlier navigation transcripts gain a correlated Salsa/Sage subtree without
   changing their browser-action and API-demand structure;
@@ -597,9 +643,11 @@ Acceptance evidence:
 ### Slice 7: Live updates and revision history
 
 The host watches represented source files, applies edits to the same database,
-notifies the browser, refreshes visible demand, and compares new results and
-traces with earlier revisions. A revisions view shows exact input changes and
-all inspection runs retained for each Salsa revision.
+notifies the browser, reloads the current semantic URL at the new process-wide
+revision, discards all response-derived state, bootstraps a fresh directory,
+replays the current semantic URL, and compares new results and traces with
+earlier revisions. A revisions view shows exact input changes and all
+inspection runs retained for each Salsa revision.
 
 Anchors established: [SI-A1](#si-a1-slice-7) and
 [SI-A13](#si-a13-slice-7).
@@ -608,10 +656,11 @@ Acceptance evidence:
 
 - cold and unchanged-warm runs use one host;
 - relevant and unrelated edits show intended execution/reuse boundaries;
-- older browser products are marked stale;
+- every response is tagged with a revision ID and a mismatch forces a complete
+  client reset and bootstrap before canonical path resolution;
 - input updates and full workspace reloads are distinguished honestly;
-- visible membership refresh requests the complete symbol index, never stale
-  lazy-branch resources;
+- bootstrap requests the complete symbol index and current product, never
+  hidden products or stale lazy-branch resources;
 - a revision with no inspection request reports no semantic work; and
 - comparisons do not infer causal dependency edges which were not recorded.
 
