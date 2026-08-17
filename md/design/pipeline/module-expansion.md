@@ -54,6 +54,28 @@ a represented item, but an omitted or unexpanded construct may have produced
 additional items. Consumers must not turn that absence into a definite
 negative semantic answer.
 
+<a id="exp-a1"></a>
+> **EXP-A1 — Expansion returns direct module members, not a visible-name
+> environment.** The result preserves deterministic order and provenance for
+> source and generated direct items. Child-module members remain in the child,
+> while imports and namespace lookup are interpreted later by resolution.
+>
+> **Required verification:** Fixtures cover ordinary items, `use` items,
+> inline child modules, recursively generated items, and derives, asserting
+> direct membership, ordering, ownership, and generated provenance without
+> treating imported or child names as direct parent members.
+
+<a id="exp-a2"></a>
+> **EXP-A2 — Exhaustive absence requires complete expansion.** Published
+> symbols are safe to use even when expansion is incomplete, but an omitted
+> symbol supports a definite negative answer only when expansion is complete
+> for that semantic question. This is the expansion consequence of
+> [D16](../decisions.md#d16-incompleteness-is-an-explicit-terminal-outcome).
+>
+> **Required verification:** Successful expansion permits a ground exhaustive
+> negative query, while unresolved, malformed, unsupported, and resource-limited
+> expansion produce conservative uncertainty rather than the same negative.
+
 ## Entry points
 
 `LocalModSym::expanded_module_items` dispatches to the tracked
@@ -98,6 +120,17 @@ Expansion convergence does not by itself establish semantic completeness. A
 separate audit must still account for failed, unresolved, unsupported, or
 depth-limited constructs.
 
+<a id="exp-a3"></a>
+> **EXP-A3 — Recursive expansion and same-module fixed points are distinct.**
+> Recursive processing expands invocations emitted directly by another
+> invocation. Salsa fixed-point recovery is used only when resolving a macro
+> requires the provisional expanded members of that same module; convergence
+> does not imply completeness.
+>
+> **Required verification:** One fixture exercises nested emitted invocations,
+> another requires a macro definition emitted earlier in the same module, and
+> traces show bounded fixed-point reexecution followed by stable warm reuse.
+
 ## Failure and terminal incompleteness
 
 Expansion may terminate without the complete-output guarantee because of:
@@ -139,6 +172,17 @@ must invalidate the affected module result. Moving a source item without
 changing its semantic or generated identity should preserve that identity;
 equal reconstructed output may be backdated so unchanged consumers do not
 reexecute. A change inside a function body is not an expansion dependency.
+
+<a id="exp-a4"></a>
+> **EXP-A4 — Expansion observes expansion inputs, never checked semantic
+> detail.** A module expansion may depend on parsed item identities, macro
+> resolution and definitions, generated output, and completeness facts. It
+> must not depend on item signatures, trait solutions, or function bodies.
+>
+> **Required verification:** Cold and warm traces identify the expansion
+> boundary; edits to an invocation or selected macro output invalidate it;
+> body-only and unrelated-signature edits do not; and unchanged reconstructed
+> output is backdated before downstream consumers execute.
 
 ## Worked example
 
@@ -197,23 +241,25 @@ symbols with provenance. Expansion is tracked per local module.
 
 ### Implemented capabilities and evidence
 
-- **Same-module fixed point.**
+- **[EXP-A3](#exp-a3) — Same-module fixed point.**
   `same_module_macro_resolution_reaches_a_fixed_point` exercises a macro that
   creates the definition needed by a later invocation. Run
   `cargo test -p sage-test-harness
   same_module_macro_resolution_reaches_a_fixed_point` and inspect the entry
   query and cycle-initial anchors above.
-- **Recursive successful expansion and exhaustive negative search.**
+- **[EXP-A2](#exp-a2) — Successful item expansion and exhaustive negative
+  search.**
   `successful_item_macro_keeps_ground_negative_search_complete` shows that a
-  successfully represented item macro does not unnecessarily weaken a ground
-  trait result.
-- **Terminal incompleteness.**
+  single successfully represented item macro does not unnecessarily weaken a
+  ground trait result. It does not exercise a nested emitted invocation; that
+  part of EXP-A3 remains unverified.
+- **[EXP-A2](#exp-a2) — Terminal incompleteness.**
   `unresolved_item_macro_prevents_ground_no`,
   `malformed_item_macro_output_prevents_ground_no_without_panicking`, and
   `recursive_item_macro_hits_expansion_limit_and_returns_maybe` show that
   unresolved input, invalid generated Rust, and resource exhaustion cannot
   create a false negative answer.
-- **Generated identity across edits.**
+- **[EXP-A1](#exp-a1) — Generated identity across edits.**
   `moving_source_item_preserves_derive_expansion_identity` moves a source item
   and verifies stable expansion identity while its origin coordinate updates.
 
@@ -231,7 +277,7 @@ module expansion.
 | Is the represented result complete? | the fixed-point test requires `Generated`; the `successful_item_macro_keeps_ground_negative_search_complete` test establishes exhaustive downstream use |
 | What happens on failure or a limit? | the unresolved, malformed-output, and recursive-limit tests listed above require conservative `Maybe` rather than false `No` |
 | Which query runs? | `expanded_module_query_has_a_cold_and_warm_trace` requires the module query on a cold request and its reuse on an unchanged warm request |
-| What happens after an edit? | `moving_source_item_preserves_derive_expansion_identity` checks offset movement; `unrelated_body_edit_exposes_current_body_invalidation` records that same-file edits currently rerun module/derive discovery |
+| What happens after an edit? | `moving_source_item_preserves_derive_expansion_identity` checks offset movement; an unrelated-body edit trace for expansion itself is not yet asserted |
 | Where does implementation detail begin? | the entry, cycle-initial, recursive expansion, and completeness anchors above |
 
 Reproduce the focused packet with:
@@ -256,8 +302,14 @@ cargo test -p sage-test-harness moving_source_item_preserves_derive_expansion_id
   conservative.
 - Built-in derive coverage is partial, and general attribute/procedural derive
   expansion is not integrated.
+- Existing generated-symbol evidence does not yet cover EXP-A1's complete
+  direct-membership matrix for imports, inline children, recursive output, and
+  derives in one review packet.
+- EXP-A3 has fixed-point success and recursive depth-limit evidence, but no
+  successful fixture in which one expansion emits another invocation.
 - Evidence covers stable generated identity and focused behavior, but not yet
-  a structured edit/invalidation trace for the expanded-module query.
+  a structured edit/invalidation trace for the expanded-module query; EXP-A4's
+  full positive and negative edit matrix remains prospective.
 
 ### Related roadmap slices
 

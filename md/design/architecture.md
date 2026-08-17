@@ -31,6 +31,32 @@ most visible in the pipeline are:
 - **Conformance is exact.** Sage and rustc independently emit a shared oracle
   representation; the adapters are thin and comparison is textual identity.
 
+<a id="arc-a1"></a>
+> **ARC-A1 — Semantic identity precedes semantic detail.** A definition's
+> semantic identity is created and retained independently from its signature,
+> members, fields, body, and other lazily computed facts. Symbol-bearing item
+> definitions use their symbol; generic parameters, fields, and locals use
+> their appropriate scoped identity family. Downstream semantic values refer
+> to that identity rather than reconstructing it from those details. This is
+> the pipeline-wide consequence of
+> [D5](./decisions.md#d5-symbols-form-the-uniform-semantic-identity-family).
+>
+> **Required verification:** Identity tests and edit experiments show that an
+> unchanged definition retains the same symbol when unrelated or detail-only
+> inputs change, while symbol-keyed detail queries execute only when their own
+> observed inputs require it.
+
+<a id="arc-a2"></a>
+> **ARC-A2 — Demand follows the narrowest semantic boundary.** Asking for one
+> semantic product requests only the interfaces and metadata needed for that
+> product. In particular, checking a caller may read a callee signature but
+> never the callee body. This is the pipeline-wide consequence of
+> [D15](./decisions.md#d15-cross-item-dependencies-stop-at-semantic-interfaces).
+>
+> **Required verification:** Focused query traces state required and forbidden
+> dependencies for representative module, signature, and body requests,
+> including an explicit no-callee-body assertion.
+
 ## Symbols connect the pipeline
 
 A path such as `crate::parse::Parse::next` is a way to *find* a definition. It
@@ -89,6 +115,18 @@ guarantee because of user errors, unsupported Sage functionality, unavailable
 external facts, or a resource limit. That is **terminal incompleteness**, not
 work that more polling will finish.
 
+<a id="arc-a3"></a>
+> **ARC-A3 — Phase incompleteness is a terminal semantic outcome.** A phase
+> distinguishes a complete result from a conservative result limited by user
+> error, unsupported functionality, unavailable facts, or an explicit
+> resource bound. It never presents such a result as computation which merely
+> needs more scheduling. This is the pipeline-wide consequence of
+> [D16](./decisions.md#d16-incompleteness-is-an-explicit-terminal-outcome).
+>
+> **Required verification:** Each phase with an incomplete outcome tests its
+> reason and surviving guarantees, and proves that repeating the same demand
+> without an input or limit change cannot silently upgrade it to complete.
+
 ## Semantic subsystems
 
 These facilities are invoked from multiple phases:
@@ -126,10 +164,12 @@ The architecture is meant to be reviewable at increasing depth:
 2. Its **Current Status** section identifies limitations and maps implemented
    claims to focused tests, snapshots, query traces, edit experiments, oracle
    results, and source anchors.
-3. Anchored excerpts lead from the explanation into the load-bearing code.
-4. The [Oracle Test Harness](./oracle-test-harness.md) establishes exact
+3. Confirmed contradictions between those anchors and the implementation are
+   indexed in [Known Architecture Deviations](../implementation/known-deviations.md).
+4. Anchored excerpts lead from the explanation into the load-bearing code.
+5. The [Oracle Test Harness](./oracle-test-harness.md) establishes exact
    conformance for pinned semantic slices.
-5. The planned Semantic Inspector will expose readable semantic output and
+6. The planned Semantic Inspector will expose readable semantic output and
    structured query traces from a persistent workspace.
 
 See [Validation and Inspection](./validation/README.md).
@@ -161,19 +201,24 @@ associated-type normalization, and elaborated calls.
 
 ### Evidence
 
-- [Oracle-checked method body](./examples/oracle-checked-method.md) follows a
-  completed method body into exact Sage/rustc output.
-- [Mini-redis Conformance Roadmap](../implementation/mini-redis.md) records the
-  acceptance criteria and query-dependency evidence for both completed slices.
-- `clone_method_body_has_a_narrow_reusable_semantic_query_trace` proves the
+- [ARC-A1](#arc-a1): the [Symbols](./infrastructure/symbols.md) and
+  [incrementality](./infrastructure/incrementality.md) review packets connect
+  stable local identities to same-database edit experiments.
+- [ARC-A2](#arc-a2): the
+  [Oracle-checked method body](./examples/oracle-checked-method.md) follows a
+  completed method body into exact Sage/rustc output, and
+  `clone_method_body_has_a_narrow_reusable_semantic_query_trace` proves the
   requested body executes once, reads selected interface metadata, reads no
   callee body, and is reused unchanged.
+- [Mini-redis Conformance Roadmap](../implementation/mini-redis.md) records the
+  acceptance criteria and query-dependency evidence for both completed slices.
 
 ### Current limitations
 
-- Module expansion returns represented symbols while completeness is audited
-  separately for particular consumers. The destination phase result makes
-  terminal incompleteness explicit.
+- [ARC-A3](#arc-a3) is not established uniformly: module expansion returns
+  represented symbols while completeness is audited separately for particular
+  consumers. The destination phase result makes terminal incompleteness
+  explicit.
 - Same-file unrelated body edits currently cause coarse module/derive and body
   reexecution; selected callee interfaces remain reusable. The
   [incrementality guide](./infrastructure/incrementality.md) links the edit

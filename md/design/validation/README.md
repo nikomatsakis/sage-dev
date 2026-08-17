@@ -10,17 +10,39 @@ every implementation detail.
   excerpts and semantic output.
 - Focused tests, readable snapshots, and query traces provide evidence for the
   claims in each architecture chapter's **Current Status** section.
-- The draft [Semantic Inspector
-  RFD](../../rfds/semantic-inspector/README.md) proposes a web-backed local and
-  external symbol browser for concrete IR, signatures, Typed IR, and other
-  semantic results. A reviewed exact JSON contract first drives frontend tests
-  through a strict dummy server; independently constructed typed backend
-  values and Axum snapshots meet it at the same bytes in the following slice.
-  Persistent edits and incremental query traces follow after result
-  inspection; an LSP adapter remains a future client.
+- The [Semantic Inspector](../../rfds/semantic-inspector/README.md) is the
+  web-backed local and external symbol browser for concrete IR, signatures,
+  Typed IR, and other semantic results. Its exact JSON contract independently
+  drives frontend and backend tests; persistent edits and incremental query
+  traces make query boundaries reviewable. An LSP adapter can reuse the
+  inspection service as a future client.
 
 Human-readable inspection supplements exact oracle conformance; it does not
 replace or relax it.
+
+<a id="val-a1"></a>
+> **VAL-A1 — Evidence is attached to one architectural claim.** A positive
+> Current Status statement names an observable artifact which establishes that
+> particular behavior, while a negative or partial artifact may pin a known
+> limitation. A passing aggregate suite is not evidence for an unstated local
+> guarantee.
+>
+> **Required verification:** Documentation review checks every implemented
+> capability against a focused test, snapshot, normalized trace, edit
+> experiment, exact oracle result, inspector scenario, or source anchor whose
+> asserted behavior matches the claim.
+
+<a id="val-a2"></a>
+> **VAL-A2 — Human inspection and exact conformance remain independent.**
+> Readable Sage-only views explain semantic values and incremental work; the
+> Oracle independently decides compatibility from Sage and rustc emissions.
+> Neither facility consumes the other's output to repair or reinterpret a
+> result.
+>
+> **Required verification:** Architecture and dependency tests keep inspector
+> adapters out of oracle comparison and rustc-oracle values out of inspector
+> rendering, while one pinned slice supplies both independently produced forms
+> of evidence.
 
 ## Review packets
 
@@ -39,10 +61,42 @@ that the destination is already implemented. In that case the architecture
 chapter's **Current Status** records the discrepancy and the test pins the
 observed frontier.
 
-The [module-expansion review
-packet](../pipeline/module-expansion.md#review-packet) and [oracle-checked body
-review packet](../examples/oracle-checked-method.md#review-packet) are the
-initial examples. The Semantic Inspector will first replace ad hoc semantic
-debug text with reproducible, navigable result views and later add structured
-query traces and edit experiments. Exact Oracle comparison remains a separate
-conformance decision.
+<a id="val-a3"></a>
+> **VAL-A3 — A review packet connects result, dependency, edit, and code
+> evidence.** For one semantic target, the packet identifies the Rust input,
+> readable result, diagnostic/completeness outcome, cold and warm dependencies,
+> relevant or unrelated edit behavior, focused or oracle verification, and
+> anchored implementation entry points.
+>
+> **Required verification:** Each designated review packet contains or links
+> all seven elements, and its reproduction commands regenerate the checked-in
+> artifacts without relying on unrecorded setup.
+
+## Current status
+
+### Current frontier and evidence
+
+- **[VAL-A1](#val-a1)/[VAL-A3](#val-a3):** The [module-expansion review
+  packet](../pipeline/module-expansion.md#review-packet) and
+  [oracle-checked body review
+  packet](../examples/oracle-checked-method.md#review-packet) are the initial
+  claim-specific review trails.
+- **[VAL-A2](#val-a2):** The [Oracle Test Harness](../oracle-test-harness.md) documents and
+  tests exact comparison independently from human-oriented examples and query
+  traces.
+
+### Current limitations
+
+- The Semantic Inspector is a draft RFD; navigable semantic results,
+  structured invocation traces, and persistent edit experiments are not yet
+  available through the destination interface.
+- Review packets are established for selected expansion and body slices, not
+  every positive capability claimed across the architecture guide.
+- No automated documentation audit yet proves VAL-A1 or the seven-element
+  completeness requirement in VAL-A3 across all chapters.
+
+### Related roadmap slices
+
+The [Semantic Inspector and persistent edit-testing
+slice](../../implementation/roadmap.md#planned-slice-semantic-inspector-and-persistent-edit-testing)
+will establish the common interactive and fixture-backed evidence surface.

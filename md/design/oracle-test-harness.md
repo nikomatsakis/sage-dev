@@ -54,12 +54,27 @@ test-fixtures/oracle/basics/hello.rs
    require byte-for-byte textual identity. A secondary diff may explain a
    mismatch, but it does not decide whether the test passes.
 
+<a id="oracle-a1"></a>
+> **ORACLE-A1 — Conformance is exact identity of independent emissions.** Sage
+> and rustc each produce and validate a complete value in the shared semantic
+> schema, serialize it deterministically, and pass only when the serialized
+> bytes are identical. A structural or textual diff may diagnose inequality
+> but cannot decide equality.
+>
+> **Required verification:** Harness tests perturb each side independently,
+> reject every byte difference, demonstrate that diagnostic diffing runs only
+> after inequality, and compare both emissions against a reviewed exact
+> snapshot for pinned slices.
+
 ## Thin adapters and exact comparison
 
 The oracle is intentionally asymmetric in authority but symmetric in output:
 rustc supplies the reference semantics, while both emitters must independently
 produce the same shared representation. The comparison layer is deliberately
 dumb.
+
+The anchors in this chapter are the auditable consequences of
+[D4](./decisions.md#d4-oracle-test-harness).
 
 An emitter may perform only the adaptation needed to cross from its native IR
 into the shared schema. Examples include:
@@ -79,6 +94,19 @@ name. Type/value namespace is not a substitute: for example,
 `core::clone::Clone::clone` is `Mod("clone")`, `Trait("Clone")`, then
 `Fn("clone")`. The rustc oracle and the rustc metadata bridge independently
 walk the definition-parent chain to obtain those facts.
+
+<a id="oracle-a2"></a>
+> **ORACLE-A2 — Each adapter is a fixed projection into the shared model.** An
+> emitter may translate its native identities, adjustments, and deliberately
+> deferred lifetime representation, but the projection cannot inspect the
+> other output or erase a distinction merely because Sage does not yet match
+> it. Missing shared vocabulary is repaired by extending the schema and both
+> independent projections.
+>
+> **Required verification:** Adapter-focused tests cover native definition
+> kinds, substitutions, receiver adjustments, lifetimes, and unsupported
+> constructs; adversarial fixtures prove that one emitter's omission or wrong
+> classification remains an exact mismatch rather than being normalized away.
 
 The harness must not:
 
@@ -100,6 +128,17 @@ Both emitters pre-register emitted local definitions in semantic item order
 before translating any signature or body. Forward references therefore use
 the same local identity as later definitions; no comparison-side renumbering
 repairs an order-dependent emitter.
+
+<a id="oracle-a3"></a>
+> **ORACLE-A3 — Determinism is an emitter responsibility.** Each side chooses
+> stable definition identities and semantic ordering before emission,
+> including forward references. The comparator never sorts, renumbers, or
+> otherwise repairs nondeterministic or order-dependent output.
+>
+> **Required verification:** Repeated fixtures and fixtures with forward
+> references or deliberately reordered items each produce their specified
+> deterministic emission independently on each side; namespace-kind tests fail
+> when either emitter changes identity assignment or semantic order.
 
 The comparison path contains no paired normalization for unresolved inference
 variables, literal values, or other known limitations. Such placeholders are
@@ -123,6 +162,18 @@ emitters omitting the same body or collapsing the same expression to
 each vertical slice must add structural checks proving that its in-scope body
 is present, successfully checked, and contains no source-shaped or unsupported
 nodes; textual equality alone is never accepted as evidence of coverage.
+
+<a id="oracle-a4"></a>
+> **ORACLE-A4 — Equality is accepted only after independent coverage.** Each
+> emitter accounts for every in-scope item and body and rejects forbidden
+> placeholders before comparison. Paired omission, paired unsupported nodes,
+> or paired debug fallback values therefore cannot satisfy conformance even if
+> the remaining serialized bytes agree.
+>
+> **Required verification:** Coverage tests independently remove or replace
+> each representative item, associated body, generated/source-written body,
+> expression family, and type family on either side and require rejection
+> before exact comparison.
 
 Source-written impl methods are part of that item/body scope. Each emitter
 pre-registers them and projects them as function items in the shared flat
@@ -151,9 +202,9 @@ input: no output is rewritten to match it. Its structural coverage assertion
 also requires the external call path to be exactly `Mod → Trait → Fn`, so two
 adapters cannot pass merely by repeating the same lossy kind inference.
 
-The current `rust-ref` model and emitters cover a smaller source-shaped subset;
-expanding them to this boundary is planned by the [Typed IR Elaboration
-RFD](../rfds/typed-ir-elaboration/README.md).
+The shared schema expands with the accepted [Typed IR Elaboration
+RFD](../rfds/typed-ir-elaboration/README.md); the implemented coverage frontier
+is recorded below rather than changing this destination boundary.
 
 ## Output directory
 
@@ -294,7 +345,11 @@ checked-in exact snapshots, and then compares deterministic serialized text.
 The [oracle-checked method review
 packet](./examples/oracle-checked-method.md#review-packet) links the source,
 structural Sage assertion, snapshot, exact comparison, query trace, and edit
-experiment.
+experiment. Together these artifacts exercise the exact snapshot and
+comparison portion of [ORACLE-A1](#oracle-a1), the adjustment and external-kind portions of
+[ORACLE-A2](#oracle-a2), exercise [ORACLE-A3](#oracle-a3)'s local/external
+identity ordering, and provide the slice-specific coverage evidence currently
+available for [ORACLE-A4](#oracle-a4).
 
 Run all fixtures with `cargo test -p sage-oracle-harness`, or the pinned body
 with:
@@ -307,10 +362,17 @@ cargo test -p sage-oracle-harness --test oracle_compare -- mini_redis/db_drop_gu
 
 - General coverage accounting is not yet schema-wide; each new vertical slice
   must add explicit structural coverage checks so paired omission cannot pass.
+  ORACLE-A4 is therefore established only for the pinned fixtures.
 - The shared `rust-ref` schema covers only the currently represented Typed IR
-  families.
+  families, so the full adapter matrix required by ORACLE-A2 grows with Typed
+  IR coverage.
+- ORACLE-A1's independent perturbation and diagnostic-ordering matrix, and
+  ORACLE-A2's adversarial one-sided omission matrix, are not yet presented as
+  focused evidence.
 - Oracle JSON is exact and reviewable but not the intended ergonomic
   human-facing semantic inspection format.
+- The adversarial repetition, forward-reference, and reordered-input matrix
+  required by ORACLE-A3 is not yet presented as focused evidence.
 
 ### Related roadmap slices
 

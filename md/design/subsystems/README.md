@@ -9,7 +9,10 @@ about dependency definitions without deciding Sage's semantic questions.
 Each subsystem chapter explains its public semantic boundary, permitted
 dependencies, important algorithms, and the phases that invoke it. Its final
 **Current Status** section records implemented behavior, limitations, and
-inspectable evidence.
+inspectable evidence. Stable chapter-local design anchors identify the
+load-bearing invariants: each anchor states its destination rule and the
+verification required to establish it, while Current Status records only the
+evidence which exists today.
 
 - [Name Resolution](./name-resolution.md) maps scoped Rust syntax to symbols
   and preserves ambiguity or incompleteness.

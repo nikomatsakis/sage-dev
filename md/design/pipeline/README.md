@@ -10,9 +10,15 @@ incompleteness, incremental dependencies, and a worked example grounded in
 source anchors. A final **Current Status** section records limitations and
 evidence without weakening the destination contract in the main text.
 
+Load-bearing rules appear next to that explanation as stable design anchors.
+Each anchor states a destination invariant and the verification required to
+establish it. The Current Status section names the anchors supported by today's
+evidence; required verification may remain prospective when the destination is
+not yet implemented.
+
 The [Architecture](../architecture.md) page gives the maximally zoomed-out
-pipeline. The existing [Type Checking](../checking.md) chapter covers
-signature and body checking while the phase-specific chapters are built out.
+pipeline. The [Shared Checking Design](../checking.md) chapter records
+mechanisms common to signature and body checking.
 
 - [Module and Macro Expansion](./module-expansion.md) documents the
   module-level represented-symbol result, recursive output expansion, the

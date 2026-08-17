@@ -21,6 +21,15 @@ duplicating its rule in several places. Design anchors are different from
 
 If the PR is accepted, the RFD will be merged in. At that point you open implementation PRs based on the RFD until it is completed. Each implementation PR should update the RFD's `implementation.md` to reflect its status.
 
-Finally, you move it from *Accepted* to *Completed* in SUMMARY.md (the path stays the same).
+Before marking the RFD complete, account for every design anchor. Promote its
+living destination rule and required verification into the relevant
+architecture chapter, retaining the identifier when it remains meaningful, or
+record why an accepted design revision retired it. Link the chapter's Current
+Status evidence to the implementation which established the anchor. Promote
+any genuinely cross-cutting choice into a `D<n>` entry in [Architecture
+Decisions](../design/decisions.md); leave feature-local rationale in the RFD.
+
+Finally, move it from *Accepted* to *Completed* in SUMMARY.md (the path stays
+the same).
 
 The latest version of the overall design is documented in the [Architecture & Design section](../design/README.md) — RFDs describe the journey, architecture pages describe the destination.

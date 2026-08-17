@@ -137,6 +137,7 @@
 
 - [Build-Out Roadmap](./implementation/roadmap.md)
 - [Mini-redis Conformance Roadmap](./implementation/mini-redis.md)
+- [Known Architecture Deviations](./implementation/known-deviations.md)
 
 # Contributing
 

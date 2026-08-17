@@ -25,6 +25,17 @@ Inference may defer a non-ground obligation and retry it after another
 constraint narrows its inputs. It may not treat ambiguity as proof or let a
 failed speculative candidate leak equalities, wakes, or obligations.
 
+<a id="inf-a1"></a>
+> **INF-A1 — One body owns inference through quiescence.** An `InferCtx` and all
+> of its variables, versions, tasks, and obligations belong to one body query.
+> A successful `CheckedBody` is published only after every type in its tree is
+> resolved and no task, obligation, or speculative branch remains live.
+>
+> **Required verification:** Completion tests inspect a representative typed
+> body for inference-free types and exercise `finish` with live variables,
+> obligations, tasks, and branches to prove that each prevents successful
+> publication; diagnostic recovery has separate expected output.
+
 ## Entry points and callers
 
 The body query constructs one context. Its fields show the state kept inside
@@ -61,6 +72,35 @@ terminal checking reports a diagnostic. Output-producing normalization binds
 the solver's returned `Type`; the caller's expected type is related only after
 that result is imported.
 
+<a id="inf-a2"></a>
+> **INF-A2 — Speculation is an all-or-nothing inference transaction.** Every
+> operation which may partially constrain inference executes in an isolated
+> child version. Complete success may atomically collapse an exclusive leaf;
+> failure or cancellation discards all of its equalities, bounds, universe
+> changes, wakes, tasks, and staged obligations. This is the inference
+> consequence of
+> [D6](../decisions.md#d6-versioned-egraph-children-are-inference-transactions)
+> and [D7](../decisions.md#d7-inference-variable-identities-are-unique-across-egraph-versions).
+>
+> **Required verification:** Failed occurs checks, universe checks,
+> multi-entry response imports, candidate matches, and cancellations leave the
+> parent semantically identical and publish no wake; concurrent siblings never
+> observe one another's branch state.
+
+<a id="inf-a3"></a>
+> **INF-A3 — Solver knowledge crosses one canonical, transactional boundary.**
+> Goals and their local environment are canonicalized together; rigid inputs,
+> flexible inputs, universes, substitutions, residuals, and goal-specific
+> outputs all round-trip without capture or lost sharing. A normalization
+> output is imported before it is related to the caller's expected type. This
+> is the inference consequence of
+> [D14](../decisions.md#d14-solver-operations-return-goal-specific-semantic-outputs).
+>
+> **Required verification:** Canonical round-trip tests cover rigid and
+> flexible inputs, nested binders, universe lowering, shared response-local
+> variables, residual obligations, and type outputs. An incompatible expected
+> type does not select among otherwise ambiguous normalization candidates.
+
 ## Incremental boundary
 
 Inference state is deliberately recreated when `LocalFnSym::body` executes.
@@ -72,6 +112,19 @@ resolution, and canonical solver queries it observed.
 Speculative branch order must not affect the final semantic result. Stable
 stash allocation and final type resolution make equal completed bodies
 backdatable even if internal scheduling differs.
+
+<a id="inf-a4"></a>
+> **INF-A4 — The completed body is the incremental and scheduling boundary.**
+> Mutable inference steps are not separately memoized or externally visible.
+> Reuse is determined by the completed `CheckedBody` and its semantic query
+> dependencies, and internal branch or polling order cannot change that body.
+> This is the inference consequence of
+> [D15](../decisions.md#d15-cross-item-dependencies-stop-at-semantic-interfaces).
+>
+> **Required verification:** Query traces show that unchanged and
+> interface-equivalent requests reuse the body without replaying inference,
+> while relevant interface edits reexecute it; scheduler-order perturbation
+> produces an identical completed body and diagnostics.
 
 ## Code map
 
@@ -94,16 +147,12 @@ recovery, and final quiescence support the two completed mini-redis bodies.
 
 ### Implemented capabilities and evidence
 
-- `canonical_equality_round_trips_transactionally` checks canonical response
-  import without leaking failed state.
-- `implication_assumptions_do_not_leak_to_siblings` verifies isolation between
-  proof branches.
-- `conjunction_retries_after_a_sibling_pins_its_input` verifies wake-driven
-  progress after a related constraint becomes known.
-- `equivalent_obligations_deduplicate_after_inference` verifies canonical
-  deduplication after variables are narrowed.
-- `clone_method_call_is_elaborated_to_a_resolved_trait_call` inspects the
-  completed body rather than an inference intermediate.
+| Anchor | State | Implemented claim and evidence |
+|---|---|---|
+| [INF-A1](#inf-a1) | Partial | `equivalent_obligations_deduplicate_after_inference` covers obligation quiescence after inputs narrow; `clone_method_call_is_elaborated_to_a_resolved_trait_call` inspects an inference-free completed body for the supported method slice. Direct negative completion tests for every live-state class are missing. |
+| [INF-A2](#inf-a2) | Partial | `canonical_equality_round_trips_transactionally` checks transactional response import, while `implication_assumptions_do_not_leak_to_siblings` verifies proof-branch isolation. Cancellation-specific isolation evidence is missing. |
+| [INF-A3](#inf-a3) | Partial | `canonical_equality_round_trips_transactionally`, `local_associated_type_normalization_produces_a_type_output`, and `response_local_type_output_round_trips_with_sharing` cover the implemented equality and type-output boundary; `conjunction_retries_after_a_sibling_pins_its_input` verifies retained work observes later hard information. No caller-side expected-type test yet proves that an expectation cannot select one of two otherwise ambiguous normalization candidates. |
+| [INF-A4](#inf-a4) | Partial | `clone_method_body_has_a_narrow_reusable_semantic_query_trace` verifies warm reuse for one completed body slice; scheduler-order perturbation is not covered. |
 
 ### Current limitations
 
@@ -116,6 +165,9 @@ recovery, and final quiescence support the two completed mini-redis bodies.
   concurrent conjunction work are not implemented.
 - Failed bodies recover with error types and diagnostics, not a structured
   phase-incompleteness taxonomy.
+- INF-A3's source boundary imports normalization output before relating the
+  caller expectation, but the required caller-side candidate-isolation
+  regression test is missing.
 
 ### Related roadmap slices
 

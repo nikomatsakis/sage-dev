@@ -1,9 +1,9 @@
 # Symbols and Semantic Identity
 
-Symbols are the semantic spine of Sage. A symbol identifies a definition; it
-does not eagerly contain everything Sage may learn about that definition.
-Signatures, members, fields, associated values, and bodies remain separate
-queries keyed by the symbol.
+Symbols are the semantic spine of Sage for top-level and associated
+definitions. A symbol identifies such a definition; it does not eagerly
+contain everything Sage may learn about it. Signatures, members, fields,
+associated values, and bodies remain separate queries keyed by the symbol.
 
 That separation gives downstream code a compact common language and gives
 Salsa a precise unit of reuse. A body edit can change the result of
@@ -14,8 +14,8 @@ of `function.sig(db)` to treat it as a different definition.
 
 ### Identity, names, and paths
 
-A definition's symbol is its semantic identity within one Sage database.
-Names and paths are not identities:
+For a definition represented in the symbol family, its symbol is its semantic
+identity within one Sage database. Names and paths are not identities:
 
 - multiple definitions can have the same name in different scopes or
   namespaces;
@@ -25,6 +25,25 @@ Names and paths are not identities:
 Resolution consumes a path, scope, and namespace and returns symbols. Once a
 symbol is known, later semantic queries use it directly rather than resolving
 the spelling again.
+
+Generic parameters form a separate `GenericParam` identity family. Fields use
+an owner plus field index, and locals use body-local IDs. These scoped
+identities participate in semantic IR without pretending to be variants of the
+erased `Symbol` family.
+
+This is the identity-model consequence of
+[D5](../decisions.md#d5-symbols-form-the-uniform-semantic-identity-family).
+
+<a id="sym-a1"></a>
+> **SYM-A1 — Definition identity is not a name or path.** Resolution may use
+> names, paths, scopes, and namespaces to discover a definition, but every
+> successful downstream semantic reference records the resulting symbol.
+> Renaming an import or choosing another path to the same definition must not
+> mint a different definition identity.
+>
+> **Required verification:** Resolution and completed-output tests show that
+> distinct paths to one definition produce the same symbol, while equal
+> spellings in different scopes or namespaces remain distinct.
 
 ### Local symbols
 
@@ -43,6 +62,18 @@ architecture_local_function_symbol
 
 This is why `LocalFnSym::sig(db)` and `LocalFnSym::body(db)` can be independent
 memoized operations over the same definition identity.
+
+<a id="sym-a2"></a>
+> **SYM-A2 — Local identity is narrower than local detail.** A local symbol's
+> identity fields identify the definition; independently tracked CST, span,
+> signature, members, and body facts do not become part of that identity.
+> Editing one such fact may invalidate its readers without replacing the
+> symbol or invalidating consumers of unchanged sibling facts.
+>
+> **Required verification:** Per-kind edit matrices cover detail-only changes,
+> sibling insertion and reordering, and genuine identity changes. They assert
+> both symbol continuity and the execution or reuse of representative
+> signature, member, and body queries.
 
 Generated items reenter the same representation. A function or impl parsed
 from macro output is an ordinary local symbol whose `ParseSource` records the
@@ -69,6 +100,21 @@ External symbols are handles, not imported rustc IR. A keyed tracked query
 asks `TcxDb` for one owned metadata fact and lowers it into Sage types. Rustc
 may authoritatively report dependency signatures, impl headers, or associated
 values, but it does not resolve local Sage paths or solve Sage trait goals.
+
+This is the symbol-layer consequence of
+[D18](../decisions.md#d18-external-providers-supply-facts-not-sage-semantic-answers).
+
+<a id="sym-a3"></a>
+> **SYM-A3 — External identity and external facts stay separate.** An external
+> symbol identifies one dependency definition independently of the metadata
+> facts requested about it. Sage imports those facts through owned, keyed
+> queries; the metadata provider neither resolves Sage-local names nor performs
+> Sage's trait or normalization operations.
+>
+> **Required verification:** External-metadata traces identify the exact
+> definition-keyed facts read by representative signature, body, proof, and
+> normalization requests, reject unrelated fact reads, and show Sage solver
+> queries executing on the imported values.
 
 ### Erased and kind-specific wrappers
 
@@ -97,6 +143,18 @@ SymExt                     external definition handle
 `SymbolData` exposes classification when a consumer must branch by kind.
 Callers should retain the narrower wrapper once the required kind is known.
 
+<a id="sym-a4"></a>
+> **SYM-A4 — Erasure is used only for heterogeneous membership.** `Symbol`
+> permits mixed symbol collections and resolution results, while operations
+> whose meaning requires a definition kind accept a kind-specific wrapper.
+> Runtime classification must not replace the narrower type throughout the
+> semantic API.
+>
+> **Required verification:** API and compile-time tests cover lossless
+> conversion from each supported kind into `Symbol`, checked recovery of the
+> right kind, rejection of the wrong kind, and local/external dispatch through
+> the corresponding kind wrapper.
+
 ### Ownership and associated items
 
 A scope anchors local lookup. `ScopeSymbol` identifies a crate or module and
@@ -120,6 +178,17 @@ Generic parameters form a related identity family rather than variants of
 - `AlphaEquivParam` is an interned placeholder used when comparing binders.
 
 Types refer to these parameter identities directly.
+
+<a id="sym-a5"></a>
+> **SYM-A5 — Associated items own stable identities under their binder.** A
+> trait or impl item has its own symbol tied to a stable associated owner.
+> Opening an associated signature reuses the owner's `Self` and generic
+> parameter identities before introducing item generics, and never requires a
+> sibling associated body.
+>
+> **Required verification:** Trait and impl fixtures cover functions, types,
+> and constants; compare owner and generic identities across repeated and
+> edited requests; and use query traces to exclude sibling-body dependencies.
 
 ### Symbols in types and Typed IR
 
@@ -178,19 +247,20 @@ types and the implemented Typed IR slices are operational.
 
 ### Implemented capabilities and evidence
 
-- **Generated-source identity.** The test
+- **[SYM-A2](#sym-a2) — Generated-source identity.** The test
   `moving_source_item_preserves_derive_expansion_identity` moves a derived
   source item, verifies that its expansion identity is unchanged, and verifies
   that the updated origin coordinate remains observable.
-- **Distinct generated occurrences.** The test
+- **[SYM-A2](#sym-a2) — Distinct generated occurrences.** The test
   `duplicate_derive_occurrences_have_distinct_generated_source_identity`
   verifies that two derive occurrences on one item do not collapse to one
   generated source identity.
-- **Associated ownership.** The test
+- **[SYM-A5](#sym-a5) — Associated ownership.** The test
   `trait_items_have_stable_symbols_and_owner_identity` checks function, type,
   and const item ownership and verifies that an associated method reuses its
   trait's generic identities.
-- **Resolved output.** The [function body example](../examples/function-body.md)
+- **[SYM-A1](#sym-a1)/[SYM-A4](#sym-a4) — Resolved output.** The
+  [function body example](../examples/function-body.md)
   inspects a resolved field owner in Typed IR, and the [oracle-checked method
   example](../examples/oracle-checked-method.md) inspects external definition
   identities in exact conformance output.
@@ -205,12 +275,24 @@ cargo test -p sage-test-harness trait_items_have_stable_symbols_and_owner_identi
 
 ### Current limitations
 
+- **Known deviation [KD-2](../../implementation/known-deviations.md#kd-2-most-local-symbol-cst-fields-participate-in-symbol-identity):**
+  CST is independently tracked for functions but remains a Salsa identity
+  field for most other local item symbols, so a detail-only edit can replace a
+  symbol contrary to SYM-A2.
 - Local tracked identities are based on the identity fields and creation
   structure used by the current parser/lowering queries. Evidence covers
   offset movement and associated ownership, but not arbitrary sibling
-  insertion, deletion, or reordering for every item kind.
+  insertion, deletion, or reordering for every item kind required by SYM-A2.
 - `SymExt` interns the carried `kind` alongside crate number and definition
-  index even though the logical definition identity is the latter pair.
+  index even though the logical definition identity is the latter pair; the
+  representation therefore does not yet make the SYM-A3 split exact.
+- Current tests exercise several wrapper conversions and external queries but
+  do not yet provide the complete compile-time conversion matrix required by
+  SYM-A4 or the external operation matrix required by SYM-A3.
+- Current resolved-output examples show that definitions are recorded by
+  symbol, but do not establish SYM-A1's distinct-path/same-symbol matrix.
+- The associated-ownership test establishes owner and generic identity but
+  does not yet include SYM-A5's sibling-body dependency assertion.
 - Some fine-grained identities are owner-relative rather than global symbols:
   fields use owner plus index and locals use body-local IDs. The architecture
   does not yet promise stable field/local identity across structural edits.

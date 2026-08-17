@@ -39,6 +39,31 @@ consulting adjustment side tables. Generic substitutions and static trait
 dispatch are attached to call targets. Diagnostics accompany recovery nodes;
 a body with errors is not evidence of successful type checking.
 
+<a id="body-a1"></a>
+> **BODY-A1 — A completed body is an elaborated semantic tree.** Successful
+> output contains final types and semantic identities and materializes all
+> type-directed operations used by the source. Method syntax, unresolved names,
+> inference variables, pending obligations, and adjustment recipes do not
+> survive in `CheckedBody`; [D11](../decisions.md#d11-completed-bodies-are-elaborated-typed-trees)
+> owns the cross-cutting representation decision.
+>
+> **Required verification:** Structural Typed-IR snapshots cover paths, fields,
+> calls, generic substitutions, borrows, dereferences, coercions, and recovery;
+> completion checks reject every unresolved or live internal form; and selected
+> slices match the independent rustc oracle by exact text.
+
+<a id="body-a2"></a>
+> **BODY-A2 — Body checking depends on interfaces, never other bodies.** The
+> body query reads only its own CST and signature plus the name-resolution,
+> interface, metadata, candidate, and solver facts demanded by that body. A
+> call may read its callee's signature but cannot read the callee body. This is
+> the body-phase consequence of [D15](../decisions.md#d15-cross-item-dependencies-stop-at-semantic-interfaces).
+>
+> **Required verification:** Cold traces whitelist the semantic facts used by a
+> representative body and reject every callee-body or unrelated-interface
+> read; an unchanged warm request performs no work; and persistent edits
+> distinguish relevant interface changes from unrelated body changes.
+
 ## Entry points
 
 `LocalFnSym::body(db)` is the tracked phase boundary:
@@ -67,6 +92,21 @@ into the caller. Finalization applies fallback, retries woken obligations,
 runs a mandatory terminal obligation pass, and asserts quiescence before
 constructing `CheckedBody`.
 
+<a id="body-a3"></a>
+> **BODY-A3 — Speculation is isolated and completion is quiescent.** Candidate
+> matching and other speculative relations occur in child inference versions;
+> failure discards their equalities, wakeups, and staged obligations, while a
+> successful operation commits them atomically. The public result is frozen
+> only after fallback and terminal obligation processing leave no live work.
+> [D6](../decisions.md#d6-versioned-egraph-children-are-inference-transactions)
+> defines the shared transaction rules.
+>
+> **Required verification:** Rejected-candidate tests observe no leaked generic
+> bindings, wakes, or obligations; accepted-candidate tests observe one atomic
+> commit; unresolved residual obligations become diagnostics; and successful
+> completion asserts an empty runtime, wake queue, obligation registry, and
+> root transaction set.
+
 Elaboration happens while checking. For example, a selected trait method call
 becomes a `ResolvedCall` whose argument contains explicit reference and
 dereference nodes:
@@ -87,6 +127,9 @@ Non-ground trait goals may soundly terminate as ambiguous even when a proof
 exists. Ground goals must be sound and complete modulo documented overflow and
 term-size limits. Body checking turns an unresolved required obligation into a
 diagnostic before it returns.
+
+This terminal treatment is the body-phase application of
+[D16](../decisions.md#d16-incompleteness-is-an-explicit-terminal-outcome).
 
 ## Incremental dependencies
 
@@ -141,25 +184,34 @@ obligations, and associated-type normalization.
 
 ### Implemented capabilities and evidence
 
-- **Simple field inference.** The [function-body
+- **[BODY-A1](#body-a1) — Simple field inference.** The [function-body
   walkthrough](../examples/function-body.md) maps the input to a resolved field
   owner and final type.
-- **Elaborated external trait call.**
+- **[BODY-A1](#body-a1) — Elaborated external trait call.**
   `clone_method_call_is_elaborated_to_a_resolved_trait_call` directly inspects
   the completed Sage tree.
-- **Exact conformance.** The [oracle-checked method
+- **[BODY-A1](#body-a1) — Exact conformance.** The [oracle-checked method
   walkthrough](../examples/oracle-checked-method.md) links the structural Sage
   assertion, independent emitters, exact shared snapshot, and byte identity.
-- **Narrow reuse.**
+- **[BODY-A2](#body-a2) — Narrow reuse.**
   `clone_method_body_has_a_narrow_reusable_semantic_query_trace` checks the
   exact external interface reads, rejects all callee-body reads, and verifies
   that an unchanged second request executes neither the body query nor the
   metadata reads.
-- **Current edit boundary.**
+- **[BODY-A2](#body-a2) — Current edit boundary.**
   `unrelated_body_edit_exposes_current_body_invalidation` edits a different
   function body and records that this body currently reexecutes, while its
-  cached callee-interface metadata queries do not. Module/derive discovery
-  metadata currently reexecutes with the containing module.
+  cached callee-interface metadata queries do not. The test does not assert
+  whether module or derive-discovery queries reexecute.
+- **[BODY-A3](#body-a3) — Transaction rollback.**
+  `external_method_mismatch_discards_partial_generic_bindings` rejects a call
+  after its first generic match and verifies that neither the binding nor the
+  root semantic revision escapes the child transaction.
+- **[BODY-A3](#body-a3) — Terminal obligations.**
+  `generic_function_use_checks_its_instantiated_bounds`,
+  `equivalent_obligations_deduplicate_after_inference`, and
+  `struct_bounds_converge_after_field_inference` cover diagnostic publication,
+  canonical deduplication, and an obligation resolved after type inference.
 
 Run the review evidence with:
 
@@ -167,6 +219,8 @@ Run the review evidence with:
 cargo test -p sage-test-harness clone_method_call_is_elaborated_to_a_resolved_trait_call
 cargo test -p sage-test-harness clone_method_body_has_a_narrow_reusable_semantic_query_trace
 cargo test -p sage-test-harness unrelated_body_edit_exposes_current_body_invalidation
+cargo test -p sage-ir external_method_mismatch_discards_partial_generic_bindings
+cargo test -p sage-test-harness trait_obligation_tests
 cargo test -p sage-oracle-harness --test oracle_compare -- mini_redis/db_drop_guard.rs
 ```
 
@@ -183,10 +237,14 @@ cargo test -p sage-oracle-harness --test oracle_compare -- mini_redis/db_drop_gu
   completed slices.
 - Query-trace evidence is currently test-asserted text rather than a
   user-facing Semantic Inspector report.
+- BODY-A3 has focused rollback and obligation-lifecycle evidence, but its full
+  accepted-commit, wake-publication, and quiescence verification is not yet
+  assembled as one review packet.
 - An unrelated body edit in the same source file currently reexecutes the
   requested body query. The focused edit test above pins this gap from the
-  destination, while also verifying that cached callee interfaces remain
-  reused; module/derive discovery metadata still reruns.
+  destination while also verifying that cached callee interfaces remain
+  reused. Expansion/discovery execution after that edit is not yet pinned by
+  this evidence.
 
 ### Related roadmap slices
 

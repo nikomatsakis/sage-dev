@@ -23,6 +23,21 @@ one trait-keyed impl candidate set, and one canonical solver result. Mutable
 inference steps and method candidates remain inside the body query because
 they are not stable public facts.
 
+This is the incremental-boundary consequence of
+[D1](../decisions.md#d1-salsa-for-incremental-computation) and
+[D15](../decisions.md#d15-cross-item-dependencies-stop-at-semantic-interfaces).
+
+<a id="inc-a1"></a>
+> **INC-A1 — Query boundaries follow stable semantic products.** Each public
+> tracked query has a semantic key and returns the narrowest independently
+> reusable product at that key. Temporary algorithm state is kept inside its
+> owning query rather than exposed merely to obtain finer-grained memoization.
+>
+> **Required verification:** Representative phase and subsystem queries state
+> their key, result, permitted dependencies, and forbidden dependencies;
+> focused traces prove that requesting one product does not execute unrelated
+> products or temporary substeps as separate public queries.
+
 ## Stable identity, equality, and backdating
 
 Stable identity answers “is this the same definition?” independently of
@@ -37,6 +52,17 @@ arena addresses. Relative spans keep offset-only movement out of semantic CST
 hashes. These mechanisms do not automatically make a query fine-grained: a
 query which reads a whole map or module vector may still reexecute, but an
 equal keyed result can stop the invalidation there.
+
+<a id="inc-a2"></a>
+> **INC-A2 — Reexecution and downstream invalidation are distinct.** A coarse
+> input change may cause a cheap producer or keyed lookup to execute again.
+> When its semantic result is equal, backdating must stop the change before
+> expensive consumers; the architecture does not claim that every unrelated
+> edit prevents all upstream execution.
+>
+> **Required verification:** Edit tests separately assert which queries may
+> reexecute, whether the keyed value changed, and which downstream consumers
+> must remain reused for unchanged, relevant, and unrelated edits.
 
 ## Designing a query firewall
 
@@ -74,6 +100,18 @@ Query traces are evidence, not part of the compiler's logical output. Internal
 scheduling may reorder independent events. Normalize event sets or multisets
 unless ordering/count is itself the contract.
 
+<a id="inc-a3"></a>
+> **INC-A3 — Incremental guarantees are verified as executions and semantic
+> reads, not timings.** Evidence distinguishes a tracked function body which
+> executed from a memoized request and records owned external-metadata reads
+> separately. Independent scheduling order and elapsed time are excluded
+> unless a specific ordering or count is itself the invariant.
+>
+> **Required verification:** Cold, warm, relevant-edit, and unrelated-edit
+> tests normalize stable query keys and metadata operations, assert execution
+> versus reuse, and remain insensitive to permitted ordering of independent
+> work.
+
 ## Code map
 
 | Path | Responsibility |
@@ -95,15 +133,20 @@ generated identity across movement, and narrow associated-value access.
 
 ### Implemented capabilities and evidence
 
-- `clone_method_body_has_a_narrow_reusable_semantic_query_trace` proves warm
+- **[INC-A1](#inc-a1)/[INC-A3](#inc-a3):**
+  `clone_method_body_has_a_narrow_reusable_semantic_query_trace` proves warm
   body reuse and rejects external callee-body reads.
-- `external_adt_default_and_predicate_have_one_narrow_reusable_dependency`
+- **[INC-A1](#inc-a1)/[INC-A3](#inc-a3):**
+  `external_adt_default_and_predicate_have_one_narrow_reusable_dependency`
   proves one keyed external ADT dependency and warm reuse.
-- `local_normalization_reads_one_keyed_value_without_impl_item_enumeration`
+- **[INC-A1](#inc-a1)/[INC-A3](#inc-a3):**
+  `local_normalization_reads_one_keyed_value_without_impl_item_enumeration`
   proves normalization reads one associated value and not the item list.
-- `moving_source_item_preserves_derive_expansion_identity` distinguishes
+- **[INC-A2](#inc-a2):** `moving_source_item_preserves_derive_expansion_identity`
+  distinguishes
   stable generated identity from its changing source coordinate.
-- `unrelated_body_edit_exposes_current_body_invalidation` is negative evidence:
+- **[INC-A2](#inc-a2):**
+  `unrelated_body_edit_exposes_current_body_invalidation` is negative evidence:
   it pins a coarse same-file invalidation that the destination should remove.
 
 ### Current limitations
@@ -111,13 +154,14 @@ generated identity across movement, and narrow associated-value access.
 - The local trait impl query is trait-keyed but still scans the complete local
   expanded-module vector; the private stable index/backdating firewall is not
   implemented.
-- Same-file unrelated body edits currently reexecute a requested body and
-  module/derive discovery, even though selected callee-interface metadata is
-  reused.
+- Same-file unrelated body edits currently reexecute a requested body even
+  though selected callee-interface metadata is reused. The existing test does
+  not assert expansion or derive-discovery execution after that edit.
 - Query logs are debug strings and tests rather than a structured persistent
-  event schema.
+  event schema, so INC-A3 is established only for the focused normalized
+  assertions above.
 - Edit matrices cover selected semantic paths, not every symbol kind and
-  query boundary.
+  query boundary required by INC-A1 and INC-A2.
 
 ### Related roadmap slices
 

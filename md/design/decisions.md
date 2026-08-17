@@ -5,22 +5,57 @@ their RFD and are linked from there.
 
 Each entry has a short code (`D<n>`) for easy cross-reference.
 
+Architecture chapters express these choices as local design anchors with
+required verification. A decision records the cross-cutting choice and
+rationale; an anchor states the auditable consequence for one phase,
+subsystem, or representation. Feature-local choices remain in their RFD until
+they acquire a cross-cutting consequence.
+
 ## D1: Salsa for incremental computation
 
 We use [salsa](https://github.com/salsa-rs/salsa) as the incremental computation
-framework. All "interesting" computations are salsa tracked functions; inputs are salsa
-inputs or interned structs.
+framework for stable semantic demand boundaries. Source and configuration enter
+through Salsa inputs; definitions have tracked or interned identity as
+appropriate; and reusable semantic products are tracked functions keyed at the
+granularity consumers request.
+
+Temporary inference state, speculative candidates, partially checked
+expressions, and formatting helpers are not promoted to tracked queries merely
+because they perform substantial work. They remain inside the semantic query
+which owns their transaction and publishes their completed result. D2 covers
+the separate Stash representation used for type and IR storage.
 
 ## D2: Stash for type-level interning
 
-Types and other IR nodes are interned into a per-database `Stash` (a custom arena with
-hash-consing) rather than using salsa interning. This gives us pointer-sized handles
-(`Ptr<T>`) with zero-copy decomposition for compound types.
+Types, CST, and other tree-shaped IR nodes are allocated in an owning `Stash`
+(a custom arena with hash-consing) rather than making every node a Salsa
+identity. A `Stashed<T>` query result owns its stash and root as one semantic
+value; checking reads source stashes and constructs output in a fresh stash.
+Solver proof contexts likewise own the stashes in which their temporary values
+are meaningful.
+
+This gives Sage compact handles (`Ptr<T>` and `Slice<T>`) with zero-copy
+decomposition inside their owning stash, deterministic rooted fingerprints for
+Salsa backdating, and an explicit structural-copy boundary between owners. In
+release builds a handle is the four-byte entry index. Debug builds add a
+four-byte stash identity, making the handle eight bytes and allowing indexing
+to diagnose cross-stash use. Release builds rely on the ownership invariant and
+the explicit structural-copy APIs: a handle never acquires database-global
+meaning and must not be interpreted by another stash merely because its
+numeric index matches.
 
 ## D3: Tree-sitter for parsing
 
-We use tree-sitter-rust for parsing rather than writing a hand-rolled parser. This gives
-us error recovery, incremental re-parsing, and avoids duplicating grammar maintenance.
+We use tree-sitter-rust for parsing rather than writing a hand-rolled parser.
+It supplies the Rust grammar and error-recovering concrete tree without Sage
+duplicating grammar maintenance. Sage immediately lowers the required syntax
+into per-item, stash-owned CST; tree-sitter nodes and their identities do not
+cross the parse query boundary.
+
+Tree-sitter can support incremental reparsing, but Sage's semantic incremental
+contract is expressed through module inputs, stable item symbols, per-item CST
+content, and Salsa backdating. This decision does not require downstream phases
+to observe or depend upon tree-sitter's internal node reuse.
 
 ## D4: Oracle test harness
 
@@ -39,11 +74,26 @@ of every path segment; an adapter may not reconstruct ancestor kinds from the
 leaf kind or from namespace alone. The detailed contract is [Oracle Test
 Harness](./oracle-test-harness.md#thin-adapters-and-exact-comparison).
 
-## D5: Symbols as the uniform IR unit
+## D5: Symbols form the uniform semantic identity family
 
-Every named entity (function, type, field, variant, generic parameter, etc.) is
-represented as a `Symbol` with per-kind data. This gives a uniform shape to queries
-and avoids proliferating distinct tracked structs per entity kind.
+Top-level and associated definitions represented as symbols—functions, types,
+impls, modules, constants, enum variants and constructors, and so on—use
+kind-specific local or external identities. Erased `Symbol` values permit
+heterogeneous ownership and membership, while wrappers such as `FnSymbol` and
+`TraitSymbol` recover the static kind required by semantic operations.
+
+Not every semantic identity is an erased `Symbol`. Generic parameters use the
+separate `GenericParam` identity family; fields are identified by owner and
+index; locals have body-local IDs. Those representations are deliberately
+scoped to the structure which owns them and are not converted to `Symbol`
+merely for surface uniformity.
+
+Uniformity therefore applies to definitions in the symbol family and their
+conversions, not to every identity-bearing IR node, one storage representation,
+or one untyped query surface. Kind-specific tracked structs and methods are
+intentional: they expose the fields and operations valid for that definition
+kind while types and Typed IR refer to each entity through its appropriate
+typed identity.
 
 ## D6: Versioned egraph children are inference transactions
 
@@ -65,9 +115,9 @@ writes target leaf versions only. Creating a child freezes its parent until
 every child is discarded or the sole child is atomically collapsed; read-only
 lookup from the frozen parent is allowed, but path compression, variable
 allocation, equality/bound changes, rebuild publication, semantic revisions,
-and wake publication are not. Append-only global stash allocation is the sole
-non-version fact exempt from this rule. This gives each branch a stable
-ancestor snapshot without copying the parent maps.
+and wake publication are not. Append-only allocation in the proof context's
+shared `Stash` is the sole non-version fact exempt from this rule. This gives
+each branch a stable ancestor snapshot without copying the parent maps.
 
 ## D7: Inference-variable identities are unique across egraph versions
 
@@ -244,3 +294,89 @@ unsettled; this decision only prevents them from being forced through the type
 variant. Trait implementation proof continues to return `Proven`, never a
 selected impl identity. See [Trait Solver Design](./trait-solver.md#knowledge-returned-by-the-solver)
 and the [Associated Type Normalization RFD](../rfds/associated-type-normalization/README.md).
+
+## D15: Cross-item dependencies stop at semantic interfaces
+
+A definition's symbol is the stable key for its semantic products. Its checked
+signature is the primary interface other definitions consume; field, member,
+and other language-required interfaces may be separate narrow keyed products.
+Its body and checking temporaries are not interfaces. A caller may read the
+callee's signature and relevant trait or metadata facts, but never the callee
+body. Signature checking likewise does not eagerly check the definition's
+body.
+
+This boundary applies to dependency meaning even when a provisional coarse
+input causes extra execution. If reexecution produces an equal public semantic
+value, Salsa backdating stops propagation before unrelated downstream
+consumers. Narrower future inputs should reduce that extra execution without
+changing the semantic boundary.
+
+This choice lets Sage type-check one body without checking the crate eagerly,
+makes interface-preserving edits reusable, and gives query-trace tests a clear
+set of forbidden dependencies. Its chapter-level consequences are
+[ARC-A2](./architecture.md#arc-a2), [TEN-A1](./tenets.md#ten-a1), and
+[TEN-A5](./tenets.md#ten-a5).
+
+## D16: Incompleteness is an explicit terminal outcome
+
+A phase or semantic subsystem distinguishes a complete result from a
+conservative result limited by invalid or ambiguous source, unsupported Sage
+functionality, unavailable external facts, or an explicit resource bound.
+Such incompleteness is terminal for the current inputs and limits: continuing
+to poll or schedule the same computation is not expected to make it complete.
+
+An incomplete result may retain partial information for diagnostics or
+conservative recovery, but it must identify which completeness guarantee is
+absent and must not be presented as a successful complete value. Resource
+exhaustion and ambiguity also remain distinct from a logical negative answer.
+Repeating the operation may produce a different outcome only after an input,
+environment, or configured limit changes.
+
+This decision separates semantic recovery from asynchronous progress and
+prevents downstream consumers from treating missing work as negative
+evidence. The pipeline-wide consequence and verification contract is
+[ARC-A3](./architecture.md#arc-a3); solver-specific resource and groundness
+semantics remain in [D9](#d9-trait-solving-is-groundness-sensitive-and-resource-bounded).
+
+## D17: Nested spans are relative to stable item provenance
+
+Each source-root item carries an absolute range in a `ParseSource`. A nested
+definition carries its placement relative to its immediate owner, and syntax
+or Typed IR inside any represented item carries byte ranges relative to that
+item's own start. Resolving a nested range composes the owner chain to the
+source root and preserves the same parse-source identity. For example, an
+associated method is relative to its trait or impl, while the method's body is
+relative to the method. Generated parse sources use stable occurrence identity
+while their generated text and current origin coordinates remain tracked facts.
+
+This split keeps position lookup and diagnostics accurate while preventing an
+offset-only edit before an otherwise unchanged item, including an edit to an
+earlier sibling associated item, from changing every span inside its semantic
+content. Queries which need source positions may observe the composed absolute
+span; ordinary signature and body semantics should depend on the relative
+content instead.
+
+The representation and edit-verification requirements are
+[SPAN-A1](./spans.md#span-a1), [SPAN-A2](./spans.md#span-a2), and
+[SPAN-A3](./spans.md#span-a3). The historical rationale is recorded in the
+[Relative Span Model RFD](../rfds/relative-span-model/README.md).
+
+## D18: External providers supply facts, not Sage semantic answers
+
+Rustc-backed providers may authoritatively expose facts owned by reachable
+dependency crates and the compilation environment: definition identity,
+ownership, signatures, predicates, associated items and values, impl headers,
+and other exported metadata. Sage lowers those facts into its own symbol,
+type, stash, and query representations at narrow keyed boundaries.
+
+The provider does not resolve Sage-local source, select a method or impl for a
+Sage body, prove a Sage trait goal, normalize an alias on Sage's behalf, or
+produce Sage's checked body. Those operations remain in Sage even when their
+inputs include authoritative external facts. Likewise, the rustc side of the
+oracle is an independent comparison producer, not a hidden semantic service
+used to manufacture Sage's result.
+
+This boundary makes external metadata reusable without masking gaps in Sage's
+semantics or creating accidental whole-crate dependencies. Its local contract
+is [META-A1](./subsystems/external-metadata.md#meta-a1); exact oracle
+independence remains [D4](#d4-oracle-test-harness).

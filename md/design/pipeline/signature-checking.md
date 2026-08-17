@@ -36,6 +36,29 @@ Consumers may instantiate the binder, reuse the same generic identities in
 detail/body queries, and type-check uses without reading the defining body.
 Checked signature types never point into the source CST stash.
 
+<a id="sig-a1"></a>
+> **SIG-A1 — A checked signature is the body-independent cross-item
+> interface.** Consumers obtain the types, generic binder, and parameter
+> environment needed to use a definition without checking that definition's
+> body. No signature query reads any function body.
+> This is the signature-phase consequence of
+> [D15](../decisions.md#d15-cross-item-dependencies-stop-at-semantic-interfaces).
+>
+> **Required verification:** Query traces for local and external callers name
+> the selected interface facts and no bodies; a body-only edit preserves the
+> signature result and does not reexecute its consumers.
+
+<a id="sig-a2"></a>
+> **SIG-A2 — Generic identities are minted once by their owner and reused.** An
+> owner signature creates its parameters under one binder. Associated-item,
+> field, and body queries reopen that binder and add only genuinely new
+> item-level parameters; they never reconstruct an existing `GenericParam` or
+> owner `Self` identity.
+>
+> **Required verification:** Trait, impl, associated-function, field, and body
+> fixtures compare semantic parameter identities across queries and revisions,
+> including separate owner and method generic scopes.
+
 ## Entry points
 
 Entry methods are kind-specific `sym.sig(db)` queries. A function query
@@ -60,9 +83,32 @@ this definition's generic parameters exactly once, resolves signature paths,
 lowers types and predicates, constructs the binder, and freezes the target
 stash as `Stashed<T>`.
 
+<a id="sig-a3"></a>
+> **SIG-A3 — Checked interfaces are self-contained semantic values.** Signature
+> lowering reads CST from one stash and writes all checked types, binders,
+> predicates, and retained alias applications into a separate result stash.
+> No checked value points into tree-sitter state or the source CST stash. This
+> is the signature-level ownership boundary established by
+> [D2](../decisions.md#d2-stash-for-type-level-interning).
+>
+> **Required verification:** Structural snapshots traverse representative
+> signatures after the parser and source stash borrows have ended, cover
+> retained aliases and predicates, and detect any cross-stash pointer.
+
 Associated items first receive stable owner-linked symbols from the trait or
 impl item query. Querying one item's signature then opens the owner binder and
 adds method-level generics; it does not enumerate or check sibling bodies.
+
+<a id="sig-a4"></a>
+> **SIG-A4 — Interface detail is split at semantic reuse boundaries.** Fields
+> and associated-item enumeration remain independently keyed from the owner
+> signature, and selecting one associated item reads only that item's
+> signature. Enumeration never checks sibling signatures or bodies eagerly.
+>
+> **Required verification:** Query traces select one field or associated item
+> and reject reads of unselected sibling signatures and all bodies; edit tests
+> show that a detail-only change does not remint the owner binder or invalidate
+> unrelated detail queries.
 
 ## Failure and terminal incompleteness
 
@@ -76,6 +122,9 @@ This result is terminal for the current input. More polling does not make an
 unsupported signature eligible. External metadata unavailability is likewise
 distinguished from an ordinary type error where the relevant query exposes
 that distinction.
+
+This is the signature-phase application of
+[D16](../decisions.md#d16-incompleteness-is-an-explicit-terminal-outcome).
 
 ## Incremental dependencies
 
@@ -124,17 +173,18 @@ external predicates needed by those slices are retained.
 
 ### Implemented capabilities and evidence
 
-- **Binder identity and field separation.** The [struct-signature
+- **[SIG-A2](#sig-a2), [SIG-A3](#sig-a3), [SIG-A4](#sig-a4) — Binder
+  identity and field separation.** The [struct-signature
   walkthrough](../examples/struct-signature.md) follows `sig` and `fields`
   through separate stashes.
-- **Owner and method generics.**
+- **[SIG-A2](#sig-a2) — Owner and method generics.**
   `trait_and_impl_signatures_share_complete_generic_binders` and
   `associated_items_reuse_owner_generics_and_bodies_resolve_fields` verify
   owner-linked identities.
-- **Parameter environments.**
+- **[SIG-A1](#sig-a1) — Parameter environments.**
   `function_and_adt_signatures_retain_parameter_environments` checks retained
   bounds on callable and ADT interfaces.
-- **Narrow reusable external dependency.**
+- **[SIG-A1](#sig-a1) — Narrow reusable external dependency.**
   `external_adt_default_and_predicate_have_one_narrow_reusable_dependency`
   inspects cold and warm query/metadata logs.
 
@@ -144,6 +194,11 @@ external predicates needed by those slices are retained.
 - Local `Check` collects signature diagnostics internally, but the current
   `Stashed` signature results do not publish that diagnostic vector as part of
   a unified phase result.
+- Existing query evidence covers selected external dependencies, but not yet
+  SIG-A1's full local body-edit matrix or SIG-A4's unselected-sibling matrix.
+- The two-stash walkthroughs support SIG-A3, but there is not yet an automated
+  structural test covering every signature and alias form for cross-stash
+  references.
 - Every lifetime form lowers to `Lifetime::Dummy`; borrow checking is omitted.
 - Some unsupported predicates are retained only as solver-ineligible
   environments, preventing definite trait conclusions.

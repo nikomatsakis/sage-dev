@@ -11,7 +11,7 @@ The rest of this page is written in the imperative, addressed to that agent.
 
 ## How the pieces relate — the Architecture section and RFDs
 
-Sage keeps three complementary views of the system:
+Sage keeps four complementary views of the system:
 
 - **Architecture pages describe the destination and the local current
   status.** Their main text states how the system is meant to work. A final
@@ -22,12 +22,15 @@ Sage keeps three complementary views of the system:
   architecture, and a high-level implementation plan.
 - **RFDs describe a change and its detailed checkpoints.** They record why a
   design was chosen and how that scoped change lands.
+- **The known-deviations register tracks confirmed contradictions.** It names
+  places where the current implementation violates an accepted design anchor,
+  while the affected architecture chapter states the same fact locally.
 
-| | Architecture & Design | Build-Out Roadmap | RFD |
-|---|---|---|---|
-| Describes | destination, local status, limitations, evidence | cross-cutting slices and their ordering | one change and its detailed checkpoints |
-| Answers | *how should this work, what works now, and how can I inspect it?* | *what coherent outcome are we building next?* | *why this change, and how does it land?* |
-| Lifespan | living, kept current | living, kept current | historical once completed |
+| | Architecture & Design | Build-Out Roadmap | RFD | Known Deviations |
+|---|---|---|---|---|
+| Describes | destination, local status, limitations, evidence | cross-cutting slices and their ordering | one change and its detailed checkpoints | confirmed implementation contradictions |
+| Answers | *how should this work, what works now, and how can I inspect it?* | *what coherent outcome are we building next?* | *why this change, and how does it land?* | *where does the code knowingly violate the accepted design?* |
+| Lifespan | living, kept current | living, kept current | historical once completed | living until closure evidence establishes the anchor |
 
 An **RFD** proposes and discusses a change. That change is often architectural — an RFD
 can describe how the architecture itself should evolve, not only an implementation plan and
@@ -61,6 +64,7 @@ When one of these happens, update the matching page(s) before you consider the w
 | An RFD is accepted (merged, in progress) | Move it to *Accepted* in [`SUMMARY.md`](../SUMMARY.md) and [`accepted.md`](../rfds/accepted.md); link it from any roadmap slice it implements |
 | An RFD completes | Move it to *Completed* in [`SUMMARY.md`](../SUMMARY.md) and [`completed.md`](../rfds/completed.md); update affected architecture Current Status sections and roadmap-slice progress |
 | Observable behavior changes / something ships | The relevant architecture **Current Status** section: current frontier, limitations, and evidence |
+| Code inspection finds a confirmed violation of an accepted design anchor | The relevant architecture **Current Status** section and [`known-deviations.md`](../implementation/known-deviations.md), with the same anchor and required closure evidence |
 | A cross-cutting acceptance target is added, reordered, blocked, or completed | The [Build-Out Roadmap](../implementation/roadmap.md): goal, scope, affected architecture, dependencies, high-level plan, and progress |
 | A new subsystem, flow, or mechanism is built | Add/update the matching [architecture](../design/README.md) page |
 | A cross-cutting, load-bearing decision is made or changed | Add/update an entry in [Architecture decisions](../design/decisions.md) with a new `D<n>` code; a feature-local decision stays in its RFD and is linked from there |
@@ -75,6 +79,35 @@ When a change touches more than one row, update all of them in the same change.
   describe unimplemented destination design. Put statements about what exists
   today, current limitations, and related slices in a final **Current Status**
   section.
+- **Give load-bearing chapter rules stable design anchors.** Place an anchor
+  immediately after the explanation which makes it intelligible. Use a
+  chapter-specific code such as `EXP-A1` or `TIR-A2`, state one crisp
+  destination invariant, and follow it with **Required verification**. Anchor
+  only non-obvious rules whose violation would materially change the design;
+  do not label summaries, routine descriptions, or every paragraph.
+- **Keep an anchor's requirement separate from its present evidence.** The
+  anchor says what must be verified even when the destination is not yet
+  implemented. The chapter's **Current Status** section says whether it is
+  established and links the tests, snapshots, traces, edit experiments,
+  inspector scenarios, or source anchors which currently support it. Do not
+  turn planned verification into a claim that evidence already exists.
+- **Reserve known deviations for confirmed contradictions.** Add an entry to
+  [`known-deviations.md`](../implementation/known-deviations.md) only when the
+  implementation is known to violate an accepted anchor. Give it a stable
+  `KD-<n>` identifier, link the affected anchor and the chapter's Current
+  Status, describe the observed behavior and consequence, and state the
+  evidence required to close it. Do not use this register for ordinary planned
+  work, missing test coverage, or intentional language restrictions.
+- **Distinguish chapter anchors from architecture decisions.** A chapter
+  anchor is a local, auditable consequence of the design. A `D<n>` entry in
+  [Architecture decisions](../design/decisions.md) records a cross-cutting
+  choice and its rationale. Anchors should link an applicable decision rather
+  than duplicating its rationale; feature-local choices remain in their RFD.
+- **Promote completed RFD anchors without losing provenance.** When an RFD
+  lands, move its destination rules and required verification into the
+  relevant architecture chapters, retaining stable anchor codes when they
+  remain meaningful. The completed RFD records history; the architecture
+  chapter becomes authoritative for the living design and evidence.
 - **Ground built claims in the code.** For anything described as existing, tie statements to
   actual modules/files and keep references accurate. Planned design is grounded in the
   design discussion instead, and is labelled as planned.
@@ -103,6 +136,9 @@ When a change touches more than one row, update all of them in the same change.
 
 When a change affects an architecture claim or worked example:
 
+- update any affected design anchor and its required verification;
+- add a new `D<n>` only for a genuinely cross-cutting decision, and link its
+  chapter-level consequences;
 - update the chapter's Current Status claim, limitation, and roadmap link;
 - keep the Rust input and readable expected output in its review packet
   accurate;
