@@ -199,6 +199,15 @@ unit suite. Source-written and generated text enter the same symbol/CST model.
 - **[PAR-A2](#par-a2) — Offset-insensitive generated identity.**
   `moving_source_item_preserves_derive_expansion_identity` verifies stable
   generated identity when source text moves.
+- **[PAR-A2](#par-a2) — Per-kind CST/detail firewall.**
+  `detail_edits_preserve_local_symbol_query_keys` applies persistent edits to
+  every top-level local item shape and proves through a Salsa observer query
+  that CST detail does not replace the symbol. The companion
+  `enum_detail_edits_preserve_variant_query_keys` covers variants and their
+  constructors, including consumption of the revised variant CST after the
+  edit. `moving_associated_items_preserves_symbol_query_keys` covers all three
+  associated item kinds through both the trait and impl parsing paths while
+  inserting, removing, and reordering siblings.
 
 Run the focused ownership test with:
 
@@ -208,18 +217,15 @@ cargo test -p sage-test-harness items_in_a_file_backed_module_use_that_module_as
 
 ### Current limitations
 
-- **Known deviation [KD-2](../../implementation/known-deviations.md#kd-2-most-local-symbol-cst-fields-participate-in-symbol-identity):**
-  CST is independently tracked for functions but remains a Salsa identity
-  field for most other local item symbols, contrary to PAR-A2's identity/detail
-  split.
 - Rust grammar coverage is incomplete; unsupported syntax can become explicit
   error nodes even when rustc accepts it.
 - Tree-sitter recovery is not yet exposed as a structured phase-completeness
   result or a complete diagnostic set; PAR-A3 is therefore not established as
   one unified phase contract.
-- Local symbol stability is tested for selected offset changes and owners, not
-  arbitrary insertion, deletion, and reordering for every item kind, so the
-  full PAR-A2 edit matrix remains prospective.
+- Local symbol stability has a per-kind detail-edit matrix and associated-item
+  insertion, deletion, and reordering coverage, but those structural edits and
+  genuine-identity edits are not yet covered for every top-level item kind, so
+  the full PAR-A2 matrix remains prospective.
 - There is not yet a parse-only cold/warm query trace establishing PAR-A4's
   complete positive and negative dependency set.
 - Signature parsing retains lifetime syntax, but later checking currently

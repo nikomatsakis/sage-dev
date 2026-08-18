@@ -245,6 +245,16 @@ pub fn setup_root_module<'db>(
 }
 
 #[cfg(test)]
+#[salsa::interned]
+struct ObservedSymbol<'db> {
+    symbol: sage_ir::symbol::Symbol<'db>,
+}
+
+#[cfg(test)]
+#[salsa::tracked]
+fn observe_symbol_identity<'db>(_db: &'db dyn Db, _symbol: ObservedSymbol<'db>) {}
+
+#[cfg(test)]
 mod file_module_scope_tests {
     use super::*;
     use sage_ir::symbol::{FnSymbol, StructSymbol, Symbol, SymbolData};
@@ -2002,7 +2012,7 @@ mod trait_system_tests {
     use super::*;
     use sage_ir::local_syms::impls::local_impls;
     use sage_ir::scope::ScopeSymbol;
-    use sage_ir::symbol::{SymbolData, TraitSymbol};
+    use sage_ir::symbol::{Symbol, SymbolData, TraitSymbol};
     use sage_ir::ty::{Lifetime, SolverEligibility, Ty};
 
     #[test]
@@ -2339,6 +2349,397 @@ mod trait_system_tests {
                 ));
             },
         );
+    }
+
+    // Evidence: ARC-A1, PAR-A2, SYM-A2, INC-A2, INC-A3.
+    #[test]
+    fn detail_edits_preserve_local_symbol_query_keys() {
+        use salsa::Setter as _;
+
+        struct Case {
+            label: &'static str,
+            before: &'static str,
+            after: &'static str,
+            item_index: usize,
+        }
+
+        fn force_observer(db: &dyn Db, source_file: SourceFile, item_index: usize) {
+            let (_, root) = setup_root_module(db, source_file);
+            let ModSymbol::Local(root) = root else {
+                panic!("expected a local root module")
+            };
+            let item = root
+                .unexpanded_items(db)
+                .get(item_index)
+                .copied()
+                .expect("expected observed item");
+            let symbol: Symbol<'_> = item.into();
+            observe_symbol_identity(db, ObservedSymbol::new(db, symbol));
+        }
+
+        let cases = [
+            Case {
+                label: "function",
+                before: "fn item() -> bool { false }",
+                after: "fn item() -> bool { true }",
+                item_index: 0,
+            },
+            Case {
+                label: "struct",
+                before: "struct Item { value: bool }",
+                after: "struct Item { value: u32 }",
+                item_index: 0,
+            },
+            Case {
+                label: "enum",
+                before: "enum Item { Value(bool) }",
+                after: "enum Item { Value(u32) }",
+                item_index: 0,
+            },
+            Case {
+                label: "trait",
+                before: "trait Item { fn value() -> bool; }",
+                after: "trait Item { fn value() -> u32; }",
+                item_index: 0,
+            },
+            Case {
+                label: "impl",
+                before: "struct Item; impl Item { fn value() -> bool { false } }",
+                after: "struct Item; impl Item { fn value() -> bool { true } }",
+                item_index: 1,
+            },
+            Case {
+                label: "type alias",
+                before: "type Item = bool;",
+                after: "type Item = u32;",
+                item_index: 0,
+            },
+            Case {
+                label: "const",
+                before: "const ITEM: bool = false;",
+                after: "const ITEM: bool = true;",
+                item_index: 0,
+            },
+            Case {
+                label: "static",
+                before: "static ITEM: bool = false;",
+                after: "static ITEM: bool = true;",
+                item_index: 0,
+            },
+            Case {
+                label: "module",
+                before: "#[doc = \"before\"] mod item {}",
+                after: "#[doc = \"after\"] mod item {}",
+                item_index: 0,
+            },
+            Case {
+                label: "use",
+                before: "use crate::before;",
+                after: "use crate::after;",
+                item_index: 0,
+            },
+            Case {
+                label: "macro definition",
+                before: "macro_rules! item { () => { struct Before; } }",
+                after: "macro_rules! item { () => { struct After; } }",
+                item_index: 0,
+            },
+            Case {
+                label: "macro invocation",
+                before: "item!(before);",
+                after: "item!(after);",
+                item_index: 0,
+            },
+        ];
+
+        for case in cases {
+            let mut database = Database::default();
+            let source_file = database.add_source_file("lib.rs".to_owned(), case.before.to_owned());
+            database.attach(|db| force_observer(db, source_file, case.item_index));
+            database.take_query_log();
+
+            database.attach(|db| force_observer(db, source_file, case.item_index));
+            assert_eq!(
+                database.take_query_log(),
+                "",
+                "{} must have a warm observer",
+                case.label
+            );
+
+            source_file
+                .set_text(&mut database)
+                .to(case.after.to_owned());
+            database.attach(|db| force_observer(db, source_file, case.item_index));
+            let edit_trace = database.take_query_log();
+            assert!(
+                !edit_trace.contains("observe_symbol_identity"),
+                "{} detail edit reminted its symbol:\n{edit_trace}",
+                case.label
+            );
+        }
+    }
+
+    // Evidence: ARC-A1, PAR-A2, SYM-A2, INC-A2, INC-A3.
+    #[test]
+    fn enum_detail_edits_preserve_variant_query_keys() {
+        use sage_ir::local_syms::enums::enum_variants;
+        use sage_ir::symbol::EnumSymbol;
+        use salsa::Setter as _;
+
+        fn force_variant_observers(db: &dyn Db, source_file: SourceFile) {
+            let (_, root) = setup_root_module(db, source_file);
+            let [symbol] = root.expanded_module_items(db) else {
+                panic!("expected one enum")
+            };
+            let SymbolData::EnumSymbol(EnumSymbol::Local(local_enum)) = symbol.data(db) else {
+                panic!("expected a local enum")
+            };
+            for symbol in enum_variants(db, local_enum) {
+                if let SymbolData::VariantSymbol(sage_ir::symbol::VariantSymbol::Local(variant)) =
+                    symbol.data(db)
+                {
+                    assert!(variant.has_fields(db));
+                }
+                observe_symbol_identity(db, ObservedSymbol::new(db, *symbol));
+            }
+        }
+
+        let mut database = Database::default();
+        let source_file =
+            database.add_source_file("lib.rs".to_owned(), "enum Item { Value(bool) }".to_owned());
+        database.attach(|db| force_variant_observers(db, source_file));
+        database.take_query_log();
+
+        source_file
+            .set_text(&mut database)
+            .to("enum Item { Value(u32) }".to_owned());
+        database.attach(|db| force_variant_observers(db, source_file));
+        let edit_trace = database.take_query_log();
+        assert!(
+            !edit_trace.contains("observe_symbol_identity"),
+            "enum detail edit reminted a variant or constructor:\n{edit_trace}"
+        );
+    }
+
+    // Evidence: SPAN-A1, SPAN-A3, ARC-A1, SYM-A2, INC-A2, INC-A3.
+    #[test]
+    fn moving_associated_items_preserves_symbol_query_keys() {
+        use sage_ir::ty::TraitItemDef;
+        use salsa::Setter as _;
+
+        fn force_target_observer(db: &dyn Db, source_file: SourceFile) {
+            let (_, root) = setup_root_module(db, source_file);
+            let items = root
+                .expanded_module_items(db)
+                .iter()
+                .find_map(|symbol| match symbol.data(db) {
+                    SymbolData::TraitSymbol(TraitSymbol::Local(owner)) => Some(owner.items(db)),
+                    SymbolData::ImplSymbol(sage_ir::symbol::ImplSymbol::Local(owner)) => {
+                        Some(owner.items(db))
+                    }
+                    _ => None,
+                })
+                .expect("expected a trait or impl owner");
+            let (stash, binder) = items.open();
+            let symbol = stash[binder.value]
+                .iter()
+                .find_map(|item| {
+                    let symbol = match *item {
+                        TraitItemDef::Function(symbol) => Symbol::from(symbol),
+                        TraitItemDef::Type(symbol) => Symbol::from(symbol),
+                        TraitItemDef::Const(symbol) => Symbol::from(symbol),
+                    };
+                    let name = symbol.name(db)?.0.text(db);
+                    name.eq_ignore_ascii_case("target").then_some(symbol)
+                })
+                .expect("expected a target associated item");
+            observe_symbol_identity(db, ObservedSymbol::new(db, symbol));
+        }
+
+        let cases = [
+            (
+                "trait function",
+                "trait HasItems { fn earlier(); fn target(&self) -> bool { true } }",
+                "trait HasItems { fn earlier(); fn added(); fn target(&self) -> bool { true } }",
+            ),
+            (
+                "trait type",
+                "trait HasItems { type Earlier; type Target; }",
+                "trait HasItems { type Earlier; type Added; type Target; }",
+            ),
+            (
+                "trait const",
+                "trait HasItems { const EARLIER: bool; const TARGET: bool; }",
+                "trait HasItems { const EARLIER: bool; const ADDED: bool; const TARGET: bool; }",
+            ),
+            (
+                "impl function",
+                "struct HasItems; impl HasItems { fn earlier() {} fn target(&self) -> bool { true } }",
+                "struct HasItems; impl HasItems { fn earlier() {} fn added() {} fn target(&self) -> bool { true } }",
+            ),
+            (
+                "impl type",
+                "struct HasItems; impl HasItems { type Earlier = bool; type Target = bool; }",
+                "struct HasItems; impl HasItems { type Earlier = bool; type Added = bool; type Target = bool; }",
+            ),
+            (
+                "impl const",
+                "struct HasItems; impl HasItems { const EARLIER: bool = true; const TARGET: bool = true; }",
+                "struct HasItems; impl HasItems { const EARLIER: bool = true; const ADDED: bool = true; const TARGET: bool = true; }",
+            ),
+            (
+                "trait function reorder",
+                "trait HasItems { fn earlier(); fn target(&self) -> bool { true } }",
+                "trait HasItems { fn target(&self) -> bool { true } fn earlier(); }",
+            ),
+            (
+                "trait type reorder",
+                "trait HasItems { type Earlier; type Target; }",
+                "trait HasItems { type Target; type Earlier; }",
+            ),
+            (
+                "trait const reorder",
+                "trait HasItems { const EARLIER: bool; const TARGET: bool; }",
+                "trait HasItems { const TARGET: bool; const EARLIER: bool; }",
+            ),
+            (
+                "impl function reorder",
+                "struct HasItems; impl HasItems { fn earlier() {} fn target(&self) -> bool { true } }",
+                "struct HasItems; impl HasItems { fn target(&self) -> bool { true } fn earlier() {} }",
+            ),
+            (
+                "impl type reorder",
+                "struct HasItems; impl HasItems { type Earlier = bool; type Target = bool; }",
+                "struct HasItems; impl HasItems { type Target = bool; type Earlier = bool; }",
+            ),
+            (
+                "impl const reorder",
+                "struct HasItems; impl HasItems { const EARLIER: bool = true; const TARGET: bool = true; }",
+                "struct HasItems; impl HasItems { const TARGET: bool = true; const EARLIER: bool = true; }",
+            ),
+        ];
+
+        for (label, before, after) in cases {
+            let mut database = Database::default();
+            let source_file = database.add_source_file("lib.rs".to_owned(), before.to_owned());
+            database.attach(|db| force_target_observer(db, source_file));
+            database.take_query_log();
+
+            source_file.set_text(&mut database).to(after.to_owned());
+            database.attach(|db| force_target_observer(db, source_file));
+            let edit_trace = database.take_query_log();
+            assert!(
+                !edit_trace.contains("observe_symbol_identity"),
+                "moving an unchanged associated {label} reminted it:\n{edit_trace}"
+            );
+
+            source_file.set_text(&mut database).to(before.to_owned());
+            database.attach(|db| force_target_observer(db, source_file));
+            let reverse_trace = database.take_query_log();
+            assert!(
+                !reverse_trace.contains("observe_symbol_identity"),
+                "reversing the associated {label} edit reminted it:\n{reverse_trace}"
+            );
+        }
+    }
+
+    // Evidence: SPAN-A1, SPAN-A3, ARC-A1, SYM-A2, INC-A2, INC-A3.
+    #[test]
+    fn moving_associated_item_reuses_method_signature_and_body() {
+        use sage_ir::ty::TraitItemDef;
+        use salsa::Setter as _;
+
+        fn force_target_body(db: &dyn Db, source_file: SourceFile) {
+            let (_, root) = setup_root_module(db, source_file);
+            let items = root
+                .expanded_module_items(db)
+                .iter()
+                .find_map(|symbol| match symbol.data(db) {
+                    SymbolData::TraitSymbol(TraitSymbol::Local(owner)) => Some(owner.items(db)),
+                    SymbolData::ImplSymbol(sage_ir::symbol::ImplSymbol::Local(owner)) => {
+                        Some(owner.items(db))
+                    }
+                    _ => None,
+                })
+                .expect("expected a trait or impl owner");
+            let (item_stash, binder) = items.open();
+            let target = item_stash[binder.value]
+                .iter()
+                .find_map(|item| match item {
+                    TraitItemDef::Function(FnSymbol::Local(function)) => {
+                        (function.name(db).text(db) == "target").then_some(*function)
+                    }
+                    TraitItemDef::Function(FnSymbol::Ext(_))
+                    | TraitItemDef::Type(_)
+                    | TraitItemDef::Const(_) => None,
+                })
+                .expect("expected target method");
+
+            let body = target.body(db);
+            assert!(body.diagnostics.is_empty(), "{:?}", body.diagnostics);
+        }
+
+        fn query_names(trace: &str) -> String {
+            let mut names = trace
+                .lines()
+                .map(|entry| {
+                    let entry = entry.strip_prefix("  salsa: ").unwrap_or(entry);
+                    entry.split_once("(Id(").map_or(entry, |(name, _)| name)
+                })
+                .collect::<Vec<_>>();
+            names.sort_unstable();
+            names.join("\n")
+        }
+
+        let cases = [
+            (
+                "trait",
+                "trait HasItems {\n    fn earlier();\n    fn target(&self) -> bool { true }\n}",
+                "    fn inserted();\n",
+            ),
+            (
+                "impl",
+                "struct HasItems;\nimpl HasItems {\n    fn earlier() {}\n    fn target(&self) -> bool { true }\n}",
+                "    fn inserted() {}\n",
+            ),
+        ];
+
+        for (owner_kind, before, inserted) in cases {
+            let after = before.replace("    fn target", &format!("{inserted}    fn target"));
+            let mut database = Database::default();
+            let source_file = database.add_source_file("lib.rs".to_owned(), before.to_owned());
+            database.attach(|db| force_target_body(db, source_file));
+            database.take_query_log();
+
+            database.attach(|db| force_target_body(db, source_file));
+            assert_eq!(
+                database.take_query_log(),
+                "",
+                "the unchanged {owner_kind} method body should be fully reusable"
+            );
+
+            source_file.set_text(&mut database).to(after);
+            database.attach(|db| force_target_body(db, source_file));
+            let edit_trace = database.take_query_log();
+
+            let expected = match owner_kind {
+                "trait" => expect![[r#"
+                    LocalTraitSym < 'db >::items_
+                    LocalTraitSym < 'db >::sig_
+                    local_expanded_module_items
+                    setup_root_module"#]],
+                "impl" => expect![[r#"
+                    LocalImplSym < 'db >::items_
+                    LocalImplSym < 'db >::sig_
+                    local_expanded_module_items
+                    local_impl_associated_item
+                    local_impl_associated_item
+                    local_impl_associated_item
+                    setup_root_module"#]],
+                _ => unreachable!(),
+            };
+            expected.assert_eq(&query_names(&edit_trace));
+        }
     }
 
     #[test]
@@ -3076,6 +3477,12 @@ mod trait_solver_proof_tests {
 
     #[test]
     fn local_normalization_reads_one_keyed_value_without_impl_item_enumeration() {
+        use salsa::Setter as _;
+
+        const SOURCE: &str = "trait Iterable<T> { type Item; type Unrelated; }\n\
+             impl Iterable<bool> for bool { type Item = i32; type Unrelated = char; }\n\
+             impl Iterable<char> for bool { type Item = u32; type Unrelated = bool; }";
+
         fn force(db: &dyn Db, source_file: SourceFile) {
             let (_, root) = setup_root_module(db, source_file);
             let (iterable, krate) = trait_and_crate(db, root, "Iterable");
@@ -3111,13 +3518,7 @@ mod trait_solver_proof_tests {
         }
 
         let mut database = Database::default();
-        let source_file = database.add_source_file(
-            "lib.rs".to_owned(),
-            "trait Iterable<T> { type Item; type Unrelated; }\n\
-             impl Iterable<bool> for bool { type Item = i32; type Unrelated = char; }\n\
-             impl Iterable<char> for bool { type Item = u32; type Unrelated = bool; }"
-                .to_owned(),
-        );
+        let source_file = database.add_source_file("lib.rs".to_owned(), SOURCE.to_owned());
         database.attach(|db| force(db, source_file));
         let cold = database.take_query_log();
         assert!(
@@ -3129,6 +3530,11 @@ mod trait_solver_proof_tests {
             1,
             "a header-mismatched candidate must not read its value:\n{cold}"
         );
+        assert_eq!(
+            cold.matches("local_impl_associated_item").count(),
+            1,
+            "the requested value must use one canonical keyed item producer:\n{cold}"
+        );
         assert!(
             !cold.contains("LocalImplSym < 'db >::items_"),
             "normalization must not enumerate or lower sibling impl items:\n{cold}"
@@ -3139,6 +3545,47 @@ mod trait_solver_proof_tests {
         assert!(
             !warm.contains("local_impl_associated_type_value"),
             "the unchanged value query should be reused:\n{warm}"
+        );
+
+        source_file
+            .set_text(&mut database)
+            .to(SOURCE.replace("type Unrelated = char", "type Unrelated = i16"));
+        database.attach(|db| force(db, source_file));
+        let unrelated_edit = database.take_query_log();
+        assert!(
+            unrelated_edit.contains("local_impl_associated_item"),
+            "the keyed item producer should revalidate the edited impl CST:\n{unrelated_edit}"
+        );
+        assert!(
+            !unrelated_edit.contains("local_impl_associated_type_value"),
+            "editing an unrelated associated value must not rerun the requested value query:\n{unrelated_edit}"
+        );
+
+        let mut database = Database::default();
+        let source_file = database.add_source_file("lib.rs".to_owned(), SOURCE.to_owned());
+        database.attach(|db| {
+            let (_, root) = setup_root_module(db, source_file);
+            let first_impl = root
+                .expanded_module_items(db)
+                .iter()
+                .find_map(|symbol| match symbol.data(db) {
+                    SymbolData::ImplSymbol(sage_ir::symbol::ImplSymbol::Local(item)) => Some(item),
+                    _ => None,
+                })
+                .expect("expected a local impl");
+            first_impl.items(db);
+        });
+        database.take_query_log();
+
+        database.attach(|db| force(db, source_file));
+        let after_aggregate = database.take_query_log();
+        assert!(
+            after_aggregate.contains("local_impl_associated_type_value"),
+            "normalization itself must be cold in this scenario:\n{after_aggregate}"
+        );
+        assert!(
+            !after_aggregate.contains("local_impl_associated_item"),
+            "normalization must reuse the canonical item producer first invoked by impl.items():\n{after_aggregate}"
         );
     }
 

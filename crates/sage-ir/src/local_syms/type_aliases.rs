@@ -12,14 +12,12 @@ pub struct LocalTypeAliasSym<'db> {
     pub scope: ScopeSymbol<'db>,
     pub owner: Option<LocalAssociatedOwner<'db>>,
 
+    #[tracked]
     #[returns(ref)]
     pub cst: TypeAliasCst<'db>,
 
     #[tracked]
     pub span: AbsoluteSpan<'db>,
-
-    #[tracked]
-    pub cst_base: AbsoluteSpan<'db>,
 }
 
 impl StashDirect for LocalTypeAliasSym<'_> {}

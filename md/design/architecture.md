@@ -203,7 +203,8 @@ associated-type normalization, and elaborated calls.
 
 - [ARC-A1](#arc-a1): the [Symbols](./infrastructure/symbols.md) and
   [incrementality](./infrastructure/incrementality.md) review packets connect
-  stable local identities to same-database edit experiments.
+  stable local identities to same-database edit experiments, including a
+  per-kind detail-edit matrix and associated-item movement traces.
 - [ARC-A2](#arc-a2): the
   [Oracle-checked method body](./examples/oracle-checked-method.md) follows a
   completed method body into exact Sage/rustc output, and

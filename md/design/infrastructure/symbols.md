@@ -173,7 +173,7 @@ Generic parameters form a related identity family rather than variants of
 `Symbol`:
 
 - `AstGenericParam` is a tracked local parameter tied to its parent symbol and
-  declaration index;
+  declaration index, with its source span tracked as mutable detail;
 - `ExtGenericParam` is interned from dependency metadata; and
 - `AlphaEquivParam` is an interned placeholder used when comparing binders.
 
@@ -255,6 +255,19 @@ types and the implemented Typed IR slices are operational.
   `duplicate_derive_occurrences_have_distinct_generated_source_identity`
   verifies that two derive occurrences on one item do not collapse to one
   generated source identity.
+- **[SYM-A2](#sym-a2) — Local detail-edit matrix.**
+  `detail_edits_preserve_local_symbol_query_keys` verifies the top-level item
+  family, `enum_detail_edits_preserve_variant_query_keys` verifies variants
+  and constructors while reading the updated self-contained variant CST, and
+  `moving_associated_items_preserves_symbol_query_keys` verifies associated
+  functions, types, and constants under both trait and impl owners across
+  insertion, removal, and reordering of siblings.
+- **[SYM-A2](#sym-a2) — One impl-item producer.**
+  `local_normalization_reads_one_keyed_value_without_impl_item_enumeration`
+  verifies that focused normalization and aggregate impl-item enumeration use
+  the same per-item producer query without making normalization depend on the
+  aggregate item list; its edit trace also separates cheap producer
+  revalidation from requested-value reuse when a sibling value changes.
 - **[SYM-A5](#sym-a5) — Associated ownership.** The test
   `trait_items_have_stable_symbols_and_owner_identity` checks function, type,
   and const item ownership and verifies that an associated method reuses its
@@ -271,18 +284,17 @@ definitions above. Run the focused harness evidence with:
 ```bash
 cargo test -p sage-test-harness moving_source_item_preserves_derive_expansion_identity
 cargo test -p sage-test-harness trait_items_have_stable_symbols_and_owner_identity
+cargo test -p sage-test-harness detail_edits_preserve_local_symbol_query_keys
+cargo test -p sage-test-harness moving_associated_items_preserves_symbol_query_keys
 ```
 
 ### Current limitations
 
-- **Known deviation [KD-2](../../implementation/known-deviations.md#kd-2-most-local-symbol-cst-fields-participate-in-symbol-identity):**
-  CST is independently tracked for functions but remains a Salsa identity
-  field for most other local item symbols, so a detail-only edit can replace a
-  symbol contrary to SYM-A2.
 - Local tracked identities are based on the identity fields and creation
-  structure used by the current parser/lowering queries. Evidence covers
-  offset movement and associated ownership, but not arbitrary sibling
-  insertion, deletion, or reordering for every item kind required by SYM-A2.
+  structure used by the current parser/lowering queries. Evidence covers the
+  per-kind detail-edit matrix, offset movement, and associated-item sibling
+  insertion, deletion, and reordering, but not those structural edits for
+  every top-level item kind required by SYM-A2.
 - `SymExt` interns the carried `kind` alongside crate number and definition
   index even though the logical definition identity is the latter pair; the
   representation therefore does not yet make the SYM-A3 split exact.

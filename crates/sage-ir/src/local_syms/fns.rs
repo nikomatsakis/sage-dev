@@ -91,9 +91,6 @@ pub struct LocalFnSym<'db> {
 
     #[tracked]
     pub span: AbsoluteSpan<'db>,
-
-    #[tracked]
-    pub cst_base: AbsoluteSpan<'db>,
 }
 // ANCHOR_END: architecture_local_function_symbol
 

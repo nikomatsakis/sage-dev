@@ -13,41 +13,6 @@ close it. The affected architecture chapter links back to the entry from its
 
 ## Open deviations
 
-### KD-1: Associated-item CST spans use the owner as their base
-
-- **Contracts:** [SPAN-A1](../design/spans.md#span-a1) and
-  [D17](../design/decisions.md#d17-nested-spans-are-relative-to-stable-item-provenance).
-- **Observed implementation:** Trait and impl parsing measures spans throughout
-  each associated function, type, or constant relative to the enclosing trait
-  or impl. Extracting the associated item preserves those coordinates and
-  stores the owner's absolute span as `cst_base`.
-- **Consequence:** Diagnostics resolve correctly through the compensating base,
-  but inserting or resizing an earlier associated item changes nested spans in
-  an otherwise unchanged later item. Its CST and downstream semantic products
-  therefore cannot be reused as independently as the design requires.
-- **Closure evidence:** Remove the owner-relative `cst_base` special case and
-  add edit tests which insert, remove, and resize an earlier associated item.
-  The later item's symbol, item-relative CST, and Typed IR must remain equal and
-  reusable while its composed absolute source position updates.
-
-### KD-2: Most local-symbol CST fields participate in symbol identity
-
-- **Contracts:** [ARC-A1](../design/architecture.md#arc-a1),
-  [PAR-A2](../design/pipeline/parsing.md#par-a2), and
-  [SYM-A2](../design/infrastructure/symbols.md#sym-a2).
-- **Observed implementation:** `LocalFnSym::cst` is independently tracked, but
-  most other local item symbols currently carry their CST as a Salsa identity
-  field. Changing that syntax can therefore create a replacement tracked
-  identity rather than update detail behind the existing symbol.
-- **Consequence:** A detail-only edit can remint the affected symbol and
-  invalidate consumers which depend only on an unchanged interface or sibling
-  fact.
-- **Closure evidence:** Make CST an independently tracked field for every local
-  item kind and add a per-kind persistent-edit matrix. Body, signature, member,
-  and attribute edits must preserve symbol identity and rerun only consumers of
-  the changed detail; genuine name, owner, or occurrence changes must still
-  produce the intended identity change.
-
 ### KD-3: Derive helper attributes do not produce the promised warning
 
 - **Contract:** [No derive helper attributes](../design/subsetting.md#no-derive-helper-attributes),
@@ -68,4 +33,37 @@ close it. The affected architecture chapter links back to the entry from its
 
 ## Closed deviations
 
-None yet.
+### KD-1: Associated-item CST spans used the owner as their base
+
+- **Contracts:** [SPAN-A1](../design/spans.md#span-a1) and
+  [D17](../design/decisions.md#d17-nested-spans-are-relative-to-stable-item-provenance).
+- **Closed:** 2026-08-18. Associated-item placement is stored separately from
+  the item-local function, type, or const CST; relative diagnostics now resolve
+  from the associated item's own absolute span. The `cst_base` special case was
+  removed.
+- **Evidence:** `moving_associated_items_preserves_symbol_query_keys` covers all
+  three associated kinds through both the trait and impl parsing paths across
+  sibling insertion, removal, and reordering, and
+  `moving_associated_item_reuses_method_signature_and_body` proves through the
+  post-edit Salsa traces for both owners that an unchanged moved method retains
+  its semantic queries.
+
+### KD-2: Most local-symbol CST fields participated in symbol identity
+
+- **Contracts:** [ARC-A1](../design/architecture.md#arc-a1),
+  [PAR-A2](../design/pipeline/parsing.md#par-a2), and
+  [SYM-A2](../design/infrastructure/symbols.md#sym-a2).
+- **Closed:** 2026-08-18. CST, module source/attributes, variant shape, and
+  local generic-parameter spans are tracked detail rather than definition
+  identity.
+- **Evidence:** `detail_edits_preserve_local_symbol_query_keys` covers every
+  top-level local item shape,
+  `enum_detail_edits_preserve_variant_query_keys` covers variants and
+  constructors while consuming the updated self-contained variant CST, and
+  `moving_associated_items_preserves_symbol_query_keys` covers associated
+  functions, types, and constants under both trait and impl owners across
+  sibling insertion, removal, and reordering.
+  `local_normalization_reads_one_keyed_value_without_impl_item_enumeration`
+  verifies that focused and aggregate impl-item paths share the canonical
+  per-item producer query and that editing a sibling value does not rerun the
+  requested-value query.

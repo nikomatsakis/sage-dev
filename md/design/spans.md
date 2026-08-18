@@ -132,17 +132,22 @@ and `duplicate_derive_occurrences_have_distinct_generated_source_identity`
 verifies occurrence identity. This establishes the exercised generated-source
 portion of [SPAN-A2](#span-a2) and supplies one movement case for
 [SPAN-A3](#span-a3).
+`moving_associated_items_preserves_symbol_query_keys` covers associated
+functions, types, and constants under both trait and impl owners across actual
+sibling insertion, removal, and reordering, while
+`moving_associated_item_reuses_method_signature_and_body` snapshots the
+post-edit Salsa executions for both owner paths and verifies that the unchanged
+method signature and body remain memoized. Together these establish the
+exercised associated item portion of [SPAN-A1](#span-a1) and
+[SPAN-A3](#span-a3).
 
 ### Current limitations
 
-- **Known deviation [KD-1](../implementation/known-deviations.md#kd-1-associated-item-cst-spans-use-the-owner-as-their-base):**
-  associated-item CST currently remains relative to the enclosing trait or
-  impl and uses `cst_base` to resolve diagnostics, rather than establishing an
-  item-local base as SPAN-A1 requires.
 - Generated-source diagnostics have less source-snippet support than real
   files, and tooling does not yet expose a provenance backtrace.
-- Identity/edit evidence covers selected generated moves rather than every
-  local item and nested expansion shape required by SPAN-A2 and SPAN-A3.
+- Identity/edit evidence covers associated items and selected generated moves
+  rather than every local item and nested expansion shape required by SPAN-A2
+  and SPAN-A3.
 - The exhaustive parsing and resolution matrix required by SPAN-A1 is not yet
   collected as a chapter-level review packet.
 - Lifetime `Dummy` is a semantic type representation and is unrelated to span

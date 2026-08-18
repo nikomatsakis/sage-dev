@@ -141,10 +141,27 @@ generated identity across movement, and narrow associated-value access.
   proves one keyed external ADT dependency and warm reuse.
 - **[INC-A1](#inc-a1)/[INC-A3](#inc-a3):**
   `local_normalization_reads_one_keyed_value_without_impl_item_enumeration`
-  proves normalization reads one associated value and not the item list.
+  proves normalization reads one associated value through the canonical keyed
+  item producer, reuses that producer after aggregate item enumeration, and
+  does not depend on the aggregate item-list query. Editing only a sibling
+  associated value revalidates the cheap producer while leaving the requested
+  value query memoized.
 - **[INC-A2](#inc-a2):** `moving_source_item_preserves_derive_expansion_identity`
   distinguishes
   stable generated identity from its changing source coordinate.
+- **[INC-A1](#inc-a1)/[INC-A2](#inc-a2)/[INC-A3](#inc-a3):**
+  `detail_edits_preserve_local_symbol_query_keys` and
+  `enum_detail_edits_preserve_variant_query_keys` use persistent edits and
+  Salsa observer queries to establish the CST/detail identity firewall across
+  local item kinds; the variant case also consumes the revised self-contained
+  CST so reuse cannot retain a pointer into an obsolete parent stash.
+- **[INC-A2](#inc-a2)/[INC-A3](#inc-a3):**
+  `moving_associated_item_reuses_method_signature_and_body` snapshots the
+  work required after inserting a preceding associated method under both trait
+  and impl owners and verifies that the unchanged target's signature and body
+  do not execute. `moving_associated_items_preserves_symbol_query_keys` extends
+  the symbol-key evidence across sibling insertion, removal, and reordering for
+  every represented associated-item kind.
 - **[INC-A2](#inc-a2):**
   `unrelated_body_edit_exposes_current_body_invalidation` is negative evidence:
   it pins a coarse same-file invalidation that the destination should remove.

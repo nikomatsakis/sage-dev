@@ -12,14 +12,12 @@ pub struct LocalConstSym<'db> {
     pub scope: ScopeSymbol<'db>,
     pub owner: Option<LocalAssociatedOwner<'db>>,
 
+    #[tracked]
     #[returns(ref)]
     pub cst: ConstCst<'db>,
 
     #[tracked]
     pub span: AbsoluteSpan<'db>,
-
-    #[tracked]
-    pub cst_base: AbsoluteSpan<'db>,
 }
 
 impl StashDirect for LocalConstSym<'_> {}

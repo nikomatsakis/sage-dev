@@ -29,7 +29,7 @@ use crate::span::RelativeSpan;
 use crate::ts_helpers;
 
 use super::Parser;
-use super::util::{absolute_span, item_start, node_name};
+use super::util::{absolute_span, item_start, node_name, relative_span};
 
 #[derive(Clone)]
 struct UsePrefix<'db> {
@@ -97,7 +97,7 @@ impl<'a, 'db> Parser<'a, 'db> {
         let abs_span = absolute_span(self.source, node, start);
 
         LocalModItemSym::Function(LocalFnSym::new(
-            self.db, name, self.scope, None, cst, abs_span, abs_span,
+            self.db, name, self.scope, None, cst, abs_span,
         ))
     }
 
@@ -468,7 +468,7 @@ impl<'a, 'db> Parser<'a, 'db> {
         let is_unsafe = header_words.contains(&"unsafe");
         let is_auto = header_words.contains(&"auto");
         let where_clauses = self.parse_where_clauses(&mut stash, node, start);
-        let items = self.parse_trait_body(&mut stash, node, start);
+        let items = self.parse_associated_items(&mut stash, node, start);
 
         let span = RelativeSpan {
             start: 0,
@@ -492,7 +492,7 @@ impl<'a, 'db> Parser<'a, 'db> {
         LocalModItemSym::Trait(LocalTraitSym::new(self.db, name, self.scope, cst, abs_span))
     }
 
-    fn parse_trait_body(
+    fn parse_associated_items(
         &self,
         stash: &mut Stash,
         node: tree_sitter::Node<'a>,
@@ -506,21 +506,32 @@ impl<'a, 'db> Parser<'a, 'db> {
         let mut items = Vec::new();
         let mut cursor = body.walk();
         for child in body.children(&mut cursor) {
+            let placement = relative_span(child, item_start);
+            let child_start = child.start_byte() as u32;
             match child.kind() {
                 "function_item" | "function_signature_item" => {
-                    let fn_data = self.parse_fn_cst_data(stash, child, item_start);
+                    let fn_data = self.parse_fn_cst_data(stash, child, child_start);
                     let ptr = stash.alloc(fn_data);
-                    items.push(TraitItemCst::Fn(ptr));
+                    items.push(TraitItemCst::Fn {
+                        cst: ptr,
+                        placement,
+                    });
                 }
                 "associated_type" | "type_item" => {
-                    let ta_data = self.parse_type_alias_cst_data(stash, child, item_start);
+                    let ta_data = self.parse_type_alias_cst_data(stash, child, child_start);
                     let ptr = stash.alloc(ta_data);
-                    items.push(TraitItemCst::Type(ptr));
+                    items.push(TraitItemCst::Type {
+                        cst: ptr,
+                        placement,
+                    });
                 }
                 "const_item" => {
-                    let c_data = self.parse_const_cst_data(stash, child, item_start);
+                    let c_data = self.parse_const_cst_data(stash, child, child_start);
                     let ptr = stash.alloc(c_data);
-                    items.push(TraitItemCst::Const(ptr));
+                    items.push(TraitItemCst::Const {
+                        cst: ptr,
+                        placement,
+                    });
                 }
                 _ => {}
             }
@@ -577,7 +588,7 @@ impl<'a, 'db> Parser<'a, 'db> {
             .child_by_field_name("trait")
             .map(|n| self.parse_path_from_type_node(&mut stash, n, start));
 
-        let items = self.parse_impl_body(&mut stash, node, start);
+        let items = self.parse_associated_items(&mut stash, node, start);
 
         let span = RelativeSpan {
             start: 0,
@@ -601,42 +612,6 @@ impl<'a, 'db> Parser<'a, 'db> {
         let abs_span = absolute_span(self.source, node, start);
 
         LocalModItemSym::Impl(LocalImplSym::new(self.db, self.scope, cst, abs_span))
-    }
-
-    fn parse_impl_body(
-        &self,
-        stash: &mut Stash,
-        node: tree_sitter::Node<'a>,
-        item_start: u32,
-    ) -> sage_stash::Slice<TraitItemCst<'db>> {
-        let body = match node.child_by_field_name("body") {
-            Some(n) => n,
-            None => return stash.alloc_slice(&[]),
-        };
-
-        let mut items = Vec::new();
-        let mut cursor = body.walk();
-        for child in body.children(&mut cursor) {
-            match child.kind() {
-                "function_item" | "function_signature_item" => {
-                    let fn_data = self.parse_fn_cst_data(stash, child, item_start);
-                    let ptr = stash.alloc(fn_data);
-                    items.push(TraitItemCst::Fn(ptr));
-                }
-                "associated_type" | "type_item" => {
-                    let ta_data = self.parse_type_alias_cst_data(stash, child, item_start);
-                    let ptr = stash.alloc(ta_data);
-                    items.push(TraitItemCst::Type(ptr));
-                }
-                "const_item" => {
-                    let c_data = self.parse_const_cst_data(stash, child, item_start);
-                    let ptr = stash.alloc(c_data);
-                    items.push(TraitItemCst::Const(ptr));
-                }
-                _ => {}
-            }
-        }
-        stash.alloc_slice(&items)
     }
 
     // -----------------------------------------------------------------------
@@ -765,7 +740,7 @@ impl<'a, 'db> Parser<'a, 'db> {
         let abs_span = absolute_span(self.source, node, start);
 
         LocalModItemSym::Const(LocalConstSym::new(
-            self.db, name, self.scope, None, cst, abs_span, abs_span,
+            self.db, name, self.scope, None, cst, abs_span,
         ))
     }
 
@@ -850,7 +825,7 @@ impl<'a, 'db> Parser<'a, 'db> {
         let abs_span = absolute_span(self.source, node, start);
 
         LocalModItemSym::TypeAlias(LocalTypeAliasSym::new(
-            self.db, name, self.scope, None, cst, abs_span, abs_span,
+            self.db, name, self.scope, None, cst, abs_span,
         ))
     }
 

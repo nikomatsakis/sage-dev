@@ -23,9 +23,11 @@ pub struct LocalModSym<'db> {
     /// The enclosing module, if any. `None` only for the crate root.
     pub parent: Option<ScopeSymbol<'db>>,
 
+    #[tracked]
     #[returns(ref)]
     pub body_source: ModBodySource,
 
+    #[tracked]
     #[returns(ref)]
     pub attrs: Stashed<Slice<AttrCst<'db>>>,
 

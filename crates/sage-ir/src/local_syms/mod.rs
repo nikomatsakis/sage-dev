@@ -54,13 +54,13 @@ impl<'db> LocalModItemSym<'db> {
 
     pub fn relative_span_base(self, db: &'db dyn crate::Db) -> AbsoluteSpan<'db> {
         match self {
-            LocalModItemSym::Function(f) => f.cst_base(db),
+            LocalModItemSym::Function(f) => f.span(db),
             LocalModItemSym::Struct(s) => s.span(db),
             LocalModItemSym::Enum(e) => e.span(db),
             LocalModItemSym::Trait(t) => t.span(db),
             LocalModItemSym::Impl(i) => i.span(db),
-            LocalModItemSym::TypeAlias(t) => t.cst_base(db),
-            LocalModItemSym::Const(c) => c.cst_base(db),
+            LocalModItemSym::TypeAlias(t) => t.span(db),
+            LocalModItemSym::Const(c) => c.span(db),
             LocalModItemSym::Static(s) => s.span(db),
             LocalModItemSym::Mod(m) => m.span(db),
             LocalModItemSym::Use(u) => u.span(db),
