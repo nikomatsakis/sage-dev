@@ -86,13 +86,6 @@ impl ProviderDemand {
             arguments: arguments.into_iter().map(Into::into).collect(),
         }
     }
-
-    pub fn fixture_line(&self) -> String {
-        std::iter::once(format!("provider: {}", self.operation))
-            .chain(self.arguments.iter().cloned())
-            .collect::<Vec<_>>()
-            .join(" ")
-    }
 }
 
 impl ActorReceiver {

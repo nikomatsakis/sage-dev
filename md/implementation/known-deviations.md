@@ -13,23 +13,6 @@ close it. The affected architecture chapter links back to the entry from its
 
 ## Open deviations
 
-### KD-5: The scripted inspector advertises products it cannot return
-
-- **Contracts:** [SI-A3](../design/validation/semantic-inspector.md#si-a3) and
-  [SI-A15](../design/validation/semantic-inspector.md#si-a15).
-- **Observed implementation:** The reviewed scripted provider gives the local
-  crate, `Db`, `DbDropGuard`, and its impl an `identity` product descriptor,
-  but its product dispatcher implements `identity` only for the local `db`
-  method and external `Clone::clone` method.
-- **Consequence:** Selecting one of those otherwise navigable symbols makes the
-  generic browser request the backend-authored default product and receive a
-  structured `product-not-found` error. The fixture-backed application is
-  therefore not internally closed over the product URLs it advertises.
-- **Closure evidence:**
-  `every_advertised_scripted_product_is_fetchable` must enumerate the scripted
-  local symbol directory through the Axum router, select each symbol, and
-  successfully fetch every advertised product with the matching page ID.
-
 ### KD-4: Stash byte storage does not guarantee entry alignment
 
 - **Contract:** [STASH-A1](../design/stash.md#stash-a1), together with the
@@ -70,6 +53,20 @@ close it. The affected architecture chapter links back to the entry from its
   conservative incompleteness rather than being assumed inert.
 
 ## Closed deviations
+
+### KD-5: The scripted inspector advertised products it could not return
+
+- **Contracts:** [SI-A3](../design/validation/semantic-inspector.md#si-a3) and
+  [SI-A15](../design/validation/semantic-inspector.md#si-a15).
+- **Closed:** 2026-08-31. The scripted provider and `--fixture` command path
+  were removed. Catalogs and products now come only from the live provider over
+  Rust source, so precomputed catalog and response models cannot drift apart.
+- **Evidence:**
+  `real_command_serves_embedded_assets_and_correlated_request_logs` launches
+  the live sample project, selects `Db` from the source-built directory, and
+  fetches its advertised identity page through the production actor and Axum
+  server. The same test snapshots the representative visible result and
+  actor-owned demand.
 
 ### KD-1: Associated-item CST spans used the owner as their base
 

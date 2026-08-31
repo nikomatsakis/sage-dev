@@ -1,1 +1,0 @@
-provider: continuation fixture-continuation

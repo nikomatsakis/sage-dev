@@ -1,6 +1,6 @@
 [workspace]
 members = ["crates/*", "xtask"]
-exclude = ["test-fixtures"]
+exclude = ["test-fixtures", "test-projects"]
 resolver = "3"
 
 [patch.crates-io]

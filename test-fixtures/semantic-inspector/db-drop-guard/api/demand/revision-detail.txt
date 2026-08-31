@@ -1,1 +1,0 @@
-provider: revision-detail rev_0

@@ -160,13 +160,10 @@ incremental work.
 
 Provide a `cargo sage inspect` web application with an Axum backend connected
 to a live Sage database and a JavaScript frontend which fetches semantic
-products on demand from a reusable typed service. Its first review checkpoint
-is frontend-only: the complete page structure and navigation operate against
-one reviewed exact API fixture bundle through a strict dummy server. The next
-checkpoint independently implements typed Rust DTOs, scripted service values,
-Axum transport, embedded assets, and the inspector command. Later checkpoints
-replace those scripts in order: workspace symbols, selected-symbol products,
-then canonical local/external navigation and metadata.
+products on demand from a reusable typed service. Every semantic checkpoint
+starts from a checked-in Cargo sample project and traverses the production
+workspace host and live provider. Snapshots record returned values and demand;
+they are not loaded as semantic responses.
 
 Full-slice acceptance later adds complete structured query lifecycle capture
 and cold, warm, relevant-edit, and unrelated-edit tests in one persistent
@@ -184,15 +181,13 @@ dependencies.
 ### Scope and non-goals
 
 The destination client is an Axum loopback backend and generic React
-application over a reusable service. Slice 1 deliberately has no Axum or Rust
-backend. Fixture data crosses the same JSON resource boundary as later real
-data; it is not embedded in view code. The frontend interprets a symbol
+application over a reusable service. The frontend interprets a symbol
 directory, positive product descriptors, and server-owned render trees without
 encoding Sage symbol kinds or product meanings. Salsa lifecycle integration
-follows only after real semantic products and cross-symbol navigation are
-usable. Watch mode, persistent revisions, and invalidation explanations follow
-lifecycle capture. An LSP adapter is a later client. Human-readable rendering
-does not replace or normalize the exact oracle representation.
+follows real semantic products and cross-symbol navigation. Watch mode,
+persistent revisions, and invalidation explanations follow lifecycle capture.
+An LSP adapter is a later client. Human-readable rendering does not replace or
+normalize the exact oracle representation.
 
 ### Affected architecture
 
@@ -208,43 +203,39 @@ does not replace or normalize the exact oracle representation.
   symbol directory and reflected semantic references; and
 - the existing symbol-keyed semantic and external metadata boundaries.
 
-The fixture shell, symbol, product, and navigation checkpoints do not depend on
-complete Salsa request hooks. Those are introduced only after the operation
-surface they must observe is real.
+The shell, symbol, product, and navigation checkpoints do not depend on
+complete Salsa request hooks. Those are introduced only after the live
+operation surface they must observe exists.
 
 ### High-level implementation plan
 
-1. Implement the complete React page, semantic URLs, and interactions against
-   one reviewed exact API fixture bundle and a strict dummy server. No Axum,
-   Rust DTO, inspector command, or Sage database exists in this slice.
-2. Add typed Rust DTOs and service boundaries, scripted values independent of
-   the expected JSON, exact Axum/Snapbox tests, embedded assets, the inspector
-   command, and one real-process smoke flow.
-3. Replace the scripted session and symbol resources with a database-owning
-   actor reached through a typed client, one eager detail-free real local
-   symbol index, browser-local search and disclosure, and canonical-path
-   selection with no backend search text.
-4. Add real source, concrete, signature, body, and diagnostic products through
+1. Add typed Rust DTOs, a database-owning actor reached through a typed client,
+   Axum, embedded assets, the inspector command, and one eager detail-free
+   local symbol index computed from a checked-in Cargo sample project.
+2. Add real source, concrete, signature, body, and diagnostic products through
    derive-driven structural reflection, with custom implementations only for
    symbol links, spans, stashed values, sharing, cycles, and limits.
-5. Activate canonical local/external navigation and dependency metadata.
-6. Temporarily fork Salsa to add balanced spans for every tracked-query
+3. Activate canonical local/external navigation and dependency metadata.
+4. Temporarily fork Salsa to add balanced spans for every tracked-query
    invocation before memo lookup, then expose the complete execution tree.
-7. Add watching, coherent visible-demand refresh, persistent revision/input/run
+5. Add watching, coherent visible-demand refresh, persistent revision/input/run
    history, and edit comparisons. A revision mismatch discards all
    response-derived client state, bootstraps the current directory, and replays
    URL intent, retaining a clean future LSP boundary.
 
 ### Progress
 
-**Operational, with one accepted navigation gap.** The typed actor service,
-Axum loopback server, embedded generic React client, exact shared fixture
-contract, live local/external navigation,
+**Operational, with browser-evidence and navigation gaps.** The typed actor
+service, Axum loopback server, embedded generic React client, source-driven
+backend snapshots, live local/external navigation,
 derive-driven bounded reflection, temporary Salsa invocation spans, file
 watching, explicit workspace reloads, and retained revision/edit comparison
-are operational. The living design and focused evidence are in the
+are operational. The scripted provider and static API fixtures have been
+removed. The living design and focused evidence are in the
 [Semantic Inspector architecture chapter](../design/validation/semantic-inspector.md);
-the RFD implementation page retains the detailed slice mapping. SI-A8 remains
+the RFD implementation page retains the detailed slice mapping. SI-A3/A4/A5/A7
+remain partial until a headless browser drives the live sample-project server.
+SI-A8 remains
 partial: ordinary local and named external paths work, but replay through an
 anonymous external impl would require a broader metadata lookup than the
 current boundary, and invalid duplicate local definitions do not yet have

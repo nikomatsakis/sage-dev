@@ -484,9 +484,9 @@ mod tests {
 
     #[test]
     fn failed_metadata_provider_replacement_preserves_the_live_host() {
-        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("test-fixtures/semantic-inspector/db-drop-guard/source");
-        let mut host = SageHost::try_open(&fixture, &[]).unwrap();
+        let project = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("test-projects/semantic-inspector/db-drop-guard");
+        let mut host = SageHost::try_open(&project, &[]).unwrap();
         let revision = host.salsa_revision();
         let source_paths = host.source_paths();
 

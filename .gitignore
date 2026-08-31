@@ -4,4 +4,4 @@
 /crates/sage-inspector/web/*.tsbuildinfo
 /crates/sage-inspector/web/vite.config.js
 /crates/sage-inspector/web/vite.config.d.ts
-/test-fixtures/semantic-inspector/db-drop-guard/source/target/
+/test-projects/semantic-inspector/db-drop-guard/target/

@@ -10,6 +10,83 @@ use sage_reflect::{SymbolReference, ValueNode};
 
 struct ChildGuard(std::process::Child);
 
+struct TestHttpResponse {
+    status: u16,
+    headers: std::collections::BTreeMap<String, String>,
+    body: String,
+}
+
+fn http_get(address: &str, path: &str, accept_json: bool) -> TestHttpResponse {
+    use std::io::{Read as _, Write as _};
+
+    let mut stream = std::net::TcpStream::connect(address).unwrap();
+    let accept = if accept_json {
+        "Accept: application/json\r\n"
+    } else {
+        ""
+    };
+    write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: {address}\r\n{accept}Connection: close\r\n\r\n"
+    )
+    .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    let (head, body) = response
+        .split_once("\r\n\r\n")
+        .expect("HTTP response has a body separator");
+    let mut lines = head.lines();
+    let status = lines
+        .next()
+        .expect("HTTP response has a status line")
+        .split_whitespace()
+        .nth(1)
+        .expect("HTTP status line has a status code")
+        .parse()
+        .unwrap();
+    let headers = lines
+        .map(|line| {
+            let (name, value) = line
+                .split_once(':')
+                .expect("HTTP response header has a colon");
+            (name.to_ascii_lowercase(), value.trim().to_owned())
+        })
+        .collect();
+    TestHttpResponse {
+        status,
+        headers,
+        body: body.to_owned(),
+    }
+}
+
+fn assert_json_response(response: &TestHttpResponse, status: u16) {
+    assert_eq!(response.status, status);
+    assert_eq!(
+        response.headers.get("content-type").map(String::as_str),
+        Some("application/json; charset=utf-8")
+    );
+    assert_eq!(
+        response.headers.get("cache-control").map(String::as_str),
+        Some("no-store")
+    );
+    assert!(response.body.ends_with('\n'));
+}
+
+fn protocol_response_snapshot(label: &str, response: &TestHttpResponse, output: &mut String) {
+    use std::fmt::Write as _;
+
+    writeln!(output, "## {label}").unwrap();
+    writeln!(output, "status: {}", response.status).unwrap();
+    writeln!(output, "content-type: {}", response.headers["content-type"]).unwrap();
+    writeln!(
+        output,
+        "cache-control: {}",
+        response.headers["cache-control"]
+    )
+    .unwrap();
+    output.push_str(&response.body);
+}
+
 impl Drop for ChildGuard {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -18,6 +95,24 @@ impl Drop for ChildGuard {
 }
 
 struct TempProject(std::path::PathBuf);
+
+fn inspector_project() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("test-projects/semantic-inspector/db-drop-guard")
+}
+
+fn percent_encode(value: &str) -> String {
+    use std::fmt::Write as _;
+
+    value.bytes().fold(String::new(), |mut encoded, byte| {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            encoded.push(char::from(byte));
+        } else {
+            write!(encoded, "%{byte:02X}").unwrap();
+        }
+        encoded
+    })
+}
 
 impl TempProject {
     fn new(label: &str) -> Self {
@@ -181,9 +276,8 @@ fn value_shape(node: &ValueNode) -> String {
 
 #[test]
 fn real_symbol_index_is_complete_local_and_detail_free() {
-    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("test-fixtures/semantic-inspector/db-drop-guard/source");
-    run_sage_host_with(&fixture, &[], |host| {
+    let project = inspector_project();
+    run_sage_host_with(&project, &[], |host| {
         let mut provider = LiveInspectionProvider::new(host);
         let provided = provider.symbols().unwrap();
         let labels: Vec<_> = provided
@@ -819,9 +913,8 @@ fn real_symbol_index_is_complete_local_and_detail_free() {
 
 #[test]
 fn edit_matrix_distinguishes_relevant_execution_from_unrelated_validation() {
-    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("test-fixtures/semantic-inspector/db-drop-guard/source");
-    run_sage_host_with(&fixture, &[], |host| {
+    let project = inspector_project();
+    run_sage_host_with(&project, &[], |host| {
         let original = host.source_text("lib.rs").unwrap();
         let mut provider = LiveInspectionProvider::new(host);
         let index = provider.symbols().unwrap();
@@ -890,9 +983,8 @@ fn edit_matrix_distinguishes_relevant_execution_from_unrelated_validation() {
 
 #[test]
 fn retained_host_separates_edits_from_demand_and_preserves_symbol_paths() {
-    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("test-fixtures/semantic-inspector/db-drop-guard/source");
-    run_sage_host_with(&fixture, &[], |host| {
+    let project = inspector_project();
+    run_sage_host_with(&project, &[], |host| {
         let original = host.source_text("lib.rs").unwrap();
         let (watch_root_sender, watch_root_receiver) = std::sync::mpsc::channel();
         let mut provider =
@@ -1277,9 +1369,8 @@ fn live_host_requires_one_explicit_workspace_target() {
 
 #[test]
 fn salsa_request_spans_are_balanced_when_a_query_unwinds() {
-    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("test-fixtures/semantic-inspector/db-drop-guard/source");
-    run_sage_host_with(&fixture, &[], |host| {
+    let project = inspector_project();
+    run_sage_host_with(&project, &[], |host| {
         let _ = host.take_inspection_log();
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             host.with_context(|context| panicking_inspection_query(context.db));
@@ -1375,21 +1466,12 @@ fn repeated_leaf_requests_retain_multiplicity_without_repeating_nodes() {
 
 #[test]
 fn inspector_reports_an_occupied_port_without_panicking() {
-    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("test-fixtures/semantic-inspector/db-drop-guard/source");
+    let project = inspector_project();
     let occupied = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
     let port = occupied.local_addr().unwrap().port().to_string();
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_cargo-sage"))
-        .args([
-            "sage",
-            "inspect",
-            "--fixture",
-            "semantic-inspector",
-            "--port",
-            &port,
-            "--no-open",
-        ])
-        .current_dir(fixture)
+        .args(["sage", "inspect", "--port", &port, "--no-open"])
+        .current_dir(project)
         .output()
         .unwrap();
 
@@ -1403,21 +1485,12 @@ fn inspector_reports_an_occupied_port_without_panicking() {
 #[test]
 fn real_command_serves_embedded_assets_and_correlated_request_logs() {
     use expect_test::expect;
-    use std::io::{BufRead as _, Read as _, Write as _};
+    use std::io::{BufRead as _, Read as _};
 
-    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("test-fixtures/semantic-inspector/db-drop-guard/source");
+    let project = inspector_project();
     let child = std::process::Command::new(env!("CARGO_BIN_EXE_cargo-sage"))
-        .args([
-            "sage",
-            "inspect",
-            "--fixture",
-            "semantic-inspector",
-            "--port",
-            "0",
-            "--no-open",
-        ])
-        .current_dir(fixture)
+        .args(["sage", "inspect", "--port", "0", "--no-open"])
+        .current_dir(project)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -1445,44 +1518,212 @@ fn real_command_serves_embedded_assets_and_correlated_request_logs() {
         .strip_prefix("http://")
         .unwrap();
 
-    let request = |path: &str| {
-        let mut stream = std::net::TcpStream::connect(address).unwrap();
-        write!(
-            stream,
-            "GET {path} HTTP/1.1\r\nHost: {address}\r\nAccept: application/json\r\nConnection: close\r\n\r\n"
-        )
-        .unwrap();
-        let mut response = String::new();
-        stream.read_to_string(&mut response).unwrap();
-        response
-    };
-    let direct_route = request("/symbols/local%2Fdb-drop-guard/signature");
-    assert!(direct_route.starts_with("HTTP/1.1 200 OK"));
-    assert!(direct_route.contains("<div id=\"root\"></div>"));
+    let direct_route = http_get(address, "/symbols/local%2Fdb-drop-guard/signature", false);
+    assert_eq!(direct_route.status, 200);
+    assert_eq!(
+        direct_route.headers.get("content-type").map(String::as_str),
+        Some("text/html")
+    );
+    assert!(direct_route.body.contains("<div id=\"root\"></div>"));
+    let missing_asset = http_get(address, "/assets/not-built.js", false);
+    assert_eq!(missing_asset.status, 404);
 
     let json = |path: &str| {
-        let response = request(path);
-        assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
-        let (_, body) = response
-            .split_once("\r\n\r\n")
-            .expect("HTTP response has a body separator");
-        serde_json::from_str::<serde_json::Value>(body).unwrap()
+        let response = http_get(address, path, true);
+        assert_json_response(&response, 200);
+        serde_json::from_str::<serde_json::Value>(&response.body).unwrap()
     };
-    let revision = json("/api/v1/revision");
+    let revision_response = http_get(address, "/api/v1/revision", true);
+    assert_json_response(&revision_response, 200);
+    let revision: serde_json::Value = serde_json::from_str(&revision_response.body).unwrap();
     let session = json("/api/v1/session");
     let symbols = json("/api/v1/symbols");
-    let symbol = json("/api/v1/symbol?path=local%2Fdb-drop-guard%2Fimpl-DbDropGuard%2Fdb");
-    let signature = json(
-        "/api/v1/product?symbol=local%2Fdb-drop-guard%2Fimpl-DbDropGuard%2Fdb&product=signature",
-    );
-    let run = json("/api/v1/runs/run_2");
+    let method_path = symbols["value"]["symbols"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|symbol| symbol["label"] == "db")
+        .and_then(|symbol| symbol["path"].as_str())
+        .expect("the sample project contains DbDropGuard::db");
+    let symbol = json(&format!(
+        "/api/v1/symbol?path={}",
+        percent_encode(method_path)
+    ));
+    let signature = json(&format!(
+        "/api/v1/product?symbol={}&product=signature",
+        percent_encode(method_path)
+    ));
+    let signature_run = signature["run_id"]
+        .as_str()
+        .expect("signature inspection records a run");
+    let run = json(&format!("/api/v1/runs/{signature_run}"));
 
-    assert_eq!(revision["revision_id"], "rev_0");
+    assert!(
+        revision["revision_id"]
+            .as_str()
+            .is_some_and(|revision| revision.starts_with("db0-rev"))
+    );
     assert_eq!(session["value"]["protocol_version"], "1");
-    assert_eq!(symbols["value"]["root"], "local/db-drop-guard");
+    assert_eq!(symbols["value"]["root"], "local/db_drop_guard");
     assert_eq!(symbol["value"]["label"], "db");
     assert_eq!(signature["value"]["title"], "Checked function signature");
     assert_eq!(run["value"]["request"]["kind"], "product");
+
+    let db_path = symbols["value"]["symbols"]
+        .as_array()
+        .expect("the live symbol index contains an array")
+        .iter()
+        .find(|symbol| symbol["label"] == "Db")
+        .and_then(|symbol| symbol["path"].as_str())
+        .expect("the sample project contains Db");
+    let db = json(&format!("/api/v1/symbol?path={}", percent_encode(db_path)));
+    let identity_href = db["value"]["products"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|product| product["id"] == "identity")
+        .and_then(|product| product["href"].as_str())
+        .expect("Db advertises its identity page");
+    let db_identity_response = http_get(address, identity_href, true);
+    assert_json_response(&db_identity_response, 200);
+    let db_identity: serde_json::Value = serde_json::from_str(&db_identity_response.body).unwrap();
+    assert_eq!(db_identity["value"]["title"], "Symbol identity");
+
+    let malformed_product = http_get(
+        address,
+        &format!("/api/v1/product?symbol={}", percent_encode(db_path)),
+        true,
+    );
+    assert_json_response(&malformed_product, 400);
+    let missing_symbol = http_get(
+        address,
+        "/api/v1/symbol?path=local%2Fdb_drop_guard%2Fmissing",
+        true,
+    );
+    assert_json_response(&missing_symbol, 404);
+    let unadvertised_product = http_get(
+        address,
+        &format!(
+            "/api/v1/product?symbol={}&product=not-advertised",
+            percent_encode(db_path)
+        ),
+        true,
+    );
+    assert_json_response(&unadvertised_product, 404);
+    let unknown_api = http_get(address, "/api/v1/not-a-route", true);
+    assert_json_response(&unknown_api, 404);
+
+    let mut protocol_snapshot = String::new();
+    protocol_response_snapshot("revision", &revision_response, &mut protocol_snapshot);
+    protocol_response_snapshot("Db identity", &db_identity_response, &mut protocol_snapshot);
+    protocol_response_snapshot(
+        "malformed product",
+        &malformed_product,
+        &mut protocol_snapshot,
+    );
+    protocol_response_snapshot("missing symbol", &missing_symbol, &mut protocol_snapshot);
+    protocol_response_snapshot(
+        "unadvertised product",
+        &unadvertised_product,
+        &mut protocol_snapshot,
+    );
+    protocol_response_snapshot("unknown API route", &unknown_api, &mut protocol_snapshot);
+    expect![[r###"
+        ## revision
+        status: 200
+        content-type: application/json; charset=utf-8
+        cache-control: no-store
+        {
+          "revision_id": "db0-rev1",
+          "request_id": "request-1",
+          "run_id": null,
+          "value": null
+        }
+        ## Db identity
+        status: 200
+        content-type: application/json; charset=utf-8
+        cache-control: no-store
+        {
+          "revision_id": "db0-rev1",
+          "request_id": "request-8",
+          "run_id": "run_5",
+          "value": {
+            "id": "identity",
+            "title": "Symbol identity",
+            "content": {
+              "kind": "group",
+              "layout": "block",
+              "children": [
+                {
+                  "kind": "heading",
+                  "level": 2,
+                  "text": "Canonical identity"
+                },
+                {
+                  "kind": "text",
+                  "text": "local/db_drop_guard/type-struct-Db"
+                },
+                {
+                  "kind": "text",
+                  "text": "db_drop_guard::Db"
+                }
+              ]
+            }
+          }
+        }
+        ## malformed product
+        status: 400
+        content-type: application/json; charset=utf-8
+        cache-control: no-store
+        {
+          "revision_id": "db0-rev1",
+          "request_id": "request-9",
+          "run_id": null,
+          "error": {
+            "code": "invalid-request",
+            "message": "missing or invalid symbol/product query"
+          }
+        }
+        ## missing symbol
+        status: 404
+        content-type: application/json; charset=utf-8
+        cache-control: no-store
+        {
+          "revision_id": "db0-rev1",
+          "request_id": "request-10",
+          "run_id": null,
+          "error": {
+            "code": "symbol-not-found",
+            "message": "unknown symbol path `local/db_drop_guard/missing`"
+          }
+        }
+        ## unadvertised product
+        status: 404
+        content-type: application/json; charset=utf-8
+        cache-control: no-store
+        {
+          "revision_id": "db0-rev1",
+          "request_id": "request-11",
+          "run_id": null,
+          "error": {
+            "code": "product-not-found",
+            "message": "product `not-advertised` is not listed for `local/db_drop_guard/type-struct-Db`"
+          }
+        }
+        ## unknown API route
+        status: 404
+        content-type: application/json; charset=utf-8
+        cache-control: no-store
+        {
+          "revision_id": "db0-rev1",
+          "request_id": "request-12",
+          "run_id": null,
+          "error": {
+            "code": "not-found",
+            "message": "unknown API route `/api/v1/not-a-route`"
+          }
+        }
+    "###]].assert_eq(&protocol_snapshot);
 
     child.0.kill().unwrap();
     let status = child.0.wait().unwrap();
@@ -1513,6 +1754,11 @@ fn real_command_serves_embedded_assets_and_correlated_request_logs() {
             })
         })
         .collect();
+    assert_eq!(
+        transcript.len(),
+        12,
+        "every HTTP request is visible in the actor demand log"
+    );
     let evidence = serde_json::json!({
         "visible": {
             "target": session["value"]["target"],
@@ -1522,6 +1768,9 @@ fn real_command_serves_embedded_assets_and_correlated_request_logs() {
             "trace_root": run["value"]["root"]["operation"],
         },
         "demand": transcript,
+        "live_regression": {
+            "advertised_db_identity": db_identity["value"]["title"],
+        },
     });
     expect![[r#"
         {
@@ -1530,7 +1779,7 @@ fn real_command_serves_embedded_assets_and_correlated_request_logs() {
               "arguments": [],
               "operation": "current-revision",
               "request_id": "request-1",
-              "revision_id": "rev_0",
+              "revision_id": "db0-rev1",
               "run_id": null,
               "status": "ok"
             },
@@ -1538,7 +1787,7 @@ fn real_command_serves_embedded_assets_and_correlated_request_logs() {
               "arguments": [],
               "operation": "session",
               "request_id": "request-2",
-              "revision_id": "rev_0",
+              "revision_id": "db0-rev1",
               "run_id": null,
               "status": "ok"
             },
@@ -1546,46 +1795,107 @@ fn real_command_serves_embedded_assets_and_correlated_request_logs() {
               "arguments": [],
               "operation": "local-symbol-index",
               "request_id": "request-3",
-              "revision_id": "rev_0",
+              "revision_id": "db0-rev1",
               "run_id": "run_1",
               "status": "ok"
             },
             {
               "arguments": [
-                "local/db-drop-guard/impl-DbDropGuard/db"
+                "local/db_drop_guard/impl-08431cf62f880d5d/value-fn-db"
               ],
               "operation": "symbol",
               "request_id": "request-4",
-              "revision_id": "rev_0",
-              "run_id": null,
-              "status": "ok"
-            },
-            {
-              "arguments": [
-                "local/db-drop-guard/impl-DbDropGuard/db",
-                "signature"
-              ],
-              "operation": "product",
-              "request_id": "request-5",
-              "revision_id": "rev_0",
+              "revision_id": "db0-rev1",
               "run_id": "run_2",
               "status": "ok"
             },
             {
               "arguments": [
-                "run_2"
+                "local/db_drop_guard/impl-08431cf62f880d5d/value-fn-db",
+                "signature"
+              ],
+              "operation": "product",
+              "request_id": "request-5",
+              "revision_id": "db0-rev1",
+              "run_id": "run_3",
+              "status": "ok"
+            },
+            {
+              "arguments": [
+                "run_3"
               ],
               "operation": "run",
               "request_id": "request-6",
-              "revision_id": "rev_0",
+              "revision_id": "db0-rev1",
+              "run_id": null,
+              "status": "ok"
+            },
+            {
+              "arguments": [
+                "local/db_drop_guard/type-struct-Db"
+              ],
+              "operation": "symbol",
+              "request_id": "request-7",
+              "revision_id": "db0-rev1",
+              "run_id": "run_4",
+              "status": "ok"
+            },
+            {
+              "arguments": [
+                "local/db_drop_guard/type-struct-Db",
+                "identity"
+              ],
+              "operation": "product",
+              "request_id": "request-8",
+              "revision_id": "db0-rev1",
+              "run_id": "run_5",
+              "status": "ok"
+            },
+            {
+              "arguments": [],
+              "operation": "current-revision",
+              "request_id": "request-9",
+              "revision_id": "db0-rev1",
+              "run_id": null,
+              "status": "ok"
+            },
+            {
+              "arguments": [
+                "local/db_drop_guard/missing"
+              ],
+              "operation": "symbol",
+              "request_id": "request-10",
+              "revision_id": "db0-rev1",
+              "run_id": null,
+              "status": "error"
+            },
+            {
+              "arguments": [
+                "local/db_drop_guard/type-struct-Db",
+                "not-advertised"
+              ],
+              "operation": "product",
+              "request_id": "request-11",
+              "revision_id": "db0-rev1",
+              "run_id": null,
+              "status": "error"
+            },
+            {
+              "arguments": [],
+              "operation": "current-revision",
+              "request_id": "request-12",
+              "revision_id": "db0-rev1",
               "run_id": null,
               "status": "ok"
             }
           ],
+          "live_regression": {
+            "advertised_db_identity": "Symbol identity"
+          },
           "visible": {
             "product": "Checked function signature",
-            "selected": "db_drop_guard::DbDropGuard::db",
-            "symbol_root": "local/db-drop-guard",
+            "selected": "db_drop_guard::impl item::db",
+            "symbol_root": "local/db_drop_guard",
             "target": {
               "package": "db-drop-guard",
               "target_kind": "lib",

@@ -85,7 +85,7 @@ and cannot execute additional Sage queries.
 
 The normative [`/api/v1` protocol](./protocol.md) defines route spelling,
 headers, request and response DTOs, canonical-path encoding, rendering and reflected-value
-variants, trace ordering, and exact fixture serialization. This section is a
+variants, trace ordering, and source-driven snapshot serialization. This section is a
 walkthrough-oriented summary. If an example here disagrees with the protocol,
 the protocol is authoritative and this walkthrough must be corrected.
 
@@ -240,7 +240,7 @@ projected to explicitly ordered entry arrays rather than relying on JSON
 object-key order. Stable DTO field order and one pretty-printing convention
 produce the checked bytes, including one trailing newline.
 
-The exact fixture may evolve, but changes are reviewed as protocol changes.
+The exact protocol snapshots may evolve, but changes are reviewed as protocol changes.
 Tests do not parse and reserialize an Axum response before comparison, because
 doing so could hide field-order, omission, or formatting drift.
 
@@ -511,10 +511,10 @@ async function activateProduct(descriptor) {
 GET /api/v1/product?symbol={symbol-path}&product={product-id}
 ```
 
-The opaque IDs happen to select these narrow server operations in the reviewed
-fixture, but the frontend does not know this table:
+The opaque IDs select these narrow server operations in the sample project,
+but the frontend does not know this table:
 
-| Mockup tab | Fixture product ID | Sage request for `DbDropGuard::db` | Reflected Rust value |
+| Mockup tab | Product ID | Sage request for `DbDropGuard::db` | Reflected Rust value |
 |---|---|---|---|
 | Concrete IR | `concrete` | tracked `LocalFnSym::cst(db)` field read | `FnCst = Stashed<Ptr<FnCstData>>` plus provenance |
 | Signature | `signature` | `LocalFnSym::sig(db)` | `Stashed<Binder<FnSig>>` |
@@ -717,7 +717,7 @@ The current mockup and protocol do not expose interactive `impls`, `prove`, or
 producing an ordinary product remain visible in the execution tree. A future
 protocol can add generic server-authored action nodes while retaining typed
 inputs on the backend, but this RFD deliberately does not pin their routes or
-fixtures.
+test projects.
 
 ## 7. Execution tree
 
@@ -929,71 +929,48 @@ assets shipped in the same process but is exact within that version.
 
 The terminal running `cargo sage inspect` exposes what the browser demanded.
 Each Axum request creates one structured log span containing its request ID,
-route family, fixture or live provider, process-wide revision ID, status,
+route family, live provider, process-wide revision ID, status,
 duration, and a small result summary. For example:
 
 ```text
-request=1 resource=symbol-index provider=fixture summaries=143 status=200
-request=2 resource=symbol path=local/crate/db/DbDropGuard/db provider=fixture status=200
-request=3 resource=product product=signature path=local/crate/db/DbDropGuard/db provider=fixture status=200
+request=1 resource=symbol-index provider=live summaries=143 status=200
+request=2 resource=symbol path=local/crate/db/DbDropGuard/db provider=live status=200
+request=3 resource=product product=signature path=local/crate/db/DbDropGuard/db provider=live status=200
 ```
 
-The log omits source contents and complete JSON values. From slices 2–5 it is
-an audit of HTTP and typed-provider demand, not a claim to show every Salsa
-cache hit. Slice 1 has only the dummy server's request transcript. Slice 6
-correlates the same request ID with the complete structured execution tree.
+The log omits source contents and complete JSON values. Before the tracing
+slice it is an audit of HTTP and typed-provider demand, not a claim to show
+every Salsa cache hit. The tracing slice correlates the same request ID with the complete
+structured execution tree.
 
-## Shared API fixture and browser evidence
+## Source-driven API and browser evidence
 
-One reviewed fixture bundle is the executable contract between backend and
-frontend:
+One checked-in Cargo project supplies the executable semantic input:
 
 ```text
-test-fixtures/semantic-inspector/db-drop-guard/
-├── source/
-│   └── src/lib.rs
-├── api/
-│   ├── routes.json
-│   └── responses/
-│       ├── session.json
-│       ├── symbols.json
-│       ├── local-db-method.json
-│       ├── local-db-signature.json
-│       └── external-clone-signature.json
-└── scenarios/
-    └── open-local-signature.json
+test-projects/semantic-inspector/db-drop-guard/
+├── Cargo.toml
+├── Cargo.lock
+└── src/lib.rs
 ```
 
-`routes.json` maps an exact method and path, including significant query
-parameters, to expected status, contractual headers, and one response file.
-Backend contract tests issue those requests through the actual Axum router and
-use Snapbox to compare the returned bytes directly. They inject deterministic
-revision IDs, request IDs, canonical paths, and ephemeral handle allocation;
-they do not redact, parse and reserialize, or otherwise normalize the response.
-Snapshot-update mode writes a candidate fixture for review; it never makes a
-mismatch pass merely because the backend produced new output.
+Backend tests launch the real host, provider, actor, and Axum server over this
+project. Reviewed snapshots capture returned values and actor/query demand.
+They are outputs only: no response file, route manifest, dummy server, or
+scripted provider is loaded to answer a semantic request. Snapshot-update mode
+writes candidate expected output for review and never makes a mismatch pass
+merely because the implementation produced new output.
 
-In slice 1 the strict dummy server consumes the fixture bundle directly; there
-is no Rust transport or backend claim. In slice 2, Axum contract tests construct
-independent typed scripted Rust values and serialize them through the
-production DTOs. They never deserialize the expected response as the input
-value under test. As a resource becomes real in slices 3–5, its contract test
-constructs the database actor and its `InspectionHost` from the bundle's Rust
-source, sends the actual typed client request, and replaces the scripted
-response. The expected JSON stays the reviewed contract. Neither a
-dummy-server test nor a scripted-value snapshot is evidence that Sage produces
-a real semantic value.
-
-Frontend tests run against a strict static fixture server which reads the same
-manifest and response files. It rejects unknown requests, records consumed
-routes, and fails a scenario whose required requests were not made. The UI
-suite can therefore run in parallel with Rust tests while proving both its
-rendered output and its demand behavior against the backend's exact contract.
+Vitest exercises isolated generic rendering components with directly
+constructed protocol nodes. A headless-browser suite drives the embedded
+application against this same live server for URL, filtering, navigation,
+product-demand, and refresh claims. The component suite does not establish
+semantic or transport behavior.
 
 The small real-process suite launches the actual command:
 
 ```text
-cargo sage inspect --fixture semantic-inspector --port 0 --no-open
+cargo sage inspect --port 0 --no-open
   -> emit one machine-readable ready record with the assigned application URL
   -> request an embedded direct-route URL and a named semantic API flow
   -> record reviewer-visible result fields from the exact responses
@@ -1036,16 +1013,14 @@ action select-local-db
       provider: symbol-summary(mini_redis/db/DbDropGuard/db)
     GET product(mini_redis/db/DbDropGuard/db, signature)
       provider: signature(mini_redis/db/DbDropGuard/db)
-      salsa: not-recorded-before-slice-6
+      salsa: not-recorded-before-tracing
     GET run(run:3)
       provider: retained-run(run:3)
       semantic work: none
 ```
 
-In slice 1 the transcript comes from the strict dummy server. In slice 2 it
-crosses Axum and the typed scripted provider. In slices 3–5, resources are
-replaced incrementally with real typed-service operations. Slice 6 replaces
-the explicit `not-recorded-before-slice-6` marker with the correlated dynamic
+The transcript always crosses Axum and the live typed provider. The tracing
+slice replaces the early `not-recorded` marker with the correlated dynamic
 operation tree; it does not introduce a second, disconnected evidence format.
 
 The process writes structured events while rendering the same events concisely
@@ -1062,8 +1037,11 @@ rendered value by exact textual identity.
 - [x] Define canonical symbol paths, opaque product IDs, positive product
   lists, generic rendering trees, reflected values, common responses, and
   ephemeral continuation/run/revision handles below Axum.
-- [x] Pin the `/api/v1` DTOs and routes above with one reviewed route manifest
-  and exact pretty-printed JSON response bundle.
+- [ ] Pin every `/api/v1` DTO and route above with source-driven reviewed
+  snapshots over the checked-in sample project. The current real-process test
+  pins representative success, structured-error, asset, header, and demand
+  behavior; continuation and revision-history route families and the complete
+  successful DTO set still need exact snapshots.
 - [x] Implement `DatabaseActor` with exclusive ownership of `InspectionHost`,
   its live Sage database, source registry, metadata provider, recorder,
   canonical-path index, ephemeral handles, and bounded history.
@@ -1084,13 +1062,12 @@ rendered value by exact textual identity.
 - [x] Route semantic-view changes through React Router and preserve direct
   load, Back/Forward, and push-versus-replace behavior; on revision mismatch,
   discard all response-derived state and bootstrap from the current URL.
-- [x] Emit structured request/provider audit logs and make fixture demand
-  directly assertable.
-- [x] Use Snapbox to compare actual Axum status, contractual headers, JSON
-  bytes, and provider demand against the reviewed API bundle without response
-  redaction or parse/reserialize normalization.
-- [x] Serve the same bundle through a strict static frontend test server which
-  rejects unknown routes and records consumed requests.
+- [x] Emit structured request/provider audit logs and make live demand directly
+  assertable.
+- [x] Snapshot real semantic values, Axum responses, and provider demand from
+  the checked-in sample project without using expected output as input.
+- [ ] Drive the embedded application through a headless browser against the
+  same live sample-project server.
 - [x] Add the black-box harness which starts the real command on a port-`0`
   loopback listener, requests the embedded routed application and one
   representative API flow, and snapshots combined result and server-owned
@@ -1102,35 +1079,28 @@ rendered value by exact textual identity.
   update/reload classification, SSE reconnect, and visible-demand refresh.
 - [x] Implement the later Revisions view over retained input deltas, runs,
   product versions, and observed-work comparisons.
-- [x] Add direct service tests, Axum contract tests, Vitest/React Testing
-  Library component tests against the static fixture server, and a small
-  real-process deployment/API smoke suite.
+- [x] Add direct live-service tests, generic Vitest/React Testing Library
+  component tests, and a real-process deployment/API suite.
 
 ## Delivery mapping
 
-- Parent slice 1 implements all mockup interactions, protocol demand, and URL
-  behavior against the reviewed bundle and strict dummy server. It has no
-  Axum or Rust implementation.
-- Parent slice 2 adds typed Rust DTOs, scripted service values, exact Axum
-  snapshots, `rust-embed`, `cargo sage inspect`, and one real-process smoke
-  flow, without constructing a live Sage database.
-- Parent slice 3 replaces session and workspace-symbol scripts with a live
-  host and one eager detail-free local symbol index searched entirely in the
-  browser.
-- Parent slice 4 adds real selected-symbol source, concrete IR, signatures,
+- Parent slice 1 adds the live host, typed Rust DTOs, Axum, `rust-embed`,
+  `cargo sage inspect`, and one eager detail-free local symbol index searched
+  entirely in the browser.
+- Parent slice 2 adds real selected-symbol source, concrete IR, signatures,
   bodies, diagnostics, derive-driven reflection, and render-tree assembly.
-- Parent slice 5 activates canonical local/external navigation and dependency
+- Parent slice 3 activates canonical local/external navigation and dependency
   metadata.
-- Parent slice 6 lands the Salsa invocation-span fork and complete
+- Parent slice 4 lands the Salsa invocation-span fork and complete
   execution/validation/reuse evidence across the real semantic request
   surface.
-- Parent slice 7 adds file watching, visible-demand refresh, retained
+- Parent slice 5 adds file watching, visible-demand refresh, retained
   revision/input/run history, and revision comparison.
 
 ## Acceptance evidence
 
-- Actual Axum responses and provider demand match the reviewed JSON API bundle
-  exactly; the frontend consumes the same bytes from a strict static server.
+- Actual Axum responses and provider demand are snapshotted from the live
+  sample project; expected output is never loaded as a semantic response.
 - Product lists determine the exact set and labels of tabs without reading any
   listed product; an invented kind and product require no frontend case.
 - Loading the complete local symbol index requests no checked signature, field
@@ -1147,9 +1117,9 @@ rendered value by exact textual identity.
 - Fetching an external signature does not read external items or a body.
 - Fetching a run or revision record does not add work to the observation being
   displayed.
-- One real-process deployment/API flow and the paired fixture-backed browser
-  scenario prove that embedded assets and actual Axum routes honor the same
-  contract without duplicating the full UI suite.
+- One real-process deployment/API flow proves that embedded assets and actual
+  Axum routes honor the protocol. Source-driven headless-browser evidence for
+  the same live server remains to be added.
 - A source update discards all response-derived client state, bootstraps the
   current URL, and cannot install an older response as current.
 - A revision may contain input changes and zero runs; an unchanged warm rerun

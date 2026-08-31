@@ -8,7 +8,6 @@ extern crate rustc_span;
 
 use clap::Parser;
 use notify::{RecursiveMode, Watcher};
-use sage_inspector::scripted::ScriptedProvider;
 use sage_inspector::{InspectionClient, ServerOptions, bind, run_server, serve_actor};
 use sage_ir::Db;
 use sage_ir::symbol::ModSymbol;
@@ -51,10 +50,6 @@ enum SageCommand {
         /// Do not open the application in the default browser.
         #[arg(long)]
         no_open: bool,
-
-        /// Use the reviewed scripted fixture instead of a live workspace.
-        #[arg(long, value_name = "NAME")]
-        fixture: Option<String>,
     },
 }
 
@@ -66,18 +61,8 @@ fn main() {
     let packages: Vec<String> = p.into_iter().collect();
 
     match command {
-        Some(SageCommand::Inspect {
-            port,
-            no_open,
-            fixture,
-        }) => {
-            if let Err(error) = run_inspector(
-                cwd.clone(),
-                packages.clone(),
-                port,
-                no_open,
-                fixture.as_deref(),
-            ) {
+        Some(SageCommand::Inspect { port, no_open }) => {
+            if let Err(error) = run_inspector(cwd.clone(), packages.clone(), port, no_open) {
                 eprintln!("sage: {error}");
                 std::process::exit(2);
             }
@@ -117,49 +102,28 @@ fn run_inspector(
     packages: Vec<String>,
     port: u16,
     no_open: bool,
-    fixture: Option<&str>,
 ) -> Result<(), String> {
-    let scripted = match fixture {
-        None => false,
-        Some("semantic-inspector") => true,
-        Some(fixture) => return Err(format!("unknown inspector fixture `{fixture}`")),
-    };
-    let mut live_host = if scripted {
-        None
-    } else {
-        Some(SageHost::try_open(&project_dir, &packages)?)
-    };
+    let mut live_host = SageHost::try_open(&project_dir, &packages)?;
     let runtime = tokio::runtime::Runtime::new()
         .map_err(|error| format!("failed to create the inspector runtime: {error}"))?;
     runtime.block_on(async move {
         let (client, actor) = InspectionClient::channel();
         let (watch_root_sender, watch_root_receiver) = std::sync::mpsc::channel();
         let actor = move || {
-            if scripted {
-                serve_actor(ScriptedProvider::default(), actor);
-            } else {
-                let host = live_host
-                    .as_mut()
-                    .expect("the live host was opened before starting its actor");
-                let provider =
-                    LiveInspectionProvider::new(host).with_watch_root_observer(watch_root_sender);
-                serve_actor(provider, actor);
-            }
+            let provider = LiveInspectionProvider::new(&mut live_host)
+                .with_watch_root_observer(watch_root_sender);
+            serve_actor(provider, actor);
         };
         std::thread::Builder::new()
             .name("sage-database-actor".to_owned())
             .spawn(actor)
             .map_err(|error| format!("failed to start the inspector database actor: {error}"))?;
 
-        let _watcher = if scripted {
-            None
-        } else {
-            Some(spawn_file_watcher(
-                watch_root_receiver,
-                client.clone(),
-                tokio::runtime::Handle::current(),
-            )?)
-        };
+        let _watcher = spawn_file_watcher(
+            watch_root_receiver,
+            client.clone(),
+            tokio::runtime::Handle::current(),
+        )?;
 
         let (address, listener) = bind(ServerOptions { port }).await.map_err(|error| {
             format!(

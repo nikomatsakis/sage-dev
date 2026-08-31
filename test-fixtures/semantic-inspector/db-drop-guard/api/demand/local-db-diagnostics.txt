@@ -1,1 +1,0 @@
-provider: product local/db-drop-guard/impl-DbDropGuard/db diagnostics

@@ -1,2 +1,0 @@
-provider: symbol local/db-drop-guard/impl-DbDropGuard/db
-forbidden: advertised-product

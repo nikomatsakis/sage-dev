@@ -95,13 +95,13 @@ semantic_inspector_service_boundary
 > and result types do not depend on Axum, React, terminal state, LSP, or the
 > Oracle schema. HTTP handlers only decode, call `InspectionClient`, and encode.
 >
-> **Required verification:** Service and router tests construct typed providers
-> independently and compare the actual HTTP boundary without accessing Sage
-> from a handler.
+> **Required verification:** Service tests call the live provider directly;
+> black-box router tests start from a checked-in Rust project and cross the
+> actor and HTTP boundary. No handler accesses Sage directly.
 
-The executable entry point constructs either the live provider or the reviewed
-scripted fixture, starts the actor and watcher, binds loopback port 2442 by
-default, and serves assets embedded with `rust-embed`:
+The executable entry point constructs the live provider, starts the actor and
+watcher, binds loopback port 2442 by default, and serves assets embedded with
+`rust-embed`:
 
 ```{anchor}
 semantic_inspector_command_entry
@@ -121,14 +121,18 @@ valid products for a selected symbol, so an absent body is omission rather
 than a synthetic “unavailable” product.
 
 <a id="si-a3"></a>
-> **SI-A3 — One exact JSON fixture drives both halves.** Backend tests construct
-> independent typed Rust values and compare exact Axum bytes with the reviewed
-> bundle. Browser tests consume those same bytes through a strict fixture
-> server which rejects unlisted demand.
+> **SI-A3 — Inspector integration evidence starts from Rust source.** A
+> checked-in Cargo sample project enters through the production workspace host,
+> live inspection provider, actor, and Axum server. Reviewed snapshots record
+> returned values and demand; precomputed JSON and scripted semantic providers
+> never supply results to an integration test. This is the Inspector-local
+> consequence of [D19](../decisions.md#d19-semantic-evidence-starts-from-source).
 >
-> **Required verification:** The route manifest, response bytes, expected
-> provider demand, and browser scenarios are checked without deserializing an
-> expected response to manufacture the backend value under test.
+> **Required verification:** Backend and browser integration tests launch the
+> real command over the same sample project, drive production routes, and
+> snapshot the returned values, visible UI, and actor/query demand. A source
+> edit must change results only through the live database; no snapshot is read
+> as an API response.
 
 <a id="si-a4"></a>
 > **SI-A4 — The browser is a generic protocol interpreter.** Symbol
@@ -136,9 +140,10 @@ than a synthetic “unavailable” product.
 > trace nodes determine the UI; JavaScript does not branch on Sage symbol kinds
 > or known product IDs.
 >
-> **Required verification:** A fixture-only invented kind and product render
-> and navigate without a product-specific component, and omitted products make
-> no request.
+> **Required verification:** Generic rendering component tests cover every
+> protocol node without semantic product IDs, source-driven browser tests cover
+> local and external navigation, and a static audit forbids product- or
+> symbol-kind dispatch in the client. Omitted products make no request.
 
 <a id="si-a5"></a>
 > **SI-A5 — The URL stores durable intent, not response state.** Selection,
@@ -312,9 +317,10 @@ work.
 > analysis/reflection boundary; view assembly is explicit and later JSON/DOM
 > work has no database access.
 >
-> **Required verification:** Phase tests inspect real products, while strict
-> frontend fixtures prove tree interaction performs no additional semantic
-> request.
+> **Required verification:** Phase tests inspect real products; generic
+> component tests interact with already-owned trees; and a source-driven
+> browser demand trace proves filtering, resizing, growth, collapse, and
+> expansion perform no semantic request.
 
 <a id="si-a12"></a>
 > **SI-A12 — Checked trace assertions use a deterministic projection.** Dynamic
@@ -363,15 +369,16 @@ last revision and its structured reason.
   real `DbDropGuard::db` host, exact macro-expansion metadata allowances,
   product catalogs, local/external navigation, relevant/unrelated edits,
   sibling reorder, rename failure, and explicit host reconstruction.
-- **SI-A2/A3:** `crates/sage-inspector/tests/protocol_contract.rs` drives the
-  reviewed 25-route manifest through the production Axum router and compares
-  exact response bytes, headers, structured errors, and provider-demand
-  fixtures.
-- **SI-A4/A5/A7:** `crates/sage-inspector/web/src/InspectorApp.test.tsx` uses the
-  same strict manifest and responses to test client-side filtering, generic
-  invented products, URL history, external links, incomplete membership,
-  revision reset/replay/fallback, per-revision product caching, explicit
-  reruns, continuations, comparisons, and trace expansion.
+- **SI-A2/A3:** `real_command_serves_embedded_assets_and_correlated_request_logs`
+  launches the production command over
+  `test-projects/semantic-inspector/db-drop-guard`, crosses the live workspace,
+  actor, and Axum boundary, snapshots reviewer-visible output and demand, and
+  follows the advertised `Db` identity link through the catalog and product
+  endpoints.
+- **SI-A4:** `crates/sage-inspector/web/src/InspectorApp.test.tsx` exercises the
+  generic rendering vocabulary and canonical semantic navigation without an
+  API mock or product-specific data model. The production command test checks
+  embedded routed assets against real API data.
 - **SI-A6/A16:** `crates/sage-reflect/src/lib.rs` tests derived field/variant
   shape, same- and cross-stash sharing, bounded wide-sequence traversal, and
   frozen continuation pages; the real inspector test snapshots complete
@@ -381,8 +388,8 @@ last revision and its structured reason.
   operation families; the remaining real trace tests cover executed,
   validated, reused, cancelled/unwinding, nested metadata, phase attribution,
   producer-authored sequential solver-query and unordered trait/normalization
-  candidate groups, and forbidden query families. The scripted bundle supplies
-  the stable human-reviewed projection.
+  candidate groups, and forbidden query families. Provider and command tests
+  supply the stable human-reviewed projections from source.
 - `real_command_serves_embedded_assets_and_correlated_request_logs` launches
   the actual command on port 0 and checks embedded direct-route assets, JSON,
   and actor-owned request logs together.
@@ -393,23 +400,21 @@ last revision and its structured reason.
 - Injected replacement-watch and obsolete-unwatch failures prove that reloads
   retain a complete watch set and expose any degraded cleanup state.
 
-Run the reviewed fixture without compiling a workspace:
+Run the checked-in sample project through the live inspector:
 
 ```text
-cargo run --bin cargo-sage -- sage inspect \
-  --fixture semantic-inspector --port 2442 --no-open
+cargo run --manifest-path ../../../../Cargo.toml --bin cargo-sage -- \
+  sage inspect --port 2442 --no-open
 ```
 
-Run against the current crate with `cargo sage inspect --package <name>` after
+Run that command from `test-projects/semantic-inspector/db-drop-guard`, or run
+against the current crate with `cargo sage inspect --package <name>` after
 installing the Cargo subcommand in the normal development workflow.
 
 ### Current limitations
 
-- The reviewed scripted provider currently advertises `identity` for four
-  basic local symbols without implementing those product requests. The
-  exhaustive catalog integration test records this as
-  [KD-5](../../implementation/known-deviations.md#kd-5-the-scripted-inspector-advertises-products-it-cannot-return).
-- The local symbol path matrix covers the represented `DbDropGuard` fixture;
+- The local symbol path matrix covers the represented `DbDropGuard` sample
+  project;
   duplicate same-name definitions and every generated ownership form do not
   yet have a complete adversarial matrix.
 - Named external paths and duplicate same-name crate versions resolve by
@@ -420,10 +425,18 @@ installing the Cargo subcommand in the normal development workflow.
   not every query ingredient has a semantic key projection.
 - Revision retention is process-memory and bounded to 64 revisions. It is not
   persisted across inspector processes.
-- Cross-browser layout and CSS behavior are not automatically tested. The
-  Vitest/jsdom suite checks browser state and demand against the exact bundle;
-  the real-process smoke separately checks embedded assets, direct routing,
-  the Axum boundary, visible result fields, and actor-owned demand.
+- Cross-browser layout, URL-history behavior, SSE refresh, and CSS behavior do
+  not yet have a source-driven browser harness. The component suite establishes
+  only generic rendering; the real-process test separately checks embedded
+  assets, direct routing, the Axum boundary, visible result fields, and
+  actor-owned demand. SI-A3 and the browser-specific parts of SI-A4/A5 remain
+  partial until a headless browser drives that same live server. The
+  browser-demand portion of SI-A7 is partial for the same reason.
+- Exact live Axum snapshots cover representative success, structured-error,
+  asset, header, and actor-demand paths. The successful DTO catalog and the
+  continuation and revision-history route families do not yet have exhaustive
+  source-driven byte snapshots, so the full protocol regression gate remains
+  partial.
 
 These limitations narrow evidence or ergonomics; they do not change the
 service, protocol, reflection, or revision contracts above.

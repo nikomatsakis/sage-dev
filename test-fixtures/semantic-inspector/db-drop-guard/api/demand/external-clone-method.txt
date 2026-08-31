@@ -1,2 +1,0 @@
-provider: symbol external/core-1/clone/Clone/clone
-forbidden: advertised-product

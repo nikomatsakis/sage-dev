@@ -380,3 +380,24 @@ This boundary makes external metadata reusable without masking gaps in Sage's
 semantics or creating accidental whole-crate dependencies. Its local contract
 is [META-A1](./subsystems/external-metadata.md#meta-a1); exact oracle
 independence remains [D4](#d4-oracle-test-harness).
+
+## D19: Semantic evidence starts from source
+
+When a semantic behavior can be produced by a Rust program, integration and
+acceptance evidence starts from a checked-in Cargo project and traverses the
+production layers named by the claim. Snapshots, query traces, and rendered
+review packets are observations of that execution. They are never loaded as
+precomputed semantic answers which replace parsing, expansion, resolution,
+checking, inspection, or transport.
+
+Constructed values remain useful for focused unit tests, and a narrow test
+double may inject an operating-system or external-service failure which cannot
+be reproduced safely or deterministically. Such a test establishes only that
+boundary. It cannot establish a Sage semantic anchor, and a transport test
+over a scripted semantic provider cannot be presented as end-to-end evidence.
+
+This decision makes the authority of a test visible: Rust projects are inputs,
+reviewed snapshots are outputs, and production code performs the semantic
+work between them. Its general verification contract is
+[TEN-A7](./tenets.md#ten-a7); the Semantic Inspector applies it in
+[SI-A3](./validation/semantic-inspector.md#si-a3).

@@ -30,6 +30,9 @@ most visible in the pipeline are:
   query determine which edits may cause downstream work to execute again.
 - **Conformance is exact.** Sage and rustc independently emit a shared oracle
   representation; the adapters are thin and comparison is textual identity.
+- **Semantic evidence starts from source.** Integration tests run checked-in
+  Rust projects through the production layers under review; snapshots record
+  results but never replace semantic computation.
 
 <a id="arc-a1"></a>
 > **ARC-A1 — Semantic identity precedes semantic detail.** A definition's

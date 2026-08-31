@@ -1,1 +1,0 @@
-provider: revision-compare rev_0 rev_0 local/db-drop-guard/impl-DbDropGuard/db signature

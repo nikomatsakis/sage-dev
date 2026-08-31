@@ -208,6 +208,34 @@ Harness](./oracle-test-harness.md#thin-adapters-and-exact-comparison).
 > one-field mismatch, and fail if either adapter or comparator attempts to
 > erase, reorder, or normalize a semantic difference.
 
+## Validation evidence
+
+**Semantic evidence begins with Rust source.** When a behavior can be expressed
+by a Rust program, integration and acceptance tests start from a checked-in
+Cargo project and exercise the production parsing, expansion, metadata,
+checking, inspection, and transport path that is in scope. Reviewed snapshots
+record what that execution produced; snapshots are never loaded as semantic
+inputs to manufacture the result under test.
+
+Small constructed values remain appropriate for unit-testing representation
+code, and narrowly scoped test doubles may inject failures at operating-system
+or external-service boundaries. Neither establishes that Sage computed a
+semantic result correctly. See
+[D19](./decisions.md#d19-semantic-evidence-starts-from-source).
+
+<a id="ten-a7"></a>
+> **TEN-A7 — Semantic integration evidence starts from source.** A semantic
+> anchor is established by running real Rust source through the production
+> layers named by the claim. Reviewed snapshots and traces are outputs of that
+> run, not alternate semantic inputs. Constructed values and test doubles can
+> establish only the isolated boundary they directly exercise.
+>
+> **Required verification:** Each semantic integration test identifies its
+> checked-in Rust project, production entry point, observed layers, reviewed
+> snapshots or traces, and any deliberately excluded boundary. Replacing a
+> production semantic layer with precomputed JSON or a scripted provider must
+> make the test ineligible as evidence for that layer.
+
 ## Naming conventions
 
 - `*Cst` — CST nodes (stash-allocated, per-item): `TypeCst`, `ExprCst`,
@@ -229,7 +257,9 @@ the focused chapters rather than being duplicated here:
 - [TEN-A4](#ten-a4): [Name Resolution](./subsystems/name-resolution.md);
 - [TEN-A5](#ten-a5): [Incrementality and Query
   Boundaries](./infrastructure/incrementality.md); and
-- [TEN-A6](#ten-a6): [Oracle Test Harness](./oracle-test-harness.md).
+- [TEN-A6](#ten-a6): [Oracle Test Harness](./oracle-test-harness.md); and
+- [TEN-A7](#ten-a7): [Validation and Inspection](./validation/README.md) and
+  [Semantic Inspector](./validation/semantic-inspector.md).
 
 The principal current gap is [TEN-A5](#ten-a5): several coarse same-file and
 module dependencies cause reexecution before an equal semantic result can be

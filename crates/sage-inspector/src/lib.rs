@@ -1,6 +1,5 @@
 pub mod actor;
 pub mod protocol;
-pub mod scripted;
 pub mod server;
 
 pub use actor::{FileUpdate, InspectionClient, InspectionProvider, ProviderDemand, serve_actor};

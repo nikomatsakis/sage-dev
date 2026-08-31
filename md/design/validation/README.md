@@ -12,10 +12,10 @@ every implementation detail.
   claims in each architecture chapter's **Current Status** section.
 - The [Semantic Inspector](./semantic-inspector.md) is the
   web-backed local and external symbol browser for concrete IR, signatures,
-  Typed IR, and other semantic results. Its exact JSON contract independently
-  drives frontend and backend tests; persistent edits and incremental query
-  traces make query boundaries reviewable. An LSP adapter can reuse the
-  inspection service as a future client.
+  Typed IR, and other semantic results. Source-driven tests exercise its live
+  service and JSON boundary; persistent edits and incremental query traces make
+  query boundaries reviewable. An LSP adapter can reuse the inspection service
+  as a future client.
 
 Human-readable inspection supplements exact oracle conformance; it does not
 replace or relax it.
@@ -85,9 +85,10 @@ observed frontier.
   tests exact comparison independently from human-oriented examples and query
   traces.
 - **[VAL-A1](#val-a1)/[VAL-A3](#val-a3):** The
-  [Semantic Inspector](./semantic-inspector.md) now supplies exact shared API
-  fixtures, readable real semantic products, structured cold/warm/edit traces,
-  revision comparisons, and direct source anchors for `DbDropGuard::db`.
+  [Semantic Inspector](./semantic-inspector.md) now supplies source-driven API
+  snapshots, readable real semantic products, structured cold/warm/edit
+  traces, revision comparisons, and direct source anchors for
+  `DbDropGuard::db`.
 
 ### Current limitations
 
@@ -100,4 +101,4 @@ observed frontier.
 
 The implemented [Semantic Inspector and persistent edit-testing
 slice](../../implementation/roadmap.md#implemented-slice-semantic-inspector-and-persistent-edit-testing)
-establishes the common interactive and fixture-backed evidence surface.
+establishes the common interactive and source-driven evidence surface.

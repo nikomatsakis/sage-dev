@@ -19,7 +19,7 @@
 **Detailed sub-RFDs:**
 
 - [JSON Protocol](./protocol.md) — the normative `/api/v1` routes, DTOs,
-  serialization rules, trace projection, and exact fixture format
+  serialization rules, trace projection, and source-driven snapshot contract
 - [Web Application Walkthrough](./web-application.md) — follows each visible
   part of the mockup through its JavaScript assembly, JSON request, inspection
   service operation, and Sage/Salsa query
@@ -35,8 +35,8 @@
 - Keep the browser generic: it interprets the symbol directory, server-authored
   product pages and rendering trees, execution traces, and revisions without
   branching on Rust symbol kinds or product identifiers.
-- Pin the `/api/v1` boundary with reviewed exact JSON fixtures which are
-  backend expectations and frontend test inputs.
+- Pin the `/api/v1` boundary with reviewed snapshots produced by running
+  checked-in Rust sample projects through the live server.
 - Address symbols with canonical backend-authored ownership paths which survive
   a fresh frontend bootstrap and make reflected definitions clickable.
 - Keep external symbols out of the workspace tree. They remain reachable from
@@ -364,22 +364,24 @@ revision/run records are specified in the [Web Application
 Walkthrough](./web-application.md).
 
 <a id="si-a3"></a>
-> **SI-A3 — Exact JSON fixtures are the shared client/server contract.** A
-> reviewed, versioned API fixture is the exact expected output of backend tests
-> and the input of frontend tests. Neither side generates or maintains an
-> alternate semantic fixture model.
+> **SI-A3 — Inspector integration evidence starts from Rust source.** A
+> checked-in Cargo sample project enters through the production workspace host,
+> live provider, actor, Axum server, and—when the claim concerns interaction—the
+> browser. Snapshots and traces are reviewed outputs, never semantic inputs.
+> This is the Inspector-local consequence of
+> [D19](../../design/decisions.md#d19-semantic-evidence-starts-from-source).
 >
-> **Required verification:** Snapbox compares the actual Axum response bytes
-> with the reviewed fixture; a strict static fixture server feeds the same
-> bytes to browser tests and rejects unexpected requests; a small real-process
-> smoke test crosses both implementations.
+> **Required verification:** Source-driven tests start the real command, drive
+> the production API and browser, and snapshot values, visible UI, and
+> actor/query demand. No route manifest, dummy API server, precomputed JSON
+> response, or scripted semantic provider may supply the result under test.
 
 Every request emits a concise structured audit log to the terminal running
 `cargo sage inspect`. Before complete Salsa tracing exists, this records the
-request identifier, route family, fixture or live provider, database revision,
+request identifier, route family, live provider, database revision,
 status, duration, and useful demand counts such as the number of symbol
 summaries returned. It must make unexpected product requests visible without
-dumping source text or full observations. Slice 6 enriches this coarse audit
+dumping source text or full observations. The tracing slice enriches this coarse audit
 trail with the complete dynamic query tree; it does not retroactively make the
 earlier log a complete cache-hit trace.
 
@@ -418,10 +420,10 @@ nodes requires no frontend change.
 > server's positive list; no behavior is keyed to a Rust symbol kind, origin,
 > or particular product identifier.
 >
-> **Required verification:** A dummy-server fixture containing an invented
-> symbol kind and product identifier renders without a corresponding
-> TypeScript case. Omitting a product produces neither a tab nor a request, and
-> local and external symbols use the same generic components.
+> **Required verification:** Generic rendering component tests exercise every
+> rendering node without product-specific behavior; source-driven browser tests
+> cover local and external symbols, omitted products, and canonical links; a
+> static audit forbids dispatch on symbol kind or product identifier.
 
 <a id="si-a5"></a>
 > **SI-A5 — The URL is durable intent; response-derived state is disposable.**
@@ -437,14 +439,12 @@ nodes requires no frontend change.
 > replay, event-stream reconnection, and explicit fallback when the canonical
 > path no longer resolves.
 
-The browser testing stack is Vitest plus React Testing Library against the
-strict API-fixture server. A small Rust black-box test launches the real
-command, requests the embedded routed application and representative API flow,
-and snapshots its reviewer-visible result together with actor-owned demand.
-This split follows the single reviewed bundle across both halves without
-requiring a browser binary in the Rust test environment. These tools are
-replaceable client details; the exact API bytes, observable URL, JSON demand,
-and rendering contracts are not.
+Vitest plus React Testing Library covers isolated generic rendering components.
+Semantic browser evidence uses a headless browser against the actual embedded
+application and live sample-project server. A Rust black-box test independently
+launches the same command, drives a representative API flow, and snapshots its
+reviewer-visible result together with actor-owned demand. Component tests do
+not establish semantic or end-to-end anchors.
 
 The [Web Application Walkthrough](./web-application.md) maps every mockup view
 through its JavaScript and API request to the semantic query which supplies it,
@@ -512,7 +512,7 @@ choices.
 > limited to named semantic or storage projections; every omission or
 > replacement of structure is explicit and tested.
 >
-> **Required verification:** Adding a field or variant to a derived fixture
+> **Required verification:** Adding a field or variant to a derived sample type
 > automatically exposes it. Nested derived values use custom symbol, span,
 > stash, sharing, cycle, and limit implementations; symbol leaves emit
 > canonical-path links; and product code never hand-serializes a reflected Sage
@@ -932,29 +932,16 @@ event patterns when incidental setup may grow. Negative assertions such as
 “no associated value other than `Iterator::Item`” and “no callee body” are
 first-class test cases.
 
-The primary browser/backend integration seam is the reviewed fixture bundle
-defined by the [JSON protocol](./protocol.md#exact-fixture-bundle). Slice 1 is
-frontend-only: a strict dummy server reads the route manifest and exact JSON,
-rejects unknown requests, and records expected and forbidden demand. It has no
-Rust DTO, Axum, or Sage database and therefore makes no backend claim.
-
-Slice 2 constructs independent typed scripted Rust values, serializes them
-through production DTOs and Axum, and uses Snapbox to compare status,
-contractual headers, exact pretty-printed JSON bytes, and provider demand with
-the bundle. Expected response bytes are never used as the values to serialize.
-Volatile data is deterministic at its source through injected revision IDs,
-request IDs, and ephemeral handle allocation; snapshots do not redact or
-rewrite actual responses. Later slices replace scripted values with real Sage
-operations over the Rust source fixture one resource at a time.
-
-From Slice 2 onward, a small real-process suite starts `cargo sage inspect`
-with port `0`, waits for its machine-readable application URL, requests the
-embedded routed application, and drives one representative semantic API flow.
-It covers the deployment seam—assets, direct URL routing, the actual Axum
-boundary, and actor logs—rather than duplicating the complete fixture-backed
-browser suite. Its combined transcript correlates reviewed result fields with
-server-owned provider demand. `GET run(...)` appears explicitly as a
-retained-record request with no semantic work.
+The browser/backend integration seam is the live server over a checked-in Cargo
+sample project, as defined by the
+[JSON protocol](./protocol.md#source-driven-contract-snapshots). A small
+real-process suite starts `cargo sage inspect` with port `0`, waits for its
+machine-readable application URL, requests the embedded routed application,
+and drives representative semantic API flows. A headless-browser suite uses
+the same arrangement for interaction claims. Their snapshots correlate
+reviewer-visible results with server-owned provider and query demand. `GET
+run(...)` appears explicitly as a retained-record request with no semantic
+work.
 
 Tests which claim live incrementality must retain one host across all
 revisions; reconstructing the host between runs is not valid evidence.
@@ -966,9 +953,8 @@ loopback web application. The browser downloads and searches the detail-free
 local symbol index, fetches supported products for the selected identity on
 demand, expands returned reflected structures, and follows semantic
 references. Typed-service and Axum contract tests verify the backend; a small
-real-process test verifies embedded assets and routed API demand, while the
-browser suite consumes the same exact API fixture used by those contract
-tests.
+real-process test verifies embedded assets and routed API demand, while
+source-driven browser tests exercise the same live server.
 
 The reusable service must not depend on terminal state, Clap types, JSON-RPC,
 or LSP position encodings. A future LSP server can own the same host, apply
@@ -1021,18 +1007,17 @@ The completed RFD must include:
   not request checked signatures, field types, bodies, associated values,
   impl discovery, or external metadata beyond the explicitly permitted macro
   families, and that selecting a product fetches only that product;
-- exact Snapbox comparisons of the actual Axum status, contractual headers,
-  JSON bytes, and provider demand against one reviewed API fixture bundle;
-- browser tests against a strict static server which serves that same bundle,
-  rejects unknown routes, and prove product-tab construction, URL navigation,
-  Back/Forward, and routed reload behavior;
+- reviewed snapshots of actual Axum status, contractual headers, JSON values,
+  and provider demand produced from one checked-in Cargo sample project;
+- headless-browser tests against that live server which prove product-tab
+  construction, URL navigation, Back/Forward, and routed reload behavior;
 - a black-box transcript produced by a real `cargo sage inspect` process with
   port `0`, combining reviewer-visible result fields with the exact semantic
   API and provider demand for the representative flow;
 - product-catalog snapshots proving that local and external product lists are
   server-authored and that catalog construction reads none of its products;
-- an invented symbol kind and product identifier rendered without a
-  corresponding frontend case;
+- generic component coverage and a static client audit showing rendering is
+  independent of symbol kind and product identifier;
 - canonical-path round trips across unrelated edits, sibling reordering, and
   host reconstruction, including unnamed/generated ownership and external
   crate disambiguation, plus explicit failure after rename or a forged path;
@@ -1046,7 +1031,7 @@ The completed RFD must include:
 - explicit not-found, invalid-product, truncation, and incomplete-child
   results;
 - one representative real-process deployment/API flow across the embedded
-  assets and actual Axum boundary, paired with the same fixture-backed browser
+  assets and actual Axum boundary, paired with a source-driven browser
   scenario;
 - a complete structured query tree rooted in balanced Salsa invocation spans,
   covering execution, validation, already-current reuse, nested parentage,
@@ -1075,27 +1060,19 @@ The destination above is one design. Delivery is divided into vertical slices
 so each checkpoint produces a reviewer-visible capability and evidence, rather
 than landing one architectural layer at a time:
 
-1. **Protocol and fixture-backed UI.** Implement the complete React mockup and
-   generic protocol interpreter against the reviewed JSON bundle and a strict
-   dummy server. This slice contains no Axum, Rust DTOs, embedded assets,
-   inspector command, or Sage database.
-2. **Axum transport and embedded application.** Define typed Rust DTOs and a
-   reusable service boundary, serve the application from Axum through
-   `rust-embed`, and launch it with `cargo sage inspect`. Independent typed
-   scripted values must reproduce the reviewed fixture bytes exactly; no live
-   Sage semantics are required yet.
-3. **Real workspace symbols.** Replace the scripted session and symbol
-   resources with a live Sage host and eagerly construct the detail-free local
-   symbol index with canonical paths, searched entirely in the browser.
-4. **Real selected-symbol products.** Add real source, concrete IR, signature,
+1. **Live shell and workspace symbols.** Define the typed service and JSON
+   protocol, launch the Axum/`rust-embed` application over a checked-in Cargo
+   sample project, and eagerly construct the detail-free local symbol index
+   with canonical paths searched entirely in the browser.
+2. **Real selected-symbol products.** Add real source, concrete IR, signature,
    diagnostics, and completed Typed IR products through derive-driven
    structural reflection and generic rendering-tree assembly.
-5. **Navigation and metadata.** Navigate canonical local and external symbol
+3. **Navigation and metadata.** Navigate canonical local and external symbol
    paths and inspect external products independently.
-6. **Salsa event chain and execution tree.** Record the complete dynamic request
+4. **Salsa event chain and execution tree.** Record the complete dynamic request
    tree from the temporary Salsa fork's invocation spans, including
    execution/reuse, semantic lookups, solver work, and external metadata reads.
-7. **Live updates and revision history.** Watch source files, rerun inspections
+5. **Live updates and revision history.** Watch source files, rerun inspections
    in one database, reload the current semantic URL at a new revision, retain
    per-revision edits and runs, compare repeated work, and distinguish input
    updates from workspace reloads.
@@ -1132,7 +1109,7 @@ workspace sharing becomes valuable.
 
 React is the initial implementation choice because its routing, component
 testing, browser-testing integration, and familiar state model minimize the
-work needed to reach the first usable fixture-backed application. Bundle size
+work needed to reach the first usable source-driven application. Bundle size
 is not a primary concern for a loopback developer tool. Solid and Preact remain
 credible replacements if experience with the recursive trees justifies a
 different reactivity model.

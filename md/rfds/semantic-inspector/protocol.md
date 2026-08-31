@@ -32,8 +32,9 @@ remote API compatibility promise.
   URL-safe ownership segments. The frontend treats the complete string as
   opaque. When used as a query value it is percent-encoded normally; clients
   do not parse or construct its segments.
-- Exact fixture tests compare response bytes directly. They do not parse and
-  reserialize, redact, or filter the actual response.
+- Protocol snapshots are produced by the live server over checked-in Rust
+  sample projects. Tests compare stable response bytes directly; a snapshot is
+  never parsed and loaded as the server's semantic value.
 
 The DTO notation below uses these string aliases:
 
@@ -193,7 +194,7 @@ RetainedRevisionRange {
 ```
 
 Capabilities appear in the order listed above. A delivery slice advertises
-only implemented capabilities; fixture data never claims a capability whose
+only implemented capabilities; sample-project evidence never claims a capability whose
 route is intentionally absent in that slice.
 
 ## Current revision
@@ -618,71 +619,46 @@ rebuild. A rebuild links to the last revision of the previous database
 generation so that revision history does not disguise a wholesale reload as
 ordinary incremental invalidation.
 
-## Exact fixture bundle
+## Source-driven contract snapshots
 
-The reviewed contract fixture has this shape:
-
-```text
-test-fixtures/semantic-inspector/db-drop-guard/
-├── source/
-│   └── src/lib.rs
-├── api/
-│   ├── routes.json
-│   ├── requests/
-│   ├── responses/
-│   └── demand/
-└── scenarios/
-```
+Protocol evidence starts from a checked-in Cargo project such as:
 
 ```text
-RouteFixture {
-  name: String,
-  request: FixtureRequest,
-  response: FixtureResponse,
-  expected_demand: String,
-}
-
-FixtureRequest {
-  method: "GET" | "POST",
-  path: String,
-  headers: [HeaderEntry],
-  body: String | null,
-}
-
-FixtureResponse {
-  status: u16,
-  headers: [HeaderEntry],
-  body: String,
-}
-
-HeaderEntry {
-  name: String,
-  value: String,
-}
+test-projects/semantic-inspector/db-drop-guard/
+├── Cargo.toml
+├── Cargo.lock
+└── src/lib.rs
 ```
 
-Header arrays are lowercase-name sorted. `body` and `expected_demand` name
-files relative to `api/`; a request body is canonical JSON using the same
-formatting rules. The strict dummy server matches method, path plus query,
-contractual headers, and exact request-body bytes. It rejects an unknown or
-duplicate request unless the scenario explicitly declares multiplicity.
+The black-box test launches `cargo sage inspect` in that project, waits for the
+real workspace host and Axum server, and issues ordinary `/api/v1` requests.
+Reviewed snapshots capture stable response values together with the
+actor-owned demand log. Focused provider tests use the same project to inspect
+larger structural value and trace snapshots without paying a second transport
+cost.
 
-Slice 1 uses this bundle only as dummy-server input for the browser; it has no
-Axum or Rust DTO implementation. Slice 2 constructs independent typed scripted
-Rust values, serializes them through the production DTO and Axum path, and
-compares those actual bytes with the reviewed response files. It never loads a
-response file as the value to serialize. As later slices replace scripted
-resources with real Sage operations over `source/`, the same comparisons become
-semantic backend evidence one resource at a time.
+The sample project is input. Snapshots are output. There is no route manifest,
+dummy API server, scripted semantic provider, or JSON file which Sage reads to
+answer a protocol request. Snapshot-update mode may write a candidate expected
+output for review; a mismatch never passes merely because the implementation
+emitted new output.
 
-Snapshot-update mode writes candidate files for review. A backend mismatch
-never passes merely because the implementation emitted new output.
+The current real-process suite pins exact bytes and contractual headers for a
+representative revision, semantic product, malformed request, missing symbol,
+unadvertised product, and unknown route. It also verifies routed HTML and a
+missing asset. Exact source-driven snapshots for every successful DTO and the
+continuation and revision-history route families remain implementation work;
+the protocol destination is unchanged.
+
+Browser integration uses the same live server and project. Pure rendering
+component tests may construct protocol nodes directly, but they establish only
+the rendering component—not semantic computation, API compatibility, or an
+end-to-end Inspector anchor.
 
 ## Protocol evolution
 
 The completed `/api/v1` contract is a regression gate. A protocol change
-updates this page, every affected response/request fixture, backend
-expectation, frontend type, and scenario in the same commit. An incompatible
-redesign uses `/api/v2`; adding a field or variant to `/api/v1` is still a
-reviewed exact-contract change even when old clients could theoretically
-ignore it.
+updates this page, affected source-driven snapshots, frontend types, and
+browser scenarios in the same commit. An incompatible redesign uses `/api/v2`;
+adding a field or variant to `/api/v1` is still a reviewed exact-contract
+change even when old clients could theoretically ignore it.
