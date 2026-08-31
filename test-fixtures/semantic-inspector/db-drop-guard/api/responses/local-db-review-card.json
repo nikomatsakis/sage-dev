@@ -1,0 +1,15 @@
+{
+  "revision_id": "rev_0",
+  "request_id": "request-11",
+  "run_id": null,
+  "value": {
+    "id": "invented-review-card",
+    "title": "Review card",
+    "content": {
+      "kind": "notice",
+      "tone": "info",
+      "title": "Protocol-driven page",
+      "text": "This invented product renders without a product-specific frontend case."
+    }
+  }
+}

@@ -156,5 +156,5 @@ exercised associated item portion of [SPAN-A1](#span-a1) and
 ### Related roadmap slices
 
 The [Semantic Inspector and persistent edit-testing
-slice](../implementation/roadmap.md#planned-slice-semantic-inspector-and-persistent-edit-testing)
+slice](../implementation/roadmap.md#implemented-slice-semantic-inspector-and-persistent-edit-testing)
 will expose source/expansion provenance and identity changes across edits.

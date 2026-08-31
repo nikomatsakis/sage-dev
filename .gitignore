@@ -1,3 +1,7 @@
 /target
 /book
-
+/crates/sage-inspector/web/node_modules/
+/crates/sage-inspector/web/*.tsbuildinfo
+/crates/sage-inspector/web/vite.config.js
+/crates/sage-inspector/web/vite.config.d.ts
+/test-fixtures/semantic-inspector/db-drop-guard/source/target/

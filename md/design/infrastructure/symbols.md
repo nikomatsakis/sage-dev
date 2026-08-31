@@ -313,8 +313,8 @@ cargo test -p sage-test-harness moving_associated_items_preserves_symbol_query_k
 
 ### Related roadmap slices
 
-- The [Semantic Inspector RFD](../../rfds/semantic-inspector/README.md) will
-  expose stable display paths and readable identity-bearing semantic output.
+- The [Semantic Inspector](../validation/semantic-inspector.md) exposes stable
+  display paths and readable identity-bearing semantic output.
 - The [Build-Out Roadmap](../../implementation/roadmap.md) tracks vertical
   slices that extend the set of symbol kinds and semantic queries exercised in
   completed bodies.

@@ -1,0 +1,23 @@
+{
+  "revision_id": "rev_0",
+  "request_id": "request-16",
+  "run_id": null,
+  "value": {
+    "run_id": "run_1",
+    "request": {
+      "kind": "symbol-index"
+    },
+    "root": {
+      "phase": "analysis",
+      "source": "sage",
+      "operation": "local-symbol-index",
+      "key": {
+        "kind": "semantic",
+        "value": "local/db-drop-guard"
+      },
+      "disposition": "observed",
+      "child_order": "sequential",
+      "children": []
+    }
+  }
+}

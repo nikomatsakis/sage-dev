@@ -10,7 +10,7 @@ use crate::span::RelativeSpan;
 
 pub type ImplCst<'db> = Stashed<Ptr<ImplCstData<'db>>>;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct ImplCstData<'db> {
     pub attrs: Slice<AttrCst<'db>>,
     pub generics: Slice<GenericParamCst<'db>>,

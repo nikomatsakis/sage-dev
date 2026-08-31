@@ -1,0 +1,85 @@
+{
+  "revision_id": "rev_0",
+  "request_id": "request-3",
+  "run_id": "run_1",
+  "value": {
+    "root": "local/db-drop-guard",
+    "symbols": [
+      {
+        "path": "local/db-drop-guard",
+        "parent": null,
+        "label": "db_drop_guard",
+        "display_path": "db_drop_guard",
+        "search_text": "db_drop_guard crate",
+        "presentation": {
+          "eyebrow": "Local crate",
+          "badges": []
+        },
+        "children": {
+          "status": "complete"
+        }
+      },
+      {
+        "path": "local/db-drop-guard/Db",
+        "parent": "local/db-drop-guard",
+        "label": "Db",
+        "display_path": "db_drop_guard::Db",
+        "search_text": "db db_drop_guard::Db struct",
+        "presentation": {
+          "eyebrow": "Local struct",
+          "badges": []
+        },
+        "children": {
+          "status": "not-applicable"
+        }
+      },
+      {
+        "path": "local/db-drop-guard/DbDropGuard",
+        "parent": "local/db-drop-guard",
+        "label": "DbDropGuard",
+        "display_path": "db_drop_guard::DbDropGuard",
+        "search_text": "dbdropguard db_drop_guard::DbDropGuard struct",
+        "presentation": {
+          "eyebrow": "Local struct",
+          "badges": []
+        },
+        "children": {
+          "status": "complete"
+        }
+      },
+      {
+        "path": "local/db-drop-guard/impl-DbDropGuard",
+        "parent": "local/db-drop-guard/DbDropGuard",
+        "label": "impl DbDropGuard",
+        "display_path": "impl db_drop_guard::DbDropGuard",
+        "search_text": "impl DbDropGuard",
+        "presentation": {
+          "eyebrow": "Local impl",
+          "badges": []
+        },
+        "children": {
+          "status": "complete"
+        }
+      },
+      {
+        "path": "local/db-drop-guard/impl-DbDropGuard/db",
+        "parent": "local/db-drop-guard/impl-DbDropGuard",
+        "label": "db",
+        "display_path": "db_drop_guard::DbDropGuard::db",
+        "search_text": "db dbdropguard method function",
+        "presentation": {
+          "eyebrow": "Local associated function",
+          "badges": [
+            {
+              "label": "Source-written",
+              "tone": "neutral"
+            }
+          ]
+        },
+        "children": {
+          "status": "not-applicable"
+        }
+      }
+    ]
+  }
+}

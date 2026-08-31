@@ -1,0 +1,13 @@
+{
+  "revision_id": "rev_0",
+  "request_id": "request-9",
+  "run_id": "run_5",
+  "value": {
+    "id": "identity",
+    "title": "Symbol identity",
+    "content": {
+      "kind": "text",
+      "text": "local/db-drop-guard/impl-DbDropGuard/db"
+    }
+  }
+}

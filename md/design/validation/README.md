@@ -10,7 +10,7 @@ every implementation detail.
   excerpts and semantic output.
 - Focused tests, readable snapshots, and query traces provide evidence for the
   claims in each architecture chapter's **Current Status** section.
-- The [Semantic Inspector](../../rfds/semantic-inspector/README.md) is the
+- The [Semantic Inspector](./semantic-inspector.md) is the
   web-backed local and external symbol browser for concrete IR, signatures,
   Typed IR, and other semantic results. Its exact JSON contract independently
   drives frontend and backend tests; persistent edits and incremental query
@@ -84,12 +84,13 @@ observed frontier.
 - **[VAL-A2](#val-a2):** The [Oracle Test Harness](../oracle-test-harness.md) documents and
   tests exact comparison independently from human-oriented examples and query
   traces.
+- **[VAL-A1](#val-a1)/[VAL-A3](#val-a3):** The
+  [Semantic Inspector](./semantic-inspector.md) now supplies exact shared API
+  fixtures, readable real semantic products, structured cold/warm/edit traces,
+  revision comparisons, and direct source anchors for `DbDropGuard::db`.
 
 ### Current limitations
 
-- The Semantic Inspector is a draft RFD; navigable semantic results,
-  structured invocation traces, and persistent edit experiments are not yet
-  available through the destination interface.
 - Review packets are established for selected expansion and body slices, not
   every positive capability claimed across the architecture guide.
 - No automated documentation audit yet proves VAL-A1 or the seven-element
@@ -97,6 +98,6 @@ observed frontier.
 
 ### Related roadmap slices
 
-The [Semantic Inspector and persistent edit-testing
-slice](../../implementation/roadmap.md#planned-slice-semantic-inspector-and-persistent-edit-testing)
-will establish the common interactive and fixture-backed evidence surface.
+The implemented [Semantic Inspector and persistent edit-testing
+slice](../../implementation/roadmap.md#implemented-slice-semantic-inspector-and-persistent-edit-testing)
+establishes the common interactive and fixture-backed evidence surface.

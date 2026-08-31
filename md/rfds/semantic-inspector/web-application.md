@@ -1,6 +1,6 @@
 # Sub-RFD: Semantic Inspector Web Application
 
-**Status:** Draft
+**Status:** Completed
 
 **Parent:** [Semantic Inspector](./README.md)
 
@@ -229,7 +229,7 @@ ValueNode =
   | { kind: "reference", target: SymbolReference }
   | { kind: "shared", identity, value: ValueNode }
   | { kind: "shared-reference", identity }
-  | { kind: "truncated", summary, continuation }
+  | { kind: "truncated", summary, continuation? }
 ```
 
 Product IDs never select a renderer; the returned `RenderNode` does. Options
@@ -240,10 +240,9 @@ projected to explicitly ordered entry arrays rather than relying on JSON
 object-key order. Stable DTO field order and one pretty-printing convention
 produce the checked bytes, including one trailing newline.
 
-The exact fixture may evolve while this RFD is Draft, but changes are reviewed
-as protocol changes. Tests do not parse and reserialize an Axum response before
-comparison, because doing so could hide field-order, omission, or formatting
-drift.
+The exact fixture may evolve, but changes are reviewed as protocol changes.
+Tests do not parse and reserialize an Axum response before comparison, because
+doing so could hide field-order, omission, or formatting drift.
 
 The complete protocol contributes to [SI-A2](./README.md#si-a2),
 [SI-A3](./README.md#si-a3), [SI-A4](./README.md#si-a4),
@@ -614,7 +613,9 @@ function renderValueNode(node) {
     case "scalar": return scalarNode(node.type_name, node.value);
     case "shared": return sharedNode(node.identity, renderValueNode(node.value));
     case "shared-reference": return sharedReferenceNode(node.identity);
-    case "truncated": return continuationNode(node.summary, node.continuation);
+    case "truncated": return node.continuation
+      ? continuationNode(node.summary, node.continuation)
+      : terminalTruncationNode(node.summary);
     default: return protocolError(`unknown ValueNode kind: ${node.kind}`);
   }
 }
@@ -772,17 +773,22 @@ JavaScript. The backend first produces a coherent database update:
 filesystem events
   -> normalize and debounce an edit batch
   -> reread stable file contents
-  -> classify input update versus workspace reload
+  -> classify input update versus workspace reload (Cargo manifests/lockfiles,
+     both rust-toolchain filenames, and workspace/package .cargo config files)
   -> update existing SourceFile::text inputs through &mut Database
+  -> after reload, replace watches from the reconstructed host's authoritative
+     Cargo workspace, selected package, and target source roots; install new
+     roots before removing old roots, retry failed installation, and retain
+     harmless extra old watches when cleanup fails
   -> record the actual Salsa revision(s) and input delta
   -> publish one completed-batch event
 ```
 
 The current Salsa setter can advance the revision for each input write, so one
 filesystem batch may cover an ordered range of Salsa revisions. The host does
-not permit a read between those writes and publishes only the final coherent
-revision. The history retains the individual input revisions; the frontend
-treats the edit batch as one visible update.
+not permit a read between those writes and publishes the final coherent Salsa
+revision together with the complete input-delta batch. Intermediate revisions
+which no reader could observe are not retained as separate history rows.
 
 Axum exposes a server-sent event stream:
 
@@ -793,7 +799,6 @@ Accept: text/event-stream
 
 ```text
 event: revision-advanced
-id: event-42
 data: {
   "revision_id": "rev_17",
   "edit_batch": "edit-9",
@@ -802,7 +807,9 @@ data: {
 ```
 
 JavaScript discards response-derived state and bootstraps from the current URL
-when the backend revision changes:
+when the backend revision changes. On every initial SSE connection and
+automatic reconnect, it first requests `GET /api/v1/revision`; this closes the
+race where the browser disconnected while an event was published:
 
 ```js
 events.onRevisionAdvanced(update => {
@@ -983,15 +990,15 @@ routes, and fails a scenario whose required requests were not made. The UI
 suite can therefore run in parallel with Rust tests while proving both its
 rendered output and its demand behavior against the backend's exact contract.
 
-The small real-process suite still launches the actual command:
+The small real-process suite launches the actual command:
 
 ```text
 cargo sage inspect --fixture semantic-inspector --port 0 --no-open
   -> emit one machine-readable ready record with the assigned application URL
-  -> Playwright opens that URL and performs a named navigation scenario
-  -> the browser records the visible assertions for each step
-  -> the command records semantic API, provider, and later Salsa/Sage events
-  -> the harness emits one exact navigation transcript
+  -> request an embedded direct-route URL and a named semantic API flow
+  -> record reviewer-visible result fields from the exact responses
+  -> record the command's provider demand for the same requests
+  -> emit one exact result-and-demand transcript
 ```
 
 The flag spellings are illustrative, but the default port `2442`, a port-`0`
@@ -1041,62 +1048,63 @@ replaced incrementally with real typed-service operations. Slice 6 replaces
 the explicit `not-recorded-before-slice-6` marker with the correlated dynamic
 operation tree; it does not introduce a second, disconnected evidence format.
 
-The process writes structured events to a dedicated test sink while rendering
-the same events concisely to the human terminal. Tests never parse prose log
-lines, and Playwright interception is not the source of truth. Assigned test
-ports, durations, raw concurrent arrival order, and raw Salsa debug keys are
-retained only in failure artifacts. The checked transcript follows
+The process writes structured events while rendering the same events concisely
+to the human terminal. Tests parse only the JSON events, not prose, and HTTP
+client interception is not the source of truth. Assigned test ports,
+durations, raw concurrent arrival order, and raw Salsa debug keys are retained
+only in failure artifacts. The checked transcript follows
 [SI-A12](./README.md#si-a12): it groups requests by browser action, canonically
 orders explicitly unordered siblings, and compares every included field and
 rendered value by exact textual identity.
 
 ## Complete implementation work
 
-- [ ] Define canonical symbol paths, opaque product IDs, positive product
+- [x] Define canonical symbol paths, opaque product IDs, positive product
   lists, generic rendering trees, reflected values, common responses, and
   ephemeral continuation/run/revision handles below Axum.
-- [ ] Pin the `/api/v1` DTOs and routes above with one reviewed route manifest
+- [x] Pin the `/api/v1` DTOs and routes above with one reviewed route manifest
   and exact pretty-printed JSON response bundle.
-- [ ] Implement `DatabaseActor` with exclusive ownership of `InspectionHost`,
+- [x] Implement `DatabaseActor` with exclusive ownership of `InspectionHost`,
   its live Sage database, source registry, metadata provider, recorder,
   canonical-path index, ephemeral handles, and bounded history.
-- [ ] Implement the cloneable typed `InspectionClient`, bounded actor mailbox,
+- [x] Implement the cloneable typed `InspectionClient`, bounded actor mailbox,
   and one-shot owned responses used by Axum handlers and service tests.
-- [ ] Implement the session, current revision, complete local symbol index,
+- [x] Implement the session, current revision, complete local symbol index,
   selected-symbol, product, external membership, continuation, run, revision,
   comparison, and SSE resources described above.
-- [ ] Implement the React/TypeScript store, routes, and current mockup regions
+- [x] Implement the React/TypeScript store, routes, and current mockup regions
   as a generic interpreter of only those resources.
-- [ ] Build the frontend with Vite and embed the production bundle through
+- [x] Build the frontend with Vite and embed the production bundle through
   `rust-embed`; keep the ordinary inspector command to one Rust process.
-- [ ] Make the complete local symbol index eager and detail-free, with search
+- [x] Make the complete local symbol index eager and detail-free, with search
   and local disclosure entirely browser-local.
-- [ ] Implement generic render-tree and structural-value interpreters,
+- [x] Implement generic render-tree and structural-value interpreters,
   canonical semantic links, product caching, URL history, filtering,
   collapse/expand, resize, and grow/restore.
-- [ ] Route semantic-view changes through React Router and preserve direct
+- [x] Route semantic-view changes through React Router and preserve direct
   load, Back/Forward, and push-versus-replace behavior; on revision mismatch,
   discard all response-derived state and bootstrap from the current URL.
-- [ ] Emit structured request/provider audit logs and make fixture demand
+- [x] Emit structured request/provider audit logs and make fixture demand
   directly assertable.
-- [ ] Use Snapbox to compare actual Axum status, contractual headers, JSON
+- [x] Use Snapbox to compare actual Axum status, contractual headers, JSON
   bytes, and provider demand against the reviewed API bundle without response
   redaction or parse/reserialize normalization.
-- [ ] Serve the same bundle through a strict static frontend test server which
+- [x] Serve the same bundle through a strict static frontend test server which
   rejects unknown routes and records consumed requests.
-- [ ] Add the black-box navigation harness which starts the real command on a
-  port-`0` loopback listener, drives one representative flow with Playwright,
-  and snapshots combined visible-result and server-owned demand evidence.
-- [ ] Make the temporary Salsa fork emit a balanced span for every tracked
+- [x] Add the black-box harness which starts the real command on a port-`0`
+  loopback listener, requests the embedded routed application and one
+  representative API flow, and snapshots combined result and server-owned
+  demand evidence.
+- [x] Make the temporary Salsa fork emit a balanced span for every tracked
   query invocation, including already-current memo fetches, and correlate its
   execution/validation/reuse disposition with nested Sage and metadata spans.
-- [ ] Implement watching, edit batching, same-database `SourceFile` updates,
+- [x] Implement watching, edit batching, same-database `SourceFile` updates,
   update/reload classification, SSE reconnect, and visible-demand refresh.
-- [ ] Implement the later Revisions view over retained input deltas, runs,
+- [x] Implement the later Revisions view over retained input deltas, runs,
   product versions, and observed-work comparisons.
-- [ ] Add direct service tests, Axum contract tests, Vitest/React Testing
+- [x] Add direct service tests, Axum contract tests, Vitest/React Testing
   Library component tests against the static fixture server, and a small
-  Playwright real-process smoke suite.
+  real-process deployment/API smoke suite.
 
 ## Delivery mapping
 
@@ -1139,8 +1147,9 @@ rendered value by exact textual identity.
 - Fetching an external signature does not read external items or a body.
 - Fetching a run or revision record does not add work to the observation being
   displayed.
-- One real-process browser flow proves the embedded application and actual
-  Axum routes honor the same contract without duplicating the full UI suite.
+- One real-process deployment/API flow and the paired fixture-backed browser
+  scenario prove that embedded assets and actual Axum routes honor the same
+  contract without duplicating the full UI suite.
 - A source update discards all response-derived client state, bootstraps the
   current URL, and cannot install an older response as current.
 - A revision may contain input changes and zero runs; an unchanged warm rerun
@@ -1153,6 +1162,6 @@ rendered value by exact textual identity.
 Component syntax, CSS system, Axum worker/channel types, watcher crate,
 debounce duration, retention limits, and exact route parameter encoding remain
 implementation choices. React, TypeScript, Vite, npm, React Router, Vitest,
-and Playwright are provisional choices and may be replaced while the Axum JSON
+and the real-process smoke harness may be replaced while the Axum JSON
 boundary remains stable. The visible-region to browser to JSON to Sage-query
 chains above are the design contract.

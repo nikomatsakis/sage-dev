@@ -412,6 +412,12 @@ pub(crate) fn solve_query<'db>(
     db: &'db dyn crate::Db,
     query: &Stashed<GoalQueryData<'db>>,
 ) -> Stashed<QueryResult<'db>> {
+    let _solver_span = crate::db::InspectionSpan::new(
+        db,
+        "solver-query",
+        crate::db::InspectionSource::Solver,
+        crate::db::InspectionChildOrder::Sequential,
+    );
     super::goal::validate_goal_query(db, query)
         .unwrap_or_else(|error| panic!("invalid canonical goal query: {error}"));
     let mut state = instantiate_query(query);
@@ -664,209 +670,232 @@ async fn solve_normalize_frame<'db>(
     let input_universes = input_universes(frame);
     let next_response_param = frame.next_response_param;
 
-    let mut tasks = ScopedTasks::new();
-    for candidate_index in 0..candidates.len() {
-        let query = query.clone();
-        let whiteboard = whiteboard.clone();
-        tasks.spawn(async move {
-            let mut candidate_state = instantiate_query(&query);
-            let SolverGoal::Normalize(crate::ty::AliasTy::Associated(projection)) =
-                candidate_state.goal
-            else {
-                unreachable!()
-            };
-            let atom = Atom::TraitImpl {
-                self_ty: projection.self_ty,
-                trait_ref: projection.trait_ref,
-            };
-            let (all_candidates, _) = assemble_candidates(
-                db,
-                &candidate_state,
-                candidate_state.version,
-                candidate_state.assumptions,
-                atom,
-            );
-            let candidates: Vec<_> = all_candidates
-                .into_iter()
-                .filter(|candidate| {
-                    matches!(
-                        candidate,
-                        Candidate::LocalImpl(_) | Candidate::ExternalImpl(_)
-                    )
-                })
-                .collect();
-            let candidate = candidates[candidate_index];
-            let parent = candidate_state.version;
-            let child = candidate_state.egraph.branch_from(parent);
-            let Some(candidate) =
-                prepare_value_candidate(db, &mut candidate_state, child, candidate)
-            else {
-                let answer =
-                    extract_query_result_at(db, &candidate_state, child, GoalResult::Maybe);
-                candidate_state.egraph.discard(child);
-                return answer;
-            };
-            let result = match match_candidate_head(
-                &mut candidate_state,
-                child,
-                atom,
-                candidate.instantiated.head,
-            ) {
-                Ok(()) => {
-                    let body_goals = candidate_state.stash[candidate.instantiated.body].to_vec();
-                    let body = Goal::all(&mut candidate_state.stash, body_goals);
-                    let environment = candidate_state.assumptions;
-                    prove_goal(
+    let answers = crate::db::InspectionFuture::new(
+        db,
+        "normalization-candidates",
+        crate::db::InspectionSource::Solver,
+        crate::db::InspectionChildOrder::Unordered,
+        async {
+            let mut tasks = ScopedTasks::new();
+            for candidate_index in 0..candidates.len() {
+                let query = query.clone();
+                let whiteboard = whiteboard.clone();
+                tasks.spawn(async move {
+                    let mut candidate_state = instantiate_query(&query);
+                    let SolverGoal::Normalize(crate::ty::AliasTy::Associated(projection)) =
+                        candidate_state.goal
+                    else {
+                        unreachable!()
+                    };
+                    let atom = Atom::TraitImpl {
+                        self_ty: projection.self_ty,
+                        trait_ref: projection.trait_ref,
+                    };
+                    let (all_candidates, _) = assemble_candidates(
                         db,
-                        &whiteboard,
-                        &mut candidate_state,
-                        child,
-                        environment,
-                        body,
-                        depth,
-                        Some(frame_id),
-                    )
-                    .await
-                }
-                Err(_) => GoalResult::No,
-            };
-            let answer = match result {
-                GoalResult::Yes { .. } => {
-                    let Some(value) = load_prepared_associated_value(
-                        db,
-                        &mut candidate_state,
-                        &candidate,
-                        projection.associated_ty,
-                    ) else {
+                        &candidate_state,
+                        candidate_state.version,
+                        candidate_state.assumptions,
+                        atom,
+                    );
+                    let candidates: Vec<_> = all_candidates
+                        .into_iter()
+                        .filter(|candidate| {
+                            matches!(
+                                candidate,
+                                Candidate::LocalImpl(_) | Candidate::ExternalImpl(_)
+                            )
+                        })
+                        .collect();
+                    let candidate = candidates[candidate_index];
+                    let parent = candidate_state.version;
+                    let child = candidate_state.egraph.branch_from(parent);
+                    let Some(candidate) =
+                        prepare_value_candidate(db, &mut candidate_state, child, candidate)
+                    else {
                         let answer =
                             extract_query_result_at(db, &candidate_state, child, GoalResult::Maybe);
                         candidate_state.egraph.discard(child);
                         return answer;
                     };
-                    extract_query_result_with_output_at(
+                    let result = match match_candidate_head(
+                        &mut candidate_state,
+                        child,
+                        atom,
+                        candidate.instantiated.head,
+                    ) {
+                        Ok(()) => {
+                            let body_goals =
+                                candidate_state.stash[candidate.instantiated.body].to_vec();
+                            let body = Goal::all(&mut candidate_state.stash, body_goals);
+                            let environment = candidate_state.assumptions;
+                            prove_goal(
+                                db,
+                                &whiteboard,
+                                &mut candidate_state,
+                                child,
+                                environment,
+                                body,
+                                depth,
+                                Some(frame_id),
+                            )
+                            .await
+                        }
+                        Err(_) => GoalResult::No,
+                    };
+                    let answer = match result {
+                        GoalResult::Yes { .. } => {
+                            let Some(value) = load_prepared_associated_value(
+                                db,
+                                &mut candidate_state,
+                                &candidate,
+                                projection.associated_ty,
+                            ) else {
+                                let answer = extract_query_result_at(
+                                    db,
+                                    &candidate_state,
+                                    child,
+                                    GoalResult::Maybe,
+                                );
+                                candidate_state.egraph.discard(child);
+                                return answer;
+                            };
+                            extract_query_result_with_output_at(
+                                db,
+                                &candidate_state,
+                                child,
+                                GoalOutput::Type(value),
+                                result,
+                            )
+                        }
+                        GoalResult::Maybe | GoalResult::No => {
+                            extract_query_result_at(db, &candidate_state, child, result)
+                        }
+                    };
+                    candidate_state.egraph.discard(child);
+                    answer
+                });
+            }
+            for candidate_index in 0..environment_candidate_count {
+                let query = query.clone();
+                let whiteboard = whiteboard.clone();
+                tasks.spawn(async move {
+                    let mut candidate_state = instantiate_query(&query);
+                    let SolverGoal::Normalize(crate::ty::AliasTy::Associated(projection)) =
+                        candidate_state.goal
+                    else {
+                        unreachable!()
+                    };
+                    let atom = Atom::TraitImpl {
+                        self_ty: projection.self_ty,
+                        trait_ref: projection.trait_ref,
+                    };
+                    let (all_candidates, _) = assemble_candidates(
+                        db,
+                        &candidate_state,
+                        candidate_state.version,
+                        candidate_state.assumptions,
+                        atom,
+                    );
+                    let candidates: Vec<_> = all_candidates
+                        .into_iter()
+                        .filter(|candidate| matches!(candidate, Candidate::Environment { .. }))
+                        .collect();
+                    let parent = candidate_state.version;
+                    let child = candidate_state.egraph.branch_from(parent);
+                    let candidate = instantiate_candidate(
+                        db,
+                        &mut candidate_state,
+                        child,
+                        candidates[candidate_index],
+                    );
+                    let result = match match_candidate_head(
+                        &mut candidate_state,
+                        child,
+                        atom,
+                        candidate.head,
+                    ) {
+                        Ok(()) => {
+                            let body_goals = candidate_state.stash[candidate.body].to_vec();
+                            let body = Goal::all(&mut candidate_state.stash, body_goals);
+                            let environment = candidate_state.assumptions;
+                            prove_goal(
+                                db,
+                                &whiteboard,
+                                &mut candidate_state,
+                                child,
+                                environment,
+                                body,
+                                depth,
+                                Some(frame_id),
+                            )
+                            .await
+                        }
+                        Err(_) => GoalResult::No,
+                    };
+                    // A matching trait fact establishes only truth. Even when all of
+                    // its conditions hold, it contributes uncertainty rather than an
+                    // invented associated value.
+                    let result = match result {
+                        GoalResult::No => GoalResult::No,
+                        GoalResult::Yes { .. } | GoalResult::Maybe => GoalResult::Maybe,
+                    };
+                    let answer = extract_query_result_at(db, &candidate_state, child, result);
+                    candidate_state.egraph.discard(child);
+                    answer
+                });
+            }
+            for fact_index in 0..normalization_fact_count {
+                let query = query.clone();
+                tasks.spawn(async move {
+                    let mut candidate_state = instantiate_query(&query);
+                    let SolverGoal::Normalize(crate::ty::AliasTy::Associated(projection)) =
+                        candidate_state.goal
+                    else {
+                        unreachable!()
+                    };
+                    let facts = normalization_facts(&candidate_state, projection);
+                    let (fact_alias, fact_value) = facts[fact_index];
+                    let parent = candidate_state.version;
+                    let child = candidate_state.egraph.branch_from(parent);
+                    let query_alias = candidate_state
+                        .stash
+                        .alloc(Ty::Alias(crate::ty::AliasTy::Associated(projection)));
+                    let fact_alias = candidate_state.stash.alloc(Ty::Alias(fact_alias));
+                    let result = if try_unify(
+                        &mut candidate_state.egraph,
+                        &mut candidate_state.stash,
+                        child,
+                        query_alias,
+                        fact_alias,
+                    )
+                    .is_ok()
+                    {
+                        GoalResult::Yes {
+                            modulo: Goal::true_(&mut candidate_state.stash),
+                        }
+                    } else {
+                        GoalResult::No
+                    };
+                    let answer = extract_query_result_with_output_at(
                         db,
                         &candidate_state,
                         child,
-                        GoalOutput::Type(value),
+                        GoalOutput::Type(fact_value),
                         result,
-                    )
-                }
-                GoalResult::Maybe | GoalResult::No => {
-                    extract_query_result_at(db, &candidate_state, child, result)
-                }
-            };
-            candidate_state.egraph.discard(child);
-            answer
-        });
-    }
-    for candidate_index in 0..environment_candidate_count {
-        let query = query.clone();
-        let whiteboard = whiteboard.clone();
-        tasks.spawn(async move {
-            let mut candidate_state = instantiate_query(&query);
-            let SolverGoal::Normalize(crate::ty::AliasTy::Associated(projection)) =
-                candidate_state.goal
-            else {
-                unreachable!()
-            };
-            let atom = Atom::TraitImpl {
-                self_ty: projection.self_ty,
-                trait_ref: projection.trait_ref,
-            };
-            let (all_candidates, _) = assemble_candidates(
-                db,
-                &candidate_state,
-                candidate_state.version,
-                candidate_state.assumptions,
-                atom,
-            );
-            let candidates: Vec<_> = all_candidates
-                .into_iter()
-                .filter(|candidate| matches!(candidate, Candidate::Environment { .. }))
-                .collect();
-            let parent = candidate_state.version;
-            let child = candidate_state.egraph.branch_from(parent);
-            let candidate =
-                instantiate_candidate(db, &mut candidate_state, child, candidates[candidate_index]);
-            let result =
-                match match_candidate_head(&mut candidate_state, child, atom, candidate.head) {
-                    Ok(()) => {
-                        let body_goals = candidate_state.stash[candidate.body].to_vec();
-                        let body = Goal::all(&mut candidate_state.stash, body_goals);
-                        let environment = candidate_state.assumptions;
-                        prove_goal(
-                            db,
-                            &whiteboard,
-                            &mut candidate_state,
-                            child,
-                            environment,
-                            body,
-                            depth,
-                            Some(frame_id),
-                        )
-                        .await
-                    }
-                    Err(_) => GoalResult::No,
-                };
-            // A matching trait fact establishes only truth. Even when all of
-            // its conditions hold, it contributes uncertainty rather than an
-            // invented associated value.
-            let result = match result {
-                GoalResult::No => GoalResult::No,
-                GoalResult::Yes { .. } | GoalResult::Maybe => GoalResult::Maybe,
-            };
-            let answer = extract_query_result_at(db, &candidate_state, child, result);
-            candidate_state.egraph.discard(child);
-            answer
-        });
-    }
-    for fact_index in 0..normalization_fact_count {
-        let query = query.clone();
-        tasks.spawn(async move {
-            let mut candidate_state = instantiate_query(&query);
-            let SolverGoal::Normalize(crate::ty::AliasTy::Associated(projection)) =
-                candidate_state.goal
-            else {
-                unreachable!()
-            };
-            let facts = normalization_facts(&candidate_state, projection);
-            let (fact_alias, fact_value) = facts[fact_index];
-            let parent = candidate_state.version;
-            let child = candidate_state.egraph.branch_from(parent);
-            let query_alias = candidate_state
-                .stash
-                .alloc(Ty::Alias(crate::ty::AliasTy::Associated(projection)));
-            let fact_alias = candidate_state.stash.alloc(Ty::Alias(fact_alias));
-            let result = if try_unify(
-                &mut candidate_state.egraph,
-                &mut candidate_state.stash,
-                child,
-                query_alias,
-                fact_alias,
-            )
-            .is_ok()
-            {
-                GoalResult::Yes {
-                    modulo: Goal::true_(&mut candidate_state.stash),
-                }
-            } else {
-                GoalResult::No
-            };
-            let answer = extract_query_result_with_output_at(
-                db,
-                &candidate_state,
-                child,
-                GoalOutput::Type(fact_value),
-                result,
-            );
-            candidate_state.egraph.discard(child);
-            answer
-        });
-    }
-    let mut answers = Vec::new();
-    while let Some((_task, answer)) = tasks.next_completed().await {
-        answers.push(answer);
-    }
+                    );
+                    candidate_state.egraph.discard(child);
+                    answer
+                });
+            }
+            let mut answers = Vec::new();
+            while let Some((_task, answer)) = tasks.next_completed().await {
+                answers.push(answer);
+            }
+            answers
+        },
+    )
+    .await;
     merge_candidate_results(
         db,
         next_response_param,
@@ -941,95 +970,81 @@ async fn solve_trait_frame<'db>(
 ) -> Stashed<QueryResult<'db>> {
     let (candidates, incomplete) =
         assemble_candidates(db, frame, frame.version, frame.assumptions, atom);
-    let input_universes: FxHashMap<_, _> = frame
-        .inputs
-        .iter()
-        .map(|input| {
-            let universe = match frame.stash[input.ty] {
-                Ty::InferVar(index) => frame.egraph.current_universe(frame.version, index),
-                Ty::Param(param) => frame.egraph.placeholder_universe(param),
-                Ty::Bool
-                | Ty::Char
-                | Ty::Int(_)
-                | Ty::Uint(_)
-                | Ty::Float(_)
-                | Ty::Str
-                | Ty::Adt(_, _)
-                | Ty::Alias(_)
-                | Ty::Ref(_, _, _)
-                | Ty::Tuple(_)
-                | Ty::Slice(_)
-                | Ty::Array(_, _)
-                | Ty::FnPtr(_, _)
-                | Ty::Never
-                | Ty::Error(_) => unreachable!("canonical input is not a variable"),
-            };
-            (input.param, universe.0)
-        })
-        .collect();
+    let input_universes = input_universes(frame);
     let next_response_param = frame.next_response_param;
     let candidate_count = candidates.len();
-    // ANCHOR: example_run_trait_candidates
-    let mut tasks = ScopedTasks::new();
-    for candidate_index in 0..candidate_count {
-        let query = query.clone();
-        let whiteboard = whiteboard.clone();
-        tasks.spawn(async move {
-            let mut candidate_state = instantiate_query(&query);
-            let SolverGoal::Prove(Goal::Atom(candidate_atom)) = candidate_state.goal else {
-                unreachable!("candidate query is not atomic")
-            };
-            let (candidates, _) = assemble_candidates(
-                db,
-                &candidate_state,
-                candidate_state.version,
-                candidate_state.assumptions,
-                candidate_atom,
-            );
-            let candidate = candidates[candidate_index];
-            let parent = candidate_state.version;
-            let child = candidate_state.egraph.branch_from(parent);
-            let instantiated = instantiate_candidate(db, &mut candidate_state, child, candidate);
-            let result = match match_candidate_head(
-                &mut candidate_state,
-                child,
-                candidate_atom,
-                instantiated.head,
-            ) {
-                Ok(()) => {
-                    let body_goals = candidate_state.stash[instantiated.body].to_vec();
-                    let body = Goal::all(&mut candidate_state.stash, body_goals);
-                    let environment = candidate_state.assumptions;
-                    prove_goal(
+    let answers = crate::db::InspectionFuture::new(
+        db,
+        "trait-candidates",
+        crate::db::InspectionSource::Solver,
+        crate::db::InspectionChildOrder::Unordered,
+        async {
+            // ANCHOR: example_run_trait_candidates
+            let mut tasks = ScopedTasks::new();
+            for candidate_index in 0..candidate_count {
+                let query = query.clone();
+                let whiteboard = whiteboard.clone();
+                tasks.spawn(async move {
+                    let mut candidate_state = instantiate_query(&query);
+                    let SolverGoal::Prove(Goal::Atom(candidate_atom)) = candidate_state.goal else {
+                        unreachable!("candidate query is not atomic")
+                    };
+                    let (candidates, _) = assemble_candidates(
                         db,
-                        &whiteboard,
+                        &candidate_state,
+                        candidate_state.version,
+                        candidate_state.assumptions,
+                        candidate_atom,
+                    );
+                    let candidate = candidates[candidate_index];
+                    let parent = candidate_state.version;
+                    let child = candidate_state.egraph.branch_from(parent);
+                    let instantiated =
+                        instantiate_candidate(db, &mut candidate_state, child, candidate);
+                    let result = match match_candidate_head(
                         &mut candidate_state,
                         child,
-                        environment,
-                        body,
-                        depth,
-                        Some(frame_id),
-                    )
-                    .await
-                }
-                Err(_) => GoalResult::No,
-            };
-            let answer = extract_query_result_at(db, &candidate_state, child, result);
-            candidate_state.egraph.discard(child);
-            answer
-        });
-    }
+                        candidate_atom,
+                        instantiated.head,
+                    ) {
+                        Ok(()) => {
+                            let body_goals = candidate_state.stash[instantiated.body].to_vec();
+                            let body = Goal::all(&mut candidate_state.stash, body_goals);
+                            let environment = candidate_state.assumptions;
+                            prove_goal(
+                                db,
+                                &whiteboard,
+                                &mut candidate_state,
+                                child,
+                                environment,
+                                body,
+                                depth,
+                                Some(frame_id),
+                            )
+                            .await
+                        }
+                        Err(_) => GoalResult::No,
+                    };
+                    let answer = extract_query_result_at(db, &candidate_state, child, result);
+                    candidate_state.egraph.discard(child);
+                    answer
+                });
+            }
 
-    let mut answers = Vec::new();
-    while let Some((_task, answer)) = tasks.next_completed().await {
-        let unconditional = is_unconditional_answer(&answer);
-        answers.push(answer);
-        if unconditional {
-            tasks.cancel_all();
-            break;
-        }
-    }
-    // ANCHOR_END: example_run_trait_candidates
+            let mut answers = Vec::new();
+            while let Some((_task, answer)) = tasks.next_completed().await {
+                let unconditional = is_unconditional_answer(&answer);
+                answers.push(answer);
+                if unconditional {
+                    tasks.cancel_all();
+                    break;
+                }
+            }
+            // ANCHOR_END: example_run_trait_candidates
+            answers
+        },
+    )
+    .await;
     merge_candidate_results(
         db,
         next_response_param,

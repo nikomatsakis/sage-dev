@@ -143,6 +143,11 @@ Run them with `cargo test -p sage-stash`.
 
 ### Current limitations
 
+- The heterogeneous byte arena does not yet guarantee the base alignment
+  required by every admitted `StashData` type. This confirmed safety defect is
+  tracked as [KD-4](../implementation/known-deviations.md#kd-4-stash-byte-storage-does-not-guarantee-entry-alignment);
+  until it is closed, STASH-A1's typed-storage representation contract is not
+  fully established.
 - Fingerprint equality is probabilistic at 128 bits; the architecture accepts
   that collision risk for incremental equality but semantic hash-consing still
   checks actual content before sharing a handle.
@@ -158,7 +163,7 @@ Run them with `cargo test -p sage-stash`.
 ### Related roadmap slices
 
 The [Semantic Inspector and persistent edit-testing
-slice](../implementation/roadmap.md#planned-slice-semantic-inspector-and-persistent-edit-testing)
+slice](../implementation/roadmap.md#implemented-slice-semantic-inspector-and-persistent-edit-testing)
 will make the effect of equal/backdated stashed results visible in structured
 traces. Application slices extend the set of tree nodes but do not change this
 storage contract.

@@ -12,7 +12,7 @@ use crate::symbol::Symbol;
 // GenericParamKind
 // ---------------------------------------------------------------------------
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update, sage_reflect::Reflect)]
 pub enum GenericParamKind {
     Type,
     Lifetime,
@@ -125,3 +125,28 @@ unsafe impl<'db> sage_stash::StashData<'db> for GenericParam<'db> {
 }
 
 impl<'db> sage_stash::AllocStashData<'db> for GenericParam<'db> {}
+
+impl<'db> sage_reflect::Reflect<'db> for GenericParam<'db> {
+    fn reflect(
+        &self,
+        context: &mut sage_reflect::ReflectionContext<'_>,
+        _stash: Option<&sage_stash::Stash>,
+    ) -> sage_reflect::ValueNode {
+        use salsa::plumbing::AsId;
+
+        let (family, id) = match self {
+            GenericParam::Ast(param) => ("generic-param-ast", param.as_id()),
+            GenericParam::Ext(param) => ("generic-param-external", param.as_id()),
+            GenericParam::AlphaEquiv(param) => ("generic-param-alpha", param.as_id()),
+        };
+        let key = sage_reflect::ReferenceKey {
+            family,
+            id: id.as_bits(),
+        };
+        context.reflect_node("GenericParam", |context| {
+            context.reflected_value(&key).unwrap_or_else(|| {
+                sage_reflect::ValueNode::scalar("GenericParam", format!("{family}:{}", key.id))
+            })
+        })
+    }
+}

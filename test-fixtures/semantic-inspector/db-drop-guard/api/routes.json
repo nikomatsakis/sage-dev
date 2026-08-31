@@ -1,0 +1,727 @@
+[
+  {
+    "name": "revision",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/revision",
+      "headers": [
+        {
+          "name": "accept",
+          "value": "application/json"
+        }
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        {
+          "name": "cache-control",
+          "value": "no-store"
+        },
+        {
+          "name": "content-type",
+          "value": "application/json; charset=utf-8"
+        }
+      ],
+      "body": "responses/revision.json"
+    },
+    "expected_demand": "demand/revision.txt"
+  },
+  {
+    "name": "session",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/session",
+      "headers": [
+        {
+          "name": "accept",
+          "value": "application/json"
+        }
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        {
+          "name": "cache-control",
+          "value": "no-store"
+        },
+        {
+          "name": "content-type",
+          "value": "application/json; charset=utf-8"
+        }
+      ],
+      "body": "responses/session.json"
+    },
+    "expected_demand": "demand/session.txt"
+  },
+  {
+    "name": "symbols",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/symbols",
+      "headers": [
+        {
+          "name": "accept",
+          "value": "application/json"
+        }
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        {
+          "name": "cache-control",
+          "value": "no-store"
+        },
+        {
+          "name": "content-type",
+          "value": "application/json; charset=utf-8"
+        }
+      ],
+      "body": "responses/symbols.json"
+    },
+    "expected_demand": "demand/symbols.txt"
+  },
+  {
+    "name": "local-db-method",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/symbol?path=local%2Fdb-drop-guard%2Fimpl-DbDropGuard%2Fdb",
+      "headers": [
+        {
+          "name": "accept",
+          "value": "application/json"
+        }
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        {
+          "name": "cache-control",
+          "value": "no-store"
+        },
+        {
+          "name": "content-type",
+          "value": "application/json; charset=utf-8"
+        }
+      ],
+      "body": "responses/local-db-method.json"
+    },
+    "expected_demand": "demand/local-db-method.txt"
+  },
+  {
+    "name": "local-db-signature",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/product?symbol=local%2Fdb-drop-guard%2Fimpl-DbDropGuard%2Fdb&product=signature",
+      "headers": [
+        {
+          "name": "accept",
+          "value": "application/json"
+        }
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        {
+          "name": "cache-control",
+          "value": "no-store"
+        },
+        {
+          "name": "content-type",
+          "value": "application/json; charset=utf-8"
+        }
+      ],
+      "body": "responses/local-db-signature.json"
+    },
+    "expected_demand": "demand/local-db-signature.txt"
+  },
+  {
+    "name": "local-db-body",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/product?symbol=local%2Fdb-drop-guard%2Fimpl-DbDropGuard%2Fdb&product=typed-ir",
+      "headers": [
+        {
+          "name": "accept",
+          "value": "application/json"
+        }
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        {
+          "name": "cache-control",
+          "value": "no-store"
+        },
+        {
+          "name": "content-type",
+          "value": "application/json; charset=utf-8"
+        }
+      ],
+      "body": "responses/local-db-body.json"
+    },
+    "expected_demand": "demand/local-db-body.txt"
+  },
+  {
+    "name": "local-db-source",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/product?symbol=local%2Fdb-drop-guard%2Fimpl-DbDropGuard%2Fdb&product=source",
+      "headers": [
+        {
+          "name": "accept",
+          "value": "application/json"
+        }
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        {
+          "name": "cache-control",
+          "value": "no-store"
+        },
+        {
+          "name": "content-type",
+          "value": "application/json; charset=utf-8"
+        }
+      ],
+      "body": "responses/local-db-source.json"
+    },
+    "expected_demand": "demand/local-db-source.txt"
+  },
+  {
+    "name": "local-db-diagnostics",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/product?symbol=local%2Fdb-drop-guard%2Fimpl-DbDropGuard%2Fdb&product=diagnostics",
+      "headers": [
+        {
+          "name": "accept",
+          "value": "application/json"
+        }
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        {
+          "name": "cache-control",
+          "value": "no-store"
+        },
+        {
+          "name": "content-type",
+          "value": "application/json; charset=utf-8"
+        }
+      ],
+      "body": "responses/local-db-diagnostics.json"
+    },
+    "expected_demand": "demand/local-db-diagnostics.txt"
+  },
+  {
+    "name": "local-db-identity",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/product?symbol=local%2Fdb-drop-guard%2Fimpl-DbDropGuard%2Fdb&product=identity",
+      "headers": [
+        {
+          "name": "accept",
+          "value": "application/json"
+        }
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        {
+          "name": "cache-control",
+          "value": "no-store"
+        },
+        {
+          "name": "content-type",
+          "value": "application/json; charset=utf-8"
+        }
+      ],
+      "body": "responses/local-db-identity.json"
+    },
+    "expected_demand": "demand/local-db-identity.txt"
+  },
+  {
+    "name": "local-db-concrete",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/product?symbol=local%2Fdb-drop-guard%2Fimpl-DbDropGuard%2Fdb&product=concrete-ir",
+      "headers": [
+        {
+          "name": "accept",
+          "value": "application/json"
+        }
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        {
+          "name": "cache-control",
+          "value": "no-store"
+        },
+        {
+          "name": "content-type",
+          "value": "application/json; charset=utf-8"
+        }
+      ],
+      "body": "responses/local-db-concrete.json"
+    },
+    "expected_demand": "demand/local-db-concrete.txt"
+  },
+  {
+    "name": "local-db-review-card",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/product?symbol=local%2Fdb-drop-guard%2Fimpl-DbDropGuard%2Fdb&product=invented-review-card",
+      "headers": [
+        {
+          "name": "accept",
+          "value": "application/json"
+        }
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        {
+          "name": "cache-control",
+          "value": "no-store"
+        },
+        {
+          "name": "content-type",
+          "value": "application/json; charset=utf-8"
+        }
+      ],
+      "body": "responses/local-db-review-card.json"
+    },
+    "expected_demand": "demand/local-db-review-card.txt"
+  },
+  {
+    "name": "external-clone-method",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/symbol?path=external%2Fcore-1%2Fclone%2FClone%2Fclone",
+      "headers": [
+        {
+          "name": "accept",
+          "value": "application/json"
+        }
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        {
+          "name": "cache-control",
+          "value": "no-store"
+        },
+        {
+          "name": "content-type",
+          "value": "application/json; charset=utf-8"
+        }
+      ],
+      "body": "responses/external-clone-method.json"
+    },
+    "expected_demand": "demand/external-clone-method.txt"
+  },
+  {
+    "name": "external-clone-signature",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/product?symbol=external%2Fcore-1%2Fclone%2FClone%2Fclone&product=signature",
+      "headers": [
+        {
+          "name": "accept",
+          "value": "application/json"
+        }
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        {
+          "name": "cache-control",
+          "value": "no-store"
+        },
+        {
+          "name": "content-type",
+          "value": "application/json; charset=utf-8"
+        }
+      ],
+      "body": "responses/external-clone-signature.json"
+    },
+    "expected_demand": "demand/external-clone-signature.txt"
+  },
+  {
+    "name": "run-signature",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/runs/run_2",
+      "headers": [
+        {
+          "name": "accept",
+          "value": "application/json"
+        }
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        {
+          "name": "cache-control",
+          "value": "no-store"
+        },
+        {
+          "name": "content-type",
+          "value": "application/json; charset=utf-8"
+        }
+      ],
+      "body": "responses/run-signature.json"
+    },
+    "expected_demand": "demand/run-signature.txt"
+  },
+  {
+    "name": "run-body",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/runs/run_3",
+      "headers": [
+        {
+          "name": "accept",
+          "value": "application/json"
+        }
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        {
+          "name": "cache-control",
+          "value": "no-store"
+        },
+        {
+          "name": "content-type",
+          "value": "application/json; charset=utf-8"
+        }
+      ],
+      "body": "responses/run-body.json"
+    },
+    "expected_demand": "demand/run-body.txt"
+  },
+  {
+    "name": "run-symbols",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/runs/run_1",
+      "headers": [
+        {
+          "name": "accept",
+          "value": "application/json"
+        }
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        {
+          "name": "cache-control",
+          "value": "no-store"
+        },
+        {
+          "name": "content-type",
+          "value": "application/json; charset=utf-8"
+        }
+      ],
+      "body": "responses/run-generic.json"
+    },
+    "expected_demand": "demand/run-symbols.txt"
+  },
+  {
+    "name": "revisions",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/revisions",
+      "headers": [
+        {
+          "name": "accept",
+          "value": "application/json"
+        }
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        {
+          "name": "cache-control",
+          "value": "no-store"
+        },
+        {
+          "name": "content-type",
+          "value": "application/json; charset=utf-8"
+        }
+      ],
+      "body": "responses/revisions.json"
+    },
+    "expected_demand": "demand/revisions.txt"
+  },
+  {
+    "name": "revision-detail",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/revisions/rev_0",
+      "headers": [
+        {
+          "name": "accept",
+          "value": "application/json"
+        }
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        {
+          "name": "cache-control",
+          "value": "no-store"
+        },
+        {
+          "name": "content-type",
+          "value": "application/json; charset=utf-8"
+        }
+      ],
+      "body": "responses/revision-detail.json"
+    },
+    "expected_demand": "demand/revision-detail.txt"
+  },
+  {
+    "name": "continuation",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/continuations/fixture-continuation",
+      "headers": [
+        {
+          "name": "accept",
+          "value": "application/json"
+        }
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        {
+          "name": "cache-control",
+          "value": "no-store"
+        },
+        {
+          "name": "content-type",
+          "value": "application/json; charset=utf-8"
+        }
+      ],
+      "body": "responses/continuation.json"
+    },
+    "expected_demand": "demand/continuation.txt"
+  },
+  {
+    "name": "comparison",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/revisions/compare?from=rev_0&to=rev_0&symbol=local%2Fdb-drop-guard%2Fimpl-DbDropGuard%2Fdb&product=signature",
+      "headers": [
+        {
+          "name": "accept",
+          "value": "application/json"
+        }
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        {
+          "name": "cache-control",
+          "value": "no-store"
+        },
+        {
+          "name": "content-type",
+          "value": "application/json; charset=utf-8"
+        }
+      ],
+      "body": "responses/comparison.json"
+    },
+    "expected_demand": "demand/comparison.txt"
+  },
+  {
+    "name": "external-clone-identity",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/product?symbol=external%2Fcore-1%2Fclone%2FClone%2Fclone&product=identity",
+      "headers": [
+        {
+          "name": "accept",
+          "value": "application/json"
+        }
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        {
+          "name": "cache-control",
+          "value": "no-store"
+        },
+        {
+          "name": "content-type",
+          "value": "application/json; charset=utf-8"
+        }
+      ],
+      "body": "responses/external-clone-identity.json"
+    },
+    "expected_demand": "demand/external-clone-identity.txt"
+  },
+  {
+    "name": "run-source",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/runs/run_4",
+      "headers": [
+        {
+          "name": "accept",
+          "value": "application/json"
+        }
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        {
+          "name": "cache-control",
+          "value": "no-store"
+        },
+        {
+          "name": "content-type",
+          "value": "application/json; charset=utf-8"
+        }
+      ],
+      "body": "responses/run-source.json"
+    },
+    "expected_demand": "demand/run-source.txt"
+  },
+  {
+    "name": "run-identity",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/runs/run_5",
+      "headers": [
+        {
+          "name": "accept",
+          "value": "application/json"
+        }
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        {
+          "name": "cache-control",
+          "value": "no-store"
+        },
+        {
+          "name": "content-type",
+          "value": "application/json; charset=utf-8"
+        }
+      ],
+      "body": "responses/run-identity.json"
+    },
+    "expected_demand": "demand/run-identity.txt"
+  },
+  {
+    "name": "run-concrete",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/runs/run_6",
+      "headers": [
+        {
+          "name": "accept",
+          "value": "application/json"
+        }
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        {
+          "name": "cache-control",
+          "value": "no-store"
+        },
+        {
+          "name": "content-type",
+          "value": "application/json; charset=utf-8"
+        }
+      ],
+      "body": "responses/run-concrete.json"
+    },
+    "expected_demand": "demand/run-concrete.txt"
+  },
+  {
+    "name": "run-external-signature",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/runs/run_7",
+      "headers": [
+        {
+          "name": "accept",
+          "value": "application/json"
+        }
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        {
+          "name": "cache-control",
+          "value": "no-store"
+        },
+        {
+          "name": "content-type",
+          "value": "application/json; charset=utf-8"
+        }
+      ],
+      "body": "responses/run-external-signature.json"
+    },
+    "expected_demand": "demand/run-external-signature.txt"
+  }
+]

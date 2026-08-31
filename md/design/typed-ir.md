@@ -352,5 +352,5 @@ boundaries, display, and both semantic emitters.
   coverage](../implementation/roadmap.md#future-slice-mini-redis-library-coverage)
   expands the construct table through vertical acceptance slices.
 - [Semantic inspector and persistent edit
-  testing](../implementation/roadmap.md#planned-slice-semantic-inspector-and-persistent-edit-testing)
+  testing](../implementation/roadmap.md#implemented-slice-semantic-inspector-and-persistent-edit-testing)
   will provide a readable typed-tree view independent of oracle JSON.

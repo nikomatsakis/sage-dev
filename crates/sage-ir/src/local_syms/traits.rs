@@ -99,8 +99,6 @@ impl<'db> LocalTraitSym<'db> {
         crate::local_syms::associated::lower_items(
             db,
             crate::local_syms::LocalAssociatedOwner::Trait(self),
-            self.scope(db),
-            self.span(db),
             source,
             cst.items,
             self.sig(db).iter_symbols(),

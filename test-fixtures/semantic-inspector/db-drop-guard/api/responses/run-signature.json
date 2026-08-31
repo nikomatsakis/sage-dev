@@ -1,0 +1,50 @@
+{
+  "revision_id": "rev_0",
+  "request_id": "request-14",
+  "run_id": null,
+  "value": {
+    "run_id": "run_2",
+    "request": {
+      "kind": "product",
+      "target": "local/db-drop-guard/impl-DbDropGuard/db",
+      "product": "signature"
+    },
+    "root": {
+      "phase": "analysis",
+      "source": "sage",
+      "operation": "product",
+      "key": {
+        "kind": "semantic",
+        "value": "signature"
+      },
+      "disposition": "observed",
+      "child_order": "sequential",
+      "children": [
+        {
+          "phase": "analysis",
+          "source": "salsa",
+          "operation": "LocalFnSym::sig",
+          "key": {
+            "kind": "semantic",
+            "value": "local/db-drop-guard/impl-DbDropGuard/db"
+          },
+          "disposition": "executed",
+          "child_order": "sequential",
+          "children": []
+        },
+        {
+          "phase": "reflection",
+          "source": "sage",
+          "operation": "reflect Binder<FnSig>",
+          "key": {
+            "kind": "semantic",
+            "value": "local/db-drop-guard/impl-DbDropGuard/db"
+          },
+          "disposition": "observed",
+          "child_order": "sequential",
+          "children": []
+        }
+      ]
+    }
+  }
+}

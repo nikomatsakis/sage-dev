@@ -350,6 +350,9 @@ comparison portion of [ORACLE-A1](#oracle-a1), the adjustment and external-kind 
 [ORACLE-A2](#oracle-a2), exercise [ORACLE-A3](#oracle-a3)'s local/external
 identity ordering, and provide the slice-specific coverage evidence currently
 available for [ORACLE-A4](#oracle-a4).
+The same full fixture suite is the regression gate that keeps the Semantic
+Inspector's richer canonical external-navigation paths out of this shared
+conformance projection.
 
 Run all fixtures with `cargo test -p sage-oracle-harness`, or the pinned body
 with:
@@ -379,5 +382,5 @@ cargo test -p sage-oracle-harness --test oracle_compare -- mini_redis/db_drop_gu
 - [Shutdown::recv](../implementation/roadmap.md#next-application-slice-shutdownrecv)
   will add the next exact vertical fixture.
 - [Semantic inspector and persistent edit
-  testing](../implementation/roadmap.md#planned-slice-semantic-inspector-and-persistent-edit-testing)
+  testing](../implementation/roadmap.md#implemented-slice-semantic-inspector-and-persistent-edit-testing)
   adds readable Sage-only inspection without relaxing oracle equality.

@@ -158,6 +158,13 @@ Trait candidate discovery and method-provider discovery then refine this
 answer for their own needs. For example, an unsupported compiler builtin
 derive may be known unable to add an impl of one particular trait while a
 general procedural derive remains capable of adding arbitrary providers.
+The Semantic Inspector asks the stricter directory question: whether every
+child which expansion could add is represented. An unsupported derive is
+therefore incomplete even when a narrower trait lookup could safely ignore it:
+
+```{anchor}
+architecture_symbol_listing_completeness
+```
 
 ## Incremental dependencies
 
@@ -262,11 +269,15 @@ symbols with provenance. Expansion is tracked per local module.
 - **[EXP-A1](#exp-a1) — Generated identity across edits.**
   `moving_source_item_preserves_derive_expansion_identity` moves a source item
   and verifies stable expansion identity while its origin coordinate updates.
+- **[EXP-A2](#exp-a2) — Inspector directory completeness.**
+  `retained_host_separates_edits_from_demand_and_preserves_symbol_paths`
+  adds an unsupported but valid derive and requires the represented root's
+  child status to become explicitly incomplete.
 
-The tests live in `crates/sage-test-harness/src/lib.rs`. Until the Semantic
-Inspector lands, these focused assertions and the anchored implementation are
-the review trail; there is not yet a human-readable persistent query trace for
-module expansion.
+The compiler tests live in `crates/sage-test-harness/src/lib.rs`; the retained
+directory/edit test lives in `tests/semantic_inspector.rs`. The Semantic
+Inspector now supplies the human-readable persistent query trace for these
+queries.
 
 ### Review packet
 
@@ -317,7 +328,7 @@ cargo test -p sage-test-harness moving_source_item_preserves_derive_expansion_id
   evidence](../../implementation/roadmap.md#in-flight-slice-auditable-architecture-and-review-evidence)
   establishes this chapter and its review trail.
 - [Semantic inspector and persistent edit
-  testing](../../implementation/roadmap.md#planned-slice-semantic-inspector-and-persistent-edit-testing)
+  testing](../../implementation/roadmap.md#implemented-slice-semantic-inspector-and-persistent-edit-testing)
   will add readable expanded output and query traces across edits.
 - [Trait-partitioned impl
   discovery](../../implementation/roadmap.md#planned-slice-trait-partitioned-impl-discovery)

@@ -1,6 +1,6 @@
 # Semantic Inspector `/api/v1` protocol
 
-**Status:** Draft
+**Status:** Completed
 
 **Parent:** [Semantic Inspector](./README.md)
 
@@ -25,9 +25,9 @@ remote API compatibility promise.
   order is never used to encode semantic order.
 - Enum and union variants use the exact lowercase kebab-case tags shown here.
 - Product IDs and ephemeral handles are case-sensitive URL-safe strings.
-  Product IDs contain ASCII letters, digits, `_`, and `-`; continuation, run,
-  and revision handles use the prefixes `cont_`, `run_`, and `rev_` followed by
-  that same alphabet. Clients treat every value as opaque.
+  Product IDs contain ASCII letters, digits, `_`, and `-`; clients treat
+  continuation, run, and revision handles as opaque rather than interpreting
+  a prefix.
 - A `SymbolPath` is a canonical slash-separated sequence of backend-authored,
   URL-safe ownership segments. The frontend treats the complete string as
   opaque. When used as a query value it is percent-encoded normally; clients
@@ -397,7 +397,7 @@ ValueNode =
   | {
       kind: "truncated",
       summary: String,
-      continuation: ContinuationHandle,
+      continuation?: ContinuationHandle,
     }
 
 ValueField {
@@ -457,8 +457,9 @@ TraceNode {
   source: "salsa" | "sage" | "solver" | "external-metadata",
   operation: String,
   key: TraceKey,
-  disposition: "executed" | "validated" | "reused" | "observed",
+  disposition: "executed" | "validated" | "reused" | "cancelled" | "observed",
   child_order: "sequential" | "unordered",
+  observations?: Integer,
   children: [TraceNode],
 }
 
@@ -478,16 +479,19 @@ already-retained run is not a child of the run being displayed.
 
 Every tracked-query invocation is represented by the balanced span emitted by
 the temporary Salsa fork, including an already-current memo fetch. Its
-disposition is `executed`, `validated`, or `reused`; nested spans determine the
-tree rather than arrival adjacency. Sage and metadata spans use `observed` when
-none of the Salsa dispositions applies.
+disposition is `executed`, `validated`, `reused`, or `cancelled`; nested spans
+determine the tree rather than arrival adjacency. Sage and metadata spans use
+`observed` when none of the Salsa dispositions applies. Repeated identical
+leaf requests may be stored once with `observations > 1`; omission means one.
+This is a lossless multiplicity encoding, not sampling.
 
 `child_order` is recorded by the producer of the parent span. `sequential`
 preserves capture order. `unordered` declares that sibling order is not part of
 the contract. Checked serialization recursively canonicalizes every unordered
 child subtree, serializes that subtree using this protocol, sorts the resulting
-UTF-8 byte strings lexicographically, and retains duplicates. Identical byte
-strings need no tie-breaker because exchanging them cannot change the output.
+UTF-8 byte strings lexicographically, and retains duplicate multiplicity
+through `observations`. Identical byte strings need no tie-breaker because
+exchanging them cannot change the output.
 
 An unmapped event retains a stable code-generated Salsa ingredient name. Raw
 Salsa keys, timestamps, and arrival order appear only in interactive
@@ -513,6 +517,10 @@ event: workspace-reloaded
 data: WorkspaceReloaded
 ```
 
+The browser requests `GET /api/v1/revision` whenever this stream connects or
+reconnects. Events are wakeups rather than a durable replay log; the revision
+handshake detects an update published while the connection was absent.
+
 ```text
 RevisionAdvanced {
   revision_id: RevisionId,
@@ -533,8 +541,8 @@ InputIdentity {
 }
 ```
 
-The SSE `id` is an opaque monotonically increasing connection-event token used
-for reconnect. Keepalive comments carry no semantic data.
+Keepalive comments carry no semantic data. The stream does not promise replay
+IDs; the current-revision handshake is the reconnect contract.
 
 ## Revision history and comparison
 
@@ -555,9 +563,19 @@ RevisionPage {
 
 RevisionSummary {
   revision_id: RevisionId,
+  cause: RevisionCause,
   input_delta_count: u32,
   run_count: u32,
 }
+
+RevisionCause =
+  { kind: "initial" }
+  | { kind: "input-edit", edit_batch: String }
+  | {
+      kind: "workspace-reload",
+      previous_revision_id: RevisionId,
+      reason: ErrorBody,
+    }
 
 RevisionDetail {
   summary: RevisionSummary,
@@ -588,12 +606,17 @@ TraceIdentity {
   source: "salsa" | "sage" | "solver" | "external-metadata",
   operation: String,
   key: TraceKey,
+  observations?: Integer,
 }
 ```
 
 These resources return their matching `Response<T>` with `run_id: null`.
 Comparison reports observed differences; it does not invent a causal
-invalidation edge.
+invalidation edge. `RevisionCause` records whether the retained revision is
+the initial workspace state, an incremental input-edit batch, or a database
+rebuild. A rebuild links to the last revision of the previous database
+generation so that revision history does not disguise a wholesale reload as
+ordinary incremental invalidation.
 
 ## Exact fixture bundle
 
@@ -657,10 +680,9 @@ never passes merely because the implementation emitted new output.
 
 ## Protocol evolution
 
-While this RFD is Draft, a protocol change updates this page, every affected
-response/request fixture, backend expectation, frontend type, and scenario in
-the same commit. Once a delivery slice establishes
-[SI-A3](./README.md#si-a3), later slices treat those established shapes as
-regression gates. An incompatible redesign uses `/api/v2`; adding a field or
-variant to `/api/v1` is still a reviewed exact-contract change even when old
-clients could theoretically ignore it.
+The completed `/api/v1` contract is a regression gate. A protocol change
+updates this page, every affected response/request fixture, backend
+expectation, frontend type, and scenario in the same commit. An incompatible
+redesign uses `/api/v2`; adding a field or variant to `/api/v1` is still a
+reviewed exact-contract change even when old clients could theoretically
+ignore it.

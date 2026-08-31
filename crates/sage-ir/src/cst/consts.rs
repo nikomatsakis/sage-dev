@@ -8,7 +8,7 @@ use crate::span::RelativeSpan;
 
 pub type ConstCst<'db> = Stashed<Ptr<ConstCstData<'db>>>;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct ConstCstData<'db> {
     pub attrs: Slice<AttrCst<'db>>,
     pub name: Name<'db>,

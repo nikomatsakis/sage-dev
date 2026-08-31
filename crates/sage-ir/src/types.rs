@@ -4,7 +4,7 @@ use crate::name::Name;
 use crate::span::RelativeSpan;
 
 /// The syntactic form of an attribute.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update, sage_reflect::Reflect)]
 pub enum AttrKind {
     /// `#[path(args)]` or `#![path(args)]`
     Normal,
@@ -37,3 +37,23 @@ pub struct TokenTree<'db> {
 }
 
 impl StashDirect for TokenTree<'_> {}
+
+impl<'db> sage_reflect::Reflect<'db> for TokenTree<'db> {
+    fn reflect(
+        &self,
+        context: &mut sage_reflect::ReflectionContext<'_>,
+        _stash: Option<&sage_stash::Stash>,
+    ) -> sage_reflect::ValueNode {
+        use salsa::plumbing::AsId;
+
+        let key = sage_reflect::ReferenceKey {
+            family: "token-tree",
+            id: self.as_id().as_bits(),
+        };
+        context.reflect_node("TokenTree", |context| {
+            context.reflected_value(&key).unwrap_or_else(|| {
+                sage_reflect::ValueNode::scalar("TokenTree", format!("tracked:{}", key.id))
+            })
+        })
+    }
+}

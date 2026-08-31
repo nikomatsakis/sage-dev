@@ -1,0 +1,39 @@
+{
+  "revision_id": "rev_0",
+  "request_id": "request-12",
+  "run_id": null,
+  "value": {
+    "path": "external/core-1/clone/Clone/clone",
+    "label": "clone",
+    "display_path": "core::clone::Clone::clone",
+    "presentation": {
+      "eyebrow": "External associated function",
+      "badges": [
+        {
+          "label": "External symbol",
+          "tone": "accent"
+        }
+      ]
+    },
+    "parent": {
+      "path": "external/core-1/clone/Clone",
+      "label": "core::clone::Clone",
+      "presentation": {
+        "eyebrow": "External trait",
+        "badges": []
+      }
+    },
+    "products": [
+      {
+        "id": "identity",
+        "label": "Identity",
+        "href": "/api/v1/product?symbol=external%2Fcore-1%2Fclone%2FClone%2Fclone&product=identity"
+      },
+      {
+        "id": "signature",
+        "label": "Signature",
+        "href": "/api/v1/product?symbol=external%2Fcore-1%2Fclone%2FClone%2Fclone&product=signature"
+      }
+    ]
+  }
+}

@@ -175,8 +175,6 @@ impl<'db> LocalImplSym<'db> {
         crate::local_syms::associated::lower_items(
             db,
             crate::local_syms::LocalAssociatedOwner::Impl(self),
-            self.scope(db),
-            self.span(db),
             source,
             cst.items,
             self.sig(db).iter_symbols(),

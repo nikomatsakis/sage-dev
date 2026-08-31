@@ -203,6 +203,14 @@ impl<T> Hash for Ptr<T> {
     }
 }
 
+impl<T> Ptr<T> {
+    /// Stable within one stash value; used to label sharing while reflecting
+    /// that stash. This is not a semantic or cross-revision identity.
+    pub fn reflection_index(self) -> u32 {
+        self.index.get()
+    }
+}
+
 impl<'db, T: StashData<'db> + StashHash> StashHash for Ptr<T> {
     fn stash_hash(&self, stash: &Stash, hasher: &mut impl StashHasher) {
         hasher.stash_hash_ptr(*self, stash);
@@ -241,6 +249,14 @@ impl<T> Eq for Slice<T> {}
 impl<T> Hash for Slice<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.index.hash(state);
+    }
+}
+
+impl<T> Slice<T> {
+    /// Stable within one stash value; used to label sharing while reflecting
+    /// that stash. This is not a semantic or cross-revision identity.
+    pub fn reflection_index(self) -> u32 {
+        self.index.get()
     }
 }
 

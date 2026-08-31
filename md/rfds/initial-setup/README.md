@@ -98,10 +98,13 @@ and queryable.
 ## Current state
 
 - **Toolchain:** pinned to `nightly-2026-03-15` with `rustc-dev` component
-- **CLI:** `cargo sage (-p CRATE)*`. No `-p` = all workspace members.
+- **CLI:** `cargo sage [-p CRATE]`. Exactly one library target is analyzed; a
+  multi-library workspace requires `-p` rather than silently selecting or
+  combining targets.
 - **Sysroot:** embedded at compile time via `build.rs`. rpath for dylib loading.
 - **Dep building:** sets `RUSTC` to sage's own sysroot rustc, shells out to
-  `cargo build --message-format=json`, collects rlib paths for direct deps.
+  `cargo build --package <selected> --lib --message-format=json`, and collects
+  rlib paths for all normal direct dependencies, including workspace members.
 - **Stub driver:** generates temp stub with `extern crate` for each direct dep,
   passes `-L dependency=<deps_dir>` + `--extern` for direct deps only.
 - **Dep stats:** walks `tcx.crates(())` + `tcx.module_children()`, counts items

@@ -168,7 +168,7 @@ macro expansion facts support the completed mini-redis slices.
   discovery](../../implementation/roadmap.md#planned-slice-trait-partitioned-impl-discovery)
   aligns the local boundary with the existing external trait/head key.
 - [Semantic inspector and persistent edit
-  testing](../../implementation/roadmap.md#planned-slice-semantic-inspector-and-persistent-edit-testing)
-  will present metadata calls alongside Salsa execution traces.
+  testing](../../implementation/roadmap.md#implemented-slice-semantic-inspector-and-persistent-edit-testing)
+  presents metadata calls alongside Salsa execution traces.
 - [Shutdown::recv](../../implementation/roadmap.md#next-application-slice-shutdownrecv)
   will add only the metadata forms required by that vertical slice.

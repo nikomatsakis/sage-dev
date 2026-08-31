@@ -1,0 +1,43 @@
+{
+  "revision_id": "rev_0",
+  "request_id": "request-13",
+  "run_id": "run_7",
+  "value": {
+    "id": "signature",
+    "title": "External checked signature",
+    "content": {
+      "kind": "value",
+      "value": {
+        "kind": "record",
+        "type_name": "Binder<FnSig>",
+        "fields": [
+          {
+            "name": "receiver",
+            "value": {
+              "kind": "record",
+              "type_name": "CheckedReceiver",
+              "fields": [
+                {
+                  "name": "form",
+                  "value": {
+                    "kind": "scalar",
+                    "type_name": "MethodReceiver",
+                    "value": "Ref(Shared)"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "name": "ret",
+            "value": {
+              "kind": "scalar",
+              "type_name": "Ty",
+              "value": "Self"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

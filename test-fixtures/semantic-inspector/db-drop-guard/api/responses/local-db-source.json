@@ -1,0 +1,15 @@
+{
+  "revision_id": "rev_0",
+  "request_id": "request-7",
+  "run_id": "run_4",
+  "value": {
+    "id": "source",
+    "title": "Source",
+    "content": {
+      "kind": "code",
+      "language": "rust",
+      "text": "fn db(&self) -> Db {\n    self.db.clone()\n}",
+      "highlights": []
+    }
+  }
+}

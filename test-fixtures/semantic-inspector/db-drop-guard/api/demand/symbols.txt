@@ -1,0 +1,6 @@
+provider: local-symbol-index
+forbidden: checked-signature
+forbidden: body
+forbidden: associated-value
+forbidden: impl-candidates
+forbidden: external-metadata

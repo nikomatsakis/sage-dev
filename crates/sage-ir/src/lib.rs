@@ -29,5 +29,13 @@ pub mod tytree;
 pub trait Db: salsa::Database {
     fn tcx(&self) -> &dyn tcx::TcxDb;
     fn log_query(&self, entry: String);
+    fn log_inspection_phase(&self, phase: &'static str, entering: bool);
+    fn log_inspection_span(
+        &self,
+        operation: &'static str,
+        source: db::InspectionSource,
+        child_order: db::InspectionChildOrder,
+        entering: bool,
+    );
     fn source_file(&self, path: &str) -> Option<source::SourceFile>;
 }

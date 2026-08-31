@@ -213,5 +213,5 @@ external predicates needed by those slices are retained.
 - [Shutdown::recv](../../implementation/roadmap.md#next-application-slice-shutdownrecv)
   is the next application slice expected to extend interface coverage.
 - [Semantic inspector and persistent edit
-  testing](../../implementation/roadmap.md#planned-slice-semantic-inspector-and-persistent-edit-testing)
+  testing](../../implementation/roadmap.md#implemented-slice-semantic-inspector-and-persistent-edit-testing)
   will make signature output and edit behavior directly inspectable.

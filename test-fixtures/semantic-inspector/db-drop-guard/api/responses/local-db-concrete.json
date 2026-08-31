@@ -1,0 +1,77 @@
+{
+  "revision_id": "rev_0",
+  "request_id": "request-10",
+  "run_id": "run_6",
+  "value": {
+    "id": "concrete-ir",
+    "title": "Expanded concrete function",
+    "content": {
+      "kind": "value",
+      "value": {
+        "kind": "record",
+        "type_name": "FnCstData",
+        "fields": [
+          {
+            "name": "name",
+            "value": {
+              "kind": "scalar",
+              "type_name": "Name",
+              "value": "db"
+            }
+          },
+          {
+            "name": "params",
+            "value": {
+              "kind": "sequence",
+              "type_name": "Slice<ParamCst>",
+              "items": [
+                {
+                  "kind": "record",
+                  "type_name": "ParamCst",
+                  "fields": [
+                    {
+                      "name": "receiver",
+                      "value": {
+                        "kind": "variant",
+                        "enum_name": "ReceiverCst",
+                        "variant_name": "Ref",
+                        "fields": [
+                          {
+                            "name": "mutability",
+                            "value": {
+                              "kind": "scalar",
+                              "type_name": "Mutability",
+                              "value": "Shared"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "name": "body",
+            "value": {
+              "kind": "variant",
+              "enum_name": "ExprCstKind",
+              "variant_name": "MethodCall",
+              "fields": [
+                {
+                  "name": "method",
+                  "value": {
+                    "kind": "scalar",
+                    "type_name": "Name",
+                    "value": "clone"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

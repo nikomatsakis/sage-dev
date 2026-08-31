@@ -11,7 +11,7 @@ use crate::types::TokenTree;
 
 /// Placeholder for an expression that hasn't been checked yet.
 /// Used when a block spawns a background initializer check.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, sage_reflect::Reflect)]
 pub struct ExprSlot(pub u32);
 
 impl StashDirect for ExprSlot {}
@@ -21,7 +21,7 @@ impl StashDirect for ExprSlot {}
 // ---------------------------------------------------------------------------
 
 /// What a path resolved to.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub enum PathResolution<'db> {
     Def(Symbol<'db>),
     Local(LocalId),
@@ -32,29 +32,29 @@ pub enum PathResolution<'db> {
 pub type Res<'db> = PathResolution<'db>;
 
 /// Identifies a local variable within a function body.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct LocalId(pub u32);
 
 /// Metadata about a local variable.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct LocalVar<'db> {
     pub name: Name<'db>,
     pub span: RelativeSpan,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub enum FieldOwner<'db> {
     Struct(StructSymbol<'db>),
     Variant(VariantSymbol<'db>),
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct ResolvedField<'db> {
     pub owner: FieldOwner<'db>,
     pub index: u32,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub enum CallDispatch<'db> {
     Direct,
     StaticTrait {
@@ -63,7 +63,7 @@ pub enum CallDispatch<'db> {
     },
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct ResolvedCallTarget<'db> {
     pub function: FnSymbol<'db>,
     pub dispatch: CallDispatch<'db>,
@@ -77,42 +77,44 @@ pub struct ResolvedCallTarget<'db> {
 
 pub type TyBody<'db> = Stashed<Ptr<TyBodyData<'db>>>;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, sage_reflect::Reflect)]
 pub struct CheckedBody<'db> {
     pub body: TyBody<'db>,
     pub diagnostics: Vec<Diagnostic<'db>>,
 }
 
+// SAFETY: Salsa supplies a valid, uniquely writable pointer to the old value
+// for the duration of `maybe_update`. The implementation performs an ordinary
+// semantic equality test and replaces that value in place only when changed.
 unsafe impl salsa::Update for CheckedBody<'_> {
     unsafe fn maybe_update(old_pointer: *mut Self, new_value: Self) -> bool {
-        // SAFETY: Salsa passes a valid, uniquely writable pointer to the old
-        // value for the duration of `maybe_update`. We only read it for
-        // equality and replace it in place when the semantic value changed.
+        // SAFETY: upheld by the `Update` caller contract documented above.
         let old = unsafe { &*old_pointer };
         if *old == new_value {
             false
         } else {
+            // SAFETY: upheld by the `Update` caller contract documented above.
             unsafe { *old_pointer = new_value };
             true
         }
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct TyBodyData<'db> {
     pub root: Ptr<TyExpr<'db>>,
     pub locals: Slice<LocalVar<'db>>,
     pub span: RelativeSpan,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct TyExpr<'db> {
     pub data: TyExprData<'db>,
     pub ty: Ptr<Ty<'db>>,
     pub span: RelativeSpan,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub enum TyExprData<'db> {
     Literal(Literal<'db>),
     Path(Res<'db>),
@@ -156,13 +158,13 @@ pub enum TyExprData<'db> {
     Missing,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct TyStmt<'db> {
     pub kind: TyStmtKind<'db>,
     pub span: RelativeSpan,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub enum TyStmtKind<'db> {
     Let(
         Ptr<TyPat<'db>>,
@@ -172,14 +174,14 @@ pub enum TyStmtKind<'db> {
     Expr(Ptr<TyExpr<'db>>),
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct TyPat<'db> {
     pub kind: TyPatKind<'db>,
     pub ty: Ptr<Ty<'db>>,
     pub span: RelativeSpan,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub enum TyPatKind<'db> {
     Wildcard,
     Bind(LocalId, Mutability),
@@ -194,21 +196,21 @@ pub enum TyPatKind<'db> {
     Missing,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct TyFieldInit<'db> {
     pub name: Name<'db>,
     pub value: Ptr<TyExpr<'db>>,
     pub span: RelativeSpan,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct TyFieldPat<'db> {
     pub name: Name<'db>,
     pub pat: Ptr<TyPat<'db>>,
     pub span: RelativeSpan,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct TyMatchArm<'db> {
     pub pat: Ptr<TyPat<'db>>,
     pub guard: Option<Ptr<TyExpr<'db>>>,
@@ -216,7 +218,7 @@ pub struct TyMatchArm<'db> {
     pub span: RelativeSpan,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct TyClosureParam<'db> {
     pub pat: Ptr<TyPat<'db>>,
     pub ty: Ptr<Ty<'db>>,

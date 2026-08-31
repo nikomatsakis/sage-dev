@@ -8,6 +8,7 @@ use serde::Deserialize;
 struct Metadata {
     packages: Vec<Package>,
     workspace_members: Vec<String>,
+    workspace_root: PathBuf,
     resolve: Resolve,
     target_directory: PathBuf,
 }
@@ -56,13 +57,13 @@ struct DepKindInfo {
 #[derive(Deserialize)]
 struct BuildMessage {
     reason: String,
+    package_id: Option<String>,
     target: Option<BuildTarget>,
     filenames: Option<Vec<PathBuf>>,
 }
 
 #[derive(Deserialize)]
 struct BuildTarget {
-    name: String,
     kind: Vec<String>,
 }
 
@@ -71,6 +72,7 @@ struct BuildTarget {
 #[derive(Debug)]
 pub struct WorkspaceInfo {
     pub selected: Vec<SelectedCrate>,
+    pub workspace_root: PathBuf,
     pub deps_dir: PathBuf,
     pub direct_dep_rlibs: HashMap<String, PathBuf>,
 }
@@ -102,8 +104,11 @@ pub fn our_rustc() -> PathBuf {
     Path::new(our_sysroot()).join("bin/rustc")
 }
 
-pub fn load_workspace(manifest_dir: &Path, selected_packages: &[String]) -> WorkspaceInfo {
-    let meta = run_cargo_metadata(manifest_dir);
+pub fn load_workspace(
+    manifest_dir: &Path,
+    selected_packages: &[String],
+) -> Result<WorkspaceInfo, String> {
+    let meta = run_cargo_metadata(manifest_dir)?;
     let ws_member_ids: HashSet<&str> = meta.workspace_members.iter().map(|s| s.as_str()).collect();
     let node_by_id: HashMap<&str, &ResolveNode> = meta
         .resolve
@@ -111,127 +116,151 @@ pub fn load_workspace(manifest_dir: &Path, selected_packages: &[String]) -> Work
         .iter()
         .map(|n| (n.id.as_str(), n))
         .collect();
-    let target_cfgs = rustc_target_cfgs();
+    let target_cfgs = rustc_target_cfgs()?;
 
-    let selected: Vec<SelectedCrate> = meta
+    let mut selected = Vec::new();
+    for package in meta.packages.iter().filter(|package| {
+        ws_member_ids.contains(package.id.as_str())
+            && (selected_packages.is_empty()
+                || selected_packages.iter().any(|name| name == &package.name))
+    }) {
+        let Some(target) = package.targets.iter().find(|target| {
+            target.kind.iter().any(|kind| kind == "lib")
+                && !target.kind.iter().any(|kind| kind == "proc-macro")
+        }) else {
+            continue;
+        };
+        let edition = sage_ir::scope::Edition::parse(&target.edition).ok_or_else(|| {
+            format!(
+                "unsupported Rust edition {:?} for {}",
+                target.edition, package.name
+            )
+        })?;
+        let mut enabled_features = node_by_id
+            .get(package.id.as_str())
+            .map_or_else(Vec::new, |node| node.features.clone());
+        enabled_features.sort();
+        let manifest_dir = package
+            .manifest_path
+            .parent()
+            .ok_or_else(|| format!("package {} has no manifest directory", package.name))?
+            .to_path_buf();
+        selected.push(SelectedCrate {
+            name: package.name.clone(),
+            manifest_dir,
+            target: SelectedTarget {
+                name: target.name.clone(),
+                src_path: target.src_path.clone(),
+                edition,
+                enabled_features,
+                cfgs: target_cfgs.clone(),
+            },
+        });
+    }
+
+    if selected.len() != 1 {
+        return Err(format!(
+            "sage requires exactly one library target, but {} were selected; use --package to select one workspace crate",
+            selected.len()
+        ));
+    }
+
+    let selected_package = meta
         .packages
         .iter()
-        .filter(|p| ws_member_ids.contains(p.id.as_str()))
-        .filter(|p| selected_packages.is_empty() || selected_packages.iter().any(|s| s == &p.name))
-        .filter_map(|p| {
-            let target = p.targets.iter().find(|target| {
-                target.kind.iter().any(|kind| kind == "lib")
-                    && !target.kind.iter().any(|kind| kind == "proc-macro")
-            })?;
-            let edition = sage_ir::scope::Edition::parse(&target.edition).unwrap_or_else(|| {
-                panic!(
-                    "unsupported Rust edition {:?} for {}",
-                    target.edition, p.name
-                )
-            });
-            let mut enabled_features = node_by_id
-                .get(p.id.as_str())
-                .map_or_else(Vec::new, |node| node.features.clone());
-            enabled_features.sort();
-            Some(SelectedCrate {
-                name: p.name.clone(),
-                manifest_dir: p.manifest_path.parent().unwrap().to_path_buf(),
-                target: SelectedTarget {
-                    name: target.name.clone(),
-                    src_path: target.src_path.clone(),
-                    edition,
-                    enabled_features,
-                    cfgs: target_cfgs.clone(),
-                },
-            })
-        })
-        .collect();
-
-    let selected_ids: HashSet<&str> = meta
-        .packages
-        .iter()
-        .filter(|p| {
-            ws_member_ids.contains(p.id.as_str()) && selected.iter().any(|s| s.name == p.name)
-        })
-        .map(|p| p.id.as_str())
-        .collect();
-
-    let mut direct_dep_names: HashSet<String> = HashSet::new();
-    for &sel_id in &selected_ids {
-        if let Some(node) = node_by_id.get(sel_id) {
-            for dep in &node.deps {
-                let is_normal = dep.dep_kinds.iter().any(|dk| dk.kind.is_none());
-                if is_normal && !ws_member_ids.contains(dep.pkg.as_str()) {
-                    direct_dep_names.insert(dep.name.replace('-', "_"));
-                }
+        .find(|package| package.name == selected[0].name)
+        .expect("the selected package came from Cargo metadata");
+    let mut direct_deps_by_package: HashMap<String, Vec<String>> = HashMap::new();
+    if let Some(node) = node_by_id.get(selected_package.id.as_str()) {
+        for dep in &node.deps {
+            if dep.dep_kinds.iter().any(|kind| kind.kind.is_none()) {
+                direct_deps_by_package
+                    .entry(dep.pkg.clone())
+                    .or_default()
+                    .push(dep.name.replace('-', "_"));
             }
         }
     }
+    for names in direct_deps_by_package.values_mut() {
+        names.sort();
+        names.dedup();
+    }
 
     let deps_dir = meta.target_directory.join("debug/deps");
-    let direct_dep_rlibs = build_and_collect_direct_deps(manifest_dir, &direct_dep_names);
+    let direct_dep_rlibs =
+        build_and_collect_direct_deps(manifest_dir, &selected[0].name, &direct_deps_by_package)?;
 
-    WorkspaceInfo {
+    Ok(WorkspaceInfo {
         selected,
+        workspace_root: meta.workspace_root,
         deps_dir,
         direct_dep_rlibs,
-    }
+    })
 }
 
-fn rustc_target_cfgs() -> Vec<String> {
+fn rustc_target_cfgs() -> Result<Vec<String>, String> {
     let output = Command::new(our_rustc())
         .args(["--print", "cfg"])
         .output()
-        .expect("failed to ask rustc for target cfg values");
-    assert!(
-        output.status.success(),
-        "rustc --print cfg failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+        .map_err(|error| format!("failed to ask rustc for target cfg values: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "rustc --print cfg failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
     let mut cfgs: Vec<_> = String::from_utf8(output.stdout)
-        .expect("rustc cfg output was not UTF-8")
+        .map_err(|error| format!("rustc cfg output was not UTF-8: {error}"))?
         .lines()
         .map(str::to_owned)
         .collect();
     cfgs.sort();
-    cfgs
+    Ok(cfgs)
 }
 
-fn run_cargo_metadata(manifest_dir: &Path) -> Metadata {
+fn run_cargo_metadata(manifest_dir: &Path) -> Result<Metadata, String> {
     let output = Command::new("cargo")
         .args(["metadata", "--format-version", "1"])
         .current_dir(manifest_dir)
         .output()
-        .expect("failed to run cargo metadata");
-    assert!(
-        output.status.success(),
-        "cargo metadata failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    serde_json::from_slice(&output.stdout).expect("failed to parse cargo metadata")
+        .map_err(|error| format!("failed to run cargo metadata: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "cargo metadata failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("failed to parse cargo metadata: {error}"))
 }
 
 fn build_and_collect_direct_deps(
     manifest_dir: &Path,
-    direct_dep_names: &HashSet<String>,
-) -> HashMap<String, PathBuf> {
+    selected_package: &str,
+    direct_deps_by_package: &HashMap<String, Vec<String>>,
+) -> Result<HashMap<String, PathBuf>, String> {
     eprintln!("sage: building dependencies...");
 
     // Use RUSTC to force cargo to use the exact same rustc that's linked into sage.
     // This guarantees rlib metadata version compatibility.
     let output = Command::new("cargo")
-        .args(["build", "--message-format=json"])
+        .args([
+            "build",
+            "--package",
+            selected_package,
+            "--lib",
+            "--message-format=json",
+        ])
         .env("RUSTC", our_rustc())
         .current_dir(manifest_dir)
         .output()
-        .expect("failed to run cargo build");
+        .map_err(|error| format!("failed to run cargo build: {error}"))?;
 
     if !output.status.success() {
-        eprintln!(
-            "sage: cargo build stderr:\n{}",
+        return Err(format!(
+            "cargo build failed:\n{}",
             String::from_utf8_lossy(&output.stderr)
-        );
-        panic!("cargo build failed");
+        ));
     }
 
     let mut rlibs: HashMap<String, PathBuf> = HashMap::new();
@@ -246,12 +275,14 @@ fn build_and_collect_direct_deps(
         if msg.reason != "compiler-artifact" {
             continue;
         }
-        let Some(target) = &msg.target else { continue };
-        let crate_name = target.name.replace('-', "_");
-
-        if !direct_dep_names.contains(&crate_name) {
+        let Some(extern_names) = msg
+            .package_id
+            .as_ref()
+            .and_then(|package_id| direct_deps_by_package.get(package_id))
+        else {
             continue;
-        }
+        };
+        let Some(target) = &msg.target else { continue };
 
         let is_lib = target.kind.iter().any(|k| k == "lib");
         let is_proc_macro = target.kind.iter().any(|k| k == "proc-macro");
@@ -272,9 +303,11 @@ fn build_and_collect_direct_deps(
                 .find(|f| f.extension().is_some_and(|e| e == "dylib" || e == "so"))
         };
         if let Some(artifact) = artifact {
-            rlibs.insert(crate_name, artifact.clone());
+            for extern_name in extern_names {
+                rlibs.insert(extern_name.clone(), artifact.clone());
+            }
         }
     }
 
-    rlibs
+    Ok(rlibs)
 }

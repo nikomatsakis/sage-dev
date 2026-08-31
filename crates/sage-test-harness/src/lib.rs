@@ -2727,6 +2727,9 @@ mod trait_system_tests {
                     LocalTraitSym < 'db >::items_
                     LocalTraitSym < 'db >::sig_
                     local_expanded_module_items
+                    local_trait_associated_item
+                    local_trait_associated_item
+                    local_trait_associated_item
                     setup_root_module"#]],
                 "impl" => expect![[r#"
                     LocalImplSym < 'db >::items_
@@ -2745,6 +2748,7 @@ mod trait_system_tests {
     #[test]
     fn trait_items_have_stable_symbols_and_owner_identity() {
         use sage_ir::local_syms::LocalAssociatedOwner;
+        use sage_ir::local_syms::associated::local_associated_items;
         use sage_ir::symbol::{ConstSymbol, FnSymbol, TypeAliasSymbol};
         use sage_ir::ty::{SolverEligibility, TraitItemDef};
 
@@ -2774,6 +2778,22 @@ mod trait_system_tests {
                 assert_eq!(alias.owner(db), owner);
                 assert_eq!(constant.owner(db), owner);
                 assert_eq!(stash[binder.generics].len(), 1);
+
+                let semantic_symbols: Vec<Symbol<'_>> = stash[binder.value]
+                    .iter()
+                    .map(|item| match *item {
+                        TraitItemDef::Function(symbol) => symbol.into(),
+                        TraitItemDef::Type(symbol) => symbol.into(),
+                        TraitItemDef::Const(symbol) => symbol.into(),
+                    })
+                    .collect();
+                let membership_symbols: Vec<Symbol<'_>> =
+                    local_associated_items(db, owner.unwrap())
+                        .iter()
+                        .copied()
+                        .map(Into::into)
+                        .collect();
+                assert_eq!(membership_symbols, semantic_symbols);
 
                 let method_signature = function.sig(db);
                 let (method_stash, method) = method_signature.open();
@@ -3667,54 +3687,83 @@ mod trait_solver_proof_tests {
     #[test]
     fn incompatible_normalization_outputs_are_ambiguous_but_identical_outputs_merge() {
         let check = |second_value: &str, expect_yes: bool| {
-            with_test_crate(
-                &format!(
-                    "trait Iterable {{ type Item; }}\n\
-                     impl Iterable for bool {{ type Item = bool; }}\n\
-                     impl Iterable for bool {{ type Item = {second_value}; }}"
-                ),
-                |db, root| {
-                    let (iterable, krate) = trait_and_crate(db, root, "Iterable");
-                    let associated_ty = first_associated_type(db, iterable);
-                    let mut stash = Stash::new();
-                    let self_ty = stash.alloc(Ty::Bool);
-                    let projection = AliasTy::Associated(ProjectionTy {
-                        associated_ty,
-                        self_ty,
-                        trait_ref: TraitRef {
-                            trait_sym: iterable,
-                            args: stash.alloc_slice(&[]),
-                        },
-                        args: stash.alloc_slice(&[]),
-                    });
-                    let assumptions = stash.alloc_slice::<Assumption>(&[]);
-                    let egraph = VersionedEGraph::new();
-                    let canonical = canonicalize_solver_goal(
-                        db,
-                        &stash,
-                        &egraph,
-                        Version::ROOT,
-                        krate,
-                        Universe::ROOT,
-                        true,
-                        assumptions,
-                        SolverGoal::Normalize(projection),
-                    );
-                    let result = GoalQuery::new(db, canonical.data).solve(db);
-                    assert_eq!(
-                        matches!(result.root().value, QueryResultData::Yes { .. }),
-                        expect_yes,
-                        "the query has no expected output with which to filter candidates"
-                    );
-                    assert_eq!(
-                        matches!(result.root().value, QueryResultData::Maybe { .. }),
-                        !expect_yes
-                    );
-                },
+            let source = format!(
+                "trait Iterable {{ type Item; }}\n\
+                 impl Iterable for bool {{ type Item = bool; }}\n\
+                 impl Iterable for bool {{ type Item = {second_value}; }}"
             );
+            let database = Database::default();
+            let observer = database.clone();
+            with_test_crate_files_using_db(database, &[("lib.rs", source.as_str())], |db, root| {
+                let (iterable, krate) = trait_and_crate(db, root, "Iterable");
+                let associated_ty = first_associated_type(db, iterable);
+                let mut stash = Stash::new();
+                let self_ty = stash.alloc(Ty::Bool);
+                let projection = AliasTy::Associated(ProjectionTy {
+                    associated_ty,
+                    self_ty,
+                    trait_ref: TraitRef {
+                        trait_sym: iterable,
+                        args: stash.alloc_slice(&[]),
+                    },
+                    args: stash.alloc_slice(&[]),
+                });
+                let assumptions = stash.alloc_slice::<Assumption>(&[]);
+                let egraph = VersionedEGraph::new();
+                let canonical = canonicalize_solver_goal(
+                    db,
+                    &stash,
+                    &egraph,
+                    Version::ROOT,
+                    krate,
+                    Universe::ROOT,
+                    true,
+                    assumptions,
+                    SolverGoal::Normalize(projection),
+                );
+                let result = GoalQuery::new(db, canonical.data).solve(db);
+                assert_eq!(
+                    matches!(result.root().value, QueryResultData::Yes { .. }),
+                    expect_yes,
+                    "the query has no expected output with which to filter candidates"
+                );
+                assert_eq!(
+                    matches!(result.root().value, QueryResultData::Maybe { .. }),
+                    !expect_yes
+                );
+            });
+            observer.take_inspection_log()
         };
-        check("bool", true);
-        check("i32", false);
+        let identical = check("bool", true);
+        let incompatible = check("i32", false);
+        for events in [&identical, &incompatible] {
+            let enters = events
+                .iter()
+                .filter(|event| {
+                    matches!(
+                        event,
+                        sage_ir::db::InspectionEvent::SpanEnter {
+                            operation: "normalization-candidates",
+                            child_order: sage_ir::db::InspectionChildOrder::Unordered,
+                            ..
+                        }
+                    )
+                })
+                .count();
+            let exits = events
+                .iter()
+                .filter(|event| {
+                    matches!(
+                        event,
+                        sage_ir::db::InspectionEvent::SpanExit {
+                            operation: "normalization-candidates"
+                        }
+                    )
+                })
+                .count();
+            assert!(enters > 0, "normalization alternatives must be visible");
+            assert_eq!(enters, exits, "normalization spans must remain balanced");
+        }
     }
 
     #[test]

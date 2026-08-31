@@ -1,0 +1,16 @@
+{
+  "revision_id": "rev_0",
+  "request_id": "request-20",
+  "run_id": null,
+  "value": {
+    "from_revision": "rev_0",
+    "to_revision": "rev_0",
+    "symbol": "local/db-drop-guard/impl-DbDropGuard/db",
+    "product": "signature",
+    "value_changed": false,
+    "executed_only_before": [],
+    "executed_only_after": [],
+    "reused_only_before": [],
+    "reused_only_after": []
+  }
+}

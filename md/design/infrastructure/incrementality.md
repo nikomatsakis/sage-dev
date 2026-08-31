@@ -183,7 +183,7 @@ generated identity across movement, and narrow associated-value access.
 ### Related roadmap slices
 
 - [Semantic inspector and persistent edit
-  testing](../../implementation/roadmap.md#planned-slice-semantic-inspector-and-persistent-edit-testing)
+  testing](../../implementation/roadmap.md#implemented-slice-semantic-inspector-and-persistent-edit-testing)
   will provide a persistent database, structured traces, and edit commands.
 - [Trait-partitioned impl
   discovery](../../implementation/roadmap.md#planned-slice-trait-partitioned-impl-discovery)

@@ -12,7 +12,7 @@ use crate::span::RelativeSpan;
 
 pub type TraitCst<'db> = Stashed<Ptr<TraitCstData<'db>>>;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct TraitCstData<'db> {
     pub attrs: Slice<AttrCst<'db>>,
     pub name: Name<'db>,
@@ -25,7 +25,7 @@ pub struct TraitCstData<'db> {
     pub span: RelativeSpan,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub enum TraitItemCst<'db> {
     Fn {
         cst: Ptr<FnCstData<'db>>,

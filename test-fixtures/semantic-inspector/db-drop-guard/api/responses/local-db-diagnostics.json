@@ -1,0 +1,15 @@
+{
+  "revision_id": "rev_0",
+  "request_id": "request-8",
+  "run_id": "run_3",
+  "value": {
+    "id": "diagnostics",
+    "title": "Checking diagnostics",
+    "content": {
+      "kind": "notice",
+      "tone": "neutral",
+      "title": "No diagnostics",
+      "text": "Body checking completed without diagnostics."
+    }
+  }
+}

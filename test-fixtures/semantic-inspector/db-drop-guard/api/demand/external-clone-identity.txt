@@ -1,0 +1,1 @@
+provider: product external/core-1/clone/Clone/clone identity

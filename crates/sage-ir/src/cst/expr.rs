@@ -10,7 +10,7 @@ use crate::span::RelativeSpan;
 // Expression primitives (shared with tytree)
 // ---------------------------------------------------------------------------
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, sage_reflect::Reflect)]
 pub enum Literal<'db> {
     Int(Name<'db>),
     Float(Name<'db>),
@@ -21,7 +21,7 @@ pub enum Literal<'db> {
 
 impl StashDirect for Literal<'_> {}
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, sage_reflect::Reflect)]
 pub enum BinaryOp {
     Add,
     Sub,
@@ -45,7 +45,7 @@ pub enum BinaryOp {
 
 impl StashDirect for BinaryOp {}
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, sage_reflect::Reflect)]
 pub enum UnaryOp {
     Not,
     Neg,
@@ -58,13 +58,13 @@ impl StashDirect for UnaryOp {}
 // CST expression nodes
 // ---------------------------------------------------------------------------
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct ExprCst<'db> {
     pub kind: ExprCstKind<'db>,
     pub span: RelativeSpan,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub enum ExprCstKind<'db> {
     Literal(Literal<'db>),
     Path(Ptr<Path<'db>>),
@@ -107,13 +107,13 @@ pub enum ExprCstKind<'db> {
     Missing,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct StmtCst<'db> {
     pub kind: StmtCstKind<'db>,
     pub span: RelativeSpan,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub enum StmtCstKind<'db> {
     Let(
         Ptr<PatCst<'db>>,
@@ -123,13 +123,13 @@ pub enum StmtCstKind<'db> {
     Expr(Ptr<ExprCst<'db>>),
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct PatCst<'db> {
     pub kind: PatCstKind<'db>,
     pub span: RelativeSpan,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub enum PatCstKind<'db> {
     Wildcard,
     Bind(Name<'db>, Mutability),
@@ -144,14 +144,14 @@ pub enum PatCstKind<'db> {
     Missing,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct FieldPatCst<'db> {
     pub name: Name<'db>,
     pub pat: Ptr<PatCst<'db>>,
     pub span: RelativeSpan,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct MatchArmCst<'db> {
     pub pat: Ptr<PatCst<'db>>,
     pub guard: Option<Ptr<ExprCst<'db>>>,
@@ -159,14 +159,14 @@ pub struct MatchArmCst<'db> {
     pub span: RelativeSpan,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct ClosureParamCst<'db> {
     pub pat: Ptr<PatCst<'db>>,
     pub ty: Option<Ptr<TypeCst<'db>>>,
     pub span: RelativeSpan,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct FieldInitCst<'db> {
     pub name: Name<'db>,
     pub value: Ptr<ExprCst<'db>>,

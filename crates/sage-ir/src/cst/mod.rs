@@ -23,7 +23,7 @@ pub mod type_aliases;
 pub mod uses;
 pub mod where_clause;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update, sage_reflect::Reflect)]
 pub enum Mutability {
     Shared,
     Mut,

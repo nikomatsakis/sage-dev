@@ -3,7 +3,7 @@ use sage_stash::{AllocStashData, Ptr, Slice};
 use crate::cst::paths::Path;
 use crate::span::RelativeSpan;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct AttrCst<'db> {
     pub kind: AttrCstKind,
     pub path: Ptr<Path<'db>>,
@@ -14,7 +14,7 @@ pub struct AttrCst<'db> {
     pub span: RelativeSpan,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub enum AttrCstKind {
     Normal,
     DocComment,

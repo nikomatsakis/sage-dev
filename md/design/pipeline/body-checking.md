@@ -255,5 +255,5 @@ cargo test -p sage-oracle-harness --test oracle_compare -- mini_redis/db_drop_gu
 - [Shutdown::recv](../../implementation/roadmap.md#next-application-slice-shutdownrecv)
   is the next body-coverage target.
 - [Semantic inspector and persistent edit
-  testing](../../implementation/roadmap.md#planned-slice-semantic-inspector-and-persistent-edit-testing)
+  testing](../../implementation/roadmap.md#implemented-slice-semantic-inspector-and-persistent-edit-testing)
   will expose readable bodies and structured query traces.

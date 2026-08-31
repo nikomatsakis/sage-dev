@@ -13,6 +13,44 @@ close it. The affected architecture chapter links back to the entry from its
 
 ## Open deviations
 
+### KD-5: The scripted inspector advertises products it cannot return
+
+- **Contracts:** [SI-A3](../design/validation/semantic-inspector.md#si-a3) and
+  [SI-A15](../design/validation/semantic-inspector.md#si-a15).
+- **Observed implementation:** The reviewed scripted provider gives the local
+  crate, `Db`, `DbDropGuard`, and its impl an `identity` product descriptor,
+  but its product dispatcher implements `identity` only for the local `db`
+  method and external `Clone::clone` method.
+- **Consequence:** Selecting one of those otherwise navigable symbols makes the
+  generic browser request the backend-authored default product and receive a
+  structured `product-not-found` error. The fixture-backed application is
+  therefore not internally closed over the product URLs it advertises.
+- **Closure evidence:**
+  `every_advertised_scripted_product_is_fetchable` must enumerate the scripted
+  local symbol directory through the Axum router, select each symbol, and
+  successfully fetch every advertised product with the matching page ID.
+
+### KD-4: Stash byte storage does not guarantee entry alignment
+
+- **Contract:** [STASH-A1](../design/stash.md#stash-a1), together with the
+  `StashData` representation contract that every accepted value can be read
+  through its typed handle.
+- **Observed implementation:** `Stash` stores entries in `Vec<u8>` and aligns
+  each entry's byte offset, but `Vec<u8>` only guarantees byte alignment for
+  the allocation's base address. Adding an aligned offset cannot make an
+  under-aligned base suitable for a type with alignment greater than one, so
+  the typed raw-pointer reads can be undefined behavior for over-aligned
+  `StashData` values.
+- **Consequence:** The ordinary Sage node types happen to receive typical
+  allocator alignment in practice, but the public unsafe storage contract is
+  not upheld for every accepted `T`, and a future over-aligned node could make
+  otherwise valid stash access unsound.
+- **Closure evidence:** Replace the byte buffer with storage whose base and
+  entry layout guarantee `align_of::<T>()` for every allocation (or constrain
+  and enforce the admitted alignments), then cover scalar and slice allocation,
+  growth, cloning, hash-cons lookup, mutation, and cross-stash copy with
+  deliberately over-aligned values under Miri.
+
 ### KD-3: Derive helper attributes do not produce the promised warning
 
 - **Contract:** [No derive helper attributes](../design/subsetting.md#no-derive-helper-attributes),

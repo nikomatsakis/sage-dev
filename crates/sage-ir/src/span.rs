@@ -21,9 +21,52 @@ pub enum ParseSource<'db> {
     Derive(crate::derive::DeriveExpansion<'db>),
 }
 
+impl<'db> sage_reflect::Reflect<'db> for ParseSource<'db> {
+    fn reflect(
+        &self,
+        context: &mut sage_reflect::ReflectionContext<'_>,
+        stash: Option<&sage_stash::Stash>,
+    ) -> sage_reflect::ValueNode {
+        use sage_reflect::{ReferenceKey, ValueField, ValueNode};
+        use salsa::plumbing::AsId;
+
+        context.reflect_node("ParseSource", |context| match self {
+            ParseSource::SourceFile(source_file) => {
+                let key = ReferenceKey {
+                    family: "source-file",
+                    id: source_file.as_id().as_bits(),
+                };
+                context
+                    .reflected_value(&key)
+                    .unwrap_or_else(|| ValueNode::scalar("SourceFile", format!("input:{}", key.id)))
+            }
+            ParseSource::BangMacro(definition, invocation) => {
+                let invocation: crate::symbol::Symbol<'db> = (*invocation).into();
+                ValueNode::variant(
+                    "ParseSource",
+                    "BangMacro",
+                    vec![
+                        ValueField::new("definition", definition.reflect(context, stash)),
+                        ValueField::new("invocation", invocation.reflect(context, stash)),
+                    ],
+                )
+            }
+            ParseSource::Derive(expansion) => {
+                let key = ReferenceKey {
+                    family: "derive-expansion",
+                    id: expansion.as_id().as_bits(),
+                };
+                context.reflected_value(&key).unwrap_or_else(|| {
+                    ValueNode::scalar("DeriveExpansion", format!("tracked:{}", key.id))
+                })
+            }
+        })
+    }
+}
+
 /// Byte offset range within a source (file or macro expansion), together
 /// with the source identity. Stored on items.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update, sage_reflect::Reflect)]
 pub struct AbsoluteSpan<'db> {
     pub source: ParseSource<'db>,
     pub start: u32,
@@ -53,7 +96,7 @@ impl<'db> AbsoluteSpan<'db> {
 /// Byte offset range relative to the containing item's start.
 /// Stored on body nodes (expressions, statements, patterns)
 /// and signature types (paths, type refs, params, etc.).
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update, sage_reflect::Reflect)]
 pub struct RelativeSpan {
     pub start: u32,
     pub end: u32,

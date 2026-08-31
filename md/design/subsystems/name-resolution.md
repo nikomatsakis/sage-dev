@@ -158,6 +158,6 @@ slices are operational.
 ### Related roadmap slices
 
 [Semantic inspector and persistent edit
-testing](../../implementation/roadmap.md#planned-slice-semantic-inspector-and-persistent-edit-testing)
+testing](../../implementation/roadmap.md#implemented-slice-semantic-inspector-and-persistent-edit-testing)
 will expose path results and their query trail. [Shutdown::recv](../../implementation/roadmap.md#next-application-slice-shutdownrecv)
 is the next application slice likely to extend method and associated lookup.

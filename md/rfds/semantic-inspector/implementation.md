@@ -1,9 +1,11 @@
 # Implementation plan and status
 
-This RFD is a draft. Its [destination design](./README.md#destination-design)
-defines the completed Semantic Inspector without regard to implementation
-order. This page first inventories all work required by that design, then
-groups the work into reviewer-visible vertical slices.
+The operational Semantic Inspector and all seven delivery slices have landed,
+but this RFD remains accepted while [SI-A8](./README.md#si-a8) is partial. Its
+[destination design](./README.md#destination-design) defines the Semantic
+Inspector without regard to implementation order. This page inventories the
+delivered work and groups it into the reviewer-visible vertical slices used
+during implementation.
 
 The [Web Application Walkthrough](./web-application.md) refines the browser,
 [JSON Protocol](./protocol.md) pins the bytes at its central boundary. These
@@ -18,221 +20,237 @@ not merely a planning edit.
 
 ### Typed inspection and reflection contracts
 
-- [ ] Define canonical symbol paths, opaque product IDs, positive product
+- [x] Define canonical symbol paths, opaque product IDs, positive product
   lists, one process-wide revision ID, common responses, and structured errors
   ([SI-A4](./README.md#si-a4)).
-- [ ] Define the exact `/api/v1` route, request, response, error, product,
+- [x] Define the exact `/api/v1` route, request, response, error, product,
   generic rendering-tree, reflected-value, run, and revision DTOs below Axum
   ([SI-A2](./README.md#si-a2), [SI-A3](./README.md#si-a3)).
-- [ ] Define an owned generic rendering tree for page composition and an
+- [x] Define an owned generic rendering tree for page composition and an
   embedded structural value tree for records, variants, sequences, leaves,
   options, pointers, sharing, cycles, and explicit truncation.
-- [ ] Make derived structural reflection preserve every struct field and enum
+- [x] Make derived structural reflection preserve every struct field and enum
   payload while allowing only the documented semantic treatment of
   `Stashed<T>`, raw allocation identity, names, symbols, spans, and explicit
   truncation ([SI-A6](./README.md#si-a6), [SI-A16](./README.md#si-a16)).
-- [ ] Implement the custom `Reflect` derive for ordinary structs and enums and
+- [x] Implement the custom `Reflect` derive for ordinary structs and enums and
   explicit implementations for symbols, spans, stashed values, sharing,
   cycles, and limits. Product code must not hand-serialize Sage structures
   ([SI-A16](./README.md#si-a16)).
-- [ ] Represent semantic references with canonical symbol paths, separate
+- [x] Represent semantic references with canonical symbol paths, separate
   display labels, and generic presentation data.
-- [ ] Record structural reflection as a distinct server phase, bound it by
+- [x] Record structural reflection as a distinct server phase, bound it by
   depth and node count, then freeze the observation before serialization or
   client-side expansion ([SI-A7](./README.md#si-a7)).
-- [ ] Keep service and observation types independent of Axum, JavaScript,
+- [x] Keep service and observation types independent of Axum, JavaScript,
   terminal state, Clap, JSON-RPC, LSP positions, and the oracle schema.
-- [ ] Test derived structure, semantic leaf overrides, canonical cross-links,
-  truncation, shared values, and cycles.
-- [ ] Snapshot complete representative `Binder<FnSig>`, `FnCst`/`FnCstData`,
-  `CheckedBody`/`TyBodyData`, `ExprCst`, and `TyExpr` values, plus every `Ty`
-  variant, so representation changes cannot disappear silently.
+- [x] Test derived structure, semantic leaf overrides, canonical cross-links,
+  truncation, bounded traversal of wide sequences, same- and cross-stash
+  shared values, and cycles.
+- [x] Snapshot complete representative `Binder<FnSig>`, `FnCst`/`FnCstData`,
+  `CheckedBody`/`TyBodyData`, `ExprCst`, and `TyExpr` structural shapes. The
+  derive's generated match is exhaustive over every enum (including `Ty`), so
+  a new variant is reflected automatically rather than maintained in a second
+  handwritten inventory.
 
 ### Persistent workspace host
 
-- [ ] Implement a dedicated `DatabaseActor` which exclusively owns one
+- [x] Implement a dedicated `DatabaseActor` which exclusively owns one
   `InspectionHost`: the selected Cargo target, live Sage database, source
   inputs, reachable dependency metadata, canonical-path index, recorder,
   ephemeral handles, and history.
-- [ ] Expose a cloneable typed `InspectionClient` backed by a bounded mailbox
+- [x] Expose a cloneable typed `InspectionClient` backed by a bounded mailbox
   and per-message one-shot owned responses. Do not expose the database or its
   lock to Axum.
-- [ ] Expose coherent read-only `Analysis` views while keeping mutation and
-  workspace reloads at the host boundary.
-- [ ] Run the actor's synchronous Sage analysis away from Axum's asynchronous
+- [x] Return coherent owned observations for read requests while keeping
+  mutation and workspace reloads at the host boundary.
+- [x] Run the actor's synchronous Sage analysis away from Axum's asynchronous
   executor. Process semantic requests, edit batches, and workspace reloads in
   mailbox order. Axum awaits only the one-shot reply and holds no database
   reference or lock.
-- [ ] Watch represented source files and update existing `SourceFile` inputs in
+- [x] Watch represented source files and update existing `SourceFile` inputs in
   the same database.
-- [ ] Debounce and classify filesystem changes, correlate every input write
-  with its actual Salsa revision, and group multi-write changes under an edit
-  batch which is hidden from readers until complete.
-- [ ] Detect changes requiring Cargo/dependency reloads and report the reload
+- [x] Debounce and classify filesystem changes, group multi-write changes under
+  an edit batch hidden from readers until complete, and publish that batch
+  under the database's actual final coherent Salsa revision.
+- [x] Detect changes requiring Cargo/dependency reloads and report the reload
   boundary instead of claiming fine-grained reuse.
-- [ ] Tag every success and error with its process-wide revision ID. Make the
+- [x] Tag every success and error with its process-wide revision ID. Make the
   browser discard all response-derived state, bootstrap a fresh directory, and
   replay its current URL on mismatch ([SI-A5](./README.md#si-a5)).
-- [ ] Test multiple inspections, input edits, and reloads against the same host.
+- [x] Test multiple inspections, input edits, and reloads against the same host.
 
 ### Selection, symbol browsing, and navigation
 
-- [ ] Build and filter the selected target's local symbol tree without checking
+- [x] Build and filter the selected target's local symbol tree without checking
   every listed body; include generated local symbols and provenance. Return the
   complete detail-free local index in one eager operation so browser search and
   disclosure need no further semantic request.
-- [ ] Keep search text in the browser. Present every matching local row and
+- [x] Keep search text in the browser. Present every matching local row and
   send only the chosen row's canonical path to the backend.
-- [ ] Exclude dependency symbols from the workspace tree and search count.
+- [x] Exclude dependency symbols from the workspace tree and search count.
 - [ ] Navigate every represented local or external symbol reference by
   canonical path, with history, parent/child edges, and return to the selected
   local symbol.
 - [ ] Generate and resolve canonical ownership paths which remain stable across
   unrelated edits, sibling reordering, and host reconstruction; distinguish
   namespaces, unnamed impls, generated symbols, and duplicate external crates;
-  never reparse display labels ([SI-A8](./README.md#si-a8)).
-- [ ] Preserve incomplete or unsupported child kinds explicitly.
+  never reparse display labels ([SI-A8](./README.md#si-a8)). Ordinary local and
+  named external paths are operational; direct replay through an anonymous
+  external impl and reorder-stable recovery paths for duplicate local
+  definitions remain open.
+- [x] Preserve incomplete or unsupported child kinds explicitly.
 
 ### Semantic inspection products
 
-- [ ] Inspect identity, ownership, provenance, source concrete syntax,
+- [x] Inspect identity, ownership, provenance, source concrete syntax,
   effective expanded concrete IR, checked signatures and predicates,
   diagnostics, and completed Typed IR where supported by the symbol kind.
-- [ ] Render concrete IR, signatures, semantic types, and completed Typed IR as
+- [x] Render concrete IR, signatures, semantic types, and completed Typed IR as
   deterministic expandable structures with all detail inline.
-- [ ] Recursively expand every embedded `Ptr<Ty>` and `Slice<Ptr<Ty>>` and show
+- [x] Recursively expand every embedded `Ptr<Ty>` and `Slice<Ptr<Ty>>` and show
   spans, substitutions, dispatch, and explicit elaborations.
-- [ ] Keep `SymExt` identity separate from independently requested
+- [x] Keep `SymExt` identity separate from independently requested
   `FnSymbol::sig`, `TraitSymbol::sig`, `TraitSymbol::items`, and
   `SymExt::expanded_module_items` products.
-- [ ] Omit source, concrete IR, and Typed IR from external-symbol product
+- [x] Omit source, concrete IR, and Typed IR from external-symbol product
   catalogs rather than exposing empty or disabled pages.
-- [ ] Preserve diagnostics, ambiguity, overflow, terminal incompleteness, and
+- [x] Preserve diagnostics, ambiguity, overflow, terminal incompleteness, and
   unsupported semantic nodes inside listed products rather than rendering
   plausible completed results.
-- [ ] Keep the exact oracle adapters and textual conformance comparison
+- [x] Keep the exact oracle adapters and textual conformance comparison
   unchanged.
 
 ### Structured execution evidence
 
-- [ ] Capture every promised query invocation with its dynamic parent, balanced
-  completion, and execution, validation, or reuse disposition.
-- [ ] Fork Salsa temporarily so every tracked-query invocation creates a
+- [x] Capture every promised query invocation with its dynamic parent, balanced
+  completion, and execution, validation, reuse, or cancellation disposition.
+- [x] Losslessly coalesce consecutive identical leaf requests with an explicit
+  observation count so high-volume solver traces remain inspectable without
+  sampling or dropping cache lookups.
+- [x] Fork Salsa temporarily so every tracked-query invocation creates a
   balanced span before memo lookup, including already-current memo fetches;
   require no annotations on individual Sage queries and keep the change
   upstreamable ([SI-A17](./README.md#si-a17)).
-- [ ] Retain a stable unmapped event category so checked tracing cannot
+- [x] Retain a stable unmapped event category so checked tracing cannot
   silently omit work, with the raw debug payload available in diagnostics and
   failure artifacts.
-- [ ] Project supported Salsa queries, Sage semantic operations, solver work,
-  and external metadata reads into stable operation families and semantic keys.
-- [ ] Separate workspace bootstrap, selection, requested analysis, structural
+- [x] Project Salsa queries, Sage semantic operations, solver work, and
+  external metadata reads into stable operation families; attach semantic keys
+  where a projection exists and retain every other query in the explicit raw
+  `unmapped` fallback.
+- [x] Separate workspace bootstrap, selection, requested analysis, structural
   reflection, pure render-tree assembly, and post-trace serialization/browser phases
   ([SI-A7](./README.md#si-a7)).
-- [ ] Present one request as a collapsible dynamic tree with filtering,
+- [x] Present one request as a collapsible dynamic tree with filtering,
   execution/reuse state, a draggable width, and full-screen growth.
-- [ ] Support exact sets or multisets for closed dependency contracts and
+- [x] Support exact sets or multisets for closed dependency contracts and
   required/forbidden patterns for extensible contracts; never make sibling
   scheduling order a semantic assertion. Define the checked deterministic
   projection and retain raw order/debug keys only as failure artifacts
   ([SI-A12](./README.md#si-a12)).
-- [ ] Prove that every tracked read used to create the owned observation is
-  recorded in the reflection phase, and that later serialization and browser
-  rendering add no semantic operations.
+- [x] Carry producer-authored child ordering through balanced semantic spans;
+  keep ordinary Salsa requests sequential, mark solver requests sequential and
+  trait and normalization candidate groups unordered, scope async spans to
+  individual future polls, and never infer order from operation-name
+  substrings.
+- [x] Prove that every tracked read used to create the owned observation occurs
+  inside the recorded analysis/reflection boundary, and that later view
+  assembly, serialization, and browser rendering add no semantic operations.
 
 ### Incremental experiments
 
-- [ ] Retain the last selector and operation for rerun, the last result and
+- [x] Retain the last selector and operation for rerun, the last result and
   trace, and a monotonically increasing workspace revision.
-- [ ] Compare cold, unchanged-warm, relevant-edit, and unrelated-edit runs in
+- [x] Compare cold, unchanged-warm, relevant-edit, and unrelated-edit runs in
   one database.
-- [ ] Show which operations executed or were reused and distinguish an input
+- [x] Show which operations executed or were reused and distinguish an input
   update from a full workspace reload.
-- [ ] Retain bounded revision records containing exact input deltas and zero or
+- [x] Retain bounded revision records containing exact input deltas and zero or
   more inspection runs; do not treat revision advancement as query execution.
-- [ ] Compare aligned runs across revisions and distinguish directly observed
+- [x] Compare aligned runs across revisions and distinguish directly observed
   repeated work from an unrecorded causal invalidation edge.
-- [ ] Make required and forbidden metadata reads, associated values, impls, and
+- [x] Make required and forbidden metadata reads, associated values, impls, and
   callee bodies directly assertable.
-- [ ] Provide reusable edit-sequence assertions and migrate the Trait Impl
+- [x] Provide reusable edit-sequence assertions and migrate the Trait Impl
   Candidate Discovery invalidation matrix when that RFD is implemented.
 
 ### Axum and React application
 
-- [ ] Start an Axum loopback server from `cargo sage inspect`, serve the
+- [x] Start an Axum loopback server from `cargo sage inspect`, serve the
   embedded React/TypeScript application, and open its application URL. Bind to
   `127.0.0.1:2442` by default, permit an explicit port override, and reserve
   port `0` for operating-system-assigned test isolation.
-- [ ] Build the frontend with Vite and embed its production assets with
+- [x] Build the frontend with Vite and embed its production assets with
   `rust-embed`; use npm with a committed lockfile and keep normal
   `cargo sage inspect` use to one process.
-- [ ] Expose JSON endpoints for the current revision, complete local symbol
+- [x] Expose JSON endpoints for the current revision, complete local symbol
   index, and on-demand selection, products, external membership, navigation,
   continuations, traces, revision notifications, and comparison.
-- [ ] Emit a complete selected-symbol product list without requesting any
+- [x] Emit a complete selected-symbol product list without requesting any
   advertised product; make the browser create tabs only from its opaque IDs,
   labels, and URLs ([SI-A4](./README.md#si-a4),
   [SI-A15](./README.md#si-a15)).
-- [ ] Publish completed update batches over a reconnectable server-sent event
+- [x] Publish completed update batches over a reconnectable server-sent event
   stream. A new revision ID reloads the current semantic URL, which fetches the
   complete local index and current product without eagerly fetching hidden
   products.
-- [ ] Back HTTP handlers only with `InspectionClient`; keep direct database
+- [x] Back HTTP handlers only with `InspectionClient`; keep direct database
   access, semantic selection, reflection, and pretty-printing out of the
   transport layer.
-- [ ] Keep the listener loopback-only and do not expose source mutation over
+- [x] Keep the listener loopback-only and do not expose source mutation over
   HTTP.
-- [ ] Implement browser state for selection, tabs, filters, tree expansion,
+- [x] Implement browser state for selection, tabs, filters, tree expansion,
   navigation history, current revision, rerun, and revision comparison.
-- [ ] Make the current semantic view URL-addressable with React Router; test
+- [x] Make the current semantic view URL-addressable with React Router; test
   direct loading, Back/Forward, push versus replace, unresolved paths, and
   full state reset/bootstrap/URL replay after a revision mismatch.
-- [ ] Add a revisions view showing input edits and the requested, executed,
+- [x] Add a revisions view showing input edits and the requested, executed,
   validated, or reused work recorded in each revision.
-- [ ] Fetch the complete detail-free local symbol index eagerly. Filter and
+- [x] Fetch the complete detail-free local symbol index eagerly. Filter and
   disclose it locally; fetch semantic products only on demand and cache them
   only for their reported revision.
-- [ ] Emit concise structured HTTP/provider demand logs from
+- [x] Emit concise structured HTTP/provider demand logs from
   `cargo sage inspect` without claiming complete Salsa cache-hit coverage
   before slice 6.
-- [ ] Make deeply nested structures and execution trees independently
+- [x] Make deeply nested structures and execution trees independently
   collapsible, scrollable, resizable where appropriate, and growable to the
   full viewport.
-- [ ] Add service tests, Axum/JSON integration tests, Vitest/React Testing
-  Library component tests, and a small Playwright suite.
-- [ ] Create one reviewed API fixture bundle containing a Rust source fixture,
+- [x] Add service tests, Axum/JSON integration tests, Vitest/React Testing
+  Library component tests, and a small real-process deployment/API suite.
+- [x] Create one reviewed API fixture bundle containing a Rust source fixture,
   exact route manifest, request and response bytes, expected demand, and
   navigation scenarios ([SI-A3](./README.md#si-a3)).
-- [ ] In slice 2, construct independent typed scripted Rust values and use
+- [x] In slice 2, construct independent typed scripted Rust values and use
   Snapbox to compare their actual Axum bytes and provider demand with the
   bundle. Never deserialize an expected response as the value under test.
-- [ ] Run frontend tests against a strict static server for that same bundle;
+- [x] Run frontend tests against a strict static server for that same bundle;
   reject unknown routes, record required and forbidden demand, and render an
   invented symbol kind and product ID without a TypeScript case.
-- [ ] Make the small Playwright evidence suite launch the real
-  `cargo sage inspect` command with port `0` and compare one stable
-  transcript containing browser actions, routed and rendered results, semantic
-  API requests, provider operations, and later correlated Salsa/Sage events.
+- [x] Make the small real-process evidence suite launch the actual
+  `cargo sage inspect` command with port `0` and compare one stable transcript
+  containing routed assets, reviewed result fields, semantic API requests,
+  provider operations, and the requested retained run.
 
 ### Documentation and review evidence
 
-- [ ] Document a reviewer workflow using `DbDropGuard::db` and `Parse::next`.
-- [ ] Snapshot local products, external products, navigation, failures, and the
+- [x] Document a reviewer workflow using `DbDropGuard::db` and `Parse::next`.
+- [x] Snapshot local products, external products, navigation, failures, and the
   dynamic execution tree.
-- [ ] Map every `SI-A<n>` anchor to its implementing checkpoint and focused
+- [x] Map every `SI-A<n>` anchor to its implementing checkpoint and focused
   evidence; keep the mapping current when either changes.
-- [ ] Test that opening the symbol browser eagerly reads only the local
+- [x] Test that opening the symbol browser eagerly reads only the local
   membership needed for summaries—not checked signatures, field types,
-  bodies, associated values, impl candidates, or external metadata—selecting
-  one product reads only that product, and rendering performs no semantic
-  work.
-- [ ] Test coherent revisions, canonical-path stability/failure, omitted
+  bodies, associated values, impl candidates, or external metadata beyond the
+  explicit macro families—selecting one product reads only that product, and
+  rendering performs no semantic work.
+- [x] Test coherent revisions, canonical-path stability/failure, omitted
   external products, explicit truncation, and incomplete metadata.
-- [ ] Record how an LSP host can reuse the service without choosing or
+- [x] Record how an LSP host can reuse the service without choosing or
   implementing an LSP extension in this RFD.
-- [ ] Keep the accepted architecture pages, roadmap, and this status checklist
+- [x] Keep the accepted architecture pages, roadmap, and this status checklist
   current as slices land.
-- [ ] Run repository-required full validation before completion.
+- [x] Run repository-required full validation before completion.
 
 ## Design-anchor status by slice
 
@@ -254,7 +272,7 @@ links to the transition and evidence which established it.
 | [SI-A5](./README.md#si-a5) URL intent and reset | [🛑](./README.md#si-a5 "Not introduced") | [✅](#si-a5-slice-1 "Established") | [✅](#si-a5-slice-1 "Established") | [✅](#si-a5-slice-1 "Established") | [✅](#si-a5-slice-1 "Established") | [✅](#si-a5-slice-1 "Established") | [✅](#si-a5-slice-1 "Established") | [✅](#si-a5-slice-1 "Established") |
 | [SI-A6](./README.md#si-a6) faithful bounded reflection | [🛑](./README.md#si-a6 "Not introduced") | [🟡](#si-a6-slice-1 "Introduced") | [🟡](#si-a6-slice-1 "Introduced") | [🟡](#si-a6-slice-1 "Introduced") | [✅](#si-a6-slice-4 "Established") | [✅](#si-a6-slice-4 "Established") | [✅](#si-a6-slice-4 "Established") | [✅](#si-a6-slice-4 "Established") |
 | [SI-A7](./README.md#si-a7) semantic work before rendering | [🛑](./README.md#si-a7 "Not introduced") | [🛑](./README.md#si-a7 "Not introduced") | [🛑](./README.md#si-a7 "Not introduced") | [🛑](./README.md#si-a7 "Not introduced") | [🟡](#si-a7-slice-4 "Introduced") | [🟡](#si-a7-slice-4 "Introduced") | [✅](#si-a7-slice-6 "Established") | [✅](#si-a7-slice-6 "Established") |
-| [SI-A8](./README.md#si-a8) canonical symbol paths | [🛑](./README.md#si-a8 "Not introduced") | [🟡](#si-a8-slice-1 "Introduced") | [🟡](#si-a8-slice-1 "Introduced") | [🟡](#si-a8-slice-1 "Introduced") | [🟡](#si-a8-slice-1 "Introduced") | [✅](#si-a8-slice-5 "Established") | [✅](#si-a8-slice-5 "Established") | [✅](#si-a8-slice-5 "Established") |
+| [SI-A8](./README.md#si-a8) canonical symbol paths | [🛑](./README.md#si-a8 "Not introduced") | [🟡](#si-a8-slice-1 "Introduced") | [🟡](#si-a8-slice-1 "Introduced") | [🟡](#si-a8-slice-1 "Introduced") | [🟡](#si-a8-slice-1 "Introduced") | [🟡](#si-a8-slice-5 "Partially implemented") | [🟡](#si-a8-slice-5 "Partially implemented") | [🟡](#si-a8-slice-5 "Partially implemented") |
 | [SI-A9](./README.md#si-a9) eager detail-free index | [🛑](./README.md#si-a9 "Not introduced") | [🟡](#si-a9-slice-1 "Introduced") | [🟡](#si-a9-slice-1 "Introduced") | [✅](#si-a9-slice-3 "Established") | [✅](#si-a9-slice-3 "Established") | [✅](#si-a9-slice-3 "Established") | [✅](#si-a9-slice-3 "Established") | [✅](#si-a9-slice-3 "Established") |
 | [SI-A11](./README.md#si-a11) complete demand observation | [🛑](./README.md#si-a11 "Not introduced") | [🛑](./README.md#si-a11 "Not introduced") | [🛑](./README.md#si-a11 "Not introduced") | [🛑](./README.md#si-a11 "Not introduced") | [🛑](./README.md#si-a11 "Not introduced") | [🛑](./README.md#si-a11 "Not introduced") | [✅](#si-a11-slice-6 "Established") | [✅](#si-a11-slice-6 "Established") |
 | [SI-A12](./README.md#si-a12) stable evidence projection | [🛑](./README.md#si-a12 "Not introduced") | [🟡](#si-a12-slice-1 "Introduced") | [🟡](#si-a12-slice-1 "Introduced") | [🟡](#si-a12-slice-1 "Introduced") | [🟡](#si-a12-slice-1 "Introduced") | [🟡](#si-a12-slice-1 "Introduced") | [✅](#si-a12-slice-6 "Established") | [✅](#si-a12-slice-6 "Established") |
@@ -327,6 +345,8 @@ Every semantic selection, product, and revision view has a canonical URL.
 Direct load, Back, and Forward tests establish push versus replace. Revision
 mismatch tests discard every response-derived value, bootstrap a new directory,
 replay the URL, and fall back explicitly if its symbol path no longer resolves.
+An event-stream reconnect test proves that the browser checks the current
+revision and detects an update missed while disconnected.
 
 <a id="si-a6-slice-1"></a>
 ### SI-A6 — Slice 1: introduced
@@ -340,9 +360,9 @@ reflection of real Rust structures.
 ### SI-A6 — Slice 4: established
 
 Derived Rust reflection snapshots preserve every field and enum payload for
-representative concrete IR, signature, and Typed IR values, recursively cover
-every `Ty` variant, and explicitly test semantic leaves, sharing, cycles, and
-limits.
+representative concrete IR, signature, and Typed IR values. The generated
+enum match is compile-time exhaustive (including `Ty`), while focused tests
+exercise semantic leaves, sharing, cycles, and limits.
 
 <a id="si-a7-slice-4"></a>
 ### SI-A7 — Slice 4: introduced
@@ -367,12 +387,17 @@ labels, and all browser navigation uses those paths. Real Sage identity and
 external metadata navigation are not connected yet.
 
 <a id="si-a8-slice-5"></a>
-### SI-A8 — Slice 5: established
+### SI-A8 — Slice 5: partially implemented
 
-Local and external references round-trip through backend ownership traversal.
-Tests cover path stability across unrelated edits, sibling reordering and host
-reconstruction; namespaces, unnamed/generated definitions, duplicate external
-crates, label changes, and explicit rename/move/delete failure.
+Ordinary local and named external references round-trip through backend
+ownership traversal. Tests cover path stability across unrelated edits,
+sibling reordering and host reconstruction, namespaces, duplicate external
+crates, label changes, and explicit rename/move/delete failure. Direct replay
+through an anonymous external impl owner is not implemented because doing so
+would require a broader external-definition lookup than the current metadata
+boundary. Invalid duplicate local definitions also use encounter-order
+recovery suffixes, so their paths are not stable under reordering. SI-A8
+therefore remains yellow.
 
 <a id="si-a9-slice-1"></a>
 ### SI-A9 — Slice 1: introduced
@@ -387,7 +412,8 @@ those interactions.
 The same behavior is backed by the real Sage workspace. Provider-demand tests
 prove that the complete local index excludes dependencies and does not request
 signatures, field types, bodies, associated values, impl candidates, or
-external metadata.
+external metadata beyond the explicitly permitted macro-resolution and
+expansion families.
 
 <a id="si-a11-slice-6"></a>
 ### SI-A11 — Slice 6: established
@@ -549,10 +575,15 @@ Anchors introduced or extended: [SI-A1](#si-a1-slice-3),
 
 Acceptance evidence:
 
-- index construction requests only local module and kind-specific membership;
+- index construction snapshots its closed set of local module and
+  kind-specific membership operation families, plus only the external metadata
+  dynamically required to resolve and expand macros whose output contributes
+  local membership;
 - expanding, filtering, and searching the returned tree perform no request;
 - signatures, field types, bodies, associated values, impl candidates, and
-  external metadata are forbidden while constructing the index and catalogs;
+  semantic external metadata are forbidden while constructing the index and
+  catalogs; every permitted external metadata read is nested under macro
+  resolution or expansion;
 - generated local symbols and provenance appear where represented;
 - dependency symbols are absent from the workspace tree and search count;
 - search sends no user text to the backend and selects the chosen row's
@@ -579,7 +610,8 @@ Acceptance evidence:
   embedded `Ty` tree;
 - reflection coverage and mutation tests prove ordinary derived fields and
   variants appear automatically, while custom symbol cross-links and bounded
-  sharing, cycle, and truncation behavior remain explicit;
+  sharing, cycle, truncation, and continuation-exhaustion behavior remain
+  explicit;
 - client expansion and formatting perform no semantic work;
 - incompleteness, truncation, and diagnostics remain explicit within returned
   products;
@@ -595,7 +627,7 @@ independently. The frontend treats paths and product identifiers as opaque;
 ownership traversal and positive product enumeration remain server
 responsibilities.
 
-Anchors established: [SI-A8](#si-a8-slice-5) and
+Anchor partially implemented: [SI-A8](#si-a8-slice-5). Anchor established:
 [SI-A15](#si-a15-slice-5).
 
 Acceptance evidence:
@@ -628,13 +660,17 @@ Acceptance evidence:
 - no promised request is omitted, including already-verified memo fetches;
 - the temporary Salsa fork emits one balanced span for every tracked-query
   invocation before memo lookup, covering execution, validation,
-  already-current reuse, nested parentage, and every termination path without
-  per-query Sage annotations;
+  already-current reuse, nested parentage, pre-fetch revision cancellation, and
+  every termination path without per-query Sage annotations; ordinary fetch
+  and accumulator graph traversal share that traced refresh path;
 - unmapped work uses the stable fallback and retains raw diagnostic payload;
 - earlier navigation transcripts gain a correlated Salsa/Sage subtree without
   changing their browser-action and API-demand structure;
 - checked transcripts sort only explicitly unordered siblings and retain raw
   ordering and debug keys as failure artifacts;
+- a focused projection test preserves sequential solver-child order while
+  canonicalizing explicitly unordered trait and normalization candidate
+  groups;
 - required and forbidden dependency assertions survive sibling scheduling
   changes; and
 - reflection is recorded before the run freezes, while serialization and
@@ -646,8 +682,27 @@ The host watches represented source files, applies edits to the same database,
 notifies the browser, reloads the current semantic URL at the new process-wide
 revision, discards all response-derived state, bootstraps a fresh directory,
 replays the current semantic URL, and compares new results and traces with
-earlier revisions. A revisions view shows exact input changes and all
-inspection runs retained for each Salsa revision.
+earlier revisions. After host reconstruction, the actor supplies the new
+authoritative Cargo workspace, selected package, and target source roots. The
+watcher replaces its non-recursive Cargo/toolchain and recursive source-tree
+watch set, including workspace/package `.cargo/config{,.toml}` directories.
+This remains correct when the command starts below the workspace root or
+`[lib].path` is nested below the package root. A revisions view shows exact
+input changes and all inspection runs retained for each Salsa revision.
+
+Live startup requires exactly one selected library target and preserves Cargo's
+distinct package and target names in the session. Reload constructs a fallible
+replacement before swapping hosts; a transient invalid manifest leaves the
+current database, revision, and watches intact and returns a structured error.
+The replacement becomes eligible for the swap only after its rustc metadata
+provider reaches `after_expansion` without diagnostics and reports readiness.
+The watcher likewise configures its initial roots before command readiness is
+published. Expected command startup failures are propagated; an occupied port
+recommends `--port`, and browser-launch failure is non-fatal.
+Replacement watches are installed before obsolete watches are removed. A
+failed replacement installation retains the prior complete set and retries
+while reporting a degraded-watcher event; failed cleanup retains the harmless
+extra old watch rather than losing the new root.
 
 Anchors established: [SI-A1](#si-a1-slice-7) and
 [SI-A13](#si-a13-slice-7).
@@ -659,6 +714,25 @@ Acceptance evidence:
 - every response is tagged with a revision ID and a mismatch forces a complete
   client reset and bootstrap before canonical path resolution;
 - input updates and full workspace reloads are distinguished honestly;
+- ambiguous multi-target startup is rejected, while explicit package selection
+  and distinct package/target names are preserved;
+- the selected-package build ignores broken unrelated workspace members and
+  retains a normal workspace-member dependency under its Cargo extern name;
+- failed reconstruction preserves the prior live host and a subsequent valid
+  manifest recovers;
+- an explicitly corrupted metadata-provider invocation fails its readiness
+  handshake and preserves the prior host, while valid keyword extern aliases
+  work and concurrent hosts own distinct temporary stubs;
+- initial watcher-configuration failure prevents command readiness, while an
+  occupied inspector port exits with a useful CLI error rather than panicking;
+- manifest-driven source-root changes replace the watch set from authoritative
+  workspace/package/source roots before subsequent source edits are observed;
+- a fake watcher verifies that reconfiguration actually removes the old
+  recursive source root and installs the new one, and Cargo/toolchain path
+  classification covers both toolchain filenames and workspace/package Cargo
+  config files;
+- injected replacement-installation and obsolete-unwatch failures prove that
+  reconfiguration never leaves the reconstructed source root uncovered;
 - bootstrap requests the complete symbol index and current product, never
   hidden products or stale lazy-branch resources;
 - a revision with no inspection request reports no semantic work; and
@@ -670,7 +744,7 @@ Acceptance evidence:
   removed by an accepted design revision.
 - [ ] Every delivery slice meets its acceptance evidence.
 - [ ] All end-state acceptance tests in the RFD pass.
-- [ ] Repository-required full validation passes.
-- [ ] The destination and built status are reflected in architecture
+- [x] Repository-required full validation passes.
+- [x] The destination and partial built status are reflected in architecture
   documentation and the build-out roadmap.
-- [ ] An LSP server is not required for completion.
+- [x] An LSP server is not required for completion.

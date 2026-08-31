@@ -16,7 +16,7 @@ between the larger outcomes.
 flowchart TD
     Db[Complete: DbDropGuard::db] --> Parse[Complete: Parse::next]
     Parse --> Docs[Complete: auditable architecture guide]
-    Docs --> Inspect[Planned: semantic inspector]
+    Docs --> Inspect[Implemented: semantic inspector]
     Parse --> ImplIndex[Planned: trait-partitioned impl discovery]
     Parse --> SolverSearch[Planned: solver search semantics]
     Inspect --> Shutdown[Next body slice: Shutdown::recv]
@@ -133,9 +133,9 @@ All architecture navigation is affected. The primary contract is the accepted
 
 ### Dependencies
 
-The completed semantic slices provide real examples and evidence. The planned
-Semantic Inspector builds on the evidence model but is not required to begin
-the documentation rewrite.
+The completed semantic slices provide real examples and evidence. The
+Semantic Inspector now builds on that evidence model and provides its
+persistent interactive review surface.
 
 ### High-level implementation plan
 
@@ -143,7 +143,7 @@ the documentation rewrite.
 2. Reshape the overview and document symbols.
 3. Convert this roadmap to cross-cutting slices.
 4. Pilot module expansion, then document the remaining phases and subsystems.
-5. Connect existing tests and snapshots; later add Semantic Inspector commands.
+5. Connect existing tests and snapshots, then add Semantic Inspector commands.
 
 ### Progress
 
@@ -154,7 +154,7 @@ plan][auditable-plan] records the completed checkpoints. The audit also pinned
 the current coarse same-file body invalidation as evidence for later
 incremental work.
 
-## Planned slice: semantic inspector and persistent edit testing
+## Implemented slice: semantic inspector and persistent edit testing
 
 ### Goal and acceptance target
 
@@ -237,8 +237,19 @@ surface they must observe is real.
 
 ### Progress
 
-**Planned.** The [Semantic Inspector RFD] is Draft; no implementation has
-started.
+**Operational, with one accepted navigation gap.** The typed actor service,
+Axum loopback server, embedded generic React client, exact shared fixture
+contract, live local/external navigation,
+derive-driven bounded reflection, temporary Salsa invocation spans, file
+watching, explicit workspace reloads, and retained revision/edit comparison
+are operational. The living design and focused evidence are in the
+[Semantic Inspector architecture chapter](../design/validation/semantic-inspector.md);
+the RFD implementation page retains the detailed slice mapping. SI-A8 remains
+partial: ordinary local and named external paths work, but replay through an
+anonymous external impl would require a broader metadata lookup than the
+current boundary, and invalid duplicate local definitions do not yet have
+reorder-stable recovery addresses. Other current evidence limitations are
+listed in that chapter.
 
 ## Planned slice: trait-partitioned impl discovery
 

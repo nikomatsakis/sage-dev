@@ -13,6 +13,20 @@ pub enum LocalAssociatedOwner<'db> {
 
 impl sage_stash::StashDirect for LocalAssociatedOwner<'_> {}
 
+impl<'db> sage_reflect::Reflect<'db> for LocalAssociatedOwner<'db> {
+    fn reflect(
+        &self,
+        context: &mut sage_reflect::ReflectionContext<'_>,
+        stash: Option<&sage_stash::Stash>,
+    ) -> sage_reflect::ValueNode {
+        let symbol: Symbol<'db> = match self {
+            LocalAssociatedOwner::Trait(symbol) => (*symbol).into(),
+            LocalAssociatedOwner::Impl(symbol) => (*symbol).into(),
+        };
+        sage_reflect::Reflect::reflect(&symbol, context, stash)
+    }
+}
+
 /// Thin enum over all item kinds. `Copy` because salsa tracked struct
 /// handles are just IDs.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, salsa::Update)]
@@ -113,6 +127,40 @@ impl<'db> From<LocalModItemSym<'db>> for Symbol<'db> {
             LocalModItemSym::MacroDef(m) => m.into(),
             LocalModItemSym::MacroInvocation(m) => m.into(),
             LocalModItemSym::Error(_) => panic!("Error items have no symbol representation"),
+        }
+    }
+}
+
+impl<'db> sage_reflect::Reflect<'db> for LocalModItemSym<'db> {
+    fn reflect(
+        &self,
+        context: &mut sage_reflect::ReflectionContext<'_>,
+        stash: Option<&sage_stash::Stash>,
+    ) -> sage_reflect::ValueNode {
+        match self {
+            LocalModItemSym::Error(span) => sage_reflect::ValueNode::variant(
+                "LocalModItemSym",
+                "Error",
+                vec![sage_reflect::ValueField::new(
+                    "0",
+                    sage_reflect::Reflect::reflect(span, context, stash),
+                )],
+            ),
+            LocalModItemSym::Function(_)
+            | LocalModItemSym::Struct(_)
+            | LocalModItemSym::Enum(_)
+            | LocalModItemSym::Trait(_)
+            | LocalModItemSym::Impl(_)
+            | LocalModItemSym::TypeAlias(_)
+            | LocalModItemSym::Const(_)
+            | LocalModItemSym::Static(_)
+            | LocalModItemSym::Mod(_)
+            | LocalModItemSym::Use(_)
+            | LocalModItemSym::MacroDef(_)
+            | LocalModItemSym::MacroInvocation(_) => {
+                let symbol: Symbol<'db> = (*self).into();
+                sage_reflect::Reflect::reflect(&symbol, context, stash)
+            }
         }
     }
 }

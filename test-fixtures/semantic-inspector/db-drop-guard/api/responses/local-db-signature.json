@@ -1,0 +1,224 @@
+{
+  "revision_id": "rev_0",
+  "request_id": "request-5",
+  "run_id": "run_2",
+  "value": {
+    "id": "signature",
+    "title": "Checked function signature",
+    "content": {
+      "kind": "group",
+      "layout": "block",
+      "children": [
+        {
+          "kind": "text",
+          "text": "Every Binder and FnSig field is reflected recursively."
+        },
+        {
+          "kind": "value",
+          "value": {
+            "kind": "record",
+            "type_name": "Binder<FnSig>",
+            "fields": [
+              {
+                "name": "value",
+                "value": {
+                  "kind": "record",
+                  "type_name": "FnSig",
+                  "fields": [
+                    {
+                      "name": "owner_generic_count",
+                      "value": {
+                        "kind": "scalar",
+                        "type_name": "u32",
+                        "value": 0
+                      }
+                    },
+                    {
+                      "name": "owner_self_ty",
+                      "value": {
+                        "kind": "variant",
+                        "enum_name": "Option",
+                        "variant_name": "Some",
+                        "fields": [
+                          {
+                            "name": "0",
+                            "value": {
+                              "kind": "shared",
+                              "identity": "ty_self",
+                              "value": {
+                                "kind": "variant",
+                                "enum_name": "Ty",
+                                "variant_name": "Adt",
+                                "fields": [
+                                  {
+                                    "name": "symbol",
+                                    "value": {
+                                      "kind": "reference",
+                                      "target": {
+                                        "path": "local/db-drop-guard/DbDropGuard",
+                                        "label": "db_drop_guard::DbDropGuard",
+                                        "presentation": {
+                                          "eyebrow": "Local struct",
+                                          "badges": []
+                                        }
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "name": "arguments",
+                                    "value": {
+                                      "kind": "sequence",
+                                      "type_name": "Slice<Ptr<Ty>>",
+                                      "items": []
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "name": "receiver",
+                      "value": {
+                        "kind": "variant",
+                        "enum_name": "Option",
+                        "variant_name": "Some",
+                        "fields": [
+                          {
+                            "name": "0",
+                            "value": {
+                              "kind": "record",
+                              "type_name": "CheckedReceiver",
+                              "fields": [
+                                {
+                                  "name": "owner_self_ty",
+                                  "value": {
+                                    "kind": "shared-reference",
+                                    "identity": "ty_self"
+                                  }
+                                },
+                                {
+                                  "name": "form",
+                                  "value": {
+                                    "kind": "variant",
+                                    "enum_name": "MethodReceiver",
+                                    "variant_name": "Ref",
+                                    "fields": [
+                                      {
+                                        "name": "mutability",
+                                        "value": {
+                                          "kind": "scalar",
+                                          "type_name": "Mutability",
+                                          "value": "Shared"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "name": "params",
+                      "value": {
+                        "kind": "sequence",
+                        "type_name": "Slice<Ptr<Ty>>",
+                        "items": []
+                      }
+                    },
+                    {
+                      "name": "ret",
+                      "value": {
+                        "kind": "variant",
+                        "enum_name": "Ty",
+                        "variant_name": "Adt",
+                        "fields": [
+                          {
+                            "name": "symbol",
+                            "value": {
+                              "kind": "reference",
+                              "target": {
+                                "path": "local/db-drop-guard/Db",
+                                "label": "db_drop_guard::Db",
+                                "presentation": {
+                                  "eyebrow": "Local struct",
+                                  "badges": []
+                                }
+                              }
+                            }
+                          },
+                          {
+                            "name": "arguments",
+                            "value": {
+                              "kind": "sequence",
+                              "type_name": "Slice<Ptr<Ty>>",
+                              "items": []
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "name": "parameter_env",
+                      "value": {
+                        "kind": "record",
+                        "type_name": "CheckedParameterEnv",
+                        "fields": [
+                          {
+                            "name": "where_clauses",
+                            "value": {
+                              "kind": "sequence",
+                              "type_name": "Slice<WherePredicate>",
+                              "items": []
+                            }
+                          },
+                          {
+                            "name": "solver_eligibility",
+                            "value": {
+                              "kind": "scalar",
+                              "type_name": "SolverEligibility",
+                              "value": "Eligible"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "name": "method_candidate_eligibility",
+                      "value": {
+                        "kind": "scalar",
+                        "type_name": "SolverEligibility",
+                        "value": "Eligible"
+                      }
+                    },
+                    {
+                      "name": "const_call_complete",
+                      "value": {
+                        "kind": "scalar",
+                        "type_name": "bool",
+                        "value": false
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "generics",
+                "value": {
+                  "kind": "sequence",
+                  "type_name": "Slice<GenericParam>",
+                  "items": []
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

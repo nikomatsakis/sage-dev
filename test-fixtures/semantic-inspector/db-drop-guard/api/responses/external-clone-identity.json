@@ -1,0 +1,13 @@
+{
+  "revision_id": "rev_0",
+  "request_id": "request-21",
+  "run_id": null,
+  "value": {
+    "id": "identity",
+    "title": "Symbol identity",
+    "content": {
+      "kind": "text",
+      "text": "external/core-1/clone/Clone/clone"
+    }
+  }
+}

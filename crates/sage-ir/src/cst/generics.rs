@@ -9,7 +9,7 @@ use crate::resolve::{Namespace, Resolution};
 use crate::span::RelativeSpan;
 use crate::symbol::Symbol;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub enum GenericParamCst<'db> {
     Type {
         name: Name<'db>,
@@ -28,7 +28,7 @@ pub enum GenericParamCst<'db> {
     },
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub enum TypeBoundCst<'db> {
     Trait(Ptr<Path<'db>>),
     Lifetime(Name<'db>),

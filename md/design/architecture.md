@@ -169,8 +169,8 @@ The architecture is meant to be reviewable at increasing depth:
 4. Anchored excerpts lead from the explanation into the load-bearing code.
 5. The [Oracle Test Harness](./oracle-test-harness.md) establishes exact
    conformance for pinned semantic slices.
-6. The planned Semantic Inspector will expose readable semantic output and
-   structured query traces from a persistent workspace.
+6. The [Semantic Inspector](./validation/semantic-inspector.md) exposes readable
+   semantic output and structured query traces from a persistent workspace.
 
 See [Validation and Inspection](./validation/README.md).
 
@@ -189,6 +189,7 @@ The semantic structure above maps to the current workspace as follows:
 | `crates/sage-ir/src/tytree/` | completed typed body representation |
 | `crates/sage-ir/src/tcx/` and `external_syms.rs` | typed external metadata boundary and tracked lowering |
 | `crates/sage-stash/` | stash storage and hashing infrastructure |
+| `crates/sage-inspector/`, `crates/sage-reflect/`, and `src/inspector.rs` | typed inspection service, protocol, structural reflection, and live semantic provider |
 
 ## Current status
 

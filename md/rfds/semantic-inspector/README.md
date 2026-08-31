@@ -1,6 +1,6 @@
 # RFD: Semantic Inspector
 
-**Status:** Draft
+**Status:** Accepted
 
 **Depends on:**
 
@@ -94,12 +94,13 @@ Inspecting mini-redis (lib) at http://127.0.0.1:<port>/
 
 The browser eagerly fetches one detail-free index of the selected target's
 represented local symbols so the complete workspace tree can be searched and
-filtered without further requests. Signatures, bodies, external metadata, and
-other semantic products remain separate and are fetched only when selected. A
-returned observation contains everything needed to render and expand that
-product; ordinary client-side rendering must not execute additional semantic
-queries. The complete runtime components and message flow appear at the start
-of [Destination design](#system-at-a-glance).
+filtered without further requests. The index may read the narrow external
+metadata needed for macro resolution and expansion; signatures, bodies, other
+external metadata, and semantic products remain separate and are fetched only
+when selected. A returned observation contains everything needed to render and
+expand that product; ordinary client-side rendering must not execute additional
+semantic queries. The complete runtime components and message flow appear at
+the start of [Destination design](#system-at-a-glance).
 
 ### Interaction mockup
 
@@ -138,6 +139,11 @@ asynchronous HTTP and event-stream boundary. A single database actor owns all
 mutable semantic state and performs synchronous Sage work serially, away from
 Axum's executor. The browser and file watcher reach that state only through a
 cloneable `InspectionClient` and its bounded actor mailbox.
+
+The host in turn owns a persistent rustc metadata provider. Startup and reload
+do not publish the host until that provider reports that `after_expansion` was
+reached without diagnostics; a provider which exits or rejects its generated
+stub is a reconstruction error, not a latent channel panic.
 
 ```mermaid
 flowchart TD
@@ -309,6 +315,9 @@ same process. The server binds to `127.0.0.1:2442` by default, serves the
 frontend's static assets, and exposes a JSON API over the typed inspection
 service. A port override supports conflicts and port `0` supports isolated
 tests. It does not support a remote bind or source mutation through HTTP.
+Expected startup failures return a clear CLI error. Bind conflicts recommend
+`--port`, while failure to launch the default browser is a warning because the
+printed URL remains usable.
 
 The API is product-oriented rather than a serialized database dump:
 
@@ -419,17 +428,23 @@ nodes requires no frontend change.
 > The URL identifies the canonical symbol path, product, top-level view, grown
 > panel, and search text. A revision mismatch discards the directory, products,
 > and every response-derived cache, bootstraps again, and replays that URL.
-> Rapid filter changes replace history; disclosure and sizing remain local.
+> Each event-stream connection checks the current revision so a notification
+> missed while disconnected cannot preserve stale state. Rapid filter changes
+> replace history; disclosure and sizing remain local.
 >
 > **Required verification:** Browser tests cover direct load, Back/Forward,
 > push-versus-replace, complete state discard and bootstrap on mismatch, URL
-> replay, and explicit fallback when the canonical path no longer resolves.
+> replay, event-stream reconnection, and explicit fallback when the canonical
+> path no longer resolves.
 
-The initial testing stack is Vitest plus React Testing Library and browser
-tests against the strict static API-fixture server. Playwright also drives a
-small real-process smoke suite against Axum. Those tools are replaceable client
-details; the exact API bytes, observable URL, JSON demand, and rendering
-contracts are not.
+The browser testing stack is Vitest plus React Testing Library against the
+strict API-fixture server. A small Rust black-box test launches the real
+command, requests the embedded routed application and representative API flow,
+and snapshots its reviewer-visible result together with actor-owned demand.
+This split follows the single reviewed bundle across both halves without
+requiring a browser binary in the Rust test environment. These tools are
+replaceable client details; the exact API bytes, observable URL, JSON demand,
+and rendering contracts are not.
 
 The [Web Application Walkthrough](./web-application.md) maps every mockup view
 through its JavaScript and API request to the semantic query which supplies it,
@@ -561,21 +576,26 @@ The main symbol tree contains represented local symbols in the selected Cargo
 target, including generated local symbols with expansion provenance. One
 symbol-index operation eagerly walks the local module and associated-item
 membership needed to return every `SymbolSummary`, its parent edge, and its
-provenance. A represented field or associated item may have its own summary,
-but the index contains no checked signatures, field types, bodies, associated
-values, or external metadata. Expanding and filtering that index is local
-browser work. External dependency symbols do not appear in this tree and are
-not included in its search count.
+provenance. Discovering generated local membership may perform the narrowly
+scoped external metadata reads required to resolve and expand a macro. A
+represented field or associated item may have its own summary, but the index
+contains no checked signatures, field types, bodies, associated values, impl
+candidates, or other external metadata. Expanding and filtering that index is
+local browser work. External dependency symbols do not appear in this tree and
+are not included in its search count.
 
 <a id="si-a9"></a>
 > **SI-A9 — Local discovery is eager but detail-free.** One operation returns
 > the complete represented local symbol index. Search and disclosure are then
 > browser-local; signatures, field types, bodies, associated values, impl
-> candidates, and external metadata remain on demand.
+> candidates, and semantic external metadata remain on demand. External
+> metadata is permitted during discovery only when it is dynamically required
+> to resolve and expand a macro whose output contributes local membership.
 >
 > **Required verification:** The index snapshot contains all represented local
-> symbols and provenance, while its demand trace forbids every semantic detail
-> operation named above.
+> symbols and provenance. Its demand trace forbids every semantic detail
+> operation named above and attributes every permitted external metadata read
+> to macro resolution or expansion.
 
 Signatures, semantic types, concrete and Typed IR, predicates, ownership
 relationships, and other inspected structures render every represented symbol
@@ -721,6 +741,11 @@ Pretty-printer snapshots test readability and stability. Exact oracle tests
 continue to compare independently emitted shared IR by textual identity. A
 pretty-printer snapshot passing cannot make an oracle mismatch pass.
 
+External navigation paths are likewise a separate projection from external
+paths in the shared oracle IR. Navigation may retain anonymous ownership and
+crate/sibling disambiguators needed to address a precise symbol; that extra
+inspector identity must not alter either oracle adapter's output.
+
 <a id="si-a14"></a>
 > **SI-A14 — Inspection evidence cannot weaken conformance.** Inspector JSON,
 > reflection snapshots, and navigation transcripts are Sage debugging
@@ -728,7 +753,8 @@ pretty-printer snapshot passing cannot make an oracle mismatch pass.
 > is compared independently by textual identity.
 >
 > **Required verification:** Inspector adapters are absent from the oracle
-> comparison path, and an inspector snapshot cannot update or filter an oracle
+> comparison path, navigation-only path detail leaves exact oracle output
+> unchanged, and an inspector snapshot cannot update or filter an oracle
 > expectation.
 
 ### Structured query traces
@@ -781,22 +807,26 @@ tree.
 Sage therefore uses a temporary Salsa fork which creates a balanced tracing
 span around every tracked-query invocation, before memo lookup and whether or
 not the function body executes. The span records execution, memo validation,
-or reuse of an already-current value. Nested queries inherit the invocation
-span as their dynamic parent. Sage semantic operations and external metadata
-reads create child spans in the same tracing context. Instrumentation is
-generated by Salsa; individual Sage query definitions require no annotations.
+reuse of an already-current value, or cancellation. Ordinary fetches and
+accumulator graph traversal share the same traced memo-refresh path. Nested
+queries inherit the invocation span as their dynamic parent. Sage semantic
+operations and external metadata reads create child spans in the same tracing
+context. Instrumentation is generated by Salsa; individual Sage query
+definitions require no annotations.
 
 <a id="si-a17"></a>
 > **SI-A17 — Salsa query spans form the execution-tree spine.** The temporary
 > Salsa fork emits one balanced span for every tracked-query invocation,
 > including memoized requests, and records whether it executed, validated, or
-> reused an already-current value. Nested queries, Sage operations, and
-> metadata reads preserve dynamic parentage through the same span context.
+> reused an already-current value, or was cancelled. Nested queries, Sage
+> operations, and metadata reads preserve dynamic parentage through the same
+> span context.
 >
-> **Required verification:** Tests cover all three dispositions, nested
-> parentage, balanced exit on every termination path, and the absence of
-> per-query Sage annotations. Stable ingredient projection and an unmapped
-> fallback remain checked; raw Salsa keys remain diagnostic only.
+> **Required verification:** Tests cover all four dispositions, ordinary and
+> accumulator refreshes, nested parentage, balanced exit on every termination
+> path, and the absence of per-query Sage annotations. Stable ingredient
+> projection and an unmapped fallback remain checked; raw Salsa keys remain
+> diagnostic only.
 
 The tree must remain usable for deep executions. Every branch is independently
 collapsible, with expand-all and collapse-all actions. The execution pane can
@@ -826,6 +856,12 @@ stable code-generated ingredient name when available. Raw arrival order,
 timing, and implementation-specific Salsa debug keys remain failure artifacts,
 not golden output. A trace containing an unknown fallback ingredient cannot
 claim a closed exact dependency contract until that family is mapped.
+Salsa request spans are sequential unless a semantic producer supplies a
+different enclosing group. The solver uses balanced producer-authored spans to
+mark a solver request sequential and concurrently polled trait and
+normalization candidates unordered. Async semantic groups are active only for
+one future poll so a pending candidate closes its dynamic span before a sibling
+is polled. Trace assembly never guesses ordering from query-name text.
 
 <a id="si-a12"></a>
 > **SI-A12 — Exact evidence does not pin non-semantic scheduling.** Reviewed
@@ -873,8 +909,9 @@ database.
 <a id="si-a13"></a>
 > **SI-A13 — Revisions record edits and demanded work separately.** Advancing
 > an input revision does not imply that a query ran. Runs are attached only to
-> actual user or reload demand, and a workspace reload receives a new
-> process-wide revision ID.
+> actual user or reload demand. Every retained revision identifies its cause;
+> a workspace reload receives a new process-wide revision ID and links back to
+> the last revision of the database generation it replaced.
 >
 > **Required verification:** One retained host demonstrates revisions with
 > zero runs, multiple runs in one revision, relevant and unrelated edits, and
@@ -911,13 +948,13 @@ rewrite actual responses. Later slices replace scripted values with real Sage
 operations over the Rust source fixture one resource at a time.
 
 From Slice 2 onward, a small real-process suite starts `cargo sage inspect`
-with port `0`, waits for its machine-readable application URL, and drives the
-embedded application with Playwright. It covers the deployment seam—assets,
-bootstrap, URL routing, and one representative semantic navigation—rather
-than duplicating the complete frontend suite. Its combined
-navigation transcript correlates visible results with server-owned API,
-provider, and later Salsa/Sage evidence. `GET run(...)` appears explicitly as
-a retained-record request with no semantic work.
+with port `0`, waits for its machine-readable application URL, requests the
+embedded routed application, and drives one representative semantic API flow.
+It covers the deployment seam—assets, direct URL routing, the actual Axum
+boundary, and actor logs—rather than duplicating the complete fixture-backed
+browser suite. Its combined transcript correlates reviewed result fields with
+server-owned provider demand. `GET run(...)` appears explicitly as a
+retained-record request with no semantic work.
 
 Tests which claim live incrementality must retain one host across all
 revisions; reconstructing the host between runs is not valid evidence.
@@ -928,9 +965,10 @@ revisions; reconstructing the host between runs is not valid evidence.
 loopback web application. The browser downloads and searches the detail-free
 local symbol index, fetches supported products for the selected identity on
 demand, expands returned reflected structures, and follows semantic
-references. Tests call the typed service directly; a small Playwright suite
-verifies the real-process seam, while the larger browser suite consumes the
-same exact API fixture used by Axum contract tests.
+references. Typed-service and Axum contract tests verify the backend; a small
+real-process test verifies embedded assets and routed API demand, while the
+browser suite consumes the same exact API fixture used by those contract
+tests.
 
 The reusable service must not depend on terminal state, Clap types, JSON-RPC,
 or LSP position encodings. A future LSP server can own the same host, apply
@@ -980,24 +1018,24 @@ The completed RFD must include:
 - navigation from an external child to its parent and back to the original
   local symbol;
 - an Axum integration test proving that loading the complete symbol index does
-  not request checked signatures, field types, bodies, associated values, or
-  external metadata and that selecting a product fetches only that product;
+  not request checked signatures, field types, bodies, associated values,
+  impl discovery, or external metadata beyond the explicitly permitted macro
+  families, and that selecting a product fetches only that product;
 - exact Snapbox comparisons of the actual Axum status, contractual headers,
   JSON bytes, and provider demand against one reviewed API fixture bundle;
 - browser tests against a strict static server which serves that same bundle,
   rejects unknown routes, and prove product-tab construction, URL navigation,
   Back/Forward, and routed reload behavior;
-- a black-box navigation transcript produced by a real
-  `cargo sage inspect` process with port `0`, combining the
-  reviewer-visible result with the exact semantic API and provider demand for
-  each browser action;
+- a black-box transcript produced by a real `cargo sage inspect` process with
+  port `0`, combining reviewer-visible result fields with the exact semantic
+  API and provider demand for the representative flow;
 - product-catalog snapshots proving that local and external product lists are
   server-authored and that catalog construction reads none of its products;
 - an invented symbol kind and product identifier rendered without a
   corresponding frontend case;
-- canonical-path round trips across unrelated edits and host reconstruction,
-  including unnamed/generated and duplicate-external cases and explicit
-  failure after rename, movement, or deletion;
+- canonical-path round trips across unrelated edits, sibling reordering, and
+  host reconstruction, including unnamed/generated ownership and external
+  crate disambiguation, plus explicit failure after rename or a forged path;
 - one revision ID on every success and error, plus complete client-state
   discard, bootstrap, and URL replay on mismatch;
 - derive-coverage snapshots proving ordinary fields and variants appear
@@ -1005,10 +1043,11 @@ The completed RFD must include:
   product-specific serialization;
 - proof that rendering and client-side expansion of an owned observation add
   no semantic operations;
-- explicit ambiguity, not-found, invalid-product, truncation, and
-  incomplete-child results;
-- one representative real-process browser flow across the embedded assets and
-  actual Axum boundary;
+- explicit not-found, invalid-product, truncation, and incomplete-child
+  results;
+- one representative real-process deployment/API flow across the embedded
+  assets and actual Axum boundary, paired with the same fixture-backed browser
+  scenario;
 - a complete structured query tree rooted in balanced Salsa invocation spans,
   covering execution, validation, already-current reuse, nested parentage,
   stable unmapped fallback, and raw diagnostic data retained only as a failure
@@ -1022,9 +1061,8 @@ The completed RFD must include:
 - comparison of aligned runs across revisions without presenting temporal
   correlation as an unrecorded invalidation edge;
 - required and forbidden structured trace events;
-- after slice 6, the same navigation transcript enriched with the correlated
-  Salsa/Sage operation tree and execution or reuse disposition, rather than a
-  separate unconnected trace fixture; and
+- the representative product's retained run tree, including correlated
+  Salsa/Sage operations and execution or reuse disposition; and
 - a test distinguishing an input update from a workspace reload.
 
 The impl-index edit-invalidation matrix in the Trait Impl Candidate Discovery

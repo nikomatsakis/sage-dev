@@ -234,7 +234,7 @@ cargo test -p sage-test-harness items_in_a_file_backed_module_use_that_module_as
 ### Related roadmap slices
 
 [Semantic inspector and persistent edit
-testing](../../implementation/roadmap.md#planned-slice-semantic-inspector-and-persistent-edit-testing)
+testing](../../implementation/roadmap.md#implemented-slice-semantic-inspector-and-persistent-edit-testing)
 will expose parsed symbols and edit-invalidation evidence. Future mini-redis
 application slices extend grammar coverage only as required by an accepted
 vertical target.
