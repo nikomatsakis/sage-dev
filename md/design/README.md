@@ -43,3 +43,9 @@ When an RFD completes, its destination anchors and verification requirements
 are promoted into these chapters. The architecture guide is therefore the
 living reference; the RFD remains the historical design and implementation
 record.
+
+This organization was shaped in part by Kari Wilhelm's ideas for **Anchor
+Driven Development**: identify the small, load-bearing claims from which the
+rest of a design follows, give them stable names, and connect them to
+inspectable evidence. Those ideas helped guide the restructuring of this book.
+Many thanks to Kari for articulating the approach.
