@@ -46,6 +46,7 @@
   - [rustc Macro Expansion Ordering](./design/research/rustc-macro-expansion-ordering.md)
   - [rustc macro_rules](./design/research/rustc-macro-rules.md)
   - [rustc Name Resolution](./design/research/rustc-name-resolution.md)
+  - [rustc Opaque Types and the New Trait Solver](./design/research/rustc-opaque-types.md)
   - [Trait Solver Search](./design/research/trait-solver-search.md)
 
 # RFDs
