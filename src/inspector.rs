@@ -866,9 +866,6 @@ fn normalize_value_continuations(
                 normalize_value_continuations(item, source, canonical_handles, pages);
             }
         }
-        ValueNode::Shared { value, .. } => {
-            normalize_value_continuations(value, source, canonical_handles, pages)
-        }
         ValueNode::Truncated {
             continuation: Some(handle),
             ..
@@ -889,9 +886,7 @@ fn normalize_value_continuations(
             };
             *handle = format!("continuation-{index}");
         }
-        ValueNode::Scalar { .. }
-        | ValueNode::Reference { .. }
-        | ValueNode::SharedReference { .. } => {}
+        ValueNode::Scalar { .. } | ValueNode::Reference { .. } | ValueNode::Cycle { .. } => {}
         ValueNode::Truncated {
             continuation: None, ..
         } => {}

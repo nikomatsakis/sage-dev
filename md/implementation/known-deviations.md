@@ -31,7 +31,7 @@ close it. The affected architecture chapter links back to the entry from its
 - **Closure evidence:** Replace the byte buffer with storage whose base and
   entry layout guarantee `align_of::<T>()` for every allocation (or constrain
   and enforce the admitted alignments), then cover scalar and slice allocation,
-  growth, cloning, hash-cons lookup, mutation, and cross-stash copy with
+  growth, cloning, hash-cons lookup, and cross-stash copy with
   deliberately over-aligned values under Miri.
 
 ### KD-3: Derive helper attributes do not produce the promised warning

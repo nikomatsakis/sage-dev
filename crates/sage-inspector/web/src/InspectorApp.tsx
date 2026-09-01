@@ -378,8 +378,7 @@ export function ValueTree({ node, navigateSymbol, label }: { node: ValueNode; na
     case "sequence": return <TreeContainer label={label} title={`${node.type_name} [${node.items.length}]`}>{node.items.map((item, index) => <ValueTree key={index} label={String(index)} node={item} navigateSymbol={navigateSymbol} />)}</TreeContainer>;
     case "scalar": return <div className="value-leaf"><span className="field-name">{label}</span><span className="type-name">{node.type_name}</span><code>{String(node.value)}</code></div>;
     case "reference": return <div className="value-leaf"><span className="field-name">{label}</span><span className="type-name">Symbol</span><SymbolLink target={node.target} navigateSymbol={navigateSymbol} /></div>;
-    case "shared": return <TreeContainer label={label} title={`shared ${node.identity}`}><ValueTree node={node.value} navigateSymbol={navigateSymbol} /></TreeContainer>;
-    case "shared-reference": return <div className="value-leaf"><span className="field-name">{label}</span><code>↩ {node.identity}</code></div>;
+    case "cycle": return <div className="value-leaf"><span className="field-name">{label}</span><span className="type-name">cycle</span><code>↩ {node.identity}</code></div>;
     case "truncated": return <ContinuationNode node={node} label={label} navigateSymbol={navigateSymbol} />;
     default: return assertNever(node);
   }

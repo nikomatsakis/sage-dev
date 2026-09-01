@@ -74,8 +74,9 @@ example_fn_body
 
 The method imports the signature, installs generic/value bindings and the
 solver environment, asynchronously checks the body expression, relates it to
-the declared return type, finalizes inference and obligations, resolves all
-types, and freezes the result.
+the declared return type, and finalizes inference and obligations. Completion
+then resolves and structurally copies the working tree into a fresh output
+stash before freezing the result.
 
 ## Construction
 
@@ -89,8 +90,14 @@ Inference operations use child versions transactionally: speculative
 equalities collapse into their parent only after the whole operation succeeds.
 Trait operations cross a canonical Salsa boundary and import responses back
 into the caller. Finalization applies fallback, retries woken obligations,
-runs a mandatory terminal obligation pass, and asserts quiescence before
-constructing `CheckedBody`.
+runs a mandatory terminal obligation pass, and asserts quiescence. A final
+copy consults the settled egraph for every type edge and constructs
+`CheckedBody` in a separate append-only stash; the transient inference stash
+is never rewritten into an apparent result.
+
+```{anchor}
+finalize_typed_body_into_fresh_stash
+```
 
 <a id="body-a3"></a>
 > **BODY-A3 — Speculation is isolated and completion is quiescent.** Candidate

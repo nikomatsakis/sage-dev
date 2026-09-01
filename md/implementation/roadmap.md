@@ -214,7 +214,8 @@ operation surface they must observe exists.
    local symbol index computed from a checked-in Cargo sample project.
 2. Add real source, concrete, signature, body, and diagnostic products through
    derive-driven structural reflection, with custom implementations only for
-   symbol links, spans, stashed values, sharing, cycles, and limits.
+   symbol links, spans, stashed values, transparent arena projection, cycle
+   guards, and limits.
 3. Activate canonical local/external navigation and dependency metadata.
 4. Temporarily fork Salsa to add balanced spans for every tracked-query
    invocation before memo lookup, then expose the complete execution tree.

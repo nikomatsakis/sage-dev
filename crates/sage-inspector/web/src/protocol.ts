@@ -102,8 +102,7 @@ export type ValueNode =
   | { kind: "sequence"; type_name: string; items: ValueNode[] }
   | { kind: "scalar"; type_name: string; value: null | boolean | number | string }
   | { kind: "reference"; target: SymbolReference }
-  | { kind: "shared"; identity: string; value: ValueNode }
-  | { kind: "shared-reference"; identity: string }
+  | { kind: "cycle"; identity: string }
   | { kind: "truncated"; summary: string; continuation?: string | null };
 
 export interface ValueField {

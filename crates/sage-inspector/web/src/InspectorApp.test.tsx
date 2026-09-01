@@ -67,6 +67,20 @@ describe("generic rendering components", () => {
     expect(screen.queryByRole("button", { name: "Continue…" })).not.toBeInTheDocument();
   });
 
+  it("renders an explicit marker for recursive stash reentry", () => {
+    render(
+      <ValueTree
+        label="referent"
+        node={{ kind: "cycle", identity: "stash-0-ptr:Ty:7" }}
+        navigateSymbol={() => {}}
+      />,
+    );
+
+    expect(screen.getByText("referent")).toBeVisible();
+    expect(screen.getByText("cycle")).toBeVisible();
+    expect(screen.getByText("↩ stash-0-ptr:Ty:7")).toBeVisible();
+  });
+
   it("encodes canonical symbol paths as opaque URL components", () => {
     expect(symbolHref("local/example/impl Foo/bar", "typed-ir")).toBe(
       "/symbols/local%2Fexample%2Fimpl%20Foo%2Fbar/typed-ir",

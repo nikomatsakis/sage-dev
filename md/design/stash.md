@@ -46,6 +46,33 @@ tree traversal.
 > `AllocStashData` implementations receive the same coverage as handwritten
 > implementations.
 
+Allocation may grow the arena, but it never changes an existing entry.
+Algorithms which need mutable state keep that state outside the stash and
+publish a result by structurally copying it into a fresh stash. In particular,
+body inference records type equalities in its egraph; completion resolves each
+type while rebuilding the Typed IR, rather than overwriting inference-variable
+entries which may already participate in hash-consing.
+
+```{anchor}
+finalize_typed_body_into_fresh_stash
+```
+
+This is the immutability consequence of
+[D2](./decisions.md#d2-stash-for-type-level-interning).
+
+<a id="stash-a5"></a>
+> **STASH-A5 — Allocated entries are immutable.** `Stash` is append-only:
+> `alloc` and `alloc_slice` may add entries, but safe code cannot mutate a
+> `Ptr<T>` or `Slice<T>` allocation after it has been interned. Transient
+> inference state is finalized by resolving and copying the completed value
+> into a fresh output stash.
+>
+> **Required verification:** The public stash API exposes no mutable indexing
+> or mutable entry access; a focused finalization test proves that the working
+> stash retains its inference-variable node while the separately owned output
+> contains only its resolved type; completed-body tests reject every surviving
+> inference variable.
+
 `Stashed<T>` pairs a stash with a root value and precomputes a 128-bit
 structural fingerprint by following that root. Equality, ordering, hashing,
 and `salsa::Update` use the fingerprint. The fingerprint is deterministic for
@@ -123,9 +150,11 @@ fingerprint only prevents an equal output from propagating further. See
 
 ### Current frontier and evidence
 
-Hash-consed values/slices, collision handling, deterministic rooted
-fingerprints, cross-stash copying, and Salsa updates are operational across
-CST, signatures, solver values, and Typed IR. Focused evidence includes:
+Append-only hash-consed values/slices, collision handling, deterministic
+rooted fingerprints, cross-stash copying, and Salsa updates are operational
+across CST, signatures, solver values, and Typed IR. Body completion now
+rebuilds settled inference output into a fresh stash. Focused evidence
+includes:
 
 - **[STASH-A1](#stash-a1):** `cross_stash_ptr_wrong_type`,
   `cross_stash_ptr_same_type_panics_in_debug`,
@@ -138,8 +167,14 @@ CST, signatures, solver values, and Typed IR. Focused evidence includes:
   `stashed_ne_different_content_fingerprint`,
   `stashed_hash_consistent_with_eq`, `stashed_ord_consistent_with_eq`,
   `stashed_eq_compound_dag`, and `fingerprint_deterministic`.
+- **[STASH-A5](#stash-a5):** `body_finalization_resolves_types_into_a_fresh_stash`
+  retains the inference node in its append-only working stash while inspecting
+  the resolved type in a separately owned completed body. Absence of
+  `IndexMut` and mutable-entry methods makes the prohibition an API property.
 
-Run them with `cargo test -p sage-stash`.
+Run the storage tests with `cargo test -p sage-stash` and the finalization
+boundary with
+`cargo test -p sage-ir body_finalization_resolves_types_into_a_fresh_stash`.
 
 ### Current limitations
 

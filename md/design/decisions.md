@@ -44,6 +44,13 @@ the explicit structural-copy APIs: a handle never acquires database-global
 meaning and must not be interpreted by another stash merely because its
 numeric index matches.
 
+A stash grows by allocating new hash-consed entries, but an allocated entry is
+immutable. Transient algorithms such as inference keep mutation in separate
+state. When their result is ready to cross a semantic query boundary, they
+resolve and structurally copy it into a fresh stash rather than rewriting
+arena entries in place. This preserves the content-addressed meaning of every
+handle and makes a completed stash an acyclic value graph by construction.
+
 ## D3: Tree-sitter for parsing
 
 We use tree-sitter-rust for parsing rather than writing a hand-rolled parser.

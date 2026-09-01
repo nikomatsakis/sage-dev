@@ -164,10 +164,9 @@ fn first_external_reference(value: &ValueNode) -> Option<&SymbolReference> {
             .iter()
             .find_map(|field| first_external_reference(&field.value)),
         ValueNode::Sequence { items, .. } => items.iter().find_map(first_external_reference),
-        ValueNode::Shared { value, .. } => first_external_reference(value),
         ValueNode::Scalar { .. }
         | ValueNode::Reference { .. }
-        | ValueNode::SharedReference { .. }
+        | ValueNode::Cycle { .. }
         | ValueNode::Truncated { .. } => None,
     }
 }
@@ -181,10 +180,7 @@ fn contains_reference_label(value: &ValueNode, label: &str) -> bool {
         ValueNode::Sequence { items, .. } => items
             .iter()
             .any(|item| contains_reference_label(item, label)),
-        ValueNode::Shared { value, .. } => contains_reference_label(value, label),
-        ValueNode::Scalar { .. }
-        | ValueNode::SharedReference { .. }
-        | ValueNode::Truncated { .. } => false,
+        ValueNode::Scalar { .. } | ValueNode::Cycle { .. } | ValueNode::Truncated { .. } => false,
     }
 }
 
@@ -256,12 +252,8 @@ fn value_shape(node: &ValueNode) -> String {
             ValueNode::Reference { target } => {
                 output.push_str(&format!("{padding}reference {}\n", target.path));
             }
-            ValueNode::Shared { value, .. } => {
-                output.push_str(&format!("{padding}shared\n"));
-                write(value, indent + 1, output);
-            }
-            ValueNode::SharedReference { .. } => {
-                output.push_str(&format!("{padding}shared-reference\n"));
+            ValueNode::Cycle { identity } => {
+                output.push_str(&format!("{padding}cycle {identity}\n"));
             }
             ValueNode::Truncated { summary, .. } => {
                 output.push_str(&format!("{padding}truncated {summary}\n"));
@@ -463,163 +455,146 @@ fn real_symbol_index_is_complete_local_and_detail_free() {
                 "concrete-ir" => expect_test::expect![[r#"
                     record Stashed
                       .root
-                        shared
-                          record FnCstData
-                            .attrs
-                              shared
-                                sequence slice [0]
-                            .name
-                              scalar Name
-                            .generics
-                              shared
-                                sequence slice [0]
-                            .params
-                              shared
-                                sequence slice [1]
-                                  record ParamCst
-                                    .name
-                                      variant Option::Some
-                                        .0
-                                          scalar Name
-                                    .ty
-                                      shared
-                                        record TypeCst
-                                          .kind
-                                            variant TypeCstKind::Infer
-                                          .span
-                                            record RelativeSpan
-                                              .start
-                                                scalar u32
-                                              .end
-                                                scalar u32
-                                    .receiver
-                                      variant Option::Some
-                                        .0
-                                          variant ReceiverCst::Ref
-                                            .mutability
-                                              variant Mutability::Shared
-                                            .lifetime
-                                              variant Option::None
+                        record FnCstData
+                          .attrs
+                            sequence slice [0]
+                          .name
+                            scalar Name
+                          .generics
+                            sequence slice [0]
+                          .params
+                            sequence slice [1]
+                              record ParamCst
+                                .name
+                                  variant Option::Some
+                                    .0
+                                      scalar Name
+                                .ty
+                                  record TypeCst
+                                    .kind
+                                      variant TypeCstKind::Infer
                                     .span
                                       record RelativeSpan
                                         .start
                                           scalar u32
                                         .end
                                           scalar u32
-                            .ret
-                              variant Option::Some
-                                .0
-                                  shared
-                                    record TypeCst
-                                      .kind
-                                        variant TypeCstKind::Path
+                                .receiver
+                                  variant Option::Some
+                                    .0
+                                      variant ReceiverCst::Ref
+                                        .mutability
+                                          variant Mutability::Shared
+                                        .lifetime
+                                          variant Option::None
+                                .span
+                                  record RelativeSpan
+                                    .start
+                                      scalar u32
+                                    .end
+                                      scalar u32
+                          .ret
+                            variant Option::Some
+                              .0
+                                record TypeCst
+                                  .kind
+                                    variant TypeCstKind::Path
+                                      .0
+                                        variant Path::Relative
                                           .0
-                                            shared
-                                              variant Path::Relative
-                                                .0
-                                                  record PathSegment
-                                                    .name
-                                                      scalar Name
-                                                    .type_args
-                                                      shared
-                                                        sequence slice [0]
-                                                    .span
-                                                      record RelativeSpan
-                                                        .start
-                                                          scalar u32
-                                                        .end
-                                                          scalar u32
-                                                .1
-                                                  shared
-                                                    sequence slice [0]
-                                      .span
-                                        record RelativeSpan
-                                          .start
-                                            scalar u32
-                                          .end
-                                            scalar u32
-                            .body
-                              variant Option::Some
-                                .0
-                                  shared
-                                    record ExprCst
-                                      .kind
-                                        variant ExprCstKind::Block
-                                          .0
-                                            shared
-                                              sequence slice [0]
+                                            record PathSegment
+                                              .name
+                                                scalar Name
+                                              .type_args
+                                                sequence slice [0]
+                                              .span
+                                                record RelativeSpan
+                                                  .start
+                                                    scalar u32
+                                                  .end
+                                                    scalar u32
                                           .1
-                                            variant Option::Some
-                                              .0
-                                                shared
-                                                  record ExprCst
-                                                    .kind
-                                                      variant ExprCstKind::MethodCall
-                                                        .0
-                                                          shared
+                                            sequence slice [0]
+                                  .span
+                                    record RelativeSpan
+                                      .start
+                                        scalar u32
+                                      .end
+                                        scalar u32
+                          .body
+                            variant Option::Some
+                              .0
+                                record ExprCst
+                                  .kind
+                                    variant ExprCstKind::Block
+                                      .0
+                                        sequence slice [0]
+                                      .1
+                                        variant Option::Some
+                                          .0
+                                            record ExprCst
+                                              .kind
+                                                variant ExprCstKind::MethodCall
+                                                  .0
+                                                    record ExprCst
+                                                      .kind
+                                                        variant ExprCstKind::Field
+                                                          .0
                                                             record ExprCst
                                                               .kind
-                                                                variant ExprCstKind::Field
+                                                                variant ExprCstKind::Path
                                                                   .0
-                                                                    shared
-                                                                      record ExprCst
-                                                                        .kind
-                                                                          variant ExprCstKind::Path
-                                                                            .0
-                                                                              shared
-                                                                                variant Path::Anchored
-                                                                                  .0
-                                                                                    record PathAnchor
-                                                                                      .kind
-                                                                                        variant PathAnchorKind::Self_
-                                                                                      .span
-                                                                                        record RelativeSpan
-                                                                                          .start
-                                                                                            scalar u32
-                                                                                          .end
-                                                                                            scalar u32
-                                                                                  .1
-                                                                                    shared-reference
-                                                                        .span
-                                                                          record RelativeSpan
-                                                                            .start
-                                                                              scalar u32
-                                                                            .end
-                                                                              scalar u32
-                                                                  .1
-                                                                    scalar Name
+                                                                    variant Path::Anchored
+                                                                      .0
+                                                                        record PathAnchor
+                                                                          .kind
+                                                                            variant PathAnchorKind::Self_
+                                                                          .span
+                                                                            record RelativeSpan
+                                                                              .start
+                                                                                scalar u32
+                                                                              .end
+                                                                                scalar u32
+                                                                      .1
+                                                                        sequence slice [0]
                                                               .span
                                                                 record RelativeSpan
                                                                   .start
                                                                     scalar u32
                                                                   .end
                                                                     scalar u32
-                                                        .1
-                                                          scalar Name
-                                                        .2
-                                                          shared
-                                                            sequence slice [0]
-                                                    .span
-                                                      record RelativeSpan
-                                                        .start
-                                                          scalar u32
-                                                        .end
-                                                          scalar u32
-                                      .span
-                                        record RelativeSpan
-                                          .start
-                                            scalar u32
-                                          .end
-                                            scalar u32
-                            .where_clauses
-                              shared
-                                sequence slice [0]
-                            .span
-                              record RelativeSpan
-                                .start
-                                  scalar u32
-                                .end
-                                  scalar u32
+                                                          .1
+                                                            scalar Name
+                                                      .span
+                                                        record RelativeSpan
+                                                          .start
+                                                            scalar u32
+                                                          .end
+                                                            scalar u32
+                                                  .1
+                                                    scalar Name
+                                                  .2
+                                                    sequence slice [0]
+                                              .span
+                                                record RelativeSpan
+                                                  .start
+                                                    scalar u32
+                                                  .end
+                                                    scalar u32
+                                  .span
+                                    record RelativeSpan
+                                      .start
+                                        scalar u32
+                                      .end
+                                        scalar u32
+                          .where_clauses
+                            sequence slice [0]
+                          .span
+                            record RelativeSpan
+                              .start
+                                scalar u32
+                              .end
+                                scalar u32
                 "#]].assert_eq(&shape),
                 "signature" => expect_test::expect![[r#"
                     record Stashed
@@ -632,37 +607,37 @@ fn real_symbol_index_is_complete_local_and_detail_free() {
                               .owner_self_ty
                                 variant Option::Some
                                   .0
-                                    shared
-                                      variant Ty::Adt
-                                        .0
-                                          reference local/db_drop_guard/type-struct-DbDropGuard
-                                        .1
-                                          shared
-                                            sequence slice [0]
+                                    variant Ty::Adt
+                                      .0
+                                        reference local/db_drop_guard/type-struct-DbDropGuard
+                                      .1
+                                        sequence slice [0]
                               .receiver
                                 variant Option::Some
                                   .0
                                     record CheckedReceiver
                                       .owner_self_ty
-                                        shared-reference
+                                        variant Ty::Adt
+                                          .0
+                                            reference local/db_drop_guard/type-struct-DbDropGuard
+                                          .1
+                                            sequence slice [0]
                                       .form
                                         variant MethodReceiver::Ref
                                           .mutability
                                             variant Mutability::Shared
                               .params
-                                shared-reference
+                                sequence slice [0]
                               .ret
-                                shared
-                                  variant Ty::Adt
-                                    .0
-                                      reference local/db_drop_guard/type-struct-Db
-                                    .1
-                                      shared-reference
+                                variant Ty::Adt
+                                  .0
+                                    reference local/db_drop_guard/type-struct-Db
+                                  .1
+                                    sequence slice [0]
                               .parameter_env
                                 record CheckedParameterEnv
                                   .where_clauses
-                                    shared
-                                      sequence slice [0]
+                                    sequence slice [0]
                                   .solver_eligibility
                                     variant SolverEligibility::Eligible
                               .method_candidate_eligibility
@@ -670,180 +645,187 @@ fn real_symbol_index_is_complete_local_and_detail_free() {
                               .const_call_complete
                                 scalar bool
                           .generics
-                            shared
-                              sequence slice [0]
+                            sequence slice [0]
                 "#]].assert_eq(&shape),
                 "typed-ir" => expect_test::expect![[r#"
                     record CheckedBody
                       .body
                         record Stashed
                           .root
-                            shared
-                              record TyBodyData
-                                .root
-                                  shared
-                                    record TyExpr
-                                      .data
-                                        variant TyExprData::Block
+                            record TyBodyData
+                              .root
+                                record TyExpr
+                                  .data
+                                    variant TyExprData::Block
+                                      .0
+                                        sequence slice [0]
+                                      .1
+                                        variant Option::Some
                                           .0
-                                            shared
-                                              sequence slice [0]
-                                          .1
-                                            variant Option::Some
-                                              .0
-                                                shared
-                                                  record TyExpr
-                                                    .data
-                                                      variant TyExprData::ResolvedCall
-                                                        .0
-                                                          record ResolvedCallTarget
-                                                            .function
-                                                              reference external/core-dd2c57927e223d81/module-clone-0/trait-Clone-0/fn-clone-0
-                                                            .dispatch
-                                                              variant CallDispatch::StaticTrait
-                                                                .self_ty
-                                                                  shared
-                                                                    variant Ty::Adt
-                                                                      .0
-                                                                        reference local/db_drop_guard/type-struct-Db
-                                                                      .1
-                                                                        shared
-                                                                          sequence slice [0]
-                                                                .trait_ref
-                                                                  record TraitRef
-                                                                    .trait_sym
-                                                                      reference external/core-dd2c57927e223d81/module-clone-0/trait-Clone-0
-                                                                    .args
-                                                                      shared-reference
-                                                            .owner_type_args
-                                                              shared
-                                                                sequence slice [1]
-                                                                  shared-reference
-                                                            .method_type_args
-                                                              shared-reference
-                                                        .1
-                                                          shared
-                                                            sequence slice [1]
-                                                              shared
-                                                                record TyExpr
-                                                                  .data
-                                                                    variant TyExprData::Ref
-                                                                      .0
-                                                                        shared
-                                                                          record TyExpr
-                                                                            .data
-                                                                              variant TyExprData::Field
-                                                                                .0
-                                                                                  shared
-                                                                                    record TyExpr
-                                                                                      .data
-                                                                                        variant TyExprData::Deref
-                                                                                          .0
-                                                                                            shared
-                                                                                              record TyExpr
-                                                                                                .data
-                                                                                                  variant TyExprData::Path
-                                                                                                    .0
-                                                                                                      variant PathResolution::Local
-                                                                                                        .0
-                                                                                                          record LocalId
-                                                                                                            .0
-                                                                                                              scalar u32
-                                                                                                .ty
-                                                                                                  shared
-                                                                                                    variant Ty::Ref
-                                                                                                      .0
-                                                                                                        shared
-                                                                                                          variant Ty::Adt
-                                                                                                            .0
-                                                                                                              reference local/db_drop_guard/type-struct-DbDropGuard
-                                                                                                            .1
-                                                                                                              shared-reference
-                                                                                                      .1
-                                                                                                        variant Mutability::Shared
-                                                                                                      .2
-                                                                                                        variant Lifetime::Dummy
-                                                                                                .span
-                                                                                                  record RelativeSpan
-                                                                                                    .start
-                                                                                                      scalar u32
-                                                                                                    .end
-                                                                                                      scalar u32
-                                                                                      .ty
-                                                                                        shared-reference
-                                                                                      .span
-                                                                                        record RelativeSpan
-                                                                                          .start
-                                                                                            scalar u32
-                                                                                          .end
-                                                                                            scalar u32
-                                                                                .1
-                                                                                  record ResolvedField
-                                                                                    .owner
-                                                                                      variant FieldOwner::Struct
+                                            record TyExpr
+                                              .data
+                                                variant TyExprData::ResolvedCall
+                                                  .0
+                                                    record ResolvedCallTarget
+                                                      .function
+                                                        reference external/core-dd2c57927e223d81/module-clone-0/trait-Clone-0/fn-clone-0
+                                                      .dispatch
+                                                        variant CallDispatch::StaticTrait
+                                                          .self_ty
+                                                            variant Ty::Adt
+                                                              .0
+                                                                reference local/db_drop_guard/type-struct-Db
+                                                              .1
+                                                                sequence slice [0]
+                                                          .trait_ref
+                                                            record TraitRef
+                                                              .trait_sym
+                                                                reference external/core-dd2c57927e223d81/module-clone-0/trait-Clone-0
+                                                              .args
+                                                                sequence slice [0]
+                                                      .owner_type_args
+                                                        sequence slice [1]
+                                                          variant Ty::Adt
+                                                            .0
+                                                              reference local/db_drop_guard/type-struct-Db
+                                                            .1
+                                                              sequence slice [0]
+                                                      .method_type_args
+                                                        sequence slice [0]
+                                                  .1
+                                                    sequence slice [1]
+                                                      record TyExpr
+                                                        .data
+                                                          variant TyExprData::Ref
+                                                            .0
+                                                              record TyExpr
+                                                                .data
+                                                                  variant TyExprData::Field
+                                                                    .0
+                                                                      record TyExpr
+                                                                        .data
+                                                                          variant TyExprData::Deref
+                                                                            .0
+                                                                              record TyExpr
+                                                                                .data
+                                                                                  variant TyExprData::Path
+                                                                                    .0
+                                                                                      variant PathResolution::Local
+                                                                                        .0
+                                                                                          record LocalId
+                                                                                            .0
+                                                                                              scalar u32
+                                                                                .ty
+                                                                                  variant Ty::Ref
+                                                                                    .0
+                                                                                      variant Ty::Adt
                                                                                         .0
                                                                                           reference local/db_drop_guard/type-struct-DbDropGuard
-                                                                                    .index
+                                                                                        .1
+                                                                                          sequence slice [0]
+                                                                                    .1
+                                                                                      variant Mutability::Shared
+                                                                                    .2
+                                                                                      variant Lifetime::Dummy
+                                                                                .span
+                                                                                  record RelativeSpan
+                                                                                    .start
                                                                                       scalar u32
-                                                                            .ty
-                                                                              shared-reference
-                                                                            .span
-                                                                              record RelativeSpan
-                                                                                .start
-                                                                                  scalar u32
-                                                                                .end
-                                                                                  scalar u32
-                                                                      .1
-                                                                        variant Mutability::Shared
-                                                                  .ty
-                                                                    shared
-                                                                      variant Ty::Ref
-                                                                        .0
-                                                                          shared-reference
-                                                                        .1
-                                                                          variant Mutability::Shared
-                                                                        .2
-                                                                          variant Lifetime::Dummy
-                                                                  .span
-                                                                    record RelativeSpan
-                                                                      .start
-                                                                        scalar u32
-                                                                      .end
-                                                                        scalar u32
-                                                    .ty
-                                                      shared-reference
-                                                    .span
-                                                      record RelativeSpan
-                                                        .start
-                                                          scalar u32
-                                                        .end
-                                                          scalar u32
-                                      .ty
-                                        shared-reference
-                                      .span
-                                        record RelativeSpan
-                                          .start
-                                            scalar u32
-                                          .end
-                                            scalar u32
-                                .locals
-                                  shared
-                                    sequence slice [1]
-                                      record LocalVar
-                                        .name
-                                          scalar Name
-                                        .span
-                                          record RelativeSpan
-                                            .start
-                                              scalar u32
-                                            .end
-                                              scalar u32
-                                .span
-                                  record RelativeSpan
-                                    .start
-                                      scalar u32
-                                    .end
-                                      scalar u32
+                                                                                    .end
+                                                                                      scalar u32
+                                                                        .ty
+                                                                          variant Ty::Adt
+                                                                            .0
+                                                                              reference local/db_drop_guard/type-struct-DbDropGuard
+                                                                            .1
+                                                                              sequence slice [0]
+                                                                        .span
+                                                                          record RelativeSpan
+                                                                            .start
+                                                                              scalar u32
+                                                                            .end
+                                                                              scalar u32
+                                                                    .1
+                                                                      record ResolvedField
+                                                                        .owner
+                                                                          variant FieldOwner::Struct
+                                                                            .0
+                                                                              reference local/db_drop_guard/type-struct-DbDropGuard
+                                                                        .index
+                                                                          scalar u32
+                                                                .ty
+                                                                  variant Ty::Adt
+                                                                    .0
+                                                                      reference local/db_drop_guard/type-struct-Db
+                                                                    .1
+                                                                      sequence slice [0]
+                                                                .span
+                                                                  record RelativeSpan
+                                                                    .start
+                                                                      scalar u32
+                                                                    .end
+                                                                      scalar u32
+                                                            .1
+                                                              variant Mutability::Shared
+                                                        .ty
+                                                          variant Ty::Ref
+                                                            .0
+                                                              variant Ty::Adt
+                                                                .0
+                                                                  reference local/db_drop_guard/type-struct-Db
+                                                                .1
+                                                                  sequence slice [0]
+                                                            .1
+                                                              variant Mutability::Shared
+                                                            .2
+                                                              variant Lifetime::Dummy
+                                                        .span
+                                                          record RelativeSpan
+                                                            .start
+                                                              scalar u32
+                                                            .end
+                                                              scalar u32
+                                              .ty
+                                                variant Ty::Adt
+                                                  .0
+                                                    reference local/db_drop_guard/type-struct-Db
+                                                  .1
+                                                    sequence slice [0]
+                                              .span
+                                                record RelativeSpan
+                                                  .start
+                                                    scalar u32
+                                                  .end
+                                                    scalar u32
+                                  .ty
+                                    variant Ty::Adt
+                                      .0
+                                        reference local/db_drop_guard/type-struct-Db
+                                      .1
+                                        sequence slice [0]
+                                  .span
+                                    record RelativeSpan
+                                      .start
+                                        scalar u32
+                                      .end
+                                        scalar u32
+                              .locals
+                                sequence slice [1]
+                                  record LocalVar
+                                    .name
+                                      scalar Name
+                                    .span
+                                      record RelativeSpan
+                                        .start
+                                          scalar u32
+                                        .end
+                                          scalar u32
+                              .span
+                                record RelativeSpan
+                                  .start
+                                    scalar u32
+                                  .end
+                                    scalar u32
                       .diagnostics
                         sequence Vec [0]
                 "#]].assert_eq(&shape),

@@ -227,8 +227,7 @@ ValueNode =
   | { kind: "sequence", type_name, items: [ValueNode] }
   | { kind: "scalar", type_name, value }
   | { kind: "reference", target: SymbolReference }
-  | { kind: "shared", identity, value: ValueNode }
-  | { kind: "shared-reference", identity }
+  | { kind: "cycle", identity }
   | { kind: "truncated", summary, continuation? }
 ```
 
@@ -543,7 +542,8 @@ The generated implementation calls `Reflect` for every field or variant
 payload. Custom implementations are reserved for semantic leaves and storage
 wrappers: a `Symbol` emits a reference with its canonical path, a span emits a
 stable location, `Stashed<T>` exposes its semantic root, and the reflection
-context handles sharing, cycles, depth, and node limits. Product producers
+context inlines arena values while guarding recursive reentry, depth, and node
+limits. Product producers
 compose the resulting `ValueNode` into a `RenderNode`; they do not manually
 serialize the underlying Sage value. This establishes
 [SI-A16](./README.md#si-a16).
@@ -611,8 +611,7 @@ function renderValueNode(node) {
                                          node.items.map(renderValueNode));
     case "reference": return symbolLink(node.target.label, node.target.path);
     case "scalar": return scalarNode(node.type_name, node.value);
-    case "shared": return sharedNode(node.identity, renderValueNode(node.value));
-    case "shared-reference": return sharedReferenceNode(node.identity);
+    case "cycle": return cycleNode(node.identity);
     case "truncated": return node.continuation
       ? continuationNode(node.summary, node.continuation)
       : terminalTruncationNode(node.summary);

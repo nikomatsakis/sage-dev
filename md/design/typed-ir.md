@@ -262,7 +262,9 @@ dependency of call checking.
 Elaboration may use temporary source-shaped nodes, inference variables,
 method-resolution candidates, and adjustment recipes internally. Those are
 not separately queryable public IR and must be consumed before a successful
-`CheckedBody` is returned.
+`CheckedBody` is returned. The inference graph and its working stash are not
+the completed representation: completion resolves every type edge and copies
+the tree into a fresh append-only stash.
 
 This is the body-representation consequence of
 [D15](./decisions.md#d15-cross-item-dependencies-stop-at-semantic-interfaces).

@@ -32,11 +32,7 @@ pub enum ValueNode {
     Reference {
         target: SymbolReference,
     },
-    Shared {
-        identity: String,
-        value: Box<ValueNode>,
-    },
-    SharedReference {
+    Cycle {
         identity: String,
     },
     Truncated {
@@ -109,7 +105,7 @@ pub struct ReflectionContext<'resolver> {
     continuation_prefix: String,
     continuations: Rc<RefCell<ContinuationStore>>,
     remaining_build_nodes: Rc<Cell<usize>>,
-    shared: Rc<RefCell<HashSet<String>>>,
+    active_stash_entries: Rc<RefCell<HashSet<String>>>,
     stash_namespaces: Rc<RefCell<StashNamespaceStore>>,
     resolver: Option<&'resolver dyn ReflectionResolver>,
     allow_continuations: bool,
@@ -147,7 +143,7 @@ impl<'resolver> ReflectionContext<'resolver> {
                 values: HashMap::new(),
             })),
             remaining_build_nodes: Rc::new(Cell::new(max_nodes)),
-            shared: Rc::new(RefCell::new(HashSet::new())),
+            active_stash_entries: Rc::new(RefCell::new(HashSet::new())),
             stash_namespaces: Rc::new(RefCell::new(StashNamespaceStore {
                 next: 0,
                 by_address: HashMap::new(),
@@ -184,7 +180,7 @@ impl<'resolver> ReflectionContext<'resolver> {
                 continuation_prefix: self.continuation_prefix.clone(),
                 continuations: self.continuations.clone(),
                 remaining_build_nodes: self.remaining_build_nodes.clone(),
-                shared: self.shared.clone(),
+                active_stash_entries: self.active_stash_entries.clone(),
                 stash_namespaces: self.stash_namespaces.clone(),
                 resolver: self.resolver,
                 allow_continuations: false,
@@ -239,10 +235,9 @@ impl<'resolver> ReflectionContext<'resolver> {
                 !fields.is_empty()
             }
             ValueNode::Sequence { items, .. } => !items.is_empty(),
-            ValueNode::Shared { .. } => true,
             ValueNode::Scalar { .. }
             | ValueNode::Reference { .. }
-            | ValueNode::SharedReference { .. }
+            | ValueNode::Cycle { .. }
             | ValueNode::Truncated { .. } => false,
         };
         if has_children && *budget == 0 {
@@ -276,16 +271,9 @@ impl<'resolver> ReflectionContext<'resolver> {
                     }
                 });
             }
-            ValueNode::Shared { value, .. } => {
-                let child = std::mem::replace(
-                    value,
-                    Box::new(Self::terminal_truncation("shared value omitted")),
-                );
-                **value = self.bound_node(*child, budget, allow_continuation);
-            }
             ValueNode::Scalar { .. }
             | ValueNode::Reference { .. }
-            | ValueNode::SharedReference { .. }
+            | ValueNode::Cycle { .. }
             | ValueNode::Truncated { .. } => {}
         }
         node
@@ -424,8 +412,22 @@ impl<'resolver> ReflectionContext<'resolver> {
         self.resolver?.reflected_value(key)
     }
 
-    fn mark_shared(&mut self, identity: &str) -> bool {
-        self.shared.borrow_mut().insert(identity.to_owned())
+    fn reflect_stash_entry(
+        &mut self,
+        identity: String,
+        reflect: impl FnOnce(&mut ReflectionContext<'resolver>) -> ValueNode,
+    ) -> ValueNode {
+        if !self
+            .active_stash_entries
+            .borrow_mut()
+            .insert(identity.clone())
+        {
+            return ValueNode::Cycle { identity };
+        }
+        let value = reflect(self);
+        let removed = self.active_stash_entries.borrow_mut().remove(&identity);
+        debug_assert!(removed, "active stash entry disappeared during reflection");
+        value
     }
 
     fn stash_namespace(&mut self, stash: &Stash) -> u64 {
@@ -615,23 +617,19 @@ where
     T: StashData<'db> + Reflect<'db> + Copy + std::fmt::Debug,
 {
     fn reflect(&self, context: &mut ReflectionContext<'_>, stash: Option<&Stash>) -> ValueNode {
-        context.reflect_node("stash pointer", |context| {
-            let Some(stash) = stash else {
-                return ValueNode::scalar("Unavailable", "stash pointer outside its owning stash");
-            };
-            let identity = format!(
-                "stash-{}-ptr:{}:{}",
-                context.stash_namespace(stash),
-                std::any::type_name::<T>(),
-                self.reflection_index()
-            );
-            if !context.mark_shared(&identity) {
-                return ValueNode::SharedReference { identity };
-            }
-            ValueNode::Shared {
-                identity,
-                value: Box::new(stash[*self].reflect(context, Some(stash))),
-            }
+        let Some(stash) = stash else {
+            return context.reflect_node("stash pointer", |_context| {
+                ValueNode::scalar("Unavailable", "stash pointer outside its owning stash")
+            });
+        };
+        let identity = format!(
+            "stash-{}-ptr:{}:{}",
+            context.stash_namespace(stash),
+            std::any::type_name::<T>(),
+            self.reflection_index()
+        );
+        context.reflect_stash_entry(identity, |context| {
+            stash[*self].reflect(context, Some(stash))
         })
     }
 }
@@ -641,23 +639,19 @@ where
     T: StashData<'db> + Reflect<'db> + Copy + std::fmt::Debug,
 {
     fn reflect(&self, context: &mut ReflectionContext<'_>, stash: Option<&Stash>) -> ValueNode {
-        context.reflect_node("stash slice", |context| {
-            let Some(stash) = stash else {
-                return ValueNode::scalar("Unavailable", "stash slice outside its owning stash");
-            };
-            let identity = format!(
-                "stash-{}-slice:{}:{}",
-                context.stash_namespace(stash),
-                std::any::type_name::<T>(),
-                self.reflection_index()
-            );
-            if !context.mark_shared(&identity) {
-                return ValueNode::SharedReference { identity };
-            }
-            ValueNode::Shared {
-                identity,
-                value: Box::new(stash[*self].reflect(context, Some(stash))),
-            }
+        let Some(stash) = stash else {
+            return context.reflect_node("stash slice", |_context| {
+                ValueNode::scalar("Unavailable", "stash slice outside its owning stash")
+            });
+        };
+        let identity = format!(
+            "stash-{}-slice:{}:{}",
+            context.stash_namespace(stash),
+            std::any::type_name::<T>(),
+            self.reflection_index()
+        );
+        context.reflect_stash_entry(identity, |context| {
+            stash[*self].reflect(context, Some(stash))
         })
     }
 }
@@ -738,34 +732,6 @@ mod tests {
     struct SharedPair {
         left: Ptr<u32>,
         right: Ptr<u32>,
-    }
-
-    #[derive(Reflect)]
-    struct NestedStash {
-        value: Stashed<Ptr<u32>>,
-    }
-
-    #[derive(Reflect)]
-    struct StashesAcrossContinuation {
-        nested: NestedStash,
-        direct: Stashed<Ptr<u32>>,
-    }
-
-    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, Reflect)]
-    struct NestedUnit {
-        value: (),
-    }
-
-    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, Reflect)]
-    struct NestedPointer {
-        value: Ptr<u32>,
-    }
-
-    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, Reflect)]
-    struct SharedAfterContinuationExhaustion {
-        exhaust: NestedUnit,
-        discarded: NestedPointer,
-        retained: Ptr<u32>,
     }
 
     #[derive(Clone, Copy)]
@@ -849,10 +815,9 @@ mod tests {
                     fields.iter().map(|field| count(&field.value)).sum()
                 }
                 ValueNode::Sequence { items, .. } => items.iter().map(count).sum(),
-                ValueNode::Shared { value, .. } => count(value),
                 ValueNode::Scalar { .. }
                 | ValueNode::Reference { .. }
-                | ValueNode::SharedReference { .. }
+                | ValueNode::Cycle { .. }
                 | ValueNode::Truncated { .. } => 0,
             }
         }
@@ -887,7 +852,7 @@ mod tests {
     }
 
     #[test]
-    fn repeated_arena_edges_use_one_shared_value_and_a_back_reference() {
+    fn repeated_arena_edges_are_reflected_inline() {
         let mut stash = Stash::new();
         let value = stash.alloc(22_u32);
         let root = stash.alloc(SharedPair {
@@ -896,60 +861,27 @@ mod tests {
         });
         let reflected = Stashed::new(stash, root).reflected();
         let json = serde_json::to_string(&reflected).unwrap();
-        assert_eq!(json.matches("\"kind\":\"shared\"").count(), 2);
-        assert_eq!(json.matches("\"kind\":\"shared-reference\"").count(), 1);
+        assert_eq!(json.matches("\"value\":22").count(), 2, "{json}");
+        assert!(!json.contains("stash-"), "{json}");
     }
 
     #[test]
-    fn equal_indices_in_distinct_stashes_have_distinct_shared_identities() {
-        fn stashed(value: u32) -> Stashed<Ptr<u32>> {
-            let mut stash = Stash::new();
-            let root = stash.alloc(value);
-            Stashed::new(stash, root)
-        }
+    fn only_an_active_recursive_stash_edge_becomes_a_cycle() {
+        let mut context = ReflectionContext::default();
+        let reflected = context.reflect_stash_entry("stash-0-ptr:u32:0".to_owned(), |context| {
+            context.reflect_stash_entry("stash-0-ptr:u32:0".to_owned(), |_context| {
+                panic!("a recursive edge must not be traversed")
+            })
+        });
+        assert!(matches!(
+            reflected,
+            ValueNode::Cycle { identity } if identity == "stash-0-ptr:u32:0"
+        ));
 
-        let reflected = vec![stashed(1), stashed(2)].reflected();
-        let json = serde_json::to_string(&reflected).unwrap();
-        assert!(json.contains("stash-0-ptr:u32:0"), "{json}");
-        assert!(json.contains("stash-1-ptr:u32:0"), "{json}");
-        assert!(!json.contains("\"kind\":\"shared-reference\""));
-    }
-
-    #[test]
-    fn stash_namespaces_remain_unique_across_continuation_boundaries() {
-        fn stashed(value: u32) -> Stashed<Ptr<u32>> {
-            let mut stash = Stash::new();
-            let root = stash.alloc(value);
-            Stashed::new(stash, root)
-        }
-
-        let value = StashesAcrossContinuation {
-            nested: NestedStash { value: stashed(1) },
-            direct: stashed(2),
-        };
-        let mut context = ReflectionContext::with_continuation_prefix(3, 100, "stashes");
-        let raw = value.reflect(&mut context, None);
-        let root = context.finish(raw);
-        let mut json = serde_json::to_string(&root).unwrap();
-        json.push_str(&serde_json::to_string(&context.continuations()).unwrap());
-        assert!(json.contains("stash-0-ptr:u32:0"), "{json}");
-        assert!(json.contains("stash-1-ptr:u32:0"), "{json}");
-    }
-
-    #[test]
-    fn discarded_depth_page_cannot_orphan_a_shared_reference() {
-        let mut stash = Stash::new();
-        let shared = stash.alloc(22_u32);
-        let root = SharedAfterContinuationExhaustion {
-            exhaust: NestedUnit { value: () },
-            discarded: NestedPointer { value: shared },
-            retained: shared,
-        };
-        let mut context = ReflectionContext::with_continuation_prefix(2, 100, "exhausted");
-        let raw = root.reflect(&mut context, Some(&stash));
-        let reflected = context.finish(raw);
-        let json = serde_json::to_string(&reflected).unwrap();
-        assert!(json.contains("\"kind\":\"shared\""), "{json}");
-        assert!(!json.contains("\"kind\":\"shared-reference\""), "{json}");
+        let reflected_again = context
+            .reflect_stash_entry("stash-0-ptr:u32:0".to_owned(), |_context| {
+                ValueNode::scalar("u32", 22_u32)
+            });
+        assert!(matches!(reflected_again, ValueNode::Scalar { .. }));
     }
 }

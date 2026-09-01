@@ -31,14 +31,15 @@ not merely a planning edit.
   ([SI-A2](./README.md#si-a2), [SI-A3](./README.md#si-a3)).
 - [x] Define an owned generic rendering tree for page composition and an
   embedded structural value tree for records, variants, sequences, leaves,
-  options, pointers, sharing, cycles, and explicit truncation.
+  options, transparent stash handles, cycle markers, and explicit truncation.
 - [x] Make derived structural reflection preserve every struct field and enum
   payload while allowing only the documented semantic treatment of
   `Stashed<T>`, raw allocation identity, names, symbols, spans, and explicit
   truncation ([SI-A6](./README.md#si-a6), [SI-A16](./README.md#si-a16)).
 - [x] Implement the custom `Reflect` derive for ordinary structs and enums and
-  explicit implementations for symbols, spans, stashed values, sharing,
-  cycles, and limits. Product code must not hand-serialize Sage structures
+  explicit implementations for symbols, spans, stashed values, transparent
+  arena projection, cycle guards, and limits. Product code must not
+  hand-serialize Sage structures
   ([SI-A16](./README.md#si-a16)).
 - [x] Represent semantic references with canonical symbol paths, separate
   display labels, and generic presentation data.
@@ -48,8 +49,8 @@ not merely a planning edit.
 - [x] Keep service and observation types independent of Axum, JavaScript,
   terminal state, Clap, JSON-RPC, LSP positions, and the oracle schema.
 - [x] Test derived structure, semantic leaf overrides, canonical cross-links,
-  truncation, bounded traversal of wide sequences, same- and cross-stash
-  shared values, and cycles.
+  truncation, bounded traversal of wide sequences, repeated inline arena
+  values, and the cycle guard.
 - [x] Snapshot complete representative `Binder<FnSig>`, `FnCst`/`FnCstData`,
   `CheckedBody`/`TyBodyData`, `ExprCst`, and `TyExpr` structural shapes. The
   derive's generated match is exhaustive over every enum (including `Ty`), so
@@ -329,8 +330,8 @@ through the source-driven headless-browser suite.
 ### SI-A6 — faithful bounded reflection
 
 Slice 1 introduced the generic value vocabulary. Slice 2 established real
-Concrete IR, signature, and Typed-IR shape snapshots, sharing, cycles,
-continuations, and node/depth limits.
+Concrete IR, signature, and Typed-IR shape snapshots, repeated-edge inlining,
+the cycle guard, continuations, and node/depth limits.
 
 <a id="si-a7-status"></a>
 ### SI-A7 — semantic work is frozen before rendering

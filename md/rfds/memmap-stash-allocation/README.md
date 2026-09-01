@@ -1,9 +1,18 @@
 # RFD: Stash-allocated MEM-map entries
 
-**Status:** Completed
+**Status:** Completed (historical; storage mechanism superseded)
 
 **Depends on:**
 - [Hash-consed stash](./stash-hash-consing.md) — `Stash`, `Slice<T>`, `Stashed<T>`, `AllocStashData`
+
+> **Current disposition.** This RFD records an intermediate representation
+> which was completed and later replaced. Its fixpoint originally mutated
+> hash-consed stash entries in place. That mechanism is superseded by
+> [D2](../../design/decisions.md#d2-stash-for-type-level-interning) and
+> [STASH-A5](../../design/stash.md#stash-a5): allocated stash entries are now
+> immutable. Current module expansion returns an ordinary ordered symbol
+> sequence and lets Salsa perform fixed-point recovery; see
+> [Module and Macro Expansion](../../design/pipeline/module-expansion.md).
 
 ## Background
 
@@ -66,24 +75,27 @@ pub struct Expansion<'db> {
 pub type Memmap<'db> = Stashed<Slice<MemmapEntry<'db>>>;
 ```
 
-### Stash extensions needed
+### Historical stash extensions
 
-1. **`IndexMut` for `Slice<T>` and `Ptr<T>`** — allows the fixpoint loop to mutate entries in place (e.g., replacing a `MacroUse.expansions` slice handle with a new one).
+1. **Mutable indexing (removed)** — the intermediate implementation allowed
+   the fixpoint loop to replace a `MacroUse.expansions` slice handle in place.
+   The append-only stash contract now forbids this API.
 
 2. **`Stash::append_one` (or similar)** — allocates a new slice consisting of an existing slice's contents plus one appended element. Used to grow `MacroUse.expansions` when a new callee is discovered.
 
 3. **Empty slices are free** — `alloc_slice(&[])` is hash-consed, so all empty slices of the same type share one entry. This is already the case.
 
-### Fixpoint loop strategy
+### Historical fixpoint loop strategy
 
 The expansion loop operates on a `Stash` + root `Slice<MemmapEntry>`:
 
 1. **Seeding** produces an initial `Stash` with all entries (paths already as `Slice<Name>`). `MacroUse` entries start with `expansions` pointing to an empty slice.
 
-2. **Each pass** walks the entries via `IndexMut`, resolves macro paths, expands callees. When a new expansion is discovered:
+2. **Each pass** walked and mutated the entries, resolved macro paths, and
+   expanded callees. When a new expansion was discovered:
    - Allocate the expansion's child entries into the stash → get a `Slice<MemmapEntry>`
    - Build an `Expansion { callee, entries }` and allocate a new expansions slice = old contents + new element via `append_one`
-   - Mutate the `MacroUse` in place (via `IndexMut`) to point `expansions` at the new slice
+   - Mutate the `MacroUse` in place to point `expansions` at the new slice
 
 3. **Convergence** — when no pass discovers new callees, wrap the stash as `Stashed::new(stash, root)`.
 
@@ -105,9 +117,10 @@ for entry in &stash[slice] { ... }
 
 Functions need access to the stash to dereference nested `Slice` fields (e.g., `Redirect.target`, `MacroUse.expansions`). The stash reference is threaded through or obtained from the `Stashed` wrapper.
 
-## Implementation plan
+## Historical implementation plan
 
-1. Add `IndexMut` impls and `append_one` to `sage-stash`.
+1. Add mutable indexing and `append_one` to `sage-stash` (the mutable indexing
+   portion was later removed by STASH-A5).
 2. Update `MemmapEntry`, `MacroUse`, `Expansion` to stash-allocated `Copy` types.
 3. Update `ExpandedModule` to hold `Memmap<'db>` (= `Stashed<Slice<MemmapEntry>>`).
 4. Update seeding (`seed.rs`) to allocate into a `Stash`.

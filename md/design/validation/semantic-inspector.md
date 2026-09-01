@@ -234,10 +234,11 @@ incremental dependency of every semantic product.
 
 Ordinary structs and enums derive `Reflect`; the derive recursively preserves
 every field and enum payload. Explicit implementations supply semantic names,
-symbol cross-links, spans, stashed roots, and shared arena identities. The
-context limits depth and node count. Repeated pointers become shared
-references, and a limit produces a frozen continuation rather than silently
-dropping detail.
+symbol cross-links, spans, stashed roots, and transparent arena-handle
+projection. The context limits depth and node count. Repeated DAG edges are
+expanded inline; only reentry into an entry currently on the reflection stack
+produces an explicit cycle marker. A limit produces a frozen continuation
+rather than silently dropping detail.
 
 ```{anchor}
 semantic_inspector_reflect_derive
@@ -245,11 +246,11 @@ semantic_inspector_reflect_derive
 
 <a id="si-a6"></a>
 > **SI-A6 — Product reflection is faithful, bounded, and owned.** Ordinary
-> structure is derived, semantic leaves are explicit, sharing/cycles are
-> represented by identities and back-references, and limits yield immutable
-> continuations which require no later database borrow.
+> structure is derived, semantic leaves are explicit, storage handles expose
+> their values inline, actual recursive reentry is explicit, and limits yield
+> immutable continuations which require no later database borrow.
 >
-> **Required verification:** Derive-shape, same- and cross-stash shared-edge,
+> **Required verification:** Derive-shape, repeated-edge inlining, cycle-guard,
 > semantic-link, bounded wide-sequence traversal, representative real IR, and
 > continuation tests cover these cases.
 
@@ -262,7 +263,7 @@ semantic_inspector_reflect_derive
 >
 > **Required verification:** Compile/shape tests cover named, tuple, and unit
 > forms, real products retain their wrappers and nested type trees, and
-> exhausting continuation capacity cannot leave an orphan shared reference.
+> continuation limits retain an explicit resumable boundary.
 
 ## Execution evidence
 
@@ -380,10 +381,11 @@ last revision and its structured reason.
   API mock or product-specific data model. The production command test checks
   embedded routed assets against real API data.
 - **SI-A6/A16:** `crates/sage-reflect/src/lib.rs` tests derived field/variant
-  shape, same- and cross-stash sharing, bounded wide-sequence traversal, and
-  frozen continuation pages; the real inspector test snapshots complete
-  Concrete IR, signature, and Typed-IR structural shapes, including nested
-  types, resolved static dispatch, and semantic links.
+  shape, repeated arena edges expanded inline, the active-edge cycle guard,
+  bounded wide-sequence traversal, and frozen continuation pages; the real
+  inspector test snapshots complete Concrete IR, signature, and Typed-IR
+  structural shapes, including nested types, resolved static dispatch, and
+  semantic links. The generic browser test renders the explicit cycle marker.
 - **SI-A9/A11/A12/A17:** the real directory trace snapshots its complete set of
   operation families; the remaining real trace tests cover executed,
   validated, reused, cancelled/unwinding, nested metadata, phase attribution,

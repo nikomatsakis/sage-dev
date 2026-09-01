@@ -474,8 +474,7 @@ pub fn body(self, db: &'db dyn crate::Db) -> CheckedBody<'db> {
 
     cx.finalize();
     cx.resolve_expr_slots(); // replace Unresolved(slot) with filled exprs
-    cx.resolve_types();
-    cx.finish(body_expr)
+    cx.finish(body_expr) // resolve types while copying into the final stash
 }
 ```
 

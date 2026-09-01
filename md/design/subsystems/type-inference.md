@@ -48,8 +48,9 @@ architecture_infer_context
 Expression and pattern `check_with` methods allocate types and typed nodes
 through the context. `require_eq`, `require_sub`, and `require_coerce` relate
 types. `finalize` performs fallback and mandatory terminal obligation
-discharge; `resolve_types` replaces solved inference-variable nodes before
-`finish` asserts quiescence.
+discharge; `finish` asserts quiescence and resolves every type edge while
+copying the working tree into a fresh append-only result stash. The working
+stash remains unchanged, as required by [STASH-A5](../stash.md#stash-a5).
 
 ## Transactional construction
 
@@ -131,6 +132,7 @@ backdatable even if internal scheduling differs.
 | Path | Responsibility |
 |---|---|
 | `check/infer_ctx.rs` | body-local context, type relations, obligations, runtime, finalization |
+| `check/finalize.rs` | resolve settled type edges and rebuild completed Typed IR in a fresh stash |
 | `check/infer/egraph.rs` | versioned union-find, bounds, wake effects, transactional collapse |
 | `check/infer/version.rs` | branch ownership, inference-variable identity, universes |
 | `check/infer/runtime.rs` | cooperative task polling and wakeups |
@@ -149,7 +151,7 @@ recovery, and final quiescence support the two completed mini-redis bodies.
 
 | Anchor | State | Implemented claim and evidence |
 |---|---|---|
-| [INF-A1](#inf-a1) | Partial | `equivalent_obligations_deduplicate_after_inference` covers obligation quiescence after inputs narrow; `clone_method_call_is_elaborated_to_a_resolved_trait_call` inspects an inference-free completed body for the supported method slice. Direct negative completion tests for every live-state class are missing. |
+| [INF-A1](#inf-a1) | Partial | `body_finalization_resolves_types_into_a_fresh_stash` proves nested inference edges resolve into a separately owned output while the working stash is unchanged; `equivalent_obligations_deduplicate_after_inference` covers obligation quiescence after inputs narrow; `clone_method_call_is_elaborated_to_a_resolved_trait_call` inspects an inference-free completed body for the supported method slice. Direct negative completion tests for every live-state class are missing. |
 | [INF-A2](#inf-a2) | Partial | `canonical_equality_round_trips_transactionally` checks transactional response import, while `implication_assumptions_do_not_leak_to_siblings` verifies proof-branch isolation. Cancellation-specific isolation evidence is missing. |
 | [INF-A3](#inf-a3) | Partial | `canonical_equality_round_trips_transactionally`, `local_associated_type_normalization_produces_a_type_output`, and `response_local_type_output_round_trips_with_sharing` cover the implemented equality and type-output boundary; `conjunction_retries_after_a_sibling_pins_its_input` verifies retained work observes later hard information. No caller-side expected-type test yet proves that an expectation cannot select one of two otherwise ambiguous normalization candidates. |
 | [INF-A4](#inf-a4) | Partial | `clone_method_body_has_a_narrow_reusable_semantic_query_trace` verifies warm reuse for one completed body slice; scheduler-order perturbation is not covered. |

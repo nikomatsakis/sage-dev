@@ -459,20 +459,21 @@ values; the browser only interprets that vocabulary. The structural
 structs and enums opt in with a custom derive which recursively exposes their
 actual fields and variants. Handwritten implementations are restricted to
 explicit semantic projections and infrastructure types such as symbols,
-spans, stashed values, sharing, cycles, and truncation.
+spans, stashed values, transparent stash handles, cycle guards, and
+truncation.
 
 The structural view is faithful to the inspected Rust value modulo documented
 semantic projections and explicit truncation. It uses the actual struct field
 names and enum variant payloads and does not replace them with a conceptual
-schema. `Option<T>`, `Ptr<T>`, `Slice<T>`, and other wrappers remain visible
-nodes; their contained values are recursively inspectable. A `Ptr<Ty>`
-therefore expands to the precise `Ty` variant and all of that variant's fields,
-and a `Slice<Ptr<Ty>>` expands each element in the same way. Raw addresses and
-process-specific allocation indexes are omitted; shared pointees may instead
-carry a display-local identity so repetition and cycles remain intelligible.
-Storage infrastructure is the other explicit exception: `Stashed<T>` exposes
-its semantic `root`, but the backing `Stash` and cached fingerprint are not
-part of the inspected language value and may be omitted.
+schema. Semantic wrappers such as `Option<T>` remain visible nodes; their
+contained values are recursively inspectable. Storage handles are projected
+transparently: a `Ptr<Ty>` expands directly to the precise `Ty` variant and all
+of that variant's fields, and a `Slice<Ptr<Ty>>` expands to the element
+sequence. Repeated DAG edges expand inline. Raw addresses and process-specific
+allocation indexes are omitted unless reflection detects recursive reentry,
+in which case an explicit cycle marker identifies the active entry. `Stashed<T>`
+exposes its semantic `root`, but the backing `Stash` and cached fingerprint are
+not part of the inspected language value and may be omitted.
 
 Semantic summaries are additive. For example, a `Ty::Adt` node may show
 `DbDropGuard` beside the variant name and make its `Symbol` child navigable,
@@ -502,8 +503,9 @@ choices.
 > structure; readable summaries never replace it.
 >
 > **Required verification:** Coverage snapshots include every representative
-> field and `Ty` variant, semantic reference, shared value, cycle, and
-> truncation node, and fail when an unhandled field or variant is added.
+> field and `Ty` variant, semantic reference, repeated inline value, cycle
+> guard, and truncation node, and fail when an unhandled field or variant is
+> added.
 
 <a id="si-a16"></a>
 > **SI-A16 — Structural reflection is derive-driven with explicit semantic
@@ -514,7 +516,7 @@ choices.
 >
 > **Required verification:** Adding a field or variant to a derived sample type
 > automatically exposes it. Nested derived values use custom symbol, span,
-> stash, sharing, cycle, and limit implementations; symbol leaves emit
+> stash-projection, cycle-guard, and limit implementations; symbol leaves emit
 > canonical-path links; and product code never hand-serializes a reflected Sage
 > structure.
 

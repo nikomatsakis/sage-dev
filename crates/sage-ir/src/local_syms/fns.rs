@@ -328,7 +328,6 @@ impl<'db> LocalFnSym<'db> {
 
         // Resolve remaining inference variables.
         cx.finalize();
-        cx.resolve_types();
 
         cx.finish(body_expr, cst.span)
     }

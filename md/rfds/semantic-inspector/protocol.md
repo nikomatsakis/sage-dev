@@ -387,12 +387,7 @@ ValueNode =
       target: SymbolReference,
     }
   | {
-      kind: "shared",
-      identity: String,
-      value: ValueNode,
-    }
-  | {
-      kind: "shared-reference",
+      kind: "cycle",
       identity: String,
     }
   | {
@@ -413,9 +408,11 @@ display label and canonical symbol path. The client matches this union
 exhaustively; an unknown `kind` is a visible protocol error rather than a
 silently omitted subtree.
 
-`shared.identity` and `shared-reference.identity` are display-local IDs, not
-process addresses. The first occurrence carries the value. Truncation is
-explicit and can be continued without executing Sage work.
+Stash pointers and slices normally expose their values inline, including when
+hash-consing makes two edges share an allocation. `cycle.identity` is a
+display-local ID emitted only when reflection reenters an allocation currently
+on its recursion stack; it is not a process address or semantic identity.
+Truncation is explicit and can be continued without executing Sage work.
 
 ## Continuations
 

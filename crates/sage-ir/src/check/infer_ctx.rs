@@ -1628,26 +1628,6 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         self.runtime.borrow_mut().drain();
     }
 
-    pub fn resolve_types(&self) {
-        let variables: Vec<_> = self
-            .egraph
-            .borrow()
-            .version_tree()
-            .visible_variables(Version::ROOT)
-            .collect();
-
-        let mut stash = self.target_stash.borrow_mut();
-        let mut egraph = self.egraph.borrow_mut();
-        for idx in variables {
-            let ty_ptr = stash.alloc(Ty::InferVar(idx));
-            let resolved = egraph.find_mut(Version::ROOT, ty_ptr);
-            if resolved != ty_ptr {
-                let resolved_ty = stash[resolved];
-                stash[ty_ptr] = resolved_ty;
-            }
-        }
-    }
-
     // ------------------------------------------------------------------
     // Finish — consumes self, produces CheckedBody
     // ------------------------------------------------------------------
@@ -1669,12 +1649,11 @@ impl<'check, 'db> InferCtx<'check, 'db> {
             self.pending_wakes.borrow().is_empty(),
             "body finished with unpublished inference wakes"
         );
-        let mut stash = self.target_stash.into_inner();
         let local_vars = self.local_vars.into_inner();
-        let locals = stash.alloc_slice(&local_vars);
-        let body_data = stash.alloc(TyBodyData { root, locals, span });
+        let source = self.target_stash.into_inner();
+        let egraph = self.egraph.into_inner();
         CheckedBody {
-            body: Stashed::new(stash, body_data),
+            body: super::finalize::finalize_typed_body(&source, &egraph, root, &local_vars, span),
             diagnostics: self.diagnostics.into_inner(),
         }
     }
