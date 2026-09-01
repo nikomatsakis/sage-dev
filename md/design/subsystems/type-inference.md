@@ -127,6 +127,36 @@ backdatable even if internal scheduling differs.
 > while relevant interface edits reexecute it; scheduler-order perturbation
 > produces an identical completed body and diagnostics.
 
+## Subtyping and coercion
+
+Subtyping and coercion are separate relations. Subtyping states that a value
+can be used at the target type without changing its runtime representation:
+the source and target therefore have the same memory layout. Equal layout is
+necessary but not sufficient for subtyping. A coercion is a selected,
+type-directed conversion and may produce a value with a different layout. If
+checking selects such a conversion, the completed body records it explicitly,
+as required by
+[D11](../decisions.md#d11-completed-bodies-are-elaborated-typed-trees).
+
+In particular, never-to-any is a coercion, not the subtype rule `! <: T`. It
+may be selected when an expression of type `!` occurs at a coercion site, but
+it cannot be applied recursively while establishing a structural subtype
+relation such as `&mut ! <: &mut u32`.
+
+<a id="inf-a5"></a>
+> **INF-A5 — Subtyping preserves representation; coercion is an explicit
+> conversion.** A successful subtype relation requires source and target to
+> have the same memory layout and introduces no runtime conversion. A coercion
+> is selected only at a coercion site, may change layout, and is materialized
+> in the completed Typed IR. Never-to-any belongs only to the coercion
+> relation.
+>
+> **Required verification:** Source-driven integration tests reject
+> never-to-any beneath invariant type constructors, accept it at a top-level
+> coercion site, and inspect the completed Typed IR to show that the accepted
+> coercion is explicit. Focused relation tests cover every implemented subtype
+> and coercion rule and demonstrate that subtype success preserves layout.
+
 ## Code map
 
 | Path | Responsibility |
@@ -155,10 +185,15 @@ recovery, and final quiescence support the two completed mini-redis bodies.
 | [INF-A2](#inf-a2) | Partial | `canonical_equality_round_trips_transactionally` checks transactional response import, while `implication_assumptions_do_not_leak_to_siblings` verifies proof-branch isolation. Cancellation-specific isolation evidence is missing. |
 | [INF-A3](#inf-a3) | Partial | `canonical_equality_round_trips_transactionally`, `local_associated_type_normalization_produces_a_type_output`, and `response_local_type_output_round_trips_with_sharing` cover the implemented equality and type-output boundary; `conjunction_retries_after_a_sibling_pins_its_input` verifies retained work observes later hard information. No caller-side expected-type test yet proves that an expectation cannot select one of two otherwise ambiguous normalization candidates. |
 | [INF-A4](#inf-a4) | Partial | `clone_method_body_has_a_narrow_reusable_semantic_query_trace` verifies warm reuse for one completed body slice; scheduler-order perturbation is not covered. |
+| [INF-A5](#inf-a5) | Not established | The ignored source-driven integration regression `never_to_any_does_not_apply_beneath_mutable_reference` currently fails because Sage accepts `&mut !` as `&mut u32`. [KD-6](../../implementation/known-deviations.md#kd-6-never-to-any-coercion-is-modeled-as-subtyping) records the contradiction and its closure evidence. Positive top-level never-coercion and completed-IR evidence are also missing. |
 
 ### Current limitations
 
 - Subtyping and coercions currently cover only a small structural subset.
+- [KD-6](../../implementation/known-deviations.md#kd-6-never-to-any-coercion-is-modeled-as-subtyping)
+  contradicts [INF-A5](#inf-a5): the current implementation admits
+  never-to-any through `require_sub` instead of selecting it only through
+  `require_coerce`.
 - Numeric inference/fallback, closures, casts, patterns, and control-flow joins
   are incomplete relative to Rust.
 - All lifetime syntax becomes `Lifetime::Dummy`; no lifetime variables or

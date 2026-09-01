@@ -52,6 +52,21 @@ fn if_else_branch_mismatch() {
 }
 
 #[test]
+#[ignore = "KD-6: never-to-any is incorrectly implemented as subtyping"]
+fn never_to_any_does_not_apply_beneath_mutable_reference() {
+    TestCrate::in_memory("fn invalid(value: &mut !) -> &mut u32 { value }").check_errors(expect![
+        [r#"
+            error: type mismatch: expected `u32`, found `!`
+             --> lib.rs:1:39
+              |
+            1 | fn invalid(value: &mut !) -> &mut u32 { value }
+              |                              -------- ^^^^^^^^^ found `!`
+              |                              |
+              |                              expected `u32` because of return type"#]
+    ]);
+}
+
+#[test]
 fn let_binding_inferred() {
     TestCrate::in_memory("fn f(x: u32) -> u32 { let y = x; y }").check_ok();
 }

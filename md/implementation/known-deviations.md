@@ -13,6 +13,31 @@ close it. The affected architecture chapter links back to the entry from its
 
 ## Open deviations
 
+### KD-6: Never-to-any coercion is modeled as subtyping
+
+- **Contract:** [INF-A5](../design/subsystems/type-inference.md#inf-a5)
+  requires subtyping to preserve representation and never-to-any to be selected
+  only as a coercion. [BODY-A1](../design/pipeline/body-checking.md#body-a1) and
+  [D11](../design/decisions.md#d11-completed-bodies-are-elaborated-typed-trees)
+  additionally require the selected coercion to be materialized in completed
+  Typed IR rather than accepted through an unrelated type relation.
+- **Observed implementation:** `InferCtx::require_sub` accepts `Ty::Never` as
+  a subtype of every target, while `require_coerce` merely delegates to
+  `require_sub`. Rust's never-to-any behavior is a coercion, not ordinary
+  subtyping. The ignored
+  `never_to_any_does_not_apply_beneath_mutable_reference` integration
+  regression checks the resulting source behavior and fails against the
+  current implementation.
+- **Consequence:** A direct subtype request such as `! <: u32` succeeds, and
+  recursively applying the same rule beneath references can admit invalid
+  relations such as `&mut ! <: &mut u32`. Completed bodies can therefore rely
+  on a coercion which was neither requested nor represented.
+- **Closure evidence:** Move never-to-any handling to the coercion path,
+  represent the selected operation in completed Typed IR where required, and
+  make `never_to_any_does_not_apply_beneath_mutable_reference` pass without
+  `#[ignore]`. Add complementary positive evidence for top-level never
+  coercion.
+
 ### KD-4: Stash byte storage does not guarantee entry alignment
 
 - **Contract:** [STASH-A1](../design/stash.md#stash-a1), together with the
