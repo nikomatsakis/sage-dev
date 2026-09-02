@@ -12,7 +12,15 @@ tracked Salsa entities.
 `Ptr<T>` identifies one value and `Slice<T>` identifies a contiguous sequence.
 Both are valid only with the `Stash` that created them. Debug builds attach a
 stash identity to catch cross-stash indexing; semantic code explicitly copies
-between stashes when crossing a query boundary.
+between stashes when crossing a query boundary. The heterogeneous byte buffer
+starts with `usize` alignment, tracks the strongest admitted type alignment,
+and reallocates with that layout when it grows or encounters a more strongly
+aligned type. Every typed entry address therefore satisfies
+`align_of::<T>()` while handles remain compact byte-table indices.
+
+```{anchor}
+aligned_stash_buffer
+```
 
 This is the ownership consequence of
 [D2](./decisions.md#d2-stash-for-type-level-interning).
@@ -119,8 +127,10 @@ required semantic values into the destination before retaining their handles.
 
 ## Core traits
 
-- `StashData` is the unsafe representation contract for stash-storable `Copy`
-  types. Its `StaticSelf` supports runtime type checking across `'db`.
+- `StashData` is the unsafe representation contract for stash-storable
+  `Copy + Send + Sync` types. Its `StaticSelf` supports runtime type checking
+  across `'db`; the thread-safety bounds preserve `Stash`'s type-erased
+  `Send + Sync` contract.
 - `AllocStashData` adds structural hashing and equality required by
   hash-consing; derive it for ordinary stash nodes.
 - `StashHash` hashes a value in its stash context.
@@ -159,7 +169,10 @@ includes:
 - **[STASH-A1](#stash-a1):** `cross_stash_ptr_wrong_type`,
   `cross_stash_ptr_same_type_panics_in_debug`,
   `cross_stash_slice_panics_in_debug`, `copy_into_simple`,
-  `copy_into_compound`, and `copy_into_with_slice`;
+  `copy_into_compound`, and `copy_into_with_slice`; typed-storage alignment is
+  covered by `over_aligned_scalar_slice_and_zst_have_aligned_addresses`,
+  `over_aligned_entries_survive_growth_clone_and_hash_cons_lookup`, and
+  `over_aligned_values_copy_between_stashes`;
 - **[STASH-A2](#stash-a2):** `hash_cons_dedup`, `hash_cons_slice_dedup`, and
   `hash_cons_collision_stores_both`, plus
   `derived_stash_hash_leaf_struct` and `derived_stash_hash_with_ptr_field`;
@@ -178,11 +191,6 @@ boundary with
 
 ### Current limitations
 
-- The heterogeneous byte arena does not yet guarantee the base alignment
-  required by every admitted `StashData` type. This confirmed safety defect is
-  tracked as [KD-4](../implementation/known-deviations.md#kd-4-stash-byte-storage-does-not-guarantee-entry-alignment);
-  until it is closed, STASH-A1's typed-storage representation contract is not
-  fully established.
 - Fingerprint equality is probabilistic at 128 bits; the architecture accepts
   that collision risk for incremental equality but semantic hash-consing still
   checks actual content before sharing a handle.

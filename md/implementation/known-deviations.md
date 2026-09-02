@@ -32,27 +32,6 @@ close it. The affected architecture chapter links back to the entry from its
   representative integer, float, boolean, comparison, and mixed-operand cases
   against the independent rustc oracle.
 
-### KD-4: Stash byte storage does not guarantee entry alignment
-
-- **Contract:** [STASH-A1](../design/stash.md#stash-a1), together with the
-  `StashData` representation contract that every accepted value can be read
-  through its typed handle.
-- **Observed implementation:** `Stash` stores entries in `Vec<u8>` and aligns
-  each entry's byte offset, but `Vec<u8>` only guarantees byte alignment for
-  the allocation's base address. Adding an aligned offset cannot make an
-  under-aligned base suitable for a type with alignment greater than one, so
-  the typed raw-pointer reads can be undefined behavior for over-aligned
-  `StashData` values.
-- **Consequence:** The ordinary Sage node types happen to receive typical
-  allocator alignment in practice, but the public unsafe storage contract is
-  not upheld for every accepted `T`, and a future over-aligned node could make
-  otherwise valid stash access unsound.
-- **Closure evidence:** Replace the byte buffer with storage whose base and
-  entry layout guarantee `align_of::<T>()` for every allocation (or constrain
-  and enforce the admitted alignments), then cover scalar and slice allocation,
-  growth, cloning, hash-cons lookup, and cross-stash copy with
-  deliberately over-aligned values under Miri.
-
 ### KD-3: Derive helper attributes do not produce the promised warning
 
 - **Contract:** [No derive helper attributes](../design/subsetting.md#no-derive-helper-attributes),
@@ -72,6 +51,23 @@ close it. The affected architecture chapter links back to the entry from its
   conservative incompleteness rather than being assumed inert.
 
 ## Closed deviations
+
+### KD-4: Stash byte storage did not guarantee entry alignment
+
+- **Contract:** [STASH-A1](../design/stash.md#stash-a1), together with the
+  `StashData` representation contract that every accepted value can be read
+  through its typed handle.
+- **Closed:** 2026-09-02. The stash now owns a raw byte allocation whose
+  `Layout` retains the strongest alignment requested by any admitted type.
+  Growth and stronger alignment requests relocate the stored byte prefix into
+  a correctly aligned allocation without changing entry offsets or handles.
+- **Evidence:** `over_aligned_scalar_slice_and_zst_have_aligned_addresses`
+  checks scalar, slice, and zero-sized entries with 64- and 128-byte alignment;
+  `over_aligned_entries_survive_growth_clone_and_hash_cons_lookup` forces
+  relocation and verifies cloning and deduplication; and
+  `over_aligned_values_copy_between_stashes` verifies structural copying into
+  an independently aligned destination. The `sage-stash` test target passes
+  under Miri.
 
 ### KD-6: Never-to-any coercion was modeled as subtyping
 

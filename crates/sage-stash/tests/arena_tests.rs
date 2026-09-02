@@ -28,6 +28,14 @@ mod tests {
         val: u16,
     }
 
+    #[repr(align(64))]
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+    struct OverAligned(u64);
+
+    #[repr(align(128))]
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+    struct OverAlignedZst;
+
     // -- Basic alloc -------------------------------------------------------
 
     #[test]
@@ -210,6 +218,58 @@ mod tests {
         let b = stash.alloc(Big(0xDEAD_BEEF_CAFE_BABE));
         assert_eq!(stash[s], Small(1));
         assert_eq!(stash[b], Big(0xDEAD_BEEF_CAFE_BABE));
+    }
+
+    #[test]
+    fn stash_remains_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<Stash>();
+    }
+
+    #[test]
+    fn over_aligned_scalar_slice_and_zst_have_aligned_addresses() {
+        let mut stash = Stash::new();
+        let _prefix = stash.alloc(Color { r: 1, g: 2, b: 3 });
+        let scalar = stash.alloc(OverAligned(10));
+        let slice = stash.alloc_slice(&[OverAligned(20), OverAligned(30)]);
+        let zst = stash.alloc(OverAlignedZst);
+
+        assert_eq!((&stash[scalar] as *const OverAligned as usize) % 64, 0);
+        assert_eq!(stash[slice].as_ptr() as usize % 64, 0);
+        assert_eq!((&stash[zst] as *const OverAlignedZst as usize) % 128, 0);
+        assert_eq!(stash[scalar], OverAligned(10));
+        assert_eq!(stash[slice], [OverAligned(20), OverAligned(30)]);
+    }
+
+    #[test]
+    fn over_aligned_entries_survive_growth_clone_and_hash_cons_lookup() {
+        let mut stash = Stash::new();
+        let value = stash.alloc(OverAligned(0xCAFE_BABE));
+        for index in 0..4_096_u64 {
+            stash.alloc(index);
+        }
+        let duplicate = stash.alloc(OverAligned(0xCAFE_BABE));
+
+        assert_eq!(value, duplicate);
+        assert_eq!((&stash[value] as *const OverAligned as usize) % 64, 0);
+        assert_eq!(stash[value], OverAligned(0xCAFE_BABE));
+
+        let cloned = stash.clone();
+        assert_eq!((&cloned[value] as *const OverAligned as usize) % 64, 0);
+        assert_eq!(cloned[value], OverAligned(0xCAFE_BABE));
+    }
+
+    #[test]
+    fn over_aligned_values_copy_between_stashes() {
+        let mut source = Stash::new();
+        let values = source.alloc_slice(&[OverAligned(1), OverAligned(2)]);
+        let stashed = Stashed::new(source, values);
+
+        let mut target = Stash::new();
+        let copied = stashed.copy_into(&mut target);
+
+        assert_eq!(target[copied], [OverAligned(1), OverAligned(2)]);
+        assert_eq!(target[copied].as_ptr() as usize % 64, 0);
     }
 
     // -- Stashed tests -------------------------------------------

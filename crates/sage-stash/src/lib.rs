@@ -1,8 +1,10 @@
+use std::alloc::{Layout, alloc, dealloc, handle_alloc_error};
 use std::any::TypeId;
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::num::NonZeroU32;
 use std::ops::Index;
+use std::ptr::NonNull;
 #[cfg(debug_assertions)]
 use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
@@ -36,9 +38,11 @@ fn next_stash_id() -> u32 {
 ///   the `'db` lifetime — i.e., two distinct types must not share the same
 ///   `StaticSelf`.
 /// - `Self: Copy`.
+/// - `Self: Send + Sync`, so a type-erased `Stash` remains safe to transfer or
+///   share between threads.
 ///
 /// Prefer `#[derive(AllocStashData)]` over implementing this directly.
-pub unsafe trait StashData<'db>: Copy {
+pub unsafe trait StashData<'db>: Copy + Send + Sync {
     type StaticSelf: 'static;
 }
 
@@ -642,6 +646,174 @@ struct InternKey {
     collision: u32,
 }
 
+/// A byte buffer whose allocation has the strongest alignment requested by
+/// any value stored in it.
+///
+/// `Vec<u8>` cannot provide this guarantee: aligning an offset within a
+/// byte-aligned allocation does not align the resulting address. This buffer
+/// preserves byte offsets while reallocating with a stronger `Layout` when a
+/// newly admitted `StashData` type requires it.
+// ANCHOR: aligned_stash_buffer
+struct AlignedBuf {
+    ptr: NonNull<u8>,
+    len: usize,
+    capacity: usize,
+    align: usize,
+}
+
+// Safety: `AlignedBuf` has unique ownership of its allocation, moves do not
+// invalidate the allocation, and mutation is available only through `&mut
+// self`. Its raw pointer is not exposed by the public stash API.
+unsafe impl Send for AlignedBuf {}
+
+// Safety: shared access cannot mutate the allocation and can produce only
+// shared typed references through `Stash`'s checked indexing operations.
+unsafe impl Sync for AlignedBuf {}
+
+impl AlignedBuf {
+    fn new() -> Self {
+        Self {
+            ptr: NonNull::dangling(),
+            len: 0,
+            capacity: 0,
+            align: std::mem::align_of::<usize>(),
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn as_ptr(&self) -> *const u8 {
+        self.ptr.as_ptr()
+    }
+
+    fn reserve(&mut self, additional: usize, required_align: usize) {
+        let required_len = self
+            .len
+            .checked_add(additional)
+            .expect("stash byte length overflow");
+        let new_align = self.align.max(required_align);
+
+        if self.capacity != 0 && required_len <= self.capacity && new_align == self.align {
+            return;
+        }
+
+        let minimum_capacity = required_len.max(1);
+        let new_capacity = self
+            .capacity
+            .max(4)
+            .checked_next_power_of_two()
+            .unwrap_or(usize::MAX)
+            .max(
+                minimum_capacity
+                    .checked_next_power_of_two()
+                    .unwrap_or(usize::MAX),
+            );
+        let new_layout = Layout::from_size_align(new_capacity, new_align)
+            .expect("stash allocation layout overflow");
+        // Safety: `new_layout` has nonzero size and valid power-of-two
+        // alignment, as established by `Layout::from_size_align`.
+        let new_ptr = unsafe { alloc(new_layout) };
+        let new_ptr = NonNull::new(new_ptr).unwrap_or_else(|| handle_alloc_error(new_layout));
+
+        if self.len != 0 {
+            // Safety: both allocations are valid for at least `self.len`
+            // bytes, and the live old allocation cannot overlap the new one.
+            unsafe {
+                std::ptr::copy_nonoverlapping(self.ptr.as_ptr(), new_ptr.as_ptr(), self.len);
+            }
+        }
+
+        if self.capacity != 0 {
+            let old_layout = Layout::from_size_align(self.capacity, self.align)
+                .expect("existing stash allocation layout must remain valid");
+            // Safety: `self.ptr` was allocated with exactly `old_layout` and
+            // has not previously been deallocated.
+            unsafe {
+                dealloc(self.ptr.as_ptr(), old_layout);
+            }
+        }
+
+        self.ptr = new_ptr;
+        self.capacity = new_capacity;
+        self.align = new_align;
+    }
+    fn resize_zeroed(&mut self, new_len: usize) {
+        assert!(new_len >= self.len, "stash buffer is append-only");
+        let additional = new_len - self.len;
+        self.reserve(additional, 1);
+        if additional != 0 {
+            // Safety: `reserve` made the range from the old length through
+            // `new_len` part of this allocation and it does not overlap a
+            // live typed entry.
+            unsafe {
+                self.ptr.as_ptr().add(self.len).write_bytes(0, additional);
+            }
+            self.len = new_len;
+        }
+    }
+
+    fn extend_from_slice<T: Copy>(&mut self, values: &[T]) {
+        let byte_len = std::mem::size_of_val(values);
+        self.reserve(byte_len, std::mem::align_of::<T>());
+        if byte_len != 0 {
+            // Safety: `values` is valid for `byte_len` reads; `reserve` made
+            // the destination suffix valid for that many writes; and an
+            // exclusive stash borrow prevents safe callers from sourcing the
+            // values from this buffer.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    values.as_ptr().cast::<u8>(),
+                    self.ptr.as_ptr().add(self.len),
+                    byte_len,
+                );
+            }
+            self.len += byte_len;
+        }
+    }
+}
+
+impl Clone for AlignedBuf {
+    fn clone(&self) -> Self {
+        let Self {
+            ptr,
+            len,
+            capacity,
+            align,
+        } = self;
+        let mut cloned = Self::new();
+        if *capacity != 0 {
+            cloned.reserve(*len, *align);
+            if *len != 0 {
+                // Safety: `reserve` allocated a distinct destination valid for
+                // `self.len` bytes and the source prefix lies within its live
+                // allocation. Raw copying may preserve padding bytes.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(ptr.as_ptr(), cloned.ptr.as_ptr(), *len);
+                }
+                cloned.len = *len;
+            }
+        }
+        cloned
+    }
+}
+
+impl Drop for AlignedBuf {
+    fn drop(&mut self) {
+        if self.capacity != 0 {
+            let layout = Layout::from_size_align(self.capacity, self.align)
+                .expect("existing stash allocation layout must remain valid");
+            // Safety: `self.ptr` was allocated with exactly `layout` and Drop
+            // runs at most once.
+            unsafe {
+                dealloc(self.ptr.as_ptr(), layout);
+            }
+        }
+    }
+}
+// ANCHOR_END: aligned_stash_buffer
+
 /// Append-only, type-erased heterogeneous storage for `Copy` data with thin handles.
 ///
 /// Allocation grows the stash, but an existing entry cannot be mutated
@@ -649,7 +821,7 @@ struct InternKey {
 /// of every `Ptr` and `Slice` returned by the stash.
 #[derive(Clone)]
 pub struct Stash {
-    buf: Vec<u8>,
+    buf: AlignedBuf,
     entries: Vec<Entry>,
     intern_map: FxHashMap<InternKey, EntryIndex>,
     #[cfg(debug_assertions)]
@@ -659,7 +831,7 @@ pub struct Stash {
 impl Stash {
     pub fn new() -> Self {
         Self {
-            buf: Vec::new(),
+            buf: AlignedBuf::new(),
             entries: Vec::new(),
             intern_map: FxHashMap::default(),
             #[cfg(debug_assertions)]
@@ -762,20 +934,19 @@ impl Stash {
 
     // -- internal helpers --------------------------------------------------
 
-    fn push_raw<T: Copy>(&mut self, values: &[T], type_id: TypeId, inline_hash: u64) -> EntryIndex {
+    fn push_raw<'db, T: StashData<'db>>(
+        &mut self,
+        values: &[T],
+        type_id: TypeId,
+        inline_hash: u64,
+    ) -> EntryIndex {
         let align = std::mem::align_of::<T>().max(4);
         let cur = self.buf.len();
         let padding = cur.wrapping_neg() & (align - 1);
-        self.buf.resize(cur + padding, 0);
+        self.buf.resize_zeroed(cur + padding);
 
         let offset = self.buf.len() as u32;
-        let byte_len = std::mem::size_of_val(values);
-        self.buf.reserve(byte_len);
-        unsafe {
-            let dst = self.buf.as_mut_ptr().add(offset as usize);
-            std::ptr::copy_nonoverlapping(values.as_ptr() as *const u8, dst, byte_len);
-            self.buf.set_len(self.buf.len() + byte_len);
-        }
+        self.buf.extend_from_slice(values);
 
         let entry_idx = EntryIndex::new(self.entries.len() as u32);
         self.entries.push(Entry {
