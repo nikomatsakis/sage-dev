@@ -67,6 +67,9 @@ identities, then load only the selected function signature. Trait candidate
 discovery loads relevant impl identities, then matching candidate headers.
 Associated-type normalization requests one associated value only after its
 impl header matches. No operation reads an external function body.
+Ordinary primitive operator impls defined in `core` use this same relevant-impl
+path; the metadata boundary does not replace them with a compiler-authored
+operator table or proof result.
 
 <a id="meta-a3"></a>
 > **META-A3 — External demand is decomposed by semantic product.** Identity

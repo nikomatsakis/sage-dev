@@ -340,6 +340,10 @@ Trait impls are global within the compilation world visible to rustc: candidate
 discovery includes applicable impls from the local crate and every reachable
 external crate represented by compiler metadata. It does not mean scanning
 unrelated or downstream crates which are absent from the current compilation.
+Primitive operator impls such as `u8: Add<u8>` are ordinary impls in `core` and
+enter through this same external candidate path. They are distinct from
+explicit Sage candidates for structural compiler traits whose behavior is not
+represented by enumerable library impls.
 
 The semantic candidate query is keyed at least by the fixed trait. It must not
 enumerate impls for every trait and filter them only inside proof execution.
@@ -368,7 +372,8 @@ semantic effect.
 > fixtures show that indexed discovery loses no exhaustive candidate; unrelated
 > traits and provably disjoint rigid heads are absent; indexed and exhaustive
 > enumeration produce identical canonical responses; incomplete sources never
-> manufacture `No`.
+> manufacture `No`; and a primitive operator proof reads its ordinary `core`
+> impl metadata rather than a synthetic operator candidate.
 
 #### Local impl-index incremental firewall
 

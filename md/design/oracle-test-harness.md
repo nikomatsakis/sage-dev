@@ -83,6 +83,9 @@ into the shared schema. Examples include:
   external definition paths;
 - translating rustc receiver adjustments into the explicit operations which
   the shared typed tree represents; and
+- projecting a type-checked overloadable operator to its language-item trait
+  method call, including when rustc has already classified concrete scalar
+  operands as a THIR primitive operation; and
 - mapping lifetimes to `Dummy` because the shared Sage architecture explicitly
   defers lifetime semantics.
 
@@ -104,9 +107,10 @@ walk the definition-parent chain to obtain those facts.
 > independent projections.
 >
 > **Required verification:** Adapter-focused tests cover native definition
-> kinds, substitutions, receiver adjustments, lifetimes, and unsupported
-> constructs; adversarial fixtures prove that one emitter's omission or wrong
-> classification remains an exact mismatch rather than being normalized away.
+> kinds, substitutions, receiver adjustments, overloadable operator calls,
+> lifetimes, and unsupported constructs; adversarial fixtures prove that one
+> emitter's omission or wrong classification remains an exact mismatch rather
+> than being normalized away.
 
 The harness must not:
 
@@ -152,6 +156,16 @@ substitutions, and adjustment lists into the shared calls, borrows,
 dereferences, and coercions. Sage's internal method-candidate or adjustment
 representation is not part of the oracle contract. This per-emitter projection
 into a shared schema is not a license for a later pairwise normalization pass.
+
+That fixed projection includes overloadable operators. Rustc may erase a
+concrete scalar operator's type-dependent method marker before THIR, whereas
+Sage deliberately keeps the semantic trait-method call through Typed IR. The
+rustc emitter therefore uses the type-checked HIR operator, its resolved
+operand/result types, and the corresponding language-item method signature to
+emit the same resolved call and explicit adjustments. It does not identify a
+concrete impl—Sage's call contract does not require one—and it does not inspect
+Sage's output. This is a specified native-to-shared representation mapping,
+not comparison-time normalization.
 
 The destination contract pairs exact textual equality with coverage
 accounting. Each side reports the items and bodies in scope, including

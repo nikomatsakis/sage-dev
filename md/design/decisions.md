@@ -408,3 +408,25 @@ reviewed snapshots are outputs, and production code performs the semantic
 work between them. Its general verification contract is
 [TEN-A7](./tenets.md#ten-a7); the Semantic Inspector applies it in
 [SI-A3](./validation/semantic-inspector.md#si-a3).
+
+## D20: Overloadable operators remain trait calls through Typed IR
+
+Every successfully proven overloadable operator is represented in completed
+Typed IR as a resolved trait-method call, including operations whose current
+operands are concrete primitive types. Generic bodies therefore retain the
+same semantic representation whether a later instantiation selects a
+primitive or user-defined implementation. Non-overloadable lazy boolean
+operators remain explicit short-circuit operations.
+
+Primitive recognition belongs after Typed IR. Once generic substitutions are
+concrete, future codegen may recognize a supported operator language-item call
+and replace it with the corresponding primitive operation; otherwise it uses
+ordinary static trait-call lowering. The rustc oracle's fixed projection maps
+rustc's earlier scalar classification back into Sage's shared semantic-call
+schema, preserving exact independent comparison without making rustc's THIR
+representation Sage's architecture.
+
+The body-checking consequence is
+[BODY-A5](./pipeline/body-checking.md#body-a5), the representation invariant is
+[TIR-A6](./typed-ir.md#tir-a6), and the accepted change is specified by
+[NIV-A4](../rfds/numeric-inference-variables/README.md#niv-a4).

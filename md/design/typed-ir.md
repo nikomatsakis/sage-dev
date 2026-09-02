@@ -141,8 +141,8 @@ represented by the implementation.
 | closure | Typed nested body, explicit parameters and captures (planned) |
 | async block or async function body | Typed nested coroutine body; no state-machine lowering (planned) |
 | `x.method(a)` | Resolved call with dispatch, owner/method substitutions, and receiver operations materialized (built for the conservative external trait and inherent method slices; general lookup planned) |
-| overloaded operator | Resolved trait call (planned) |
-| primitive operator | Typed intrinsic operation |
+| non-short-circuit operator syntax | Resolved trait-method call, including primitive and generic operands (planned) |
+| `x && y`, `x || y` | Typed lazy logical operation with conditional RHS evaluation |
 | `x[i]` | Resolved `Index` or `IndexMut` call (planned) |
 | callable `f(a)` | Direct, pointer, dynamic, or `Fn*` call as resolved (planned) |
 | implicit coercion | Explicit coercion, borrow, dereference, or unsizing node (shared borrow and built-in dereference represented; general coercions planned) |
@@ -155,6 +155,33 @@ represented by the implementation.
 `await` deliberately remains above generator lowering. Its node records the
 resolved future conversion and output type, but not polling, suspension
 points, or state-machine layout.
+
+Overloadable operators remain calls throughout Typed IR. For example, both a
+concrete `u8 + u8` expression and an operation in a generic `T: Add` body name
+`Add::add` with the applicable substitutions and explicit adjustments. The
+generic body does not yet determine whether a future instantiation uses a
+primitive or user-defined implementation. Future codegen may recognize a
+supported primitive operator call once substitutions are concrete and replace
+it with an appropriate primitive operation. Lazy `&&` and `||` remain direct
+logical nodes because their non-overloadable, short-circuit evaluation cannot
+be represented by an ordinary eager call.
+
+This is the representation consequence of
+[D20](./decisions.md#d20-overloadable-operators-remain-trait-calls-through-typed-ir).
+
+<a id="tir-a6"></a>
+> **TIR-A6 — Overloadable operators are calls until codegen.** Completed Typed
+> IR represents every proven overloadable operator as a resolved trait-method
+> call, independent of whether its current operands are primitive, generic, or
+> user-defined. Primitive recognition occurs only after Typed IR, when codegen
+> has concrete substitutions; lazy boolean operators remain explicit
+> short-circuit operations.
+>
+> **Required verification:** Completed-tree fixtures inspect concrete
+> arithmetic, mixed-integer shift, generic operator, and user-defined operator
+> cases and require resolved method identity, substitutions, adjustments, and
+> result types. No overloadable case may complete as `Binary`; `&&` and `||`
+> fixtures must retain conditional RHS evaluation.
 
 ## Rigid and alias types
 
@@ -285,6 +312,8 @@ This is the body-representation consequence of
 The oracle compares the semantic typed tree, not Sage's temporary checking
 state or rustc's adjustment encoding. The rustc side translates its selected
 definitions, substitutions, and adjustments into the same explicit tree form.
+For overloadable operators this includes projecting rustc's concrete scalar
+operation back to the language-item trait-method call required by TIR-A6.
 Alias identity is part of that common model: comparison does not globally
 expand named aliases or reveal opaques merely to make the two trees agree.
 
@@ -339,7 +368,7 @@ solver boundaries, display, and both semantic emitters.
 - `TyExprData` still contains source-shaped variants for constructs whose
   general elaboration is not implemented. Such variants are not permitted in
   a successful oracle slice that claims their semantics.
-- Closures/captures, async/coroutine bodies, overloaded operators, indexing,
+- Closures/captures, async/coroutine bodies, operator trait calls, indexing,
   callable dispatch, general coercions/unsizing, `for`, `?`, and fully
   elaborated `.await` remain planned.
 - Method resolution is limited to the conservative external trait/inherent

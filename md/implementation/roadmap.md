@@ -17,9 +17,11 @@ flowchart TD
     Db[Complete: DbDropGuard::db] --> Parse[Complete: Parse::next]
     Parse --> Docs[Complete: auditable architecture guide]
     Docs --> Inspect[Implemented: semantic inspector]
+    Inspect --> Numeric[Next correctness slice: numeric inference and operator soundness]
     Parse --> ImplIndex[Planned: trait-partitioned impl discovery]
     Parse --> SolverSearch[Planned: solver search semantics]
     Inspect --> Shutdown[Next body slice: Shutdown::recv]
+    Numeric --> Library[mini-redis library coverage]
     ImplIndex --> Library[mini-redis library coverage]
     SolverSearch --> Library
     Shutdown --> Library
@@ -243,6 +245,89 @@ current boundary, and invalid duplicate local definitions do not yet have
 reorder-stable recovery addresses. Other current evidence limitations are
 listed in that chapter.
 
+## Next correctness slice: numeric inference and operator soundness
+
+### Goal and acceptance target
+
+Constrain unsuffixed numeric literals to the integer or floating-point type
+families without selecting a concrete default, prove binary syntax through its
+operator trait, and preserve every proven overloadable operation as a resolved
+trait-method call in Typed IR.
+
+Acceptance closes KD-7: `1 + true` produces a type diagnostic and recovery,
+valid mixed-integer shifts such as `1u8 << 2i16` retain the left result type,
+and primitive, generic, and user-defined operators become resolved trait calls.
+Representative positive and negative cases agree with
+the independent rustc oracle within this slice. An otherwise unconstrained
+numeric literal remains unresolved and receives explicit diagnostic recovery;
+it does not silently become `i32` or `f64`. Successful completed Typed IR
+contains concrete types and no domain metadata.
+
+### Why this slice
+
+The existing checker can complete a ground, invalid arithmetic expression as
+an apparently valid binary operation because numeric literals are ordinary
+unconstrained variables and every binary operator initially equates its
+operands. This is a small surface defect with a cross-cutting fix: literal
+construction, transactional inference, operator checking, diagnostics,
+canonicalization, and Typed IR completion must agree.
+
+### Scope and non-goals
+
+The slice covers suffixed and unsuffixed integer/float literals and binary
+operator syntax currently represented by `BinaryOp`. Non-short-circuit syntax
+uses the existing trait-solving and static-call elaboration boundaries; the
+slice replaces successful overloadable `Binary` nodes with resolved calls,
+including for primitive and generic operands. It includes a representative
+user-defined operator to establish that boundary, but not a new general method
+lookup system or codegen primitive-specialization design. Operator-specific
+hardcoded inference relationships are excluded. Common-constraint extraction
+from ambiguous candidates is deferred to a general inference-level design and
+must operate on the actual complete candidate answers. Literal range lints,
+implicit numeric coercions, complete casts, unary operators, and numeric
+defaulting also remain separate work. Defaulting must be designed later as
+part of a holistic inference-commitment policy rather than introduced through
+scheduler-local quiescence.
+
+### Affected architecture
+
+- [Type Inference](../design/subsystems/type-inference.md)
+- [Body Checking and Typed-IR Elaboration](../design/pipeline/body-checking.md)
+- [Typed IR](../design/typed-ir.md)
+- [Oracle Test Harness](../design/oracle-test-harness.md)
+
+### Dependencies
+
+The completed type-inference egraph and current `Binary` representation
+provide the implementation base. The Semantic Inspector is useful review
+infrastructure but is not a semantic prerequisite. Operator overloading reuses
+the existing trait-call elaboration boundary. Primitive operator proofs use
+ordinary `core` impls supplied by the existing external relevant-impl metadata
+path; no primitive candidate is built into body checking or the solver.
+Primitive lowering is deferred until future codegen has concrete substitutions
+and is not a competing solver candidate. The [rustc binary-operator research]
+records the reference pipeline that motivates this ordering and the
+intentionally deferred answer-merging and fallback questions.
+
+### High-level implementation plan
+
+1. Add versioned equality-class domains and canonical round trips.
+2. Construct suffixed and domain-constrained literals, propagate
+   proof-derived constraints, and diagnose unresolved numeric classes without
+   defaulting them.
+3. Replace blanket binary equality with retained operator-trait goals, import
+   ordinary local or `core` impl responses, import only proof-derived
+   constraints, and elaborate every proven overloadable operation as a
+   resolved trait call.
+4. Add table-driven relation tests, source integrations, completed-IR checks,
+   and exact oracle cases.
+5. Close KD-7 and promote the accepted RFD anchors with their evidence.
+
+### Progress
+
+**Planned.** The [Numeric Inference Domains and Binary Operator Typing RFD] is
+accepted and its implementation has not begun.
+
 ## Planned slice: trait-partitioned impl discovery
 
 ### Goal and acceptance target
@@ -445,3 +530,5 @@ file when one of its detailed checkpoints lands.
 [Cycle Semantics]: ../rfds/trait-solver-cycle-semantics/README.md
 [Scheduling and Fairness]: ../rfds/trait-solver-scheduling/README.md
 [Incremental Trait Results]: ../rfds/incremental-trait-results/README.md
+[Numeric Inference Domains and Binary Operator Typing RFD]: ../rfds/numeric-inference-variables/README.md
+[rustc binary-operator research]: ../design/research/rustc-binary-operator-typing.md

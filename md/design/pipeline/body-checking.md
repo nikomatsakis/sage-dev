@@ -151,6 +151,57 @@ a coercion expectation; expression-specific inward propagation is incremental:
 initial_bidirectional_expression_checking
 ```
 
+## Binary operator checking and elaboration
+
+Except for lazy `&&` and `||`, binary syntax begins as a retained
+operator-trait operation. Checking creates the applicable trait goal,
+instantiates its method signature, and relates the expression type to the
+method result. The operator token alone neither narrows operand domains nor
+equates their types: a selected user-defined impl may accept arbitrary operand
+types. It selects only the operator language-item trait and method. Candidate
+discovery uses the ordinary local and external impl path; primitive arithmetic
+and shift implementations arrive as `core` impl metadata, not synthetic
+builtin candidates. This first slice adds no hardcoded operator-specific
+inference relationships. Any future extraction of facts shared by several
+ambiguous candidates must use the actual complete candidate answers through
+the general inference and solver design.
+
+After inference and trait selection settle, every proven non-short-circuit
+operator becomes a resolved static trait-method call with its substitutions,
+explicit adjustments, and result type. This includes operations over concrete
+primitive types and generic parameters. A generic body may be instantiated
+with either a primitive or user-defined implementation, so body checking does
+not classify the call by its current operand representation. Future codegen
+may recognize a supported primitive operator call after substitutions are
+concrete and lower it specially.
+
+A failed or ambiguous trait operation produces a terminal diagnostic and
+recovery node. Lazy boolean operators bypass trait selection and preserve
+short-circuit evaluation. The accepted [Numeric Inference Domains and
+Binary Operator Typing RFD][numeric-rfd] gives the complete first-slice design,
+and the [rustc operator research][rustc-operator-research] records rustc's
+additional inference hints as descriptive precedent, not this slice's
+contract.
+
+<a id="body-a5"></a>
+> **BODY-A5 — Overloadable operators remain resolved calls in Typed IR.** Every
+> non-short-circuit binary operator retains its trait operation and method
+> result through inference; its token alone neither narrows nor equates operand
+> types. Every proven operation completes as a resolved trait-method call,
+> including primitive and generic cases. Ambiguity and unsupported operands
+> cannot be represented as success, and primitive specialization occurs only
+> at the future codegen boundary defined by [D20].
+>
+> **Required verification:** Table-driven checks cover every represented
+> operator-to-trait mapping, including different integer types for shift
+> operands. Query traces show primitive proofs loading ordinary `core` impl
+> identities and headers from external metadata, with no synthetic primitive
+> candidate. Source-driven tests and independent rustc oracle cases cover
+> representative positive and negative expressions; concrete primitive,
+> generic, nonnumeric shift, and user-defined calls; non-`Self` `Rhs` and
+> `Output`; preservation of `Any` domains before proof selection; lazy boolean
+> short-circuit nodes; and rejection of `1 + true`.
+
 ## Failure and terminal incompleteness
 
 User type errors produce diagnostics and error-typed recovery nodes. An
@@ -290,8 +341,9 @@ cargo test -p sage-oracle-harness --test oracle_compare -- mini_redis/db_drop_gu
   incomplete; diagnostics or recovery nodes mark unsupported paths.
 - [KD-7](../../implementation/known-deviations.md#kd-7-arithmetic-operators-do-not-require-numeric-operands)
   records the confirmed exception to that diagnostic guarantee: current
-  binary-operator checking relates operand types but does not yet require
-  arithmetic operands to be numeric.
+  binary-operator checking relates operand types, does not yet require
+  arithmetic operands to be numeric, and retains successful source-shaped
+  `Binary` nodes instead of the resolved calls required by BODY-A5.
 - Expected-type checking currently synthesizes an expression before applying
   its coercion expectation. Only ordinary direct-call arguments use this
   boundary; literals, closures, nested expression forms, and method arguments
@@ -325,3 +377,9 @@ cargo test -p sage-oracle-harness --test oracle_compare -- mini_redis/db_drop_gu
 - [Semantic inspector and persistent edit
   testing](../../implementation/roadmap.md#implemented-slice-semantic-inspector-and-persistent-edit-testing)
   will expose readable bodies and structured query traces.
+- [Numeric inference and operator
+  soundness](../../implementation/roadmap.md#next-correctness-slice-numeric-inference-and-operator-soundness)
+  will establish [BODY-A5](#body-a5) and close KD-7.
+
+[numeric-rfd]: ../../rfds/numeric-inference-variables/README.md
+[rustc-operator-research]: ../research/rustc-binary-operator-typing.md

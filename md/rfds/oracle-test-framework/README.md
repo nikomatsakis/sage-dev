@@ -7,7 +7,11 @@
 > details are superseded by [D4](../../design/decisions.md#d4-oracle-test-harness)
 > and the [Oracle Test Harness](../../design/oracle-test-harness.md). The
 > destination is deterministic serialized output compared by exact textual
-> identity; paired normalization is technical debt to remove.
+> identity; paired normalization is technical debt to remove. Its primitive
+> operator representation is also superseded by
+> [D20](../../design/decisions.md#d20-overloadable-operators-remain-trait-calls-through-typed-ir):
+> the shared Typed IR represents every overloadable operator as a resolved
+> trait-method call.
 
 ## Problem
 
@@ -628,7 +632,11 @@ This is enough to represent all three initial tests. The model grows by adding v
 
 2. **How to handle macro expansion?** Probably compare the post-expansion typed tree (both sides expand macros first). The `rust-ref` model represents the expanded program, not the surface syntax.
 
-3. **How to handle trait resolution in bodies?** Overloaded operators (e.g., `x + y` on non-primitives) are represented as `Call` with the resolved impl method as target. Built-in operators on primitives use `BinaryOp` (no def). Method calls also use `Call` with the resolved impl path. This exercises the trait solver.
+3. **How to handle trait resolution in bodies?** This historical proposal used
+   `Call` only for user-defined operators and `BinaryOp` for primitives. The
+   current D20 architecture instead projects every overloadable operator to
+   its resolved trait-method call, including primitive operands, while lazy
+   boolean operators retain direct short-circuit representation.
 
 4. **Multi-file crates?** Start with single-file inputs. Multi-file support (mod declarations) can come later by pointing at a directory rather than a single file.
 

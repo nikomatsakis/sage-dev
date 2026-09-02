@@ -57,6 +57,52 @@ asserts quiescence and resolves every type edge while copying the working tree
 into a fresh append-only result stash. The working stash remains unchanged, as
 required by [STASH-A5](../stash.md#stash-a5).
 
+## Domain-constrained inference
+
+An inference variable may carry a class-wide domain restriction in addition
+to its structural equality and bound state. Ordinary variables initially
+admit any type. Unsuffixed integer and float literals instead begin in
+`Integer` and `Float` domains. The restriction belongs to the variable's
+current egraph equality class: union intersects the two domains, binding to a
+concrete type checks membership, and an empty intersection is a type error.
+
+Domains are versioned semantic state. Speculative refinement is visible only
+inside its inference child; collapse publishes it and wakes affected
+consumers, while discard removes it without an observable effect. A caller
+inference variable unified with a numeric literal inherits the numeric domain,
+so the restriction survives generic instantiation and representative changes.
+Using that variable as an operand of an overloadable operator does not itself
+narrow the domain; only literal construction or a proof-derived constraint
+does so in this slice.
+
+Expected types, equality, selected impls, where-clauses, and other ordinary
+proof-derived constraints may bind a numeric class to a concrete member of its
+domain. Numeric domain metadata itself does not choose a concrete default. An
+integer- or float-domain class which remains unresolved at terminal
+finalization receives explicit unresolved-inference diagnostics and recovery,
+just like other unresolved inference. A later holistic commitment policy may
+introduce Rust's numeric defaults after defining their relationship to trait
+ambiguity, provider completeness, normalization, and never fallback. The
+[Numeric Inference Domains and Binary Operator Typing RFD][numeric-rfd]
+specifies the accepted first slice.
+
+<a id="inf-a6"></a>
+> **INF-A6 — Inference domains narrow transactionally without selecting a
+> default.** An effective domain follows its complete equality class, narrows
+> only by intersection, and obeys the versioned egraph's commit, rollback,
+> revision, and wake rules. Only proof-derived constraints make a numeric class
+> concrete in this slice; overloadable operator spelling does not narrow a
+> domain, and scheduler quiescence does not authorize defaulting.
+>
+> **Required verification:** Egraph tests cover both union orders,
+> transitivity, incompatible concrete bindings, branch collapse/discard,
+> revisions, and wakes. Source-driven completion tests cover contextual
+> numeric inference, generic propagation, selected-impl and where-clause
+> constraints, preservation of an ordinary `Any` operand before proof
+> selection, unrelated-variable isolation, and explicit recovery for otherwise
+> unresolved integer and float classes. Tests prove this slice neither narrows
+> from operator spelling nor silently chooses `i32` or `f64`.
+
 ## Transactional construction
 
 The equality engine is a versioned egraph. A child version sees its ancestors
@@ -206,7 +252,7 @@ recovery, and final quiescence support the two completed mini-redis bodies.
 ### Current limitations
 
 - Subtyping and coercions currently cover only a small structural subset.
-- Numeric inference/fallback, operator-domain checking, closures, casts,
+- Numeric-domain inference, operator checking, closures, casts,
   patterns, and control-flow joins are incomplete relative to Rust. In
   particular, [KD-7](../../implementation/known-deviations.md#kd-7-arithmetic-operators-do-not-require-numeric-operands)
   records that an unconstrained integer literal can currently unify with
@@ -226,4 +272,8 @@ recovery, and final quiescence support the two completed mini-redis bodies.
 [Solver recursion, scheduling, and monotone
 progress](../../implementation/roadmap.md#planned-slice-solver-recursion-scheduling-and-monotone-progress)
 will change task progress and wake behavior. [Shutdown::recv](../../implementation/roadmap.md#next-application-slice-shutdownrecv)
-will extend body-level inference coverage.
+will extend body-level inference coverage. [Numeric inference and primitive
+operator soundness](../../implementation/roadmap.md#next-correctness-slice-numeric-inference-and-operator-soundness)
+will establish [INF-A6](#inf-a6) and close KD-7.
+
+[numeric-rfd]: ../../rfds/numeric-inference-variables/README.md

@@ -87,8 +87,10 @@ alias relations are proved.
 ### Materialize implicit operations
 
 Autoderef, autoref, unsizing, and other selected coercions become explicit
-tree nodes. Primitive operations may remain intrinsics; overloaded operations
-become resolved trait calls.
+tree nodes. Proven overloadable operators, including those over primitive
+operands, become resolved trait calls; future codegen may recognize and lower
+primitive instances specially. Non-overloadable operations such as lazy
+boolean conjunction and disjunction remain explicit semantic operations.
 
 ### Preserve structured control flow
 

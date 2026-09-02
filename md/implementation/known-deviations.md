@@ -15,22 +15,26 @@ close it. The affected architecture chapter links back to the entry from its
 
 ### KD-7: Arithmetic operators do not require numeric operands
 
-- **Contract:** [BODY-A1](../design/pipeline/body-checking.md#body-a1), including
-  the body-phase guarantee that user type errors produce diagnostics rather
-  than an apparently valid typed operation.
+- **Contracts:** [BODY-A1](../design/pipeline/body-checking.md#body-a1),
+  [BODY-A5](../design/pipeline/body-checking.md#body-a5), and
+  [INF-A6](../design/subsystems/type-inference.md#inf-a6), including the
+  body-phase guarantee that user type errors produce diagnostics rather than
+  an apparently valid typed operation.
 - **Observed implementation:** Unsuffixed integer literals begin as
   unconstrained type variables, and binary `+` currently equates its two
   operand types without also requiring a numeric operator domain. While adding
   surplus-argument diagnostic coverage, the expression `1 + true` was checked
   but produced no type diagnostic: the integer variable unified with `bool`.
 - **Consequence:** A ground, ill-typed arithmetic expression can survive body
-  checking as a resolved binary operation instead of producing an error and
-  recovery node.
+  checking as an apparently valid binary operation instead of producing an
+  error and recovery node.
 - **Closure evidence:** Add a source-driven integration reproducer which
-  rejects `1 + true`, implement numeric literal constraints and operator-domain
-  checking without relying on a caller's expected type, and cover
-  representative integer, float, boolean, comparison, and mixed-operand cases
-  against the independent rustc oracle.
+  rejects `1 + true`, implement numeric literal constraints and trait-first
+  operator checking without relying on a caller's expected type, and cover
+  representative integer, float, boolean, comparison, mixed-operand, generic,
+  and user-defined operator cases against the independent rustc oracle.
+  Inspect completed IR to require resolved trait calls for every overloadable
+  operator, including primitive operands, and explicit lazy boolean nodes.
 
 ### KD-3: Derive helper attributes do not produce the promised warning
 

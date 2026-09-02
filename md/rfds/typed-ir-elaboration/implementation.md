@@ -56,8 +56,9 @@ remain incomplete where their checkboxes are still open.
 
 - [ ] Land the separate normalization design needed to represent and solve
   associated-type projections while preserving unnormalized alias bounds.
-- [ ] Elaborate overloaded operators, indexing, callable values, `for`, and
-  `?` into their resolved semantic operations.
+- [ ] Elaborate overloadable operators (including primitive operands),
+  indexing, callable values, `for`, and `?` into their resolved semantic
+  operations.
 - [ ] Add one focused fixture and query-dependency assertion per family.
 
 ### Step 5: Closures and async
