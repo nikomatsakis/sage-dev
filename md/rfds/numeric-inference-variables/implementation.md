@@ -3,6 +3,75 @@
 No implementation step in this accepted RFD has landed yet. Each step must
 leave the workspace building and keep unsupported operator paths diagnostic.
 
+## Landing strategy
+
+Land the work in dependency order rather than as one source-visible change:
+
+1. **Domain substrate.** Add versioned domains, fallible domain-aware equality,
+   and canonical round trips. Existing inference-variable constructors continue
+   to allocate `Any`, so this checkpoint deliberately changes no source
+   behavior.
+2. **Literal behavior.** Construct domain-constrained variables for unsuffixed
+   literals, lower suffixes directly, and add terminal diagnostics and recovery.
+   This is the first checkpoint that closes the unsound literal-to-`bool`
+   unification independently of operator elaboration.
+3. **Operator proof and elaboration.** Add typed operator-language-item
+   metadata, retain the trait obligation, reuse normal impl discovery, and emit
+   resolved trait calls. Keep lazy boolean operators on their existing
+   short-circuit path.
+4. **Closure evidence.** Complete the source matrix, oracle comparisons,
+   query-trace assertions, and living-document evidence before closing KD-7.
+
+Each checkpoint is independently reviewable, keeps successful completed IR
+free of inference-domain metadata, and updates the checkboxes below as it
+lands. The first implementation change should be checkpoint 1 only; it should
+not mix operator lookup or literal lowering into the equality substrate.
+
+## Implementation seams
+
+The current code provides most of the required boundaries, but the operator
+language-item lookup is new. The expected code map is:
+
+| Responsibility | Current seam | Planned change |
+|---|---|---|
+| Domain declared at variable creation | `check/infer/version.rs` (`VarInfo`, `VersionTree::alloc_var`) and `check/infer_ctx.rs` (`fresh_ty_var`) | Add `InferDomain` and a domain-aware constructor; preserve the existing constructor as `Any`. |
+| Versioned class state | `check/infer/egraph.rs` (`VersionState`, `union`, `set_bound_in`) | Store effective class domains, intersect them transactionally, and include committed narrowing in revisions and wakes. |
+| Equality enforcement and diagnostics | `check/infer/unify.rs` (`try_unify`, `unify_in_probe`, `bind_variable`) and `check/infer_ctx.rs` (`require_eq`) | Reject an empty domain intersection or an out-of-domain concrete type with a structured `DomainConflict`; keep probe rejection silent and render required source relations without exposing inference indices. |
+| Solver cache boundary | `check/solve/goal.rs` (`CanonicalVarInfo`), `canonical.rs`, and `boundary.rs` (`apply_query_response`) | Put effective input domains in the canonical key and recreate/recheck them while importing a response through the existing child transaction. Response-local variables begin as `Any` unless their binder metadata says otherwise. |
+| Literal and binary-expression checking | `check/expr.rs` (`check_literal_ty`, `check_binary_op_ty`) | Lower suffixes directly, allocate `Integer`/`Float` variables for unsuffixed literals, and replace blanket binary equality with the selected operator-trait operation. |
+| Operator semantic identity | `tcx/mod.rs` (`TcxDb`), `tcx/proxy.rs`, and the request loop plus `tcx_impl.rs` in `sage-rustc-bridge` | Add a typed query from Sage's closed binary-operator kind to the exact external trait and method definitions. The rustc-backed provider obtains the trait from rustc's language-item table and validates the associated method under that trait; body checking does not resolve a textual `core::ops` path or prelude name. Missing or inconsistent metadata is incomplete, never proof. |
+| Ordinary primitive/user impl discovery | `external_syms.rs` (`external_relevant_impls`) and `check/solve/clauses.rs` | Reuse the selected trait identity with the existing relevant-impl and impl-signature queries. Do not add a primitive operator candidate or signature matrix. |
+| Successful operator IR | `tytree/mod.rs` (`ResolvedCallTarget`, `CallDispatch`, `TyExprData`) | Reuse resolved static trait-call representation for overloadable operators. Reserve source-shaped `Binary` for non-overloadable/lazy forms still needing it; future codegen performs primitive recognition. |
+
+The language-item operation should return an owned, provider-neutral record
+containing both definitions, following the other `Raw*` metadata in `TcxDb`.
+Its exact Rust type name is an implementation detail, but operator kind,
+missing-data behavior, and semantic identities are part of the boundary and
+need focused proxy/provider tests.
+
+## First landing checkpoint
+
+Checkpoint 1 is complete only when all of the following hold without changing
+literal or operator behavior:
+
+- every fresh variable has an explicit effective domain, with legacy call
+  sites receiving `Any`;
+- variable union and exact concrete binding share one fallible membership
+  path, including exact-bound installation;
+- either union order preserves the domain intersection, failed work rolls
+  back, and committed narrowing publishes the expected revision and wakes;
+- canonicalization distinguishes otherwise equal goals whose existential
+  inputs have different domains;
+- canonical response application recreates the caller constraints and rejects
+  an incompatible substitution without leaking child state; and
+- focused unit tests cover `Any ∩ Integer`, `Integer ∩ Float`, an integer
+  variable unified with `f32`, representative integer/float members, branch
+  collapse, and branch discard.
+
+The checkpoint gate is a formatted workspace build plus the focused inference
+and canonical-response tests. Source-level numeric tests belong to checkpoint
+2, not this substrate commit.
+
 ## Step 1: Versioned inference domains
 
 - [ ] Add `InferDomain::{Any, Integer, Float}` to inference-variable

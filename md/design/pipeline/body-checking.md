@@ -344,6 +344,11 @@ cargo test -p sage-oracle-harness --test oracle_compare -- mini_redis/db_drop_gu
   binary-operator checking relates operand types, does not yet require
   arithmetic operands to be numeric, and retains successful source-shaped
   `Binary` nodes instead of the resolved calls required by BODY-A5.
+- The external metadata interface can enumerate impls for a known trait but
+  does not yet expose the operator-language-item trait and method identities.
+  The numeric/operator implementation plan adds that typed lookup before body
+  checking begins retaining operator obligations; textual `core::ops` or
+  prelude lookup is not a substitute for it.
 - Expected-type checking currently synthesizes an expression before applying
   its coercion expectation. Only ordinary direct-call arguments use this
   boundary; literals, closures, nested expression forms, and method arguments

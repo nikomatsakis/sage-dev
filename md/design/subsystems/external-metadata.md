@@ -67,6 +67,10 @@ identities, then load only the selected function signature. Trait candidate
 discovery loads relevant impl identities, then matching candidate headers.
 Associated-type normalization requests one associated value only after its
 impl header matches. No operation reads an external function body.
+Operator checking first asks a typed metadata operation for the exact
+language-item trait and associated method identities selected by the operator
+kind. The rustc-backed provider obtains those identities from compiler
+semantics; the checker does not reconstruct them by resolving a library path.
 Ordinary primitive operator impls defined in `core` use this same relevant-impl
 path; the metadata boundary does not replace them with a compiler-authored
 operator table or proof result.
@@ -159,6 +163,9 @@ macro expansion facts support the completed mini-redis slices.
 - META-A1 lacks a mechanical interface-surface check, META-A2 lacks a complete
   unavailable-metadata matrix, and META-A3 lacks a focused external
   associated-value trace.
+- `TcxDb` does not yet expose operator language-item trait/method identities.
+  The [numeric inference and operator soundness slice] adds this typed identity
+  lookup before reusing the existing relevant-impl path.
 - External module children are broader than several desired semantic lookup
   keys; finer queries should be introduced when evidence shows unnecessary
   invalidation.
@@ -175,3 +182,7 @@ macro expansion facts support the completed mini-redis slices.
   presents metadata calls alongside Salsa execution traces.
 - [Shutdown::recv](../../implementation/roadmap.md#next-application-slice-shutdownrecv)
   will add only the metadata forms required by that vertical slice.
+- [Numeric inference and operator
+  soundness](../../implementation/roadmap.md#next-correctness-slice-numeric-inference-and-operator-soundness)
+  adds operator semantic-identity lookup and traces ordinary `core` impl
+  discovery through this boundary.

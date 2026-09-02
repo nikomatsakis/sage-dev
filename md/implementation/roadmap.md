@@ -311,22 +311,32 @@ intentionally deferred answer-merging and fallback questions.
 
 ### High-level implementation plan
 
-1. Add versioned equality-class domains and canonical round trips.
+1. Land the source-neutral inference substrate: versioned equality-class
+   domains, fallible domain-aware unification, and canonical round trips while
+   every existing constructor continues to allocate `Any`.
 2. Construct suffixed and domain-constrained literals, propagate
    proof-derived constraints, and diagnose unresolved numeric classes without
    defaulting them.
-3. Replace blanket binary equality with retained operator-trait goals, import
-   ordinary local or `core` impl responses, import only proof-derived
-   constraints, and elaborate every proven overloadable operation as a
-   resolved trait call.
-4. Add table-driven relation tests, source integrations, completed-IR checks,
-   and exact oracle cases.
-5. Close KD-7 and promote the accepted RFD anchors with their evidence.
+3. Add a typed external-metadata query from an operator kind to its rustc
+   language-item trait and associated method identities. Missing metadata is
+   incomplete; body checking does not recover identity through a textual
+   `core::ops` path or prelude lookup.
+4. Replace blanket binary equality with retained operator-trait goals, import
+   ordinary local or `core` impl responses through the existing candidate
+   path, and elaborate every proven overloadable operation as a resolved trait
+   call.
+5. Add table-driven relation tests, source integrations, completed-IR checks,
+   query traces, and exact oracle cases; then close KD-7 and promote the
+   accepted RFD anchors with their evidence.
 
 ### Progress
 
 **Planned.** The [Numeric Inference Domains and Binary Operator Typing RFD] is
-accepted and its implementation has not begun.
+accepted and its implementation has not begun. Its [implementation
+chapter][numeric-plan] maps the landing checkpoints to the current inference,
+canonicalization, metadata, solver, and Typed IR seams. The first reviewable
+change is the source-neutral domain substrate; literal behavior and operator
+metadata follow separately.
 
 ## Planned slice: trait-partitioned impl discovery
 
@@ -531,4 +541,5 @@ file when one of its detailed checkpoints lands.
 [Scheduling and Fairness]: ../rfds/trait-solver-scheduling/README.md
 [Incremental Trait Results]: ../rfds/incremental-trait-results/README.md
 [Numeric Inference Domains and Binary Operator Typing RFD]: ../rfds/numeric-inference-variables/README.md
+[numeric-plan]: ../rfds/numeric-inference-variables/implementation.md
 [rustc binary-operator research]: ../design/research/rustc-binary-operator-typing.md

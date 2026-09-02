@@ -272,8 +272,8 @@ recovery, and final quiescence support the two completed mini-redis bodies.
 [Solver recursion, scheduling, and monotone
 progress](../../implementation/roadmap.md#planned-slice-solver-recursion-scheduling-and-monotone-progress)
 will change task progress and wake behavior. [Shutdown::recv](../../implementation/roadmap.md#next-application-slice-shutdownrecv)
-will extend body-level inference coverage. [Numeric inference and primitive
-operator soundness](../../implementation/roadmap.md#next-correctness-slice-numeric-inference-and-operator-soundness)
+will extend body-level inference coverage. [Numeric inference and operator
+soundness](../../implementation/roadmap.md#next-correctness-slice-numeric-inference-and-operator-soundness)
 will establish [INF-A6](#inf-a6) and close KD-7.
 
 [numeric-rfd]: ../../rfds/numeric-inference-variables/README.md
