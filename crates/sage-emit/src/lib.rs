@@ -715,7 +715,41 @@ impl<'db> Emitter<'db> {
                     ty: expr_ty,
                 }
             }
-            _ => Expr::Literal {
+            TyExprData::NeverToAny(inner_ptr) => {
+                let inner = &stash[*inner_ptr];
+                Expr::NeverToAny {
+                    expr: Box::new(self.emit_expr(stash, inner, locals)),
+                    ty: expr_ty,
+                }
+            }
+            TyExprData::MethodCall(_, _, _)
+            | TyExprData::Unary(
+                sage_ir::cst::expr::UnaryOp::Not | sage_ir::cst::expr::UnaryOp::Neg,
+                _,
+            )
+            | TyExprData::If(_, _, _)
+            | TyExprData::IfLet(_, _, _, _)
+            | TyExprData::Match(_, _)
+            | TyExprData::Loop(_)
+            | TyExprData::While(_, _)
+            | TyExprData::WhileLet(_, _, _)
+            | TyExprData::For(_, _, _)
+            | TyExprData::Break(_)
+            | TyExprData::Continue
+            | TyExprData::Return(_)
+            | TyExprData::Assign(_, _)
+            | TyExprData::Await(_)
+            | TyExprData::Try(_)
+            | TyExprData::Closure(_, _)
+            | TyExprData::Tuple(_)
+            | TyExprData::Array(_)
+            | TyExprData::Index(_, _)
+            | TyExprData::Cast(_, _)
+            | TyExprData::Range(_, _)
+            | TyExprData::MacroCall(_, _)
+            | TyExprData::Error(_)
+            | TyExprData::Unresolved(_)
+            | TyExprData::Missing => Expr::Literal {
                 kind: LiteralKind::Str,
                 value: "?unsupported".to_string(),
             },

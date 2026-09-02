@@ -8,7 +8,7 @@ use sage_ir::parse::parse_str_to_cst;
 use sage_ir::scope::{LocalCrateSymbol, ScopeSymbol, local_crate};
 use sage_ir::source::SourceFile;
 use sage_ir::span::{AbsoluteSpan, ParseSource};
-use sage_ir::symbol::{FnSymbol, ModSymbol};
+use sage_ir::symbol::{FnSymbol, ModSymbol, SymbolData};
 use sage_stash::{Stash, Stashed};
 use salsa::Database as _;
 
@@ -139,6 +139,37 @@ pub fn with_test_crate<R>(
     f: impl for<'db> FnOnce(&'db dyn Db, ModSymbol<'db>) -> R,
 ) -> R {
     with_test_crate_files(&[("lib.rs", source)], f)
+}
+
+/// Find a named local free function among a root module's expanded items.
+pub fn local_function_named<'db>(
+    db: &'db dyn Db,
+    root: ModSymbol<'db>,
+    name: &str,
+) -> sage_ir::local_syms::fns::LocalFnSym<'db> {
+    root.expanded_module_items(db)
+        .iter()
+        .find_map(|symbol| match symbol.data(db) {
+            SymbolData::FnSymbol(FnSymbol::Local(function)) => {
+                (function.name(db).text(db) == name).then_some(function)
+            }
+            SymbolData::FnSymbol(FnSymbol::Ext(_))
+            | SymbolData::StructSymbol(_)
+            | SymbolData::EnumSymbol(_)
+            | SymbolData::VariantSymbol(_)
+            | SymbolData::VariantCtorSymbol(_)
+            | SymbolData::TraitSymbol(_)
+            | SymbolData::TypeAliasSymbol(_)
+            | SymbolData::ConstSymbol(_)
+            | SymbolData::StaticSymbol(_)
+            | SymbolData::ImplSymbol(_)
+            | SymbolData::ModSymbol(_)
+            | SymbolData::MacroDefSymbol(_)
+            | SymbolData::UseSymbol(_)
+            | SymbolData::IntrinsicTypeSymbol(_)
+            | SymbolData::MacroInvocationSymbol(_) => None,
+        })
+        .unwrap_or_else(|| panic!("local function `{name}`"))
 }
 
 /// Execute a callback with a multi-file sage crate.

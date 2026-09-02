@@ -462,6 +462,24 @@ impl<'tcx> Emitter<'tcx> {
         typeck: &'tcx ty::TypeckResults<'tcx>,
         locals: &mut LocalMap,
     ) -> Expr<NormalizedDef> {
+        let mut emitted = self.emit_unadjusted_expr_with_locals(expr, typeck, locals);
+        for adjustment in typeck.expr_adjustments(expr) {
+            if matches!(&adjustment.kind, ty::adjustment::Adjust::NeverToAny) {
+                emitted = Expr::NeverToAny {
+                    expr: Box::new(emitted),
+                    ty: self.emit_type(adjustment.target),
+                };
+            }
+        }
+        emitted
+    }
+
+    fn emit_unadjusted_expr_with_locals(
+        &self,
+        expr: &'tcx hir::Expr<'tcx>,
+        typeck: &'tcx ty::TypeckResults<'tcx>,
+        locals: &mut LocalMap,
+    ) -> Expr<NormalizedDef> {
         let expr_ty = typeck.expr_ty(expr);
 
         match &expr.kind {

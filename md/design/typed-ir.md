@@ -306,8 +306,9 @@ rejects unsupported nodes or non-semantic debug types in successful output.
 The `DbDropGuard::db` and `Parse::next` mini-redis slices produce explicit
 field identities, dereferences, `Dummy` borrows, selected functions, static or
 direct dispatch, owner/method substitutions, and associated-type normalization
-results. The common rigid/alias family survives inference, canonical solver
-boundaries, display, and both semantic emitters.
+results. Never-to-any coercion is represented by an explicit `NeverToAny`
+expression node. The common rigid/alias family survives inference, canonical
+solver boundaries, display, and both semantic emitters.
 
 ### Implemented capabilities and evidence
 
@@ -320,6 +321,13 @@ boundaries, display, and both semantic emitters.
 - **[TIR-A1](#tir-a1)/[TIR-A2](#tir-a2):** The `Parse::next` evidence in the [Mini-redis
   roadmap](../implementation/mini-redis.md#slice-2-parsenext) checks direct and
   static-trait calls, substitutions, and normalized iterator item type.
+- **[TIR-A1](#tir-a1):** `top_level_never_to_any_is_explicit_in_typed_ir`
+  and `call_argument_never_to_any_is_explicit_in_typed_ir` inspect
+  source-driven completed bodies whose `NeverToAny` nodes have a `!` operand
+  and `u32` result. `struct_field_never_to_any_uses_the_value_span` additionally
+  verifies that the node retains the value expression's span. The
+  `basics/never_to_any.rs` oracle case compares the independently emitted Sage
+  and rustc function-result, direct-call, and struct-field trees exactly.
 - **[TIR-A3](#tir-a3):** `alias_variants_copy_fold_and_display_without_erasing_identity` and
   `aliases_round_trip_through_canonical_query_and_response_stashes` exercise
   the shared alias representation.

@@ -215,6 +215,10 @@ pub enum Expr<Def> {
         expr: Box<Expr<Def>>,
         ty: Type<Def>,
     },
+    NeverToAny {
+        expr: Box<Expr<Def>>,
+        ty: Type<Def>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -478,6 +482,10 @@ impl<Def> Expr<Def> {
             },
             Expr::Ref { mutable, expr, ty } => Expr::Ref {
                 mutable,
+                expr: Box::new((*expr).map(f)),
+                ty: ty.map(f),
+            },
+            Expr::NeverToAny { expr, ty } => Expr::NeverToAny {
                 expr: Box::new((*expr).map(f)),
                 ty: ty.map(f),
             },

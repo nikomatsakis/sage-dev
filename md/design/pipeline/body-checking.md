@@ -122,6 +122,35 @@ dereference nodes:
 example_elaborate_trait_method_call
 ```
 
+Expression checking is bidirectional. A context which knows an expected type
+passes that expectation into expression checking, where syntax-directed rules
+may use it to guide inference and a coercion site may materialize an explicit
+conversion. An expectation constrains the resulting expression; it does not
+select a trait or alias-normalization candidate which would otherwise be
+ambiguous.
+
+<a id="body-a4"></a>
+> **BODY-A4 — Expected types flow into expression checking without selecting
+> semantic candidates.** A caller supplies an available expected type before
+> checking the expression beneath that boundary. Expression forms may use it
+> to guide local inference and explicit coercion, but trait proof, method
+> provider discovery, and alias normalization retain their independent
+> candidate-selection rules.
+>
+> **Required verification:** Source-driven tests show expected types guide
+> representative call arguments, literals, closures, and aggregate or branch
+> elements; completed Typed IR contains any selected conversions; and an
+> incompatible expected type cannot choose among otherwise ambiguous solver or
+> method candidates.
+
+The first implementation establishes this boundary for ordinary direct-call
+arguments. It synthesizes the argument and then applies the parameter type as
+a coercion expectation; expression-specific inward propagation is incremental:
+
+```{anchor}
+initial_bidirectional_expression_checking
+```
+
 ## Failure and terminal incompleteness
 
 User type errors produce diagnostics and error-typed recovery nodes. An
@@ -197,6 +226,15 @@ obligations, and associated-type normalization.
 - **[BODY-A1](#body-a1) — Elaborated external trait call.**
   `clone_method_call_is_elaborated_to_a_resolved_trait_call` directly inspects
   the completed Sage tree.
+- **[BODY-A1](#body-a1) — Explicit never coercion.**
+  `top_level_never_to_any_is_explicit_in_typed_ir` and
+  `call_argument_never_to_any_is_explicit_in_typed_ir` inspect completed
+  results for `NeverToAny` nodes at function-result and call-argument coercion
+  sites; `external_inherent_call_accepts_a_never_argument` exercises the
+  resolved-method path with rustc-provided metadata. The
+  `basics/never_to_any.rs` oracle case independently emits function-result,
+  direct-call, and struct-field trees from Sage and rustc and compares them by
+  exact text.
 - **[BODY-A1](#body-a1) — Exact conformance.** The [oracle-checked method
   walkthrough](../examples/oracle-checked-method.md) links the structural Sage
   assertion, independent emitters, exact shared snapshot, and byte identity.
@@ -219,6 +257,17 @@ obligations, and associated-type normalization.
   `equivalent_obligations_deduplicate_after_inference`, and
   `struct_bounds_converge_after_field_inference` cover diagnostic publication,
   canonical deduplication, and an obligation resolved after type inference.
+- **[BODY-A4](#body-a4) — Initial expected-type boundary.** Direct function
+  calls inspect the callable signature before checking arguments and invoke
+  `check_with_expected` with each available parameter type.
+  `call_argument_never_to_any_is_explicit_in_typed_ir` demonstrates that this
+  boundary applies a coercion and retains it in completed Typed IR, while
+  `direct_call_rejects_too_few_arguments` and
+  `direct_call_rejects_too_many_arguments` pin the signature's arity as part of
+  the same boundary. `direct_call_checks_an_extra_argument_after_reporting_arity`
+  shows that an arity mismatch does not suppress diagnostics within surplus
+  argument expressions. Recursive consumption of the expectation by
+  expression-specific rules is not yet implemented.
 
 Run the review evidence with:
 
@@ -228,6 +277,10 @@ cargo test -p sage-test-harness clone_method_body_has_a_narrow_reusable_semantic
 cargo test -p sage-test-harness unrelated_body_edit_exposes_current_body_invalidation
 cargo test -p sage-ir external_method_mismatch_discards_partial_generic_bindings
 cargo test -p sage-test-harness trait_obligation_tests
+cargo test --test type_check_tests never
+cargo test --test type_check_tests direct_call
+cargo test -p sage-oracle-harness --test external_impls external_inherent_call_accepts_a_never_argument
+cargo test -p sage-oracle-harness --test oracle_compare -- basics/never_to_any.rs
 cargo test -p sage-oracle-harness --test oracle_compare -- mini_redis/db_drop_guard.rs
 ```
 
@@ -235,6 +288,14 @@ cargo test -p sage-oracle-harness --test oracle_compare -- mini_redis/db_drop_gu
 
 - Rust expression, pattern, coercion, and method-resolution coverage is
   incomplete; diagnostics or recovery nodes mark unsupported paths.
+- [KD-7](../../implementation/known-deviations.md#kd-7-arithmetic-operators-do-not-require-numeric-operands)
+  records the confirmed exception to that diagnostic guarantee: current
+  binary-operator checking relates operand types but does not yet require
+  arithmetic operands to be numeric.
+- Expected-type checking currently synthesizes an expression before applying
+  its coercion expectation. Only ordinary direct-call arguments use this
+  boundary; literals, closures, nested expression forms, and method arguments
+  do not yet consume expectations while they are checked.
 - Lifetimes are always `Lifetime::Dummy`, and borrow checking is deliberately
   omitted. Reference/dereference nodes are structural only.
 - Trait solving is recursive with current cycle/resource semantics; planned

@@ -138,14 +138,18 @@ impl<'db> BodyFinalizer<'_, '_, 'db> {
             return target;
         }
         let TyExpr { data, ty, span } = self.source[source];
-        let data = self.copy_expr_data(data);
         let ty = self.copy_ty(ty);
+        let data = self.copy_expr_data(data, ty);
         let target = self.target.alloc(TyExpr { data, ty, span });
         self.copied_exprs.insert(source, target);
         target
     }
 
-    fn copy_expr_data(&mut self, data: TyExprData<'db>) -> TyExprData<'db> {
+    fn copy_expr_data(
+        &mut self,
+        data: TyExprData<'db>,
+        finalized_ty: Ptr<Ty<'db>>,
+    ) -> TyExprData<'db> {
         match data {
             TyExprData::Literal(literal) => TyExprData::Literal(literal),
             TyExprData::Path(resolution) => TyExprData::Path(resolution),
@@ -175,6 +179,14 @@ impl<'db> BodyFinalizer<'_, '_, 'db> {
             TyExprData::Deref(operand) => TyExprData::Deref(self.copy_expr(operand)),
             TyExprData::Ref(operand, mutability) => {
                 TyExprData::Ref(self.copy_expr(operand), mutability)
+            }
+            TyExprData::NeverToAny(operand) => {
+                let operand = self.copy_expr(operand);
+                if matches!(self.target[finalized_ty], Ty::Never) {
+                    self.target[operand].data
+                } else {
+                    TyExprData::NeverToAny(operand)
+                }
             }
             TyExprData::If(condition, if_true, if_false) => TyExprData::If(
                 self.copy_expr(condition),

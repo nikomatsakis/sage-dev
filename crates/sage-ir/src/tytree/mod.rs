@@ -127,6 +127,8 @@ pub enum TyExprData<'db> {
     Unary(UnaryOp, Ptr<TyExpr<'db>>),
     Deref(Ptr<TyExpr<'db>>),
     Ref(Ptr<TyExpr<'db>>, Mutability),
+    /// An explicit conversion from `!`; unlike subtyping, this may change representation.
+    NeverToAny(Ptr<TyExpr<'db>>),
     If(Ptr<TyExpr<'db>>, Ptr<TyExpr<'db>>, Option<Ptr<TyExpr<'db>>>),
     IfLet(
         Ptr<TyPat<'db>>,

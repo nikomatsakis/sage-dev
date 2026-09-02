@@ -45,12 +45,17 @@ that body boundary:
 architecture_infer_context
 ```
 
-Expression and pattern `check_with` methods allocate types and typed nodes
-through the context. `require_eq`, `require_sub`, and `require_coerce` relate
-types. `finalize` performs fallback and mandatory terminal obligation
-discharge; `finish` asserts quiescence and resolves every type edge while
-copying the working tree into a fresh append-only result stash. The working
-stash remains unchanged, as required by [STASH-A5](../stash.md#stash-a5).
+Expression and pattern `check_with` methods synthesize types and allocate typed
+nodes through the context. `check_with_expected` is the initial checking-mode
+counterpart: a caller supplies a type before checking the expression at that
+boundary. It currently synthesizes the expression first and applies the type
+as a coercion expectation afterward; expression-specific inward propagation is
+part of the destination described by [BODY-A4](../pipeline/body-checking.md#body-a4).
+`require_eq`, `require_sub`, and `require_coerce` relate types. `finalize`
+performs fallback and mandatory terminal obligation discharge; `finish`
+asserts quiescence and resolves every type edge while copying the working tree
+into a fresh append-only result stash. The working stash remains unchanged, as
+required by [STASH-A5](../stash.md#stash-a5).
 
 ## Transactional construction
 
@@ -143,6 +148,17 @@ may be selected when an expression of type `!` occurs at a coercion site, but
 it cannot be applied recursively while establishing a structural subtype
 relation such as `&mut ! <: &mut u32`.
 
+When the coercion target is an unresolved inference type, a diverging
+expression leaves a provisional conversion rather than immediately binding
+the target to `!`. Other constraints have priority, independent of the order
+in which coercion sites are checked. If no other constraint determines the
+target, finalization defaults it to `!` and removes the now-redundant
+conversion. Thus `pair(loop {}, true)` and `pair(true, loop {})` both infer the
+shared parameter as `bool`, while `single(loop {})` infers its parameter as
+`!`. If body checking is suspended waiting for such a target, quiescent
+recovery defaults only the deferred target blocking that task; unrelated
+targets remain available to constraints in the rest of the body.
+
 <a id="inf-a5"></a>
 > **INF-A5 — Subtyping preserves representation; coercion is an explicit
 > conversion.** A successful subtype relation requires source and target to
@@ -185,17 +201,16 @@ recovery, and final quiescence support the two completed mini-redis bodies.
 | [INF-A2](#inf-a2) | Partial | `canonical_equality_round_trips_transactionally` checks transactional response import, while `implication_assumptions_do_not_leak_to_siblings` verifies proof-branch isolation. Cancellation-specific isolation evidence is missing. |
 | [INF-A3](#inf-a3) | Partial | `canonical_equality_round_trips_transactionally`, `local_associated_type_normalization_produces_a_type_output`, and `response_local_type_output_round_trips_with_sharing` cover the implemented equality and type-output boundary; `conjunction_retries_after_a_sibling_pins_its_input` verifies retained work observes later hard information. No caller-side expected-type test yet proves that an expectation cannot select one of two otherwise ambiguous normalization candidates. |
 | [INF-A4](#inf-a4) | Partial | `clone_method_body_has_a_narrow_reusable_semantic_query_trace` verifies warm reuse for one completed body slice; scheduler-order perturbation is not covered. |
-| [INF-A5](#inf-a5) | Not established | The ignored source-driven integration regression `never_to_any_does_not_apply_beneath_mutable_reference` currently fails because Sage accepts `&mut !` as `&mut u32`. [KD-6](../../implementation/known-deviations.md#kd-6-never-to-any-coercion-is-modeled-as-subtyping) records the contradiction and its closure evidence. Positive top-level never-coercion and completed-IR evidence are also missing. |
+| [INF-A5](#inf-a5) | Partial | The source-driven integrations `never_to_any_does_not_apply_beneath_mutable_reference`, `top_level_never_to_any_is_explicit_in_typed_ir`, `call_argument_never_to_any_is_explicit_in_typed_ir`, `struct_field_never_to_any_uses_the_value_span`, `external_inherent_call_accepts_a_never_argument`, `external_generic_method_defers_never_until_other_constraints_settle`, `never_result_does_not_create_a_never_to_never_coercion`, `inferred_never_join_does_not_retain_never_to_never_coercions`, `generic_call_arguments_are_order_independent_and_fall_back_to_never`, `never_fallback_wakes_suspended_method_lookup`, and `quiescent_never_fallback_does_not_settle_unrelated_targets` reject never-to-any beneath an invariant mutable reference; accept it at function-result, direct-call, struct-field, and resolved-method argument sites; preserve operand spans; exclude redundant `!`-to-`!` conversions for known and inferred targets; establish order-independent inference when a target is constrained by both divergence and another argument; and show that quiescent `!` fallback wakes a suspended consumer without prematurely settling unrelated targets. The `basics/never_to_any.rs` oracle case establishes exact Sage/rustc output for the function-result, direct-call, and struct-field conversions. Mutable-reference subtyping relates pointee types by equality. The complete subtype/coercion rule and layout matrix is not yet established. |
 
 ### Current limitations
 
 - Subtyping and coercions currently cover only a small structural subset.
-- [KD-6](../../implementation/known-deviations.md#kd-6-never-to-any-coercion-is-modeled-as-subtyping)
-  contradicts [INF-A5](#inf-a5): the current implementation admits
-  never-to-any through `require_sub` instead of selecting it only through
-  `require_coerce`.
-- Numeric inference/fallback, closures, casts, patterns, and control-flow joins
-  are incomplete relative to Rust.
+- Numeric inference/fallback, operator-domain checking, closures, casts,
+  patterns, and control-flow joins are incomplete relative to Rust. In
+  particular, [KD-7](../../implementation/known-deviations.md#kd-7-arithmetic-operators-do-not-require-numeric-operands)
+  records that an unconstrained integer literal can currently unify with
+  `bool` beneath `+` without an operator diagnostic.
 - All lifetime syntax becomes `Lifetime::Dummy`; no lifetime variables or
   borrow checks are performed.
 - The executor is single-threaded and cooperative; planned solver fairness and
