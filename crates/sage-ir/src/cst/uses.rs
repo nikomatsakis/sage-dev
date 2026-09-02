@@ -5,7 +5,7 @@ use crate::name::Name;
 use crate::span::RelativeSpan;
 
 /// A single flattened use import (stash-allocated).
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct UseImportCst<'db> {
     /// The full path as a recursive Path CST node.
     pub path: Ptr<Path<'db>>,
@@ -17,7 +17,9 @@ pub struct UseImportCst<'db> {
 pub type UseImports<'db> = Stashed<Slice<UseImportCst<'db>>>;
 
 /// What a use import brings into scope.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update, AllocStashData)]
+#[derive(
+    Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update, AllocStashData, sage_reflect::Reflect,
+)]
 pub enum UseKind<'db> {
     /// `use foo::bar` or `use foo::bar as baz` — imports under the given name.
     Named(Name<'db>),

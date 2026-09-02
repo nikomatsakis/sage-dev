@@ -32,9 +32,8 @@ One struct or closely-related cluster per file.
 traits shared across item kinds live in a module named after the pass:
 
 - `check/sig.rs` — `Check` (signature-lowering context)
-- `check/body.rs` — `BodyCheck` (body-checking context)
-- `resolve/` — `Resolver`, `Namespace`, resolution helpers
-- `ribs/` — `Ribs`, `RibEntry`
+- `check/infer_ctx.rs` — `InferCtx` and `Scope` (body-checking context)
+- `check/resolve/` — `Resolver`, `Namespace`, and lexical ribs
 
 Item-specific logic imports from these; it does not redefine its own
 plumbing.
@@ -50,21 +49,42 @@ parameters threaded from callers.
 pub fn sig(self, db: &'db dyn crate::Db) -> Stashed<Binder<'db, FnSig<'db>>> { ... }
 ```
 
-**`sig` is the cross-item boundary.** A signature query extracts
-exactly what other items need to type-check against this one: generics,
-parameter types, return type, field types. It is the minimal public
-surface.
+**Semantic interfaces are narrow and lazy.** `sig()` is the primary
+cross-item boundary: it exposes the owner binder, parameters, return type, and
+predicates needed to use a definition. Language-required field, member, and
+associated-value interfaces may be separate keyed queries so a consumer does
+not load facts it did not request. Bodies and checking temporaries are not
+interfaces.
 
-**Detail queries are lazy.** `body()`, `fields()`, and similar queries
-compute information that is either not needed from other items or only
-needed some of the time. They depend on `sig()` but are not depended on
-by other items' signatures.
+<a id="ten-a1"></a>
+> **TEN-A1 — Interfaces are the cross-item semantic boundary.** A symbol's
+> checked signature is its primary interface; field, member, and other
+> language-required interfaces may be separate keyed products. Bodies and
+> checking temporaries are not interfaces. A caller may depend on a callee's
+> interface, but never on its body. See
+> [D15](./decisions.md#d15-cross-item-dependencies-stop-at-semantic-interfaces).
+>
+> **Required verification:** Query traces for signatures and callers require
+> only the relevant interface products and forbid callee-body and
+> unrelated-detail reads; interface-preserving edits do not propagate past the
+> corresponding interface boundary.
 
 **Generic parameters are minted exactly once.** The `sig()` query mints
 `GenericParam` symbols via `cst.generics.check(db, cx, parent)` and
 stores them in a `Binder`. All other queries (`fields`, `body`) open
 that binder and bring the same param symbols into scope via
 `ribs.add_generic_params`. No re-minting, no identity confusion.
+
+<a id="ten-a2"></a>
+> **TEN-A2 — A declaration has one set of generic-parameter identities.** The
+> signature boundary creates the symbols once; every detail query opens the
+> binder and reuses those identities rather than recreating equivalent-looking
+> parameters. See
+> [D5](./decisions.md#d5-symbols-form-the-uniform-semantic-identity-family).
+>
+> **Required verification:** Identity tests compare generic parameters reached
+> through signatures, fields, predicates, and bodies, including after a warm
+> query and an unrelated edit.
 
 **Sequential layering inside a query.** `body()` calls `sig()` -> opens
 binder -> resolves names -> runs inference. Each step builds on the
@@ -86,15 +106,26 @@ pub struct Check<'a, 'db> {
 }
 ```
 
-**Purpose-specific contexts.** `Check` for signatures (produces `Ty`
-into `target_stash`). `BodyCheck` for bodies (produces `TyExpr` into
-its inherited `target_stash`). Same ingredients (resolver, ribs,
-src/dst stash pair), different output domain.
+**Purpose-specific contexts.** `Check` lowers signatures into its target
+stash. `InferCtx` owns a body target stash plus inference, obligations,
+diagnostics, and cooperative tasks. Both keep source CST storage read-only and
+return self-contained semantic output.
 
 **`Stashed<T>` is the memoization boundary.** Salsa compares
 fingerprints (content hashes of the output stash) for change detection.
-Deterministic allocation means same CST + same scope = same fingerprint
-= no downstream re-execution.
+Equal rooted semantic output has the same fingerprint regardless of allocation
+history, allowing Salsa to stop downstream propagation after recomputation.
+
+<a id="ten-a3"></a>
+> **TEN-A3 — Semantic outputs own their storage and have deterministic
+> identity.** Checking reads source storage without mutating it, builds the
+> result in a fresh stash, and returns a self-contained `Stashed<T>` whose
+> fingerprint reflects semantic content rather than process allocation. See
+> [D2](./decisions.md#d2-stash-for-type-level-interning).
+>
+> **Required verification:** Storage-isolation tests forbid source mutation or
+> cross-stash pointers, deterministic rebuild tests compare fingerprints, and
+> edit experiments show equal outputs are backdated.
 
 ## Resolution model
 
@@ -108,12 +139,22 @@ if let Some(entry) = cx.resolver.ribs.lookup(first.name, ns) {
     // found in rib — generic param, local, or Self
 } else {
     // fall through to module-level resolution
-    cx.resolver.resolve_segments(&names, ns)
+    cx.resolver.resolve_path(stash, path, ns)
 }
 ```
 
-Module-level resolution walks the MEM-map (`expanded_module`) for local
-modules and queries `TcxDb::module_children` for external crates.
+Module-level resolution walks direct expanded module symbols for local modules
+and queries `TcxDb::module_children` for external crates.
+
+<a id="ten-a4"></a>
+> **TEN-A4 — Lexical scope has priority over module fallback.** Resolution
+> consults namespace-aware lexical ribs before traversing local or external
+> module membership, so a nearer binding shadows a module-level name without
+> changing the module index.
+>
+> **Required verification:** Resolution tests cover shadowing, namespaces,
+> `Self`, generics, and locals, plus local and external fallback when no rib
+> entry applies.
 
 ## Incrementality
 
@@ -123,12 +164,25 @@ that whitespace edits before an item do not change its content hash.
 
 **Salsa tracked structs are per-item.** `LocalFnSym`, `LocalStructSym`
 — one tracked struct per top-level item. Tracked fields store the CST,
-the absolute span, and the computed sig/body.
+absolute span, and other independently changing definition facts. Signature,
+field/member, and body products are tracked functions keyed by the symbol; they
+are not identity fields stored eagerly in it.
 
-**Body changes do not invalidate signatures.** `sig()` reads only
-generics, params, and return type from the CST. The body expression is
-ignored. A change to a function body does not re-execute the sig query,
-and downstream items that only read the sig are unaffected.
+**Body changes do not propagate through unchanged signatures.** `sig()`
+semantically uses only generics, parameters, return type, and predicates. A
+coarse CST or module dependency may currently cause it to reexecute, but an
+equal checked signature is backdated before downstream interface consumers.
+
+<a id="ten-a5"></a>
+> **TEN-A5 — Incremental reuse is judged at semantic boundaries.** Coarse
+> upstream invalidation may reexecute a query, but an equal symbol, signature,
+> or other public semantic product is backdated before unrelated downstream
+> consumers are invalidated. See
+> [D1](./decisions.md#d1-salsa-for-incremental-computation).
+>
+> **Required verification:** Persistent-database edit tests distinguish
+> execution from downstream propagation for relevant, interface-preserving,
+> and unrelated edits.
 
 ## Oracle conformance
 
@@ -144,6 +198,44 @@ equivalence. Rich diffs may explain a mismatch after exact comparison fails;
 they cannot turn it into a pass. See [Oracle Test
 Harness](./oracle-test-harness.md#thin-adapters-and-exact-comparison).
 
+<a id="ten-a6"></a>
+> **TEN-A6 — Conformance is exact shared-form identity.** Sage and rustc each
+> adapt independently to the shared oracle schema; the comparator performs no
+> semantic reconciliation, filtering, or paired normalization. See
+> [D4](./decisions.md#d4-oracle-test-harness).
+>
+> **Required verification:** Harness tests demonstrate exact success, expose a
+> one-field mismatch, and fail if either adapter or comparator attempts to
+> erase, reorder, or normalize a semantic difference.
+
+## Validation evidence
+
+**Semantic evidence begins with Rust source.** When a behavior can be expressed
+by a Rust program, integration and acceptance tests start from a checked-in
+Cargo project and exercise the production parsing, expansion, metadata,
+checking, inspection, and transport path that is in scope. Reviewed snapshots
+record what that execution produced; snapshots are never loaded as semantic
+inputs to manufacture the result under test.
+
+Small constructed values remain appropriate for unit-testing representation
+code, and narrowly scoped test doubles may inject failures at operating-system
+or external-service boundaries. Neither establishes that Sage computed a
+semantic result correctly. See
+[D19](./decisions.md#d19-semantic-evidence-starts-from-source).
+
+<a id="ten-a7"></a>
+> **TEN-A7 — Semantic integration evidence starts from source.** A semantic
+> anchor is established by running real Rust source through the production
+> layers named by the claim. Reviewed snapshots and traces are outputs of that
+> run, not alternate semantic inputs. Constructed values and test doubles can
+> establish only the isolated boundary they directly exercise.
+>
+> **Required verification:** Each semantic integration test identifies its
+> checked-in Rust project, production entry point, observed layers, reviewed
+> snapshots or traces, and any deliberately excluded boundary. Replacing a
+> production semantic layer with precomputed JSON or a scripted provider must
+> make the test ineligible as evidence for that layer.
+
 ## Naming conventions
 
 - `*Cst` — CST nodes (stash-allocated, per-item): `TypeCst`, `ExprCst`,
@@ -152,3 +244,24 @@ Harness](./oracle-test-harness.md#thin-adapters-and-exact-comparison).
   `Symbol`, `FnSymbol`
 - `Ty*` — typed-tree nodes: `TyExpr`, `TyStmt`, `TyPat`, `TyBody`
 - `*Sig` — signature payloads: `FnSig`, `StructSig`, `StructFields`
+
+## Current status
+
+These tenets span several phases, so their claim-specific evidence lives in
+the focused chapters rather than being duplicated here:
+
+- [TEN-A1](#ten-a1) and [TEN-A2](#ten-a2): [Signature
+  Checking](./pipeline/signature-checking.md), [Body Checking and Typed-IR
+  Elaboration](./pipeline/body-checking.md), and [Symbols](./infrastructure/symbols.md);
+- [TEN-A3](#ten-a3): [Stash](./stash.md);
+- [TEN-A4](#ten-a4): [Name Resolution](./subsystems/name-resolution.md);
+- [TEN-A5](#ten-a5): [Incrementality and Query
+  Boundaries](./infrastructure/incrementality.md); and
+- [TEN-A6](#ten-a6): [Oracle Test Harness](./oracle-test-harness.md); and
+- [TEN-A7](#ten-a7): [Validation and Inspection](./validation/README.md) and
+  [Semantic Inspector](./validation/semantic-inspector.md).
+
+The principal current gap is [TEN-A5](#ten-a5): several coarse same-file and
+module dependencies cause reexecution before an equal semantic result can be
+backdated. The incrementality chapter distinguishes that extra execution from
+downstream propagation and records the current edit evidence.

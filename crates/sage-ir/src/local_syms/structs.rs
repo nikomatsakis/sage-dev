@@ -12,6 +12,7 @@ pub struct LocalStructSym<'db> {
     pub name: Name<'db>,
     pub scope: ScopeSymbol<'db>,
 
+    #[tracked]
     #[returns(ref)]
     pub cst: StructCst<'db>,
 

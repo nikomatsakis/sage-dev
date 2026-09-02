@@ -40,6 +40,21 @@ impl<'tcx> RustcTcxDb<'tcx> {
         None
     }
 
+    pub fn extern_crate_with_disambiguator(
+        &self,
+        name: &str,
+        crate_disambiguator: u64,
+    ) -> Option<CrateNum> {
+        self.tcx.crates(()).iter().copied().find_map(|cnum| {
+            let crate_num = CrateNum(cnum.as_u32());
+            (self.tcx.crate_name(cnum).as_str() == name
+                && self
+                    .canonical_def_path(crate_num, DefIndex(0))
+                    .is_some_and(|path| path.crate_disambiguator == crate_disambiguator))
+            .then_some(crate_num)
+        })
+    }
+
     pub fn module_children(&self, crate_num: CrateNum, def_index: DefIndex) -> Vec<RawChild> {
         assert!(
             crate_num.0 != 0,
@@ -139,6 +154,23 @@ impl<'tcx> RustcTcxDb<'tcx> {
         crate_num: CrateNum,
         def_index: DefIndex,
     ) -> Option<sage_ir::tcx::ExternalDefPath> {
+        self.external_def_path(crate_num, def_index, false)
+    }
+
+    pub fn canonical_def_path(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+    ) -> Option<sage_ir::tcx::ExternalDefPath> {
+        self.external_def_path(crate_num, def_index, true)
+    }
+
+    fn external_def_path(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        include_anonymous: bool,
+    ) -> Option<sage_ir::tcx::ExternalDefPath> {
         use sage_ir::tcx::{ExternalDefPath, ExternalDefPathSegment};
 
         let def_id = DefId {
@@ -158,6 +190,14 @@ impl<'tcx> RustcTcxDb<'tcx> {
                 segments.push(ExternalDefPathSegment {
                     name: name.to_string(),
                     kind: sym_ext_kind_for_def_kind(self.tcx.def_kind(segment_def_id)),
+                    disambiguator: key.disambiguated_data.disambiguator,
+                });
+            } else if include_anonymous {
+                let kind = sym_ext_kind_for_def_kind(self.tcx.def_kind(segment_def_id));
+                segments.push(ExternalDefPathSegment {
+                    name: anonymous_external_segment_name(kind).to_owned(),
+                    kind,
+                    disambiguator: key.disambiguated_data.disambiguator,
                 });
             }
             current = key.parent?;
@@ -165,6 +205,7 @@ impl<'tcx> RustcTcxDb<'tcx> {
         segments.reverse();
         Some(ExternalDefPath {
             krate: crate_name,
+            crate_disambiguator: self.tcx.stable_crate_id(def_id.krate).as_u64(),
             segments,
         })
     }
@@ -1199,6 +1240,26 @@ fn sym_ext_kind_for_def_kind(kind: DefKind) -> SymExtKind {
         DefKind::Macro(..) => SymExtKind::MacroDef,
         DefKind::Use => SymExtKind::Use,
         _ => SymExtKind::Other,
+    }
+}
+
+fn anonymous_external_segment_name(kind: SymExtKind) -> &'static str {
+    match kind {
+        SymExtKind::Fn => "function",
+        SymExtKind::Struct => "struct",
+        SymExtKind::TupleStructCtor => "tuple-struct-constructor",
+        SymExtKind::Enum => "enum",
+        SymExtKind::Variant => "variant",
+        SymExtKind::VariantCtor => "variant-constructor",
+        SymExtKind::Trait => "trait",
+        SymExtKind::Impl => "impl",
+        SymExtKind::Mod => "module",
+        SymExtKind::TypeAlias => "type-alias",
+        SymExtKind::Const => "const",
+        SymExtKind::Static => "static",
+        SymExtKind::MacroDef => "macro",
+        SymExtKind::Use => "use",
+        SymExtKind::Other => "anonymous",
     }
 }
 

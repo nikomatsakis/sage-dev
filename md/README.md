@@ -42,7 +42,26 @@ The pipeline runs against [mini-redis](https://github.com/tokio-rs/mini-redis)
 end-to-end, with snapshot tests covering both signatures and resolved
 bodies.
 
-Body type checking and inference are implemented, including a positive,
-type-only local trait solver with retained body obligations. Method resolution,
-external impl discovery, associated-type normalization, higher-ranked solving,
-and the other deferred solver extensions remain on the roadmap.
+Body type checking and inference are implemented, including retained body
+obligations, limited inherent/trait method resolution, reachable external impl
+discovery, and associated-type normalization for the pinned mini-redis
+`Parse::next` slice. General method coverage, higher-ranked solving,
+specialization/GATs, and the other deferred solver extensions remain on the
+roadmap.
+
+## Inspecting semantic results
+
+Run the local Semantic Inspector for the current workspace with:
+
+```bash
+cargo sage inspect
+```
+
+It opens an Axum-served browser application on `127.0.0.1:2442`. Use
+`--package <crate>` to select the one library target in a multi-library
+workspace; an ambiguous bare invocation fails instead of silently choosing a
+crate. Use `--port <port>` to override the listener or `--no-open` to leave
+browser launch to the caller. The
+[Semantic Inspector architecture chapter](./design/validation/semantic-inspector.md)
+describes its symbol navigation, structural products, query evidence, and
+revision model.

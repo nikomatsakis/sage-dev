@@ -1,0 +1,12 @@
+[package]
+name = "sage-reflect"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+sage-reflect-derive = { path = "../sage-reflect-derive" }
+sage-stash = { version = "0.1.0", path = "../sage-stash" }
+serde = { version = "1.0.228", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1.0.149"

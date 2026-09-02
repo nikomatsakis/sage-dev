@@ -97,6 +97,22 @@ trait and associated item, relevant impl candidates, selected associated
 values, and their predicates; it must not read unrelated impls or callee
 bodies.
 
+<a id="sol-a1"></a>
+> **SOL-A1 — Alias normalization preserves reveal context and narrow demand.**
+> An alias retains its identity until an operation requests its value.
+> Revealability participates in the canonical input, and projection
+> normalization reads only the fixed trait, associated item, applicable impl
+> headers, selected associated values, and predicates required for that value.
+> It never reads unrelated impls or bodies. This is the solver consequence of
+> [D13](./decisions.md#d13-named-associated-and-opaque-aliases-share-one-semantic-family)
+> and [D15](./decisions.md#d15-cross-item-dependencies-stop-at-semantic-interfaces).
+>
+> **Required verification:** Named, associated, and opaque aliases survive
+> folding and canonical round trips with reveal context intact; inside/outside
+> opaque tests produce the appropriate different result; query traces for one
+> projection include only relevant headers and its requested value and exclude
+> sibling associated values, unrelated impls, and every body.
+
 ### Ground and non-ground queries
 
 A canonical query is **ground** when it has no flexible existential inputs.
@@ -154,6 +170,22 @@ stash allocation size. A work budget must not be distributed according to
 incidental polling order. If limits become configurable, their effective
 configuration participates in the cached query boundary.
 
+<a id="sol-a2"></a>
+> **SOL-A2 — Solver completeness is groundness-sensitive and explicitly
+> bounded.** Non-ground queries terminate with only sound knowledge but may be
+> ambiguous; ground queries return the complete logical answer unless a named,
+> deterministic resource limit is exhausted. Incomplete candidate sources,
+> ambiguity, and each overflow class remain distinct and none becomes `No`.
+> This is the solver consequence of
+> [D9](./decisions.md#d9-trait-solving-is-groundness-sensitive-and-resource-bounded)
+> and [D16](./decisions.md#d16-incompleteness-is-an-explicit-terminal-outcome).
+>
+> **Required verification:** A fixture matrix covers ground positive and
+> negative answers, non-ground ambiguity despite an available instantiation,
+> incomplete candidate sources, and every configured limit class. Repeated
+> runs produce the same canonical outcome and no incomplete or exhausted case
+> produces `No`.
+
 ## Knowledge returned by the solver
 
 The destination distinguishes a value-producing solver operation from the
@@ -183,6 +215,21 @@ result to be valid.
 instance resolution or vtable construction may add purpose-built outputs; they
 need not be forced into the type variant merely because function-item types or
 vtable pointers can be represented in Rust's type system.
+
+<a id="sol-a3"></a>
+> **SOL-A3 — Goal-specific output is canonical solver knowledge.**
+> `Prove(P)` returns `Proven`, while input-only `Normalize(Alias)` returns a
+> `Type`. The output's variables participate in response binding, validation,
+> caching, comparison, merging, and caller import; the caller's expected type
+> is related only after complete candidate answers are merged. This is the
+> solver consequence of
+> [D14](./decisions.md#d14-solver-operations-return-goal-specific-semantic-outputs).
+>
+> **Required verification:** Operation/output mismatch is rejected; type
+> outputs containing repeated response-local variables round-trip with sharing
+> and universes intact; incompatible candidate outputs remain ambiguous even
+> when the caller expects one of them; trait proof never exposes a selected
+> impl identity.
 
 Let `Cond(A)` mean the conjunction of a response's substitution and residual
 proof goal, with its response-local variables existentially bound. A successful
@@ -307,6 +354,22 @@ type. That refinement is conservative:
 This boundary is also incremental. Candidate order is deterministic but has no
 semantic effect.
 
+<a id="sol-a4"></a>
+> **SOL-A4 — Candidate discovery is global, trait-keyed, conservative, and
+> completeness-carrying.** A proof considers represented impls in the local
+> crate and every reachable dependency, keyed first by the fixed trait. Any
+> self-head refinement retains blanket and unclassifiable fallback candidates,
+> and a missing or incomplete source prevents exhaustive `No`. This is the
+> solver consequence of
+> [D10](./decisions.md#d10-trait-impl-discovery-is-global-and-trait-keyed)
+> and [D16](./decisions.md#d16-incompleteness-is-an-explicit-terminal-outcome).
+>
+> **Required verification:** Local, upstream, blanket, and unsimplifiable
+> fixtures show that indexed discovery loses no exhaustive candidate; unrelated
+> traits and provably disjoint rigid heads are absent; indexed and exhaustive
+> enumeration produce identical canonical responses; incomplete sources never
+> manufacture `No`.
+
 #### Local impl-index incremental firewall
 
 The destination local index is a crate-owned Salsa tracked struct with stable
@@ -359,6 +422,20 @@ associated-item bodies. An impl-body-only edit should leave the index result
 equal. If the current `LocalImplSym` lifecycle cannot preserve that property,
 the symbol must be split or given stable header identity rather than weakening
 the firewall.
+
+<a id="sol-a5"></a>
+> **SOL-A5 — The local impl index is an incremental firewall.** Its stable
+> crate-owned identity contains a private tracked map, and keyed tracked lookup
+> is the only reader. An unrelated edit may rebuild the map and reexecute a
+> cheap lookup, but an equal trait bucket is backdated before impl-header
+> lowering, solving, normalization, or body checking; impl-body edits do not
+> alter signature-level buckets.
+>
+> **Required verification:** Persistent edit tests distinguish index rebuild,
+> keyed lookup, header lowering, canonical solving, normalization, and body
+> execution. Unrelated-trait and impl-body edits stop at an equal lookup;
+> relevant-trait and global-hazard edits invalidate exactly their permitted
+> consumers; identities remain stable across unrelated edits.
 
 The current `local_impl_candidates(LocalCrateSymbol, TraitSymbol)` query is the
 trait-keyed local boundary. It still linearly scans expanded local impl
@@ -442,6 +519,23 @@ concurrent conjunction must account for stale isolated snapshots: a sibling
 failure is cancellative only when it remains definitive after all hard sibling
 information is reconciled.
 
+<a id="sol-a6"></a>
+> **SOL-A6 — Alternative state is isolated and answer reduction is
+> output-aware.** Every disjunct candidate publishes a canonical response from
+> isolated inference state. Aggregation is order-independent, retains hard
+> knowledge common to every live alternative, and merges value-producing
+> answers only when their outputs agree or an explicit priority rule dominates.
+> Conjunct cancellation is permitted only after reconciling shared hard
+> information. This is the solver consequence of
+> [D6](./decisions.md#d6-versioned-egraph-children-are-inference-transactions)
+> and [D8](./decisions.md#d8-whiteboard-producers-own-isolated-proof-contexts).
+>
+> **Required verification:** Candidate-order permutations produce identical
+> canonical responses; incompatible normalization outputs remain ambiguous;
+> failed or cancelled candidates leak no equality, universe change, wake, or
+> obligation; concurrent-conjunction tests reconcile sibling information before
+> accepting an absorbing result.
+
 ### Whiteboard frames
 
 An atomic whiteboard frame represents shared canonical work for one goal. A
@@ -471,6 +565,18 @@ The scheduler must poll runnable work in bounded rounds. A future which wakes
 itself and returns `Pending` is deferred to a later round rather than being
 immediately drained forever.
 
+<a id="sol-a7"></a>
+> **SOL-A7 — One whiteboard frame has one final future output.** A frame owns
+> the producer for one canonical atomic goal, and all requesters subscribe to
+> that work. Candidate-local and frame-level progress are revisioned side
+> information; they do not create extra future outputs or expose raw candidate
+> state. Suspended continuations remain Rust futures, polled in bounded rounds.
+>
+> **Required verification:** Duplicate requesters share one producer, receive
+> an identical final response, and cannot observe candidate-local state;
+> progress snapshots strengthen monotonically; a self-waking pending future is
+> deferred to a later polling round and cannot starve sibling work.
+
 ## Recursive proof search
 
 Cycle semantics are logical, not a property of which future happened to poll
@@ -486,6 +592,18 @@ first.
 
 The precise search-graph, fixpoint, and path-kind rules remain under discussion
 in the [Trait Solver Cycle Semantics RFD](../rfds/trait-solver-cycle-semantics/README.md).
+
+<a id="sol-a8"></a>
+> **SOL-A8 — Recursive semantics follow canonical cycles, not polling order.**
+> Repeated canonical goals use explicit inductive, coinductive, or unknown path
+> semantics and provisional fixpoint evaluation. Infinitely growing distinct
+> goals are overflow governed by deterministic structural limits, not ordinary
+> cycle lookup.
+>
+> **Required verification:** Focused recursive clause families distinguish
+> inductive failure, coinductive success, unknown-path ambiguity, converging
+> and non-converging fixpoints, and non-repeating growth overflow; ready-queue
+> perturbation never changes any result.
 
 ## Scheduling and deterministic results
 
@@ -510,31 +628,67 @@ normalization, monotone intermediate information, logically justified early
 cancellation, and deterministic resource accounting. Tests should perturb
 ready-queue ordering and assert an identical `Stashed<QueryResult>`.
 
-## Current and planned state
+<a id="sol-a9"></a>
+> **SOL-A9 — Scheduling cannot change the canonical return value.** For fixed
+> semantic inputs and configured limits, polling order may change discovery,
+> cancellation timing, trace order, elapsed work, and memory use, but not the
+> answer class, output, substitutions, residuals, hints, response numbering,
+> ambiguity/overflow distinction, or overflow kind.
+>
+> **Required verification:** Deterministically perturbed ready queues produce
+> byte-identical stashed results across proof, normalization, residual,
+> ambiguity, and every overflow case; only explicitly non-semantic trace order
+> may differ.
 
-| Area | State |
-|---|---|
-| Positive, type-only local proving | Built |
-| Isolated candidate futures and active atomic frames | Built |
-| Order-independent completed-answer reduction | Built |
-| Final hard substitution hints | Built |
-| Trait-keyed local impl discovery with conservative expansion/header completeness | Built, provisional linear scan |
-| External trait signatures and local/external explicit impl headers | Built |
-| Unrelated-trait invalidation isolation and query-trace proof | External queries are trait/head keyed with cold/warm trace; edit-invalidation proof and local partitioning planned |
-| Global trait-keyed impl discovery | Built for explicit impls in the visible local and reachable-external world |
-| Conservative simplified-self-type index | Built for external metadata; local refinement planned |
-| Parent-chain inductive cycle cutoff and depth limit | Built, provisional |
-| Groundness-sensitive result causes | Planned |
-| Term-size and deterministic work limits | Planned |
-| Polling rounds and intentional yields | Planned |
-| Concurrent conjunction | Planned |
-| Candidate and frame progress envelopes | Planned |
-| Provisional cycle fixpoints and coinductive paths | Planned |
-| Goal-specific outputs (`Proven` and `Type`) | Built |
+## Current status
 
-The planned work is split across the
-[Cycle Semantics](../rfds/trait-solver-cycle-semantics/README.md),
-[Scheduling and Fairness](../rfds/trait-solver-scheduling/README.md), and
-[Incremental Results](../rfds/incremental-trait-results/README.md) RFDs.
-Candidate enumeration and its incremental boundary are specified separately by
-the [Trait Impl Candidate Discovery RFD](../rfds/trait-impl-candidate-discovery/README.md).
+### Current frontier
+
+The solver performs positive local and reachable-external explicit-impl proof,
+associated-type normalization with a type output, isolated asynchronous
+candidate evaluation, order-independent completed-answer reduction, final hard
+hints, conservative candidate-source completeness, a provisional inductive
+cycle cutoff, and a proof-depth limit.
+
+### Implemented capabilities and evidence
+
+| Anchor | State | Implemented claim and evidence |
+|---|---|---|
+| [SOL-A1](#sol-a1) | Partial | `aliases_round_trip_through_canonical_query_and_response_stashes` preserves the alias family, and `local_normalization_reads_one_keyed_value_without_impl_item_enumeration` verifies a narrow associated-value read; named expansion and opaque reveal are not implemented. |
+| [SOL-A2](#sol-a2) | Partial | `unresolved_item_macro_prevents_ground_no`, `unresolved_trait_impl_head_prevents_ground_no`, and `proof_depth_limit_is_maybe` establish that the implemented incomplete/depth cases do not manufacture `No`; the destination groundness and resource matrix is not built. |
+| [SOL-A3](#sol-a3) | Partial | `canonical_response_rejects_an_output_for_the_wrong_operation`, `local_associated_type_normalization_produces_a_type_output`, `response_local_type_output_round_trips_with_sharing`, and `incompatible_normalization_outputs_are_ambiguous_but_identical_outputs_merge` exercise operation pairing, response binding, and output-aware merging. The incompatible-output test constructs `SolverGoal::Normalize` directly, so it does not establish caller expected-type isolation. |
+| [SOL-A4](#sol-a4) | Partial | `generic_impl_where_clause_is_proved_by_nested_impl` covers nested local candidate obligations. The `Parse::next` evidence in the [Mini-redis roadmap](../implementation/mini-redis.md#slice-2-parsenext) covers trait/head-keyed reachable-external discovery and warm reuse; the local index remains provisional. |
+| [SOL-A5](#sol-a5) | Not implemented | No current evidence claims the destination private local index or its edit-invalidation firewall. |
+| [SOL-A6](#sol-a6) | Partial | `incompatible_normalization_outputs_are_ambiguous_but_identical_outputs_merge` and the `final_answer_rules_are_order_independent` unit test cover completed answer reduction; concurrent conjunction and cancellation isolation remain planned. |
+| [SOL-A7](#sol-a7) | Partial | `same_parent_requests_share_one_live_producer_and_result` verifies shared producer identity and one equal final response; bounded polling rounds and monotone intermediate publication have no current evidence. |
+| [SOL-A8](#sol-a8) | Partial | `inductive_impl_cycle_is_no` and `proof_depth_limit_is_maybe` cover the provisional inductive cutoff and depth result only, not the destination path-kind/fixpoint semantics. |
+| [SOL-A9](#sol-a9) | Partial | `final_answer_rules_are_order_independent` covers reducer input order; scheduler perturbation and deterministic resource accounting are not implemented. |
+
+### Current limitations
+
+- Local trait-keyed discovery is a provisional linear scan over expanded local
+  impl identities; the stable private index and edit-invalidation firewall are
+  not built.
+- Groundness-sensitive ambiguity causes, term-size limits, deterministic work
+  limits, polling rounds, and intentional yield points are not implemented.
+- Conjunctions are sequential. Candidate and frame progress envelopes are not
+  published.
+- Cycle handling uses parent-chain inductive cutoff and depth overflow rather
+  than the destination provisional fixpoint/coinductive path semantics.
+- General negative reasoning, specialization, GATs, named-alias expansion,
+  opaque reveal, and method/vtable output operations are outside the current
+  frontier.
+- SOL-A3 lacks an integration test in which the caller expects one of two
+  incompatible normalization outputs and the solver nevertheless preserves
+  ambiguity.
+
+### Related roadmap slices
+
+- [Trait-partitioned impl
+  discovery](../implementation/roadmap.md#planned-slice-trait-partitioned-impl-discovery)
+  owns the local incremental firewall.
+- [Solver recursion, scheduling, and monotone
+  progress](../implementation/roadmap.md#planned-slice-solver-recursion-scheduling-and-monotone-progress)
+  coordinates the [Cycle Semantics](../rfds/trait-solver-cycle-semantics/README.md),
+  [Scheduling and Fairness](../rfds/trait-solver-scheduling/README.md), and
+  [Incremental Results](../rfds/incremental-trait-results/README.md) RFDs.

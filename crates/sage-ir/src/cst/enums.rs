@@ -10,7 +10,7 @@ use crate::span::RelativeSpan;
 
 pub type EnumCst<'db> = Stashed<Ptr<EnumCstData<'db>>>;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct EnumCstData<'db> {
     pub attrs: Slice<AttrCst<'db>>,
     pub name: Name<'db>,
@@ -20,7 +20,9 @@ pub struct EnumCstData<'db> {
     pub span: RelativeSpan,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, salsa::Update)]
+#[derive(
+    Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, salsa::Update, sage_reflect::Reflect,
+)]
 pub struct VariantCst<'db> {
     pub name: Name<'db>,
     pub fields: Slice<FieldCst<'db>>,

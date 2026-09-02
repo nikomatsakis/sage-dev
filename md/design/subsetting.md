@@ -5,6 +5,32 @@ restriction eliminates significant implementation complexity while affecting
 little real-world code. Restrictions are documented here with rationale and may
 be lifted as sage matures.
 
+<a id="sub-a1"></a>
+> **SUB-A1 — A language restriction is explicit at its semantic boundary.** An
+> intentionally unsupported Rust construct states what is excluded, why Sage
+> excludes it, its user-visible impact, and the response at the responsible
+> phase. That response is normally a diagnostic or conservative incomplete
+> result; any temporary semantic approximation, such as `Lifetime::Dummy`, is
+> identified explicitly as a soundness exception rather than silently
+> presented as full Rust semantics.
+>
+> **Required verification:** Every listed restriction has focused acceptance
+> and rejection fixtures at the phase which encounters it, and the observable
+> diagnostic, incomplete result, or documented approximation agrees with the
+> stated impact.
+
+<a id="sub-a2"></a>
+> **SUB-A2 — Destination restrictions and implementation gaps have different
+> owners.** This page lists deliberate limits on Sage's language contract.
+> Temporary gaps in otherwise supported Rust belong in the relevant phase or
+> subsystem's Current Status and in cross-cutting roadmap slices, not in the
+> destination restriction list.
+>
+> **Required verification:** Documentation review traces every unsupported
+> fixture either to a deliberate restriction here or to a capability gap and
+> roadmap owner, and rejects restrictions justified only by the implementation
+> not having been written yet.
+
 ## Restrictions
 
 ### No proc-macro crates defined in the workspace
@@ -103,6 +129,21 @@ region.
 lifetime or borrow errors. This is a documented temporary soundness hole, not
 an ambiguous type-checking result.
 
+Outside that explicit lifetime exception, unsupported or unrepresented source
+is governed by
+[D16](./decisions.md#d16-incompleteness-is-an-explicit-terminal-outcome).
+
+<a id="sub-a3"></a>
+> **SUB-A3 — Unrepresented source never becomes negative evidence.** Published
+> symbols from an incomplete phase may support their own positive facts, but
+> omitted or unsupported source cannot justify a false proof, failed lookup,
+> or exhaustive ground `No` in a downstream consumer.
+>
+> **Required verification:** Malformed, unresolved, unsupported-attribute, and
+> resource-limited fixtures retain usable represented symbols while each
+> potentially affected resolution or solver-negative query remains explicitly
+> incomplete or ambiguous.
+
 ## Supported features
 
 The destination language includes the following. This list is not a statement
@@ -122,75 +163,55 @@ recorded below and in the build-out roadmap.
 - Type aliases, constants, statics
 - `cfg` attributes
 
-## Body resolution restrictions
+## Current status
 
-These are limitations of the current body resolver (`body_resolve.rs`),
-not fundamental design choices. They'll be lifted as type inference and
-impl resolution are added.
+### Current frontier and evidence
 
-### Method calls stay unresolved
+The destination feature list above is not an implementation-coverage list.
+Current coverage is driven by reviewed vertical slices and recorded locally in
+the architecture guide. These links establish [SUB-A2](#sub-a2)'s current ownership
+split for the named phases:
 
-`receiver.method(args)` preserves the method `Name` but doesn't resolve
-which impl provides it. Requires type inference to know the receiver type.
+- [Module and Macro Expansion](./pipeline/module-expansion.md#current-status)
+  records the empty-input local `macro_rules!` subset, built-in derives,
+  external bang expansion, active-attribute incompleteness, and depth limit.
+- [Name Resolution](./subsystems/name-resolution.md#current-status) records
+  represented path/import/prelude behavior and associated lookup limitations.
+- [Signature Checking](./pipeline/signature-checking.md#current-status) records
+  supported interface forms and the `Dummy` lifetime boundary.
+- [Body Checking](./pipeline/body-checking.md#current-status) records the
+  implemented expression, method, inference, and obligation frontier.
+- [Typed IR](./typed-ir.md#current-status) records which source constructs are
+  fully elaborated rather than merely parsed or retained for recovery.
 
-### Field access stays unresolved
+Unsupported or malformed items remain explicit error items. Incomplete item
+or attribute expansion is conservatively visible to name resolution and trait
+candidate discovery, so unrepresented code cannot justify a false proof or
+ground negative result. Lint-only inner attributes are treated as inert; other
+unrepresented active attributes remain incomplete. The focused tests
+`unresolved_item_macro_prevents_ground_no`,
+`malformed_item_macro_output_prevents_ground_no_without_panicking`, and
+`recursive_item_macro_hits_expansion_limit_and_returns_maybe` establish the
+unresolved, malformed, and resource-limited expansion portion of
+[SUB-A3](#sub-a3).
 
-`expr.field` preserves the field `Name`. Resolving to a specific struct
-field requires knowing the expression's type.
+### Current limitations
 
-### Enum variants need type-qualified paths
+- **Known deviation [KD-3](../implementation/known-deviations.md#kd-3-derive-helper-attributes-do-not-produce-the-promised-warning):**
+  registered derive helper attributes are not distinguished from arbitrary
+  potentially active attributes, so Sage omits the affected item
+  conservatively instead of retaining it and reporting the promised warning.
+- The restriction list does not yet link focused acceptance, rejection, or
+  approximation fixtures for every entry, so SUB-A1 is not established as a
+  complete matrix.
+- Several entries are phrased as “not yet supported.” They still need an audit
+  to determine whether they are deliberate destination restrictions or
+  temporary phase gaps before SUB-A2 is fully established.
+- SUB-A3 has focused expansion-to-solver evidence, but not yet the complete
+  downstream resolution and solver matrix for every incomplete source class.
 
-`Frame::Bulk` shows as `<unresolved>` because enum variants aren't
-directly in the module's value namespace — they're children of the enum
-type. Resolving `Type::Variant` requires looking up the type first, then
-searching its variants. Not yet implemented.
+### Related roadmap slices
 
-### Associated functions need impl lookup
-
-`Type::func()` — the type path resolves, but which `impl` block provides
-`func` is unknown. No impl-block search infrastructure exists yet.
-
-### Macro calls are not expanded
-
-Macro paths are resolved to their definition (`<ext tracing::debug>`),
-but the token tree is opaque. Paths inside macro arguments are not
-resolved. `macro_rules!` expansion is the next major feature needed.
-
-**Exception:** represented derive expansions produce ordinary sibling items
-with generated-source provenance. The current builtin subset includes
-`Clone` for non-generic named-field structs; other builtin input shapes remain
-unsupported. The rustc bridge contains the proc-macro invocation mechanism,
-but fully integrating proc-macro derive name resolution and output into the
-module expansion pipeline remains work in progress. See `derive.rs`,
-`local_syms/mods.rs`, and `proc_macro_srv.rs`.
-
-Trait candidate discovery treats unresolved item macros and active attribute
-macros conservatively as incomplete. An impl with an active attribute whose
-transformation has not run is excluded from definite candidates, preventing a
-disabled or replaced source impl, containing module, or macro expansion from
-producing a false proof. Derives attached to an item are likewise withheld
-while another active attribute on that item remains unexpanded. A uniquely
-resolved item macro whose output parses
-successfully remains complete. This is a soundness boundary, not a substitute
-for completing macro expansion. Likewise, a `use` with an unrepresented active
-attribute is excluded from name resolution; its pre-expansion target cannot
-steer a definite impl candidate.
-
-Unsupported item kinds (including unions) and malformed item syntax are
-retained as explicit error items. Trait candidate discovery treats their
-module as incomplete, so an attribute or derive attached to an unsupported
-item cannot disappear and justify a ground negative result.
-
-Lint-only inner attributes (`#![allow(...)]`, `warn`, `deny`, and `forbid`) are
-known inert for this pipeline and do not make candidate discovery incomplete.
-Other inner module attributes are conservatively incomplete until Sage
-represents their effects.
-
-### Type references in bodies pass through
-
-`TypeRef` in let-bindings and casts passes through unchanged. Type path
-resolution is deferred to type checking.
-
-### Closure captures not tracked
-
-The resolver doesn't track which variables a closure captures.
+The [Build-Out Roadmap](../implementation/roadmap.md) orders the next
+cross-cutting coverage slices. This page owns only intentional language
+restrictions; phase Current Status sections own temporary implementation gaps.

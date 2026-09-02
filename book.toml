@@ -6,7 +6,7 @@ src = "md"
 
 [preprocessor.anchor]
 command = "mdbook-ezanchor"
-scan-dirs = ["src", "crates"]
+scan-dirs = ["src", "crates", "vendor"]
 optional = true
 
 [preprocessor.mermaid]

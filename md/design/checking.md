@@ -1,7 +1,10 @@
-# Checking
+# Shared Checking Design
 
-Design tenets for the CST checking layer — guides all new code in
-`cst/`, `local_syms/`, and related modules.
+This chapter records mechanisms shared by the [signature-checking
+phase](./pipeline/signature-checking.md) and [body-checking
+phase](./pipeline/body-checking.md). Begin with those phase contracts for
+inputs, outputs, failure modes, incremental boundaries, and evidence; use this
+page as the deeper reference for their common query and stash design.
 
 ## Code organization
 
@@ -16,9 +19,9 @@ Avoid monolithic files. One struct or closely-related cluster per file.
 
 **Shared infra lives in pass-named modules.** Contexts, helpers, and traits
 shared across item kinds live in a module named after the pass:
-- `cst::check` — `CstLowerCtx`, `BodyCheckCtx`
-- `resolve` — `Resolver`, `Namespace`
-- `ribs` — `Ribs`, `RibEntry`
+- `check::sig` — `Check`, the signature-lowering context
+- `check::infer_ctx` — `InferCtx` and `Scope`, the body-checking context
+- `resolve` — `Resolver`, `Namespace`, and lexical ribs
 
 Item-specific logic imports from these; it doesn't redefine its own plumbing.
 
@@ -57,6 +60,32 @@ tree. Each step builds on the prior. From outside: one query, one result.
 Intermediates (`ResolvedBody`, method candidates, adjustment recipes, and
 partially inferred expressions) are not separately queryable.
 
+<a id="check-a1"></a>
+> **CHECK-A1 — Public checking queries are symbol-keyed semantic boundaries.**
+> A caller supplies the definition symbol and the query derives scope and
+> environment from it. Signatures are the primary cross-item interface;
+> field, member, and other language-required interfaces may be separate narrow
+> products. Bodies and checking temporaries are not interfaces. This is the
+> shared query design required by
+> [D15](./decisions.md#d15-cross-item-dependencies-stop-at-semantic-interfaces).
+>
+> **Required verification:** Query traces show a signature request and a body
+> request as distinct symbol-keyed roots, reject ambient caller parameters and
+> callee-body reads, and demonstrate unchanged reuse across an
+> interface-preserving edit.
+
+<a id="check-a2"></a>
+> **CHECK-A2 — Semantic identities have exactly one minting boundary.** An
+> owning query creates each generic parameter or associated-item symbol once.
+> Every dependent query reopens or references that identity instead of
+> reconstructing it from its name or source position. The identity family is
+> defined by
+> [D5](./decisions.md#d5-symbols-form-the-uniform-semantic-identity-family).
+>
+> **Required verification:** Cross-query and persistent-edit tests compare
+> owner, generic-parameter, `Self`, and associated-item identities across
+> signatures, field/member details, and bodies, including shadowed equal names.
+
 ## Completed body output
 
 The result of successful body checking is the [elaborated typed
@@ -76,15 +105,28 @@ layering rule and an incremental dependency requirement.
 `src: &Stash` (the CST) and `dst: Stash` (output types or resolved exprs).
 At the end, `cx.finish(root)` wraps `dst` into `Stashed<T>`.
 
-**Purpose-specific contexts.** `CstLowerCtx` for signatures (produces `Ty`
-into `dst`). `BodyCheckCtx` for bodies (produces `CheckedExpr` into `out`).
-Same ingredients (resolver, ribs, src/dst stash pair), different output
-domain.
+**Purpose-specific contexts.** `Check` lowers signatures and their parameter
+environments into a target stash. `InferCtx` owns the body target stash plus
+inference, obligations, diagnostics, and cooperative tasks. Both treat the
+source CST stash as read-only and return self-contained semantic output.
 
 **`Stashed<T>` is the memoization boundary.** Salsa compares fingerprints
 (content hashes of the output stash) for change detection. Deterministic
 allocation means same CST + same scope = same fingerprint = no downstream
 re-execution.
+
+<a id="check-a3"></a>
+> **CHECK-A3 — Checked products own their semantic storage.** CST is immutable
+> input; each checked signature or body allocates into a fresh output stash and
+> returns a self-contained `Stashed<T>`. Its deterministic content fingerprint,
+> rather than allocation address or source-tree lifetime, is the value used for
+> backdating. [D2](./decisions.md#d2-stash-for-type-level-interning) owns this
+> representation choice.
+>
+> **Required verification:** Structural traversal detects any source-stash or
+> tree-sitter pointer in checked output, equal recomputation yields equal
+> fingerprints, and a persistent edit test shows an equal recomputed product
+> stops downstream reexecution.
 
 ## Trait obligations
 
@@ -126,6 +168,20 @@ retry only after relevant inference wakes, and receive a mandatory terminal
 pass after inference fallback. `CheckedBody` creation asserts that the
 obligation registry, runtime, wake queue, and root egraph have no live work.
 
+<a id="check-a4"></a>
+> **CHECK-A4 — A checked body cannot publish residual inference work.** Solver
+> responses may add substitutions and residual goals during checking, but
+> fallback and a mandatory terminal pass must discharge them or emit a
+> diagnostic before `CheckedBody` is created. Incomplete solver results are
+> terminal outcomes under
+> [D16](./decisions.md#d16-incompleteness-is-an-explicit-terminal-outcome), not
+> work silently left running after return.
+>
+> **Required verification:** Tests cover obligations solved immediately,
+> woken after inference, deduplicated after canonicalization, rejected at the
+> terminal pass, and exhausted by a resource limit; successful completion
+> asserts no live obligations, tasks, wakes, or root branches.
+
 The implemented external-inherent slice opens owner and method type generics
 in one synchronous child egraph version. Receiver and argument compatibility
 must all succeed before the child collapses into the body root. Its instantiated
@@ -134,6 +190,20 @@ only after commit, so a rejected call cannot leak generic equalities, wakeups,
 or obligations. This transaction does not cross an await point. The broader
 method algorithm will extend the same boundary to result compatibility,
 autoderef, conditional candidate responses, and local inherent methods.
+
+<a id="check-a5"></a>
+> **CHECK-A5 — Speculative checking changes commit atomically.** A candidate or
+> multi-part compatibility check stages its inference changes and obligations
+> in an isolated child version. The whole operation either commits to its
+> direct parent or is discarded; no equality, wake, or obligation from a
+> rejected alternative reaches the requester. The version invariants are
+> defined by
+> [D6](./decisions.md#d6-versioned-egraph-children-are-inference-transactions).
+>
+> **Required verification:** Unit tests reject a candidate after partial
+> generic matching and observe the parent unchanged, accept the same shape and
+> observe exactly one staged obligation publication, and exercise isolated
+> sibling candidates without shared inference identities.
 
 ## Deferred lifetime and borrow semantics
 
@@ -161,3 +231,30 @@ with content-addressed (hash-consed) allocation. CST type aliases follow the
 pattern `type FnCst<'db> = Stashed<Ptr<FnCstData<'db>>>`. The CST captures
 all syntactic detail needed for later phases. No back-pointers to tree-sitter
 nodes.
+
+## Current status
+
+The single-keyed signature/body queries, two-stash boundary, transactional
+inference, obligation finalization, elaborated output, and Dummy-lifetime
+policy described above are implemented for the Rust subset recorded in the
+two phase chapters. Their **Current Status** sections own concrete capability,
+limitation, evidence, and roadmap information so this shared mechanism page
+does not duplicate it.
+
+Current evidence maps to the anchors as follows:
+
+- **[CHECK-A1](#check-a1), [CHECK-A2](#check-a2).** The [Signature Checking current
+  status](./pipeline/signature-checking.md#current-status) links binder-identity,
+  field-separation, and narrow external-dependency tests.
+- **[CHECK-A3](#check-a3).** The [struct-signature](./examples/struct-signature.md) and
+  [function-body](./examples/function-body.md) walkthroughs follow semantic
+  values across fresh signature, field, and body output stashes.
+- **[CHECK-A1](#check-a1), [CHECK-A4](#check-a4).** The [Body Checking current
+  status](./pipeline/body-checking.md#current-status) links structural Typed-IR,
+  terminal-obligation, exact-oracle, and cold/warm dependency evidence. A
+  persistent same-file edit currently exposes a coarser invalidation boundary
+  than CHECK-A1 requires.
+- **[CHECK-A5](#check-a5).** `external_method_mismatch_discards_partial_generic_bindings`
+  is the focused transaction test in `check/method.rs`; complete observable
+  wake and staged-obligation evidence is not yet linked from a public review
+  packet.

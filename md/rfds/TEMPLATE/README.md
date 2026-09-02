@@ -17,6 +17,22 @@
 <!--
     Cover your detailed plans here.
 
+    For a large RFD, embed stable RFD-scoped design anchors beside the
+    load-bearing requirements, for example:
+
+    > **XY-A1 — The server owns semantic availability.**
+    >
+    > **Required verification:** A contract test covers each origin and kind.
+
+    Use anchors for non-obvious rules which implementation could easily drift
+    from, not for every design statement. Link implementation steps and later
+    evidence back to these identifiers. Completion promotes each living anchor
+    and its required verification into the relevant Architecture & Design
+    chapter; a retired anchor requires an explicit accepted design revision.
+
+    Identify any genuinely cross-cutting choice which should become a D<n>
+    Architecture Decision when accepted. Keep feature-local rationale here.
+
     Include proposed user-facing documentation as additional files in this directory
     (e.g., proposed-reference.md) when the change affects docs. This forces concrete
     thinking and gives reviewers something tangible to react to.

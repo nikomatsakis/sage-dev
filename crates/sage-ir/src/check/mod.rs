@@ -1,4 +1,5 @@
 pub mod expr;
+mod finalize;
 pub mod infer;
 pub mod infer_ctx;
 pub(crate) mod method;

@@ -23,9 +23,11 @@ pub struct LocalModSym<'db> {
     /// The enclosing module, if any. `None` only for the crate root.
     pub parent: Option<ScopeSymbol<'db>>,
 
+    #[tracked]
     #[returns(ref)]
     pub body_source: ModBodySource,
 
+    #[tracked]
     #[returns(ref)]
     pub attrs: Stashed<Slice<AttrCst<'db>>>,
 
@@ -101,6 +103,7 @@ pub fn local_expanded_module_items<'db>(
 // ANCHOR_END: example_expanded_module_query
 
 /// Cycle recovery initial value.
+// ANCHOR: architecture_expanded_module_cycle_initial
 fn expanded_module_initial<'db>(
     _db: &'db dyn Db,
     _id: salsa::Id,
@@ -108,6 +111,7 @@ fn expanded_module_initial<'db>(
 ) -> Vec<Symbol<'db>> {
     vec![]
 }
+// ANCHOR_END: architecture_expanded_module_cycle_initial
 
 // ANCHOR: example_expand_items
 fn expand_unexpanded_items<'db>(
@@ -392,6 +396,7 @@ fn symbol_macro_definition<'db>(
     }
 }
 
+// ANCHOR: architecture_macro_expansion_completeness
 fn bang_macro_expansion_complete<'db>(
     db: &'db dyn Db,
     module: LocalModSym<'db>,
@@ -437,6 +442,7 @@ fn bang_macro_expansion_complete<'db>(
         }
     })
 }
+// ANCHOR_END: architecture_macro_expansion_completeness
 
 /// Whether the module's represented expansion is known not to hide an impl
 /// of `target_trait`.
@@ -520,6 +526,37 @@ pub(crate) fn module_expansion_complete_for_method_providers<'db>(
     db: &'db dyn Db,
     module: LocalModSym<'db>,
 ) -> bool {
+    module_expansion_complete(db, module, ExpansionCompleteness::MethodProviders)
+}
+
+/// Whether every child which macro expansion can add to the represented
+/// module is present in [`local_expanded_module_items`].
+///
+/// This is stricter than consumer-specific trait or method-provider
+/// completeness: the semantic inspector promises a complete directory, so an
+/// unsupported derive is incomplete even when it cannot affect a particular
+/// lookup.
+// ANCHOR: architecture_symbol_listing_completeness
+#[salsa::tracked]
+pub fn module_expansion_complete_for_symbol_listing<'db>(
+    db: &'db dyn Db,
+    module: LocalModSym<'db>,
+) -> bool {
+    module_expansion_complete(db, module, ExpansionCompleteness::SymbolListing)
+}
+// ANCHOR_END: architecture_symbol_listing_completeness
+
+#[derive(Copy, Clone)]
+enum ExpansionCompleteness {
+    MethodProviders,
+    SymbolListing,
+}
+
+fn module_expansion_complete<'db>(
+    db: &'db dyn Db,
+    module: LocalModSym<'db>,
+    policy: ExpansionCompleteness,
+) -> bool {
     for item in module.unexpanded_items(db) {
         if item_has_unexpanded_active_attribute(db, *item) {
             return false;
@@ -553,12 +590,34 @@ pub(crate) fn module_expansion_complete_for_method_providers<'db>(
         if item_has_unexpanded_active_attribute(db, item) {
             return false;
         }
-        if let LocalModItemSym::Mod(child) = item
-            && !module_expansion_complete_for_method_providers(db, child)
-        {
-            return false;
-        }
-        if !matches!(item, LocalModItemSym::Struct(_) | LocalModItemSym::Enum(_)) {
+        let may_have_derive = match item {
+            LocalModItemSym::Mod(child) => {
+                let child_complete = match policy {
+                    ExpansionCompleteness::MethodProviders => {
+                        module_expansion_complete_for_method_providers(db, child)
+                    }
+                    ExpansionCompleteness::SymbolListing => {
+                        module_expansion_complete_for_symbol_listing(db, child)
+                    }
+                };
+                if !child_complete {
+                    return false;
+                }
+                false
+            }
+            LocalModItemSym::Struct(_) | LocalModItemSym::Enum(_) => true,
+            LocalModItemSym::Function(_)
+            | LocalModItemSym::Trait(_)
+            | LocalModItemSym::Impl(_)
+            | LocalModItemSym::TypeAlias(_)
+            | LocalModItemSym::Const(_)
+            | LocalModItemSym::Static(_)
+            | LocalModItemSym::Use(_)
+            | LocalModItemSym::MacroDef(_)
+            | LocalModItemSym::MacroInvocation(_)
+            | LocalModItemSym::Error(_) => false,
+        };
+        if !may_have_derive {
             continue;
         }
         let Some((attrs_stash, attrs)) = item.attrs(db) else {
@@ -572,7 +631,17 @@ pub(crate) fn module_expansion_complete_for_method_providers<'db>(
                 continue;
             }
             for derive_name in parse_derive_names(&attrs_stash[attr.args]) {
-                if resolve_builtin_derive(db, module, derive_name).is_none() {
+                let Some((derive_name, _)) = resolve_builtin_derive(db, module, derive_name) else {
+                    return false;
+                };
+                if matches!(policy, ExpansionCompleteness::SymbolListing)
+                    && crate::derive::builtins::expand_builtin_derive(
+                        db,
+                        derive_name.text(db),
+                        item,
+                    )
+                    .is_none()
+                {
                     return false;
                 }
             }

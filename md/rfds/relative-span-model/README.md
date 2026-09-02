@@ -130,15 +130,12 @@ All uses are now `AbsoluteSpan` or `RelativeSpan`. Remove the old type.
 
 Add `ItemAst::absolute_span(db)` and `ItemAst::source_file(db)` helper methods.
 
-## Future: `ParseSource`
+## Follow-up: `ParseSource`
 
-<<<<<<< HEAD
-When [macro expansion as a tracked query](./macro-expansion-tracked-query.md) lands, `source_file: SourceFile` on items becomes `parse_source: ParseSource<'db>`. That's a mechanical replacement — the span model is unaffected.
-||||||| 3204e9a
-When [macro expansion as a tracked query](./macro-expansion-tracked-query.md) lands, `source_file: SourceFile` on items becomes `input_bytes: InputBytes<'db>`. That's a mechanical replacement — the span model is unaffected.
-=======
-When macro expansion as a tracked query lands, `source_file: SourceFile` on items becomes `input_bytes: InputBytes<'db>`. That's a mechanical replacement — the span model is unaffected.
->>>>>>> nikomatsakis/main
+When [macro expansion as a tracked
+query](../macro-expansion-tracked-query/README.md) landed, `source_file:
+SourceFile` on items became `parse_source: ParseSource<'db>`. That mechanical
+replacement did not change the span model.
 
 ## Dependents
 

@@ -4,13 +4,13 @@ Now let a macro create the struct used by ordinary code:
 
 ```rust
 mod shapes {
-    macro_rules! define_shape {
-        ($name:ident, $field:ident, $ty:ty) => {
-            pub struct $name { pub $field: $ty }
+    macro_rules! define_circle {
+        () => {
+            pub struct Circle { pub radius: f64 }
         };
     }
 
-    define_shape!(Circle, radius, f64);
+    define_circle!();
 }
 
 fn radius(circle: shapes::Circle) -> f64 {
@@ -38,7 +38,7 @@ invocation is expanded recursively:
 example_expand_items
 ```
 
-For `define_shape!(...)`, the resolver finds the macro in the macro namespace,
+For `define_circle!()`, the resolver finds the macro in the macro namespace,
 `parse_output` turns its output back into unexpanded item symbols, and the same
 function processes those items:
 
@@ -62,3 +62,7 @@ example.
 The checker does not retain a special "came from this macro" type. Expansion
 provenance remains available through spans and macro invocation symbols, while
 the semantic pipeline operates on the generated item symbol.
+
+The complete phase contract, including same-module fixed-point resolution and
+terminal incompleteness, is in [Module and Macro
+Expansion](../pipeline/module-expansion.md).

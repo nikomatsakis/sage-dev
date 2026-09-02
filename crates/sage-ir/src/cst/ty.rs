@@ -6,13 +6,13 @@ use crate::name::Name;
 use crate::span::RelativeSpan;
 use crate::ty::{Const, Lifetime, Ty};
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct TypeCst<'db> {
     pub kind: TypeCstKind<'db>,
     pub span: RelativeSpan,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub enum TypeCstKind<'db> {
     Path(Ptr<Path<'db>>),
     Reference(Ptr<TypeCst<'db>>, Mutability, LifetimeCst<'db>),
@@ -25,7 +25,7 @@ pub enum TypeCstKind<'db> {
     Error,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub enum LifetimeCst<'db> {
     Named(Name<'db>),
     Anonymous,

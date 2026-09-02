@@ -345,7 +345,7 @@ fn instantiate_external_inherent_signature<'db>(
         && parameters
             .into_iter()
             .zip(arguments.iter().map(|(ty, _)| *ty))
-            .all(|(parameter, argument)| cx.try_eq_in(transaction, parameter, argument));
+            .all(|(parameter, argument)| cx.try_eq_or_never_in(transaction, argument, parameter));
     if !arguments_match {
         cx.discard_branch(transaction);
         return Err(());

@@ -8,6 +8,7 @@ use crate::span::AbsoluteSpan;
 pub struct LocalImplSym<'db> {
     pub scope: ScopeSymbol<'db>,
 
+    #[tracked]
     #[returns(ref)]
     pub cst: ImplCst<'db>,
 
@@ -40,16 +41,35 @@ pub fn local_impl_associated_type_value<'db>(
     associated_ty: crate::symbol::TypeAliasSymbol<'db>,
 ) -> Option<sage_stash::Stashed<crate::ty::Binder<'db, sage_stash::Ptr<crate::ty::Ty<'db>>>>> {
     use crate::check::Check;
-    use crate::cst::traits::TraitItemCst;
     use crate::resolve::Resolver;
     use crate::ty::{Binder, BinderExt, Ty};
 
     let expected_name = crate::symbol::Symbol::from(associated_ty).name(db)?.0;
-    let (source, impl_cst) = impl_sym.cst(db).open_deref();
-    let item = source[impl_cst.items].iter().find_map(|item| match item {
-        TraitItemCst::Type(item) if source[*item].name == expected_name => Some(source[*item]),
-        TraitItemCst::Type(_) | TraitItemCst::Fn(_) | TraitItemCst::Const(_) => None,
-    })?;
+    let key = crate::local_syms::associated::LocalAssociatedItemKey {
+        kind: crate::local_syms::associated::LocalAssociatedItemKind::Type,
+        name: expected_name,
+        occurrence: 0,
+    };
+    let item_symbol =
+        match crate::local_syms::associated::local_impl_associated_item(db, impl_sym, key) {
+            Some(crate::local_syms::LocalModItemSym::TypeAlias(item)) => item,
+            Some(
+                crate::local_syms::LocalModItemSym::Function(_)
+                | crate::local_syms::LocalModItemSym::Struct(_)
+                | crate::local_syms::LocalModItemSym::Enum(_)
+                | crate::local_syms::LocalModItemSym::Trait(_)
+                | crate::local_syms::LocalModItemSym::Impl(_)
+                | crate::local_syms::LocalModItemSym::Const(_)
+                | crate::local_syms::LocalModItemSym::Static(_)
+                | crate::local_syms::LocalModItemSym::Mod(_)
+                | crate::local_syms::LocalModItemSym::Use(_)
+                | crate::local_syms::LocalModItemSym::MacroDef(_)
+                | crate::local_syms::LocalModItemSym::MacroInvocation(_)
+                | crate::local_syms::LocalModItemSym::Error(_),
+            )
+            | None => return None,
+        };
+    let (source, item) = item_symbol.cst(db).open_deref();
     if !source[item.generics].is_empty()
         || !source[item.where_clauses].is_empty()
         || !source[item.attrs].is_empty()
@@ -64,7 +84,7 @@ pub fn local_impl_associated_type_value<'db>(
         .ribs
         .add_generic_params(db, generics.iter().copied());
     let mut cx = Check::new(db, source, resolver);
-    cx.current_sym = Some(crate::local_syms::LocalModItemSym::Impl(impl_sym));
+    cx.current_sym = Some(crate::local_syms::LocalModItemSym::TypeAlias(item_symbol));
     let value = cx.source_stash[value].check(&mut cx);
     if matches!(value, Ty::Error(_)) || !cx.diagnostics.is_empty() {
         return None;
@@ -155,8 +175,6 @@ impl<'db> LocalImplSym<'db> {
         crate::local_syms::associated::lower_items(
             db,
             crate::local_syms::LocalAssociatedOwner::Impl(self),
-            self.scope(db),
-            self.span(db),
             source,
             cst.items,
             self.sig(db).iter_symbols(),

@@ -26,6 +26,25 @@ impl<'db> ExprCst<'db> {
         }
     }
 
+    // ANCHOR: initial_bidirectional_expression_checking
+    /// Check an expression with a coercion expectation.
+    ///
+    /// This is the initial bidirectional-checking boundary. For now the
+    /// expectation is applied only after ordinary synthesis; future expression
+    /// forms can consume it while they are checked.
+    async fn check_with_expected(
+        &self,
+        cx: &InferCtx<'_, 'db>,
+        scope: &Scope<'db>,
+        expected: Ptr<Ty<'db>>,
+        error_context: ErrorContext,
+    ) -> Ptr<TyExpr<'db>> {
+        let expr = self.check_with(cx, scope).await;
+        let span = cx.stash()[expr].span;
+        cx.coerce_expr_or_original_with_context(expr, expected, span, error_context)
+    }
+    // ANCHOR_END: initial_bidirectional_expression_checking
+
     #[boxed_async_fn]
     async fn check_expr(&self, cx: &InferCtx<'_, 'db>, scope: &Scope<'db>) -> CheckResult<'db> {
         let span = self.span;
@@ -61,13 +80,51 @@ impl<'db> ExprCst<'db> {
             }
             ExprCstKind::Call(func, args) => {
                 let rf = cx.source_stash[*func].check_with(cx, scope).await;
+                let callee_ty = cx.find_mut(cx.stash()[rf].ty);
+                let (parameter_tys, ty) = check_call_ty(cx, callee_ty, span);
+                let supplied_argument_count = cx.source_stash[*args].len();
+                if let Some(parameter_tys) = &parameter_tys
+                    && parameter_tys.len() != supplied_argument_count
+                {
+                    let expected = parameter_tys.len();
+                    let expected_suffix = if expected == 1 { "" } else { "s" };
+                    let supplied_suffix = if supplied_argument_count == 1 {
+                        "argument was"
+                    } else {
+                        "arguments were"
+                    };
+                    cx.record(Diagnostic::error(
+                        cx.span(span),
+                        format!(
+                            "function takes {expected} argument{expected_suffix} but \
+                             {supplied_argument_count} {supplied_suffix} supplied"
+                        ),
+                    ));
+                }
                 let mut rargs = Vec::new();
-                for a in cx.source_stash[*args].iter() {
-                    rargs.push(a.check_with(cx, scope).await);
+                for (index, argument) in cx.source_stash[*args].iter().enumerate() {
+                    let checked = match parameter_tys
+                        .as_ref()
+                        .and_then(|parameter_tys| parameter_tys.get(index))
+                    {
+                        Some(&parameter_ty) => {
+                            argument
+                                .check_with_expected(
+                                    cx,
+                                    scope,
+                                    parameter_ty,
+                                    ErrorContext::Argument {
+                                        index,
+                                        call_span: span,
+                                    },
+                                )
+                                .await
+                        }
+                        None => argument.check_with(cx, scope).await,
+                    };
+                    rargs.push(checked);
                 }
                 let args_slice = cx.stash_mut().alloc_slice(&rargs);
-                let callee_ty = cx.find_mut(cx.stash()[rf].ty);
-                let ty = check_call_ty(cx, callee_ty, args_slice, span);
                 (TyExprData::Call(rf, args_slice), ty)
             }
             ExprCstKind::MethodCall(obj, name, args) => {
@@ -76,7 +133,8 @@ impl<'db> ExprCst<'db> {
                 for a in cx.source_stash[*args].iter() {
                     rargs.push(a.check_with(cx, scope).await);
                 }
-                let receiver_ty = cx.await_concrete(cx.stash()[ro].ty).await;
+                let receiver_ty = cx.stash()[ro].ty;
+                let receiver_ty = cx.await_concrete(receiver_ty).await;
                 if let Some(error) = cx.error_in_ty(receiver_ty) {
                     let ty = cx.alloc_ty(Ty::Error(error));
                     (TyExprData::Error(error), ty)
@@ -128,18 +186,9 @@ impl<'db> ExprCst<'db> {
                                 ));
                             }
                             for (index, (param, argument)) in
-                                params.into_iter().zip(rargs.iter().copied()).enumerate()
+                                params.into_iter().zip(rargs.iter_mut()).enumerate()
                             {
-                                let argument_ty = cx.stash()[argument].ty;
-                                let argument_span = cx.stash()[argument].span;
-                                cx.require_eq(argument_ty, param, argument_span)
-                                    .map_err(|error| {
-                                        error.with_context(ErrorContext::Argument {
-                                            index,
-                                            call_span: span,
-                                        })
-                                    })
-                                    .record_err(cx);
+                                coerce_call_argument(cx, argument, param, index, span);
                             }
                             if !method.parameter_env_published {
                                 cx.submit_parameter_env(
@@ -169,7 +218,8 @@ impl<'db> ExprCst<'db> {
             ExprCstKind::Field(obj, name) => {
                 let mut base = cx.source_stash[*obj].check_with(cx, scope).await;
                 let base_span = cx.stash()[base].span;
-                let mut obj_ty = cx.await_concrete(cx.stash()[base].ty).await;
+                let obj_ty = cx.stash()[base].ty;
+                let mut obj_ty = cx.await_concrete(obj_ty).await;
                 loop {
                     let Ty::Ref(inner, _, _) = cx.stash()[obj_ty] else {
                         break;
@@ -214,19 +264,14 @@ impl<'db> ExprCst<'db> {
 
                 let result_ty = cx.fresh_ty_var();
                 let rt = cx.source_stash[*then].check_with(cx, scope).await;
-                let then_ty = cx.stash()[rt].ty;
                 let then_span = cx.source_stash[*then].span;
-                cx.require_coerce(then_ty, result_ty, then_span)
-                    .record_err(cx);
+                let rt = cx.coerce_expr_or_original(rt, result_ty, then_span);
 
                 let re = match else_ {
                     Some(e) => {
                         let re = cx.source_stash[*e].check_with(cx, scope).await;
-                        let else_ty = cx.stash()[re].ty;
                         let else_span = cx.source_stash[*e].span;
-                        cx.require_coerce(else_ty, result_ty, else_span)
-                            .record_err(cx);
-                        Some(re)
+                        Some(cx.coerce_expr_or_original(re, result_ty, else_span))
                     }
                     None => {
                         let unit = cx.unit_ty();
@@ -245,19 +290,14 @@ impl<'db> ExprCst<'db> {
                 inner_scope.resolver.ribs.pop_scope();
 
                 let result_ty = cx.fresh_ty_var();
-                let then_ty = cx.stash()[rt].ty;
                 let then_span = cx.source_stash[*then].span;
-                cx.require_coerce(then_ty, result_ty, then_span)
-                    .record_err(cx);
+                let rt = cx.coerce_expr_or_original(rt, result_ty, then_span);
 
                 let re = match else_ {
                     Some(e) => {
                         let re = cx.source_stash[*e].check_with(cx, scope).await;
-                        let else_ty = cx.stash()[re].ty;
                         let else_span = cx.source_stash[*e].span;
-                        cx.require_coerce(else_ty, result_ty, else_span)
-                            .record_err(cx);
-                        Some(re)
+                        Some(cx.coerce_expr_or_original(re, result_ty, else_span))
                     }
                     None => {
                         let unit = cx.unit_ty();
@@ -325,22 +365,26 @@ impl<'db> ExprCst<'db> {
                 (TyExprData::Continue, ty)
             }
             ExprCstKind::Return(val) => {
-                let rv = match val {
+                let mut rv = match val {
                     Some(v) => Some(cx.source_stash[*v].check_with(cx, scope).await),
                     None => None,
                 };
                 if let Some((ret_ty, ret_span)) = cx.ret_ty() {
-                    let val_ty = match rv {
-                        Some(expr) => cx.stash()[expr].ty,
-                        None => cx.unit_ty(),
+                    let result = match rv {
+                        Some(expr) => {
+                            let value_span = cx.stash()[expr].span;
+                            cx.coerce_expr(expr, ret_ty, value_span)
+                                .map(|coerced| rv = Some(coerced))
+                        }
+                        None => cx.require_coerce(cx.unit_ty(), ret_ty, span),
                     };
-                    if let Err(e) = cx.require_coerce(val_ty, ret_ty, span) {
-                        let e = if let Some(ret_span) = ret_span {
-                            e.with_context(ErrorContext::ReturnType { ret_span })
+                    if let Err(error) = result {
+                        let error = if let Some(ret_span) = ret_span {
+                            error.with_context(ErrorContext::ReturnType { ret_span })
                         } else {
-                            e
+                            error
                         };
-                        cx.catch(e);
+                        cx.catch(error);
                     }
                 }
                 let ty = cx.alloc_ty(Ty::Never);
@@ -350,9 +394,8 @@ impl<'db> ExprCst<'db> {
                 let rl = cx.source_stash[*lhs].check_with(cx, scope).await;
                 let rr = cx.source_stash[*rhs].check_with(cx, scope).await;
                 let lhs_ty = cx.stash()[rl].ty;
-                let rhs_ty = cx.stash()[rr].ty;
                 let rhs_span = cx.source_stash[*rhs].span;
-                cx.require_coerce(rhs_ty, lhs_ty, rhs_span).record_err(cx);
+                let rr = cx.coerce_expr_or_original(rr, lhs_ty, rhs_span);
                 let ty = cx.unit_ty();
                 (TyExprData::Assign(rl, rr), ty)
             }
@@ -404,8 +447,7 @@ impl<'db> ExprCst<'db> {
                 let mut relems = Vec::new();
                 for e in cx.source_stash[*elems].iter() {
                     let re = e.check_with(cx, scope).await;
-                    let elem_ty = cx.stash()[re].ty;
-                    cx.require_coerce(elem_ty, result_ty, e.span).record_err(cx);
+                    let re = cx.coerce_expr_or_original(re, result_ty, e.span);
                     relems.push(re);
                 }
                 let elems_slice = cx.stash_mut().alloc_slice(&relems);
@@ -435,17 +477,17 @@ impl<'db> ExprCst<'db> {
                         span: fi.span,
                     });
                 }
-                let fields_slice = cx.stash_mut().alloc_slice(&rfields);
                 let result = struct_lit_ty(cx, res, span);
                 match result.field_source {
                     Some(StructLitFieldSource::Struct(local)) => {
-                        check_struct_lit_fields(cx, local, result.type_args, fields_slice);
+                        check_struct_lit_fields(cx, local, result.type_args, &mut rfields);
                     }
                     Some(StructLitFieldSource::Instantiated(field_sigs)) => {
-                        check_instantiated_struct_lit_fields(cx, field_sigs, fields_slice);
+                        check_instantiated_struct_lit_fields(cx, field_sigs, &mut rfields);
                     }
                     None => {}
                 }
+                let fields_slice = cx.stash_mut().alloc_slice(&rfields);
                 (TyExprData::StructLit(res, fields_slice), result.ty)
             }
             ExprCstKind::Range(lo, hi) => {
@@ -483,7 +525,7 @@ impl<'db> StmtCst<'db> {
         let span = self.span;
         let kind = match &self.kind {
             StmtCstKind::Let(pat, ty_ann, init) => {
-                let rinit = match init {
+                let mut rinit = match init {
                     Some(e) => Some(cx.source_stash[*e].check_with(cx, scope).await),
                     None => None,
                 };
@@ -491,9 +533,8 @@ impl<'db> StmtCst<'db> {
                 let pat_ty = cx.stash()[rpat].ty;
 
                 if let Some(init_ptr) = rinit {
-                    let init_ty = cx.stash()[init_ptr].ty;
                     let init_span = cx.stash()[init_ptr].span;
-                    cx.require_coerce(init_ty, pat_ty, init_span).record_err(cx);
+                    rinit = Some(cx.coerce_expr_or_original(init_ptr, pat_ty, init_span));
                 }
 
                 let ty_ann_ptr = ty_ann.map(|t| {
@@ -619,10 +660,8 @@ impl<'db> MatchArmCst<'db> {
             None => None,
         };
         let rb = cx.source_stash[self.body].check_with(cx, &scope).await;
-        let body_ty = cx.stash()[rb].ty;
         let body_span = cx.source_stash[self.body].span;
-        cx.require_coerce(body_ty, result_ty, body_span)
-            .record_err(cx);
+        let rb = cx.coerce_expr_or_original(rb, result_ty, body_span);
         scope.resolver.ribs.pop_scope();
         TyMatchArm {
             pat: rp,
@@ -1203,7 +1242,7 @@ fn check_struct_lit_fields<'db>(
     cx: &InferCtx<'_, 'db>,
     local: crate::local_syms::structs::LocalStructSym<'db>,
     type_args: Slice<Ptr<Ty<'db>>>,
-    fields: Slice<TyFieldInit<'db>>,
+    init_fields: &mut [TyFieldInit<'db>],
 ) {
     use crate::ty::BinderExt;
     use crate::ty_fold::{SubstTarget, Substitute, TyFolder, fold_parameter_env};
@@ -1226,7 +1265,6 @@ fn check_struct_lit_fields<'db>(
     let struct_fields = fields_stashed.root();
     let field_sigs = &fields_stash[struct_fields.fields];
 
-    let init_fields: Vec<_> = cx.stash()[fields].to_vec();
     let parameter_env = if subst.is_empty() {
         use sage_stash::StashCopy;
         let mut stash = cx.stash_mut();
@@ -1246,7 +1284,7 @@ fn check_struct_lit_fields<'db>(
         obligation_span,
         crate::check::infer::obligations::ObligationReason::AdtWellFormedness,
     );
-    for field_init in &init_fields {
+    for field_init in init_fields {
         for field_sig in field_sigs {
             if field_sig.name == field_init.name {
                 let declared_ty = if subst.is_empty() {
@@ -1260,13 +1298,7 @@ fn check_struct_lit_fields<'db>(
                     drop(folder);
                     stash.alloc(ty_data)
                 };
-                let init_ty = cx.stash()[field_init.value].ty;
-                if let Err(e) = cx.require_coerce(init_ty, declared_ty, field_init.span) {
-                    let e = e.with_context(ErrorContext::FieldInit {
-                        field_span: field_init.span,
-                    });
-                    cx.catch(e);
-                }
+                coerce_field_initializer(cx, field_init, declared_ty);
                 break;
             }
         }
@@ -1276,23 +1308,33 @@ fn check_struct_lit_fields<'db>(
 fn check_instantiated_struct_lit_fields<'db>(
     cx: &InferCtx<'_, 'db>,
     field_sigs: Slice<crate::ty::FieldSig<'db>>,
-    fields: Slice<TyFieldInit<'db>>,
+    init_fields: &mut [TyFieldInit<'db>],
 ) {
     let field_sigs = cx.stash()[field_sigs].to_vec();
-    let init_fields = cx.stash()[fields].to_vec();
     for field_init in init_fields {
         if let Some(field_sig) = field_sigs
             .iter()
             .find(|field_sig| field_sig.name == field_init.name)
         {
-            let init_ty = cx.stash()[field_init.value].ty;
-            if let Err(error) = cx.require_coerce(init_ty, field_sig.ty, field_init.span) {
-                cx.catch(error.with_context(ErrorContext::FieldInit {
-                    field_span: field_init.span,
-                }));
-            }
+            coerce_field_initializer(cx, field_init, field_sig.ty);
         }
     }
+}
+
+fn coerce_field_initializer<'db>(
+    cx: &InferCtx<'_, 'db>,
+    field_init: &mut TyFieldInit<'db>,
+    target: Ptr<Ty<'db>>,
+) {
+    let value_span = cx.stash()[field_init.value].span;
+    field_init.value = cx.coerce_expr_or_original_with_context(
+        field_init.value,
+        target,
+        value_span,
+        ErrorContext::FieldInit {
+            field_span: field_init.span,
+        },
+    );
 }
 
 // ANCHOR: example_lookup_field_type
@@ -1415,24 +1457,17 @@ fn lookup_field<'db>(
 fn check_call_ty<'db>(
     cx: &InferCtx<'_, 'db>,
     callee_ty_ptr: Ptr<Ty<'db>>,
-    arg_exprs: Slice<Ptr<TyExpr<'db>>>,
     call_span: RelativeSpan,
-) -> Ptr<Ty<'db>> {
+) -> (Option<Vec<Ptr<Ty<'db>>>>, Ptr<Ty<'db>>) {
     let callee_ty = cx.stash()[callee_ty_ptr];
 
     match callee_ty {
         Ty::FnPtr(params, ret) => {
             let param_tys: Vec<_> = cx.stash()[params].to_vec();
-            let arg_ptrs: Vec<_> = cx.stash()[arg_exprs].to_vec();
-            for (param_ty, arg_expr) in param_tys.iter().zip(arg_ptrs.iter()) {
-                let arg_ty = cx.stash()[*arg_expr].ty;
-                let arg_span = cx.stash()[*arg_expr].span;
-                cx.require_eq(arg_ty, *param_ty, arg_span).record_err(cx);
-            }
-            ret
+            (Some(param_tys), ret)
         }
-        Ty::InferVar(_) => cx.fresh_ty_var(),
-        Ty::Error(_) => callee_ty_ptr,
+        Ty::InferVar(_) => (None, cx.fresh_ty_var()),
+        Ty::Error(_) => (None, callee_ty_ptr),
         Ty::Bool
         | Ty::Char
         | Ty::Int(_)
@@ -1451,7 +1486,23 @@ fn check_call_ty<'db>(
                 cx.span(call_span),
                 "value is not callable",
             ));
-            cx.alloc_ty(Ty::Error(error))
+            (None, cx.alloc_ty(Ty::Error(error)))
         }
     }
+}
+
+fn coerce_call_argument<'db>(
+    cx: &InferCtx<'_, 'db>,
+    argument: &mut Ptr<TyExpr<'db>>,
+    parameter_ty: Ptr<Ty<'db>>,
+    index: usize,
+    call_span: RelativeSpan,
+) {
+    let argument_span = cx.stash()[*argument].span;
+    *argument = cx.coerce_expr_or_original_with_context(
+        *argument,
+        parameter_ty,
+        argument_span,
+        ErrorContext::Argument { index, call_span },
+    );
 }

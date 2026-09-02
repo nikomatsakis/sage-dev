@@ -1,0 +1,17 @@
+[package]
+name = "sage-inspector"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+axum = "0.8"
+futures-util = "0.3"
+mime_guess = "2"
+rust-embed = "8"
+sage-reflect = { path = "../sage-reflect" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+tracing = "0.1"

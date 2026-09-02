@@ -78,6 +78,7 @@ fn open_owner<'db>(
     }
 }
 
+// ANCHOR: architecture_local_function_symbol
 #[salsa::tracked(debug)]
 pub struct LocalFnSym<'db> {
     pub name: Name<'db>,
@@ -90,10 +91,8 @@ pub struct LocalFnSym<'db> {
 
     #[tracked]
     pub span: AbsoluteSpan<'db>,
-
-    #[tracked]
-    pub cst_base: AbsoluteSpan<'db>,
 }
+// ANCHOR_END: architecture_local_function_symbol
 
 impl StashDirect for LocalFnSym<'_> {}
 
@@ -313,23 +312,24 @@ impl<'db> LocalFnSym<'db> {
             };
 
             // Constrain body type against declared return type.
-            let body_ty = cx.stash()[expr].ty;
             let body_span = cx.stash()[expr].span;
-            if let Err(e) = cx.require_coerce(body_ty, imported.ret, body_span) {
-                let e = if let Some(ret_ptr) = cst.ret {
-                    let ret_span = src[ret_ptr].span;
-                    e.with_context(ErrorContext::ReturnType { ret_span })
-                } else {
-                    e
-                };
-                cx.catch(e);
+            match cx.coerce_expr(expr, imported.ret, body_span) {
+                Ok(coerced) => coerced,
+                Err(error) => {
+                    let error = if let Some(ret_ptr) = cst.ret {
+                        let ret_span = src[ret_ptr].span;
+                        error.with_context(ErrorContext::ReturnType { ret_span })
+                    } else {
+                        error
+                    };
+                    cx.catch(error);
+                    expr
+                }
             }
-            expr
         });
 
         // Resolve remaining inference variables.
         cx.finalize();
-        cx.resolve_types();
 
         cx.finish(body_expr, cst.span)
     }

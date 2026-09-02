@@ -1,136 +1,204 @@
 # Stash (`sage-stash`)
 
-The **Stash** is a flat, type-erased byte buffer for `Copy`-only
-data. It stores function bodies (expressions, statements, patterns)
-outside of salsa, avoiding per-node tracked-struct overhead while
-still integrating with salsa's incremental invalidation via
-byte-level equality.
+`Stash` owns compact, heterogeneous trees of `Copy` values behind typed
+handles. A handle is four bytes in release builds; debug builds add a
+four-byte stash-identity tag for cross-stash diagnostics. Sage uses Stash for
+per-item CST, checked signatures, types, and Typed IR: data which should move
+through one semantic query result without becoming hundreds of separately
+tracked Salsa entities.
 
-## Why not salsa tracked structs for body nodes?
+## Representation contract
 
-A function body can contain hundreds of `Expr`, `Stmt`, and `Pat`
-nodes. Making each one a salsa tracked struct would mean hundreds
-of salsa IDs per function, with per-field change detection overhead
-that isn't needed — body resolution reads the *entire* body, not
-individual nodes. The Stash gives O(1) bulk equality: if the bytes
-didn't change, the body didn't change.
+`Ptr<T>` identifies one value and `Slice<T>` identifies a contiguous sequence.
+Both are valid only with the `Stash` that created them. Debug builds attach a
+stash identity to catch cross-stash indexing; semantic code explicitly copies
+between stashes when crossing a query boundary.
 
-## Core types
+This is the ownership consequence of
+[D2](./decisions.md#d2-stash-for-type-level-interning).
 
-### `Stash`
+<a id="stash-a1"></a>
+> **STASH-A1 — Handles never cross stash ownership implicitly.** A `Ptr<T>` or
+> `Slice<T>` is interpreted only by its allocating `Stash`. Retaining a value
+> across a stash boundary requires a structural copy into the destination; a
+> checked output tree must not contain handles back into its source CST or an
+> imported query result.
+>
+> **Required verification:** Debug tests reject cross-stash pointer and slice
+> access for equal and unequal element types, copy tests reconstruct nested
+> pointers and slices in a destination stash, and completed-query tests walk
+> outputs under the destination stash without consulting source stashes.
 
-```rust
-pub struct Stash {
-    buf: Vec<u8>,
-    entries: Vec<Entry>,
-    intern_map: HashMap<InternKey, u32>,
-}
+All `alloc` and `alloc_slice` operations are hash-consing. Equal values of the
+same stash data type return the same handle; hash collisions are resolved by
+content comparison. Children are allocated before parents, so a parent's hash
+can incorporate the already computed hashes of its handles without recursive
+tree traversal.
+
+<a id="stash-a2"></a>
+> **STASH-A2 — Allocation is content-addressed within one stash.** Every value
+> and slice allocation is hash-consed by its typed structural content. Equal
+> content of the same stash data type yields the same handle, while hash
+> collisions are resolved by actual content comparison rather than sharing.
+>
+> **Required verification:** Scalar, nested-pointer, slice, duplicate, and
+> forced-collision tests establish deduplication and non-aliasing; derived
+> `AllocStashData` implementations receive the same coverage as handwritten
+> implementations.
+
+Allocation may grow the arena, but it never changes an existing entry.
+Algorithms which need mutable state keep that state outside the stash and
+publish a result by structurally copying it into a fresh stash. In particular,
+body inference records type equalities in its egraph; completion resolves each
+type while rebuilding the Typed IR, rather than overwriting inference-variable
+entries which may already participate in hash-consing.
+
+```{anchor}
+finalize_typed_body_into_fresh_stash
 ```
 
-A growable byte buffer with an entry table. Each entry records a
-`TypeId`, byte offset, and element count. The `intern_map` is only
-used for deduplicated (`intern`) operations.
+This is the immutability consequence of
+[D2](./decisions.md#d2-stash-for-type-level-interning).
 
-Two equality semantics: `Stash: PartialEq` compares `buf` bytes
-directly, and `Stash: Hash` hashes the `buf`. This is what makes
-`Stashed<T>` cheap to compare.
+<a id="stash-a5"></a>
+> **STASH-A5 — Allocated entries are immutable.** `Stash` is append-only:
+> `alloc` and `alloc_slice` may add entries, but safe code cannot mutate a
+> `Ptr<T>` or `Slice<T>` allocation after it has been interned. Transient
+> inference state is finalized by resolving and copying the completed value
+> into a fresh output stash.
+>
+> **Required verification:** The public stash API exposes no mutable indexing
+> or mutable entry access; a focused finalization test proves that the working
+> stash retains its inference-variable node while the separately owned output
+> contains only its resolved type; completed-body tests reject every surviving
+> inference variable.
 
-### `Ptr<T>` and `Slice<T>`
+`Stashed<T>` pairs a stash with a root value and precomputes a 128-bit
+structural fingerprint by following that root. Equality, ordering, hashing,
+and `salsa::Update` use the fingerprint. The fingerprint is deterministic for
+equal rooted semantic content and ignores unreachable allocation history.
 
-```rust
-pub struct Ptr<T> { index: u32, .. }
-pub struct Slice<T> { index: u32, .. }
+<a id="stash-a3"></a>
+> **STASH-A3 — Query-result equality follows rooted semantic content.** The
+> equality, ordering, hashing, and Salsa update behavior of `Stashed<T>` use a
+> deterministic structural fingerprint of the reachable root, not stash
+> addresses, allocation order, padding, or unreachable allocations.
+>
+> **Required verification:** Independently allocated equal and unequal trees,
+> shared DAGs, reordered/unreachable allocations, and repeated construction
+> produce the expected equality, hash, ordering, fingerprint, and
+> `salsa::Update` behavior.
+
+## Why this is the query boundary
+
+A function body can contain hundreds of expressions, statements, patterns,
+and types. Tracking each node independently would expose unstable internal
+structure and add per-node Salsa overhead, while body consumers need the
+completed tree as a unit. `Stashed<T>` gives Salsa one semantic value to
+compare and backdate.
+
+The source and destination stashes remain separate during checking:
+
+```text
+per-item CST Stashed<T> --read--> Check / InferCtx --allocate--> checked Stashed<U>
 ```
 
-Thin handles (4 bytes each, `Copy`) that index into the entry
-table. `Ptr<T>` points to one value, `Slice<T>` to a contiguous
-run. Accessed via `stash[ptr]` / `stash[slice]` (`Index` impls).
+No checked pointer refers back into its source CST stash. Imports copy the
+required semantic values into the destination before retaining their handles.
 
-Handles are only valid within the `Stash` that created them.
-Cross-stash indexing panics at the type-id check.
+<a id="stash-a4"></a>
+> **STASH-A4 — A stash-owned tree is one incremental value.** Salsa compares
+> and backdates a `Stashed<T>` root as a unit; nodes below that root are not
+> independent tracked identities. Finer incremental boundaries are introduced
+> as semantic queries outside the tree, not by exposing its internal handles.
+>
+> **Required verification:** Query traces show equal reconstructed roots
+> stopping downstream invalidation after a producer reexecutes, while an edit
+> changing reachable semantic content changes the root and invalidates its
+> consumers.
 
-### `Stashed<T>`
+## Core traits
 
-```rust
-pub struct Stashed<T> {
-    stash: Stash,
-    root: T,
-}
-```
+- `StashData` is the unsafe representation contract for stash-storable `Copy`
+  types. Its `StaticSelf` supports runtime type checking across `'db`.
+- `AllocStashData` adds structural hashing and equality required by
+  hash-consing; derive it for ordinary stash nodes.
+- `StashHash` hashes a value in its stash context.
+- `StashCopy` reconstructs a value and its reachable children in another
+  stash.
 
-A self-contained bundle: a `Stash` plus a root handle into it.
-This is what salsa stores as a tracked field value.
+## Incremental behavior
 
-`PartialEq` compares the stash bytes first (O(n) over the buffer),
-then the root value. If the bytes match, handle indices are
-equivalent so the root comparison is O(1). This gives salsa its
-incremental firewall: a tracked field of type `Stashed<Ptr<Body>>`
-only invalidates downstream queries when the body's bytes actually
-changed.
+Fingerprint equality is the incremental firewall at a stash-owned query
+boundary. If a query reexecutes and reconstructs equal rooted semantic output,
+`Stashed<T>::maybe_update` reports no change and Salsa can backdate the result.
 
-The type alias `FunctionBody<'db> = Stashed<Ptr<Body<'db>>>` is
-the concrete instance used for function bodies.
+This does not make the producing query itself immune to coarse inputs. A body
+query may still reexecute because of a module- or file-level dependency; the
+fingerprint only prevents an equal output from propagating further. See
+[Incrementality and Query Boundaries](./infrastructure/incrementality.md).
 
-## Alloc vs Intern
+## Code map
 
-- **`stash.alloc(value)`** — append, return a fresh `Ptr`. Two
-  calls with the same value produce distinct handles.
-- **`stash.intern(value)`** — deduplicate. Returns the same `Ptr`
-  for equal values (`T: Hash + Eq`).
-- Same distinction for `alloc_slice` / `intern_slice`.
+| Path | Responsibility |
+|---|---|
+| `crates/sage-stash/src/lib.rs` | typed handles, hash-consed allocation, fingerprints, copying, Salsa updates |
+| `crates/sage-stash-macros/` | `AllocStashData` derive |
+| `crates/sage-stash/tests/arena_tests.rs` | allocation, collision, fingerprint, copy, and ordering evidence |
 
-Body lowering uses `alloc` exclusively (dedup isn't needed for
-tree-shaped data). Interning is available for cases where
-structural sharing matters.
+## Current status
 
-## Derive macros
+### Current frontier and evidence
 
-- **`#[derive(AllocStashData)]`** — generates `StashData` +
-  `AllocStashData` impls. Used on body node types (`Expr`, `Stmt`,
-  `Pat`, `MatchArm`, `FieldInit`, etc.).
-- **`#[derive(InternStashData)]`** — generates `StashData` +
-  `InternStashData` impls. Used when dedup is desired.
+Append-only hash-consed values/slices, collision handling, deterministic
+rooted fingerprints, cross-stash copying, and Salsa updates are operational
+across CST, signatures, solver values, and Typed IR. Body completion now
+rebuilds settled inference output into a fresh stash. Focused evidence
+includes:
 
-Types that are self-contained scalars (no `Ptr`/`Slice` fields)
-can implement `StashDirect` for blanket `StashEq`/`StashHash`/
-`StashOrd` impls that ignore the stash context.
+- **[STASH-A1](#stash-a1):** `cross_stash_ptr_wrong_type`,
+  `cross_stash_ptr_same_type_panics_in_debug`,
+  `cross_stash_slice_panics_in_debug`, `copy_into_simple`,
+  `copy_into_compound`, and `copy_into_with_slice`;
+- **[STASH-A2](#stash-a2):** `hash_cons_dedup`, `hash_cons_slice_dedup`, and
+  `hash_cons_collision_stores_both`, plus
+  `derived_stash_hash_leaf_struct` and `derived_stash_hash_with_ptr_field`;
+- **[STASH-A3](#stash-a3):** `stashed_eq_same_content_fingerprint`,
+  `stashed_ne_different_content_fingerprint`,
+  `stashed_hash_consistent_with_eq`, `stashed_ord_consistent_with_eq`,
+  `stashed_eq_compound_dag`, and `fingerprint_deterministic`.
+- **[STASH-A5](#stash-a5):** `body_finalization_resolves_types_into_a_fresh_stash`
+  retains the inference node in its append-only working stash while inspecting
+  the resolved type in a separately owned completed body. Absence of
+  `IndexMut` and mutable-entry methods makes the prohibition an API property.
 
-## Stash-contextual comparison
+Run the storage tests with `cargo test -p sage-stash` and the finalization
+boundary with
+`cargo test -p sage-ir body_finalization_resolves_types_into_a_fresh_stash`.
 
-Handles compare by index (O(1)), but that only works within the
-same stash. For cross-stash comparison (e.g. diffing two versions
-of a body), the `StashEq`, `StashHash`, and `StashOrd` traits
-provide stash-contextual deep comparison:
+### Current limitations
 
-```rust
-pub trait StashEq<'db> {
-    fn stash_eq(&self, other: &Self, stash: &Stash) -> bool;
-}
-```
+- The heterogeneous byte arena does not yet guarantee the base alignment
+  required by every admitted `StashData` type. This confirmed safety defect is
+  tracked as [KD-4](../implementation/known-deviations.md#kd-4-stash-byte-storage-does-not-guarantee-entry-alignment);
+  until it is closed, STASH-A1's typed-storage representation contract is not
+  fully established.
+- Fingerprint equality is probabilistic at 128 bits; the architecture accepts
+  that collision risk for incremental equality but semantic hash-consing still
+  checks actual content before sharing a handle.
+- Stash values are `Copy` and use a closed derive-supported storage model;
+  owned variable-sized data must be represented through slices or interned
+  semantic values.
+- Focused stash tests establish selected value behavior for STASH-A1 through
+  STASH-A3, but the reordered/unreachable-allocation matrix is not yet
+  explicit and STASH-A1's completed-query ownership walk is not yet isolated.
+  A query-level relevant/equal edit experiment directly establishing STASH-A4
+  has not yet been isolated as stash-specific evidence.
 
-`Ptr<T>` and `Slice<T>` implement these by quick-checking the
-index, then falling through to element-wise deep comparison.
+### Related roadmap slices
 
-## Salsa integration
-
-`Ptr<T>`, `Slice<T>`, and `Stashed<T>` all implement
-`salsa::Update` (behind a `salsa` feature flag). The `Update`
-impls use value equality — salsa calls `maybe_update` and gets
-told whether the new value differs from the old, enabling
-incremental skip.
-
-## Usage pattern
-
-Lowering builds a body like this:
-
-```rust
-let mut stash = Stash::new();
-let root_expr = lower_expr(&mut stash, node);
-let body = stash.alloc(Body { root: root_expr, span });
-let function_body: FunctionBody = Stashed::new(stash, body);
-```
-
-The `FunctionBody` is stored in `FnAst::body` (a salsa tracked
-field). When salsa re-executes lowering and the new stash bytes
-match the old ones, `Stashed::eq` returns true and downstream
-queries like `resolve_body` are skipped.
+The [Semantic Inspector and persistent edit-testing
+slice](../implementation/roadmap.md#implemented-slice-semantic-inspector-and-persistent-edit-testing)
+will make the effect of equal/backdated stashed results visible in structured
+traces. Application slices extend the set of tree nodes but do not change this
+storage contract.

@@ -10,6 +10,7 @@ pub struct LocalStaticSym<'db> {
     pub name: Name<'db>,
     pub scope: ScopeSymbol<'db>,
 
+    #[tracked]
     #[returns(ref)]
     pub cst: StaticCst<'db>,
 

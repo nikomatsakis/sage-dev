@@ -17,3 +17,7 @@ impl Fallback for Option<Frame> {
 fn next_item(mut parts: std::vec::IntoIter<Frame>) -> Result<Frame, ParseError> {
     parts.next().ok_or(ParseError::EndOfStream)
 }
+
+fn never_error(value: Option<Frame>) -> Result<Frame, bool> {
+    value.ok_or(loop {})
+}

@@ -144,6 +144,18 @@ impl Runtime {
         }
     }
 
+    pub fn variables_waited_on_by(&self, task_id: TaskId) -> Vec<InferVarIndex> {
+        self.waiting
+            .iter()
+            .filter_map(|(variable, waiters)| {
+                waiters
+                    .iter()
+                    .any(|(waiter, _)| *waiter == task_id)
+                    .then_some(*variable)
+            })
+            .collect()
+    }
+
     pub fn wake_all(&mut self) {
         for (_, waiters) in self.waiting.drain() {
             for (_, waker) in waiters {

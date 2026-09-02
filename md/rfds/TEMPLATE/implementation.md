@@ -12,3 +12,13 @@
 
     Keep this section updated as work lands. Document deviations from the design here.
 -->
+
+## Completion checklist
+
+- [ ] Every living RFD design anchor and its required verification is promoted
+      into the relevant Architecture & Design chapter.
+- [ ] The chapter's Current Status section links the evidence which establishes
+      each implemented anchor and states any remaining gap.
+- [ ] Every genuinely cross-cutting choice is recorded or updated in
+      Architecture Decisions; feature-local rationale remains in this RFD.
+- [ ] The affected roadmap slice and RFD status indexes are updated.

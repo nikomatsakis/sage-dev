@@ -10,7 +10,7 @@ use crate::span::RelativeSpan;
 pub type StructCst<'db> = Stashed<Ptr<StructCstData<'db>>>;
 
 // ANCHOR: example_struct_cst
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct StructCstData<'db> {
     pub attrs: Slice<AttrCst<'db>>,
     pub name: Name<'db>,
@@ -21,7 +21,7 @@ pub struct StructCstData<'db> {
 }
 // ANCHOR_END: example_struct_cst
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct FieldCst<'db> {
     pub name: Name<'db>,
     pub ty: Ptr<TypeCst<'db>>,

@@ -1,4 +1,4 @@
-use sage_stash::{StashDirect, Stashed};
+use sage_stash::{Ptr, Stash, StashCopy, StashDirect, Stashed};
 
 use crate::cst::enums::{EnumCst, VariantCst};
 use crate::name::Name;
@@ -12,6 +12,7 @@ pub struct LocalEnumSym<'db> {
     pub name: Name<'db>,
     pub scope: ScopeSymbol<'db>,
 
+    #[tracked]
     #[returns(ref)]
     pub cst: EnumCst<'db>,
 
@@ -92,9 +93,12 @@ impl<'db> LocalEnumSym<'db> {
 pub struct LocalVariantSym<'db> {
     pub name: Name<'db>,
     pub parent_enum: LocalEnumSym<'db>,
-    pub cst: VariantCst<'db>,
+    #[tracked]
+    #[returns(ref)]
+    pub cst: Stashed<Ptr<VariantCst<'db>>>,
     #[tracked]
     pub span: AbsoluteSpan<'db>,
+    #[tracked]
     pub is_tuple: bool,
 }
 
@@ -102,9 +106,8 @@ impl StashDirect for LocalVariantSym<'_> {}
 
 impl<'db> LocalVariantSym<'db> {
     pub fn has_fields(self, db: &'db dyn crate::Db) -> bool {
-        let parent_enum = self.parent_enum(db);
-        let (stash, _) = parent_enum.cst(db).open_deref();
-        !stash[self.cst(db).fields].is_empty()
+        let (stash, cst) = self.cst(db).open_deref();
+        !stash[cst.fields].is_empty()
     }
 }
 
@@ -132,7 +135,12 @@ pub fn enum_variants<'db>(db: &'db dyn crate::Db, sym: LocalEnumSym<'db>) -> Vec
 
         let is_tuple = is_tuple_variant(db, stash, v);
 
-        let variant_sym = LocalVariantSym::new(db, v.name, sym, *v, abs_span, is_tuple);
+        let mut variant_stash = Stash::new();
+        let variant = v.stash_copy(stash, &mut variant_stash);
+        let variant = variant_stash.alloc(variant);
+        let variant_cst = Stashed::new(variant_stash, variant);
+
+        let variant_sym = LocalVariantSym::new(db, v.name, sym, variant_cst, abs_span, is_tuple);
         symbols.push(variant_sym.into());
 
         if is_tuple {

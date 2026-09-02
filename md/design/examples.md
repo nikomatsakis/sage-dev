@@ -26,3 +26,8 @@ source rather than retaining a stale copy.
 
 The [architecture pages](./README.md) specify the system as a whole. These
 examples are the code-reading path into that specification.
+
+The [review-packet contract](./validation/README.md#review-packets) identifies
+the evidence that a mature walkthrough should collect. The module-expansion
+and oracle-checked-body examples are the initial complete packets; earlier
+examples remain useful narrower code tours.

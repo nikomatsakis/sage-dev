@@ -50,12 +50,14 @@ pub enum SymExtKind {
 
 /// External symbol — a thin handle into rustc's metadata. Plain
 /// `Copy` struct, structural identity.
+// ANCHOR: architecture_external_symbol
 #[salsa::interned(debug)]
 pub struct SymExt<'db> {
     pub crate_num: CrateNum,
     pub def_index: DefIndex,
     pub kind: SymExtKind,
 }
+// ANCHOR_END: architecture_external_symbol
 
 impl<'db> StashDirect for SymExt<'db> {}
 impl StashDirect for SymExtKind {}
@@ -297,10 +299,22 @@ macro_rules! define_kind_symbols {
             }
 
             impl<$lt> StashDirect for $Name<$lt> {}
+
+            impl<$lt> sage_reflect::Reflect<$lt> for $Name<$lt> {
+                fn reflect(
+                    &self,
+                    context: &mut sage_reflect::ReflectionContext<'_>,
+                    stash: Option<&sage_stash::Stash>,
+                ) -> sage_reflect::ValueNode {
+                    let symbol: $SymName<$lt> = (*self).into();
+                    sage_reflect::Reflect::reflect(&symbol, context, stash)
+                }
+            }
         )*
     };
 }
 
+// ANCHOR: architecture_symbol_family
 define_kind_symbols! {
     pub struct Symbol<'db> { data: SymbolDataPriv<'db> }
     pub enum SymbolData<'db> { .. }
@@ -325,6 +339,93 @@ define_kind_symbols! {
 
     pub enum IntrinsicTypeSymbol<'db> { Local(crate::local_syms::intrinsic_types::IntrinsicTypeSym<'db>) }
     pub enum MacroInvocationSymbol<'db> { Local(crate::local_syms::macro_invocations::LocalMacroInvocationSym<'db>) }
+}
+// ANCHOR_END: architecture_symbol_family
+
+impl<'db> Symbol<'db> {
+    pub fn reflection_key(self) -> sage_reflect::ReferenceKey {
+        use salsa::plumbing::AsId;
+
+        let (family, id) = match self.data {
+            SymbolDataPriv::FnSymbol(symbol) => ("local-fn", symbol.as_id()),
+            SymbolDataPriv::StructSymbol(symbol) => ("local-struct", symbol.as_id()),
+            SymbolDataPriv::EnumSymbol(symbol) => ("local-enum", symbol.as_id()),
+            SymbolDataPriv::VariantSymbol(symbol) => ("local-variant", symbol.as_id()),
+            SymbolDataPriv::VariantCtorSymbol(symbol) => {
+                ("local-variant-constructor", symbol.as_id())
+            }
+            SymbolDataPriv::TraitSymbol(symbol) => ("local-trait", symbol.as_id()),
+            SymbolDataPriv::TypeAliasSymbol(symbol) => ("local-type-alias", symbol.as_id()),
+            SymbolDataPriv::ConstSymbol(symbol) => ("local-const", symbol.as_id()),
+            SymbolDataPriv::StaticSymbol(symbol) => ("local-static", symbol.as_id()),
+            SymbolDataPriv::ImplSymbol(symbol) => ("local-impl", symbol.as_id()),
+            SymbolDataPriv::ModSymbol(symbol) => ("local-module", symbol.as_id()),
+            SymbolDataPriv::MacroDefSymbol(symbol) => ("local-macro", symbol.as_id()),
+            SymbolDataPriv::UseSymbol(symbol) => ("local-use", symbol.as_id()),
+            SymbolDataPriv::IntrinsicTypeSymbol(symbol) => ("intrinsic-type", symbol.as_id()),
+            SymbolDataPriv::MacroInvocationSymbol(symbol) => {
+                ("local-macro-invocation", symbol.as_id())
+            }
+            SymbolDataPriv::Ext(symbol) => ("external-symbol", symbol.as_id()),
+        };
+        sage_reflect::ReferenceKey {
+            family,
+            id: id.as_bits(),
+        }
+    }
+
+    /// Reconstitute a symbol handle captured by [`Self::reflection_key`]
+    /// within the same live Salsa database.
+    pub fn from_reflection_key(key: &sage_reflect::ReferenceKey) -> Option<Self> {
+        use salsa::plumbing::FromId;
+
+        let id = salsa::Id::from_bits(key.id);
+        Some(match key.family {
+            "local-fn" => crate::local_syms::fns::LocalFnSym::from_id(id).into(),
+            "local-struct" => crate::local_syms::structs::LocalStructSym::from_id(id).into(),
+            "local-enum" => crate::local_syms::enums::LocalEnumSym::from_id(id).into(),
+            "local-variant" => crate::local_syms::enums::LocalVariantSym::from_id(id).into(),
+            "local-variant-constructor" => {
+                crate::local_syms::enums::LocalVariantCtorSym::from_id(id).into()
+            }
+            "local-trait" => crate::local_syms::traits::LocalTraitSym::from_id(id).into(),
+            "local-type-alias" => {
+                crate::local_syms::type_aliases::LocalTypeAliasSym::from_id(id).into()
+            }
+            "local-const" => crate::local_syms::consts::LocalConstSym::from_id(id).into(),
+            "local-static" => crate::local_syms::statics::LocalStaticSym::from_id(id).into(),
+            "local-impl" => crate::local_syms::impls::LocalImplSym::from_id(id).into(),
+            "local-module" => crate::local_syms::mods::LocalModSym::from_id(id).into(),
+            "local-macro" => crate::local_syms::macro_defs::LocalMacroDefSym::from_id(id).into(),
+            "local-use" => crate::local_syms::uses::LocalUseSym::from_id(id).into(),
+            "intrinsic-type" => {
+                crate::local_syms::intrinsic_types::IntrinsicTypeSym::from_id(id).into()
+            }
+            "local-macro-invocation" => {
+                crate::local_syms::macro_invocations::LocalMacroInvocationSym::from_id(id).into()
+            }
+            "external-symbol" => SymExt::from_id(id).into(),
+            _ => return None,
+        })
+    }
+}
+
+impl<'db> sage_reflect::Reflect<'db> for Symbol<'db> {
+    fn reflect(
+        &self,
+        context: &mut sage_reflect::ReflectionContext<'_>,
+        _stash: Option<&sage_stash::Stash>,
+    ) -> sage_reflect::ValueNode {
+        let key = self.reflection_key();
+        context.reflect_node("Symbol", |context| {
+            context
+                .symbol_reference(&key)
+                .map(|target| sage_reflect::ValueNode::Reference { target })
+                .unwrap_or_else(|| {
+                    sage_reflect::ValueNode::scalar("Symbol", format!("{}:{}", key.family, key.id))
+                })
+        })
+    }
 }
 
 impl<'db> Symbol<'db> {

@@ -1,7 +1,10 @@
 [workspace]
 members = ["crates/*", "xtask"]
-exclude = ["test-fixtures"]
+exclude = ["test-fixtures", "test-projects"]
 resolver = "3"
+
+[patch.crates-io]
+salsa = { path = "vendor/salsa" }
 
 [workspace.package]
 edition = "2024"
@@ -23,6 +26,8 @@ path = "src/lib.rs"
 clap = { version = "4.6.1", features = ["derive"] }
 proc-macro2 = "1.0.106"
 sage-ir = { version = "0.1.0", path = "crates/sage-ir" }
+sage-inspector = { version = "0.1.0", path = "crates/sage-inspector" }
+sage-reflect = { version = "0.1.0", path = "crates/sage-reflect" }
 sage-rustc-bridge = { version = "0.1.0", path = "crates/sage-rustc-bridge" }
 salsa = "0.26.1"
 serde = { version = "1.0.228", features = ["derive"] }
@@ -34,6 +39,10 @@ criterion = { version = "0.8", features = ["html_reports"] }
 libfuzzer-sys = "0.4"
 sage-stash = { version = "0.1.0", path = "crates/sage-stash" }
 rand = "0.10.1"
+tokio = { version = "1", features = ["full"] }
+webbrowser = "1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+notify = "8.2.0"
 
 [[bench]]
 name = "stash_bench"

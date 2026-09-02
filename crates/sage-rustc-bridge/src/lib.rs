@@ -43,6 +43,14 @@ pub fn serve_tcx_requests(tcx: TyCtxt<'_>, req_rx: mpsc::Receiver<TcxRequest>) {
             TcxRequest::ExternCrate { name, reply } => {
                 let _ = reply.send(tcx_db.extern_crate(&name));
             }
+            TcxRequest::ExternCrateWithDisambiguator {
+                name,
+                crate_disambiguator,
+                reply,
+            } => {
+                let _ =
+                    reply.send(tcx_db.extern_crate_with_disambiguator(&name, crate_disambiguator));
+            }
             TcxRequest::ModuleChildren {
                 crate_num,
                 def_index,
@@ -84,6 +92,13 @@ pub fn serve_tcx_requests(tcx: TyCtxt<'_>, req_rx: mpsc::Receiver<TcxRequest>) {
                 reply,
             } => {
                 let _ = reply.send(tcx_db.structured_def_path(crate_num, def_index));
+            }
+            TcxRequest::CanonicalDefPath {
+                crate_num,
+                def_index,
+                reply,
+            } => {
+                let _ = reply.send(tcx_db.canonical_def_path(crate_num, def_index));
             }
             TcxRequest::TraitSignature {
                 crate_num,

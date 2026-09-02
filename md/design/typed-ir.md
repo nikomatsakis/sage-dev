@@ -1,18 +1,8 @@
 # Typed IR
 
-This page defines the destination representation produced by body checking. The
-current `TyExprData` is still partly source-shaped; the transition to this
-representation is tracked by the [Typed IR Elaboration
-RFD](../rfds/typed-ir-elaboration/README.md) and the [Build-Out
-Roadmap](../implementation/roadmap.md). The completed method-call paths now
-include `DbDropGuard::db`, the isolated `Parse::next` fixture, and the real
-pinned mini-redis `Parse::next` body from its selected library root and edition.
-Their field identities, reference dereferences, `Dummy` borrows, selected
-functions, dispatch, and type substitutions are explicit. Other expression
-families remain at the statuses below.
-The common alias representation and its first operational associated-type
-normalization path are built, as recorded by the completed [Associated Type
-Normalization RFD](../rfds/associated-type-normalization/README.md).
+This page defines the destination representation produced by body checking.
+Implementation coverage and evidence are recorded in **Current status** rather
+than weakening the representation contract below.
 
 ## Role
 
@@ -50,6 +40,21 @@ A successfully checked body has these properties:
 
 An error-recovery body may contain explicit error nodes backed by diagnostics.
 It must not represent an unresolved choice as an ordinary successful node.
+
+This is the representation consequence of
+[D11](./decisions.md#d11-completed-bodies-are-elaborated-typed-trees).
+
+<a id="tir-a1"></a>
+> **TIR-A1 — A successful completed body is semantically closed.** Every node
+> is typed and provenance-bearing; every semantic reference is resolved; no
+> inference variable, method syntax, implicit adjustment recipe, or unresolved
+> choice survives. Recovery is represented by explicit diagnosed error nodes,
+> never by silently successful source-shaped placeholders.
+>
+> **Required verification:** Completion validators and representative typed-IR
+> snapshots traverse the entire returned tree and reject live inference,
+> unresolved/source-shaped operations, unsupported placeholders, and missing
+> type, definition, or provenance fields.
 
 ## Calls and receiver elaboration
 
@@ -89,6 +94,18 @@ The selected trait method does not always identify a concrete impl. A call on
 a generic `T: Clone` still names `Clone::clone` with `Self = T`; the proof that
 `T: Clone` justifies the call. Trait-object calls additionally record dynamic
 dispatch.
+
+<a id="tir-a2"></a>
+> **TIR-A2 — Calls record selected semantics, not source dispatch syntax.** A
+> completed call identifies the invoked definition, dispatch family,
+> substitutions, and explicit receiver/coercion operations. A trait proof
+> justifies a trait-method call without requiring the solver to return a
+> concrete impl identity.
+>
+> **Required verification:** Typed-tree fixtures cover direct, static-trait,
+> dynamic, pointer, and callable dispatch as each becomes supported; they
+> assert owner and method substitutions and the explicit adjustment nodes, and
+> verify that no replayable adjustment list or selected-impl field remains.
 
 The built call schema currently makes direct versus static-trait dispatch
 explicit:
@@ -184,6 +201,21 @@ the alias" as "nothing is known about the type."
 
 A debug-formatted string is never a semantic rigid or alias type.
 
+This is the typed-IR consequence of
+[D13](./decisions.md#d13-named-associated-and-opaque-aliases-share-one-semantic-family).
+
+<a id="tir-a3"></a>
+> **TIR-A3 — Alias identity survives until semantics permit revelation.** Named,
+> associated, and opaque aliases retain their definition and arguments as one
+> semantic type family. Normalization is an explicit operation; completed IR
+> neither eagerly erases every alias nor treats an unrevealed alias as having
+> no provable facts.
+>
+> **Required verification:** Copy/fold/display, inference, canonical
+> query/response, oracle, and normalization tests preserve alias kind,
+> definition, and arguments; boundary tests distinguish named revelation,
+> associated projection, and opaque reveal permissions.
+
 ## Lifetimes and borrow checking
 
 Lifetime semantics and borrow checking are deliberately deferred. The CST
@@ -205,6 +237,21 @@ that a borrow is live, unique, non-overlapping, or otherwise valid. This is a
 known soundness hole, isolated behind the `Dummy` variant, which is intended to
 be removed when the unified lifetime and type inference design is introduced.
 
+This is the typed-tree consequence of
+[D12](./decisions.md#d12-lifetimes-collapse-to-dummy-and-borrow-checking-is-deferred).
+
+<a id="tir-a4"></a>
+> **TIR-A4 — Deferred lifetime semantics are explicit and total.** Every
+> lifetime origin lowers to `Lifetime::Dummy`, `Outlives(Dummy, Dummy)` holds,
+> and reference/dereference nodes remain in the tree while borrow validity is
+> unchecked. No path substitutes `'static`, creates a lifetime inference
+> variable, or converts this omission into ambiguity.
+>
+> **Required verification:** Lowering and import tests enumerate explicit,
+> elided, bound, inferred, external, and synthesized lifetime origins; typed-IR
+> snapshots retain `Dummy` on reference operations; negative fixtures pin the
+> temporary acceptance of programs rejected only by lifetime or borrow rules.
+
 ## Query boundary
 
 `LocalFnSym::body` remains the public query boundary. It reads the owning
@@ -215,7 +262,23 @@ dependency of call checking.
 Elaboration may use temporary source-shaped nodes, inference variables,
 method-resolution candidates, and adjustment recipes internally. Those are
 not separately queryable public IR and must be consumed before a successful
-`CheckedBody` is returned.
+`CheckedBody` is returned. The inference graph and its working stash are not
+the completed representation: completion resolves every type edge and copies
+the tree into a fresh append-only stash.
+
+This is the body-representation consequence of
+[D15](./decisions.md#d15-cross-item-dependencies-stop-at-semantic-interfaces).
+
+<a id="tir-a5"></a>
+> **TIR-A5 — A body depends on interfaces, never other bodies.** Checking and
+> elaborating one function may read its own source and signature plus demanded
+> signatures, fields, associated items, impl headers, metadata facts, and
+> solver results. It must not read a callee or sibling body.
+>
+> **Required verification:** Cold and warm body traces enumerate allowed
+> semantic inputs and assert the absence of callee/sibling body reads; edit
+> tests show that a callee-body-only change does not change or reexecute the
+> caller's completed body.
 
 ## Oracle comparison
 
@@ -235,3 +298,69 @@ Conformance also reports coverage. Equality is not meaningful if both sides
 omit an associated body or replace a construct with the same unsupported
 placeholder. A conformance run therefore accounts for every body in scope and
 rejects unsupported nodes or non-semantic debug types in successful output.
+
+## Current status
+
+### Current frontier
+
+The `DbDropGuard::db` and `Parse::next` mini-redis slices produce explicit
+field identities, dereferences, `Dummy` borrows, selected functions, static or
+direct dispatch, owner/method substitutions, and associated-type normalization
+results. Never-to-any coercion is represented by an explicit `NeverToAny`
+expression node. The common rigid/alias family survives inference, canonical
+solver boundaries, display, and both semantic emitters.
+
+### Implemented capabilities and evidence
+
+- **[TIR-A1](#tir-a1):** [Function body and field access](./examples/function-body.md)
+  inspects a
+  resolved local field and substituted final type.
+- **[TIR-A1](#tir-a1)/[TIR-A2](#tir-a2):** [An oracle-checked method
+  body](./examples/oracle-checked-method.md) inspects
+  the resolved `Clone::clone` tree and its exact checked-in snapshot.
+- **[TIR-A1](#tir-a1)/[TIR-A2](#tir-a2):** The `Parse::next` evidence in the [Mini-redis
+  roadmap](../implementation/mini-redis.md#slice-2-parsenext) checks direct and
+  static-trait calls, substitutions, and normalized iterator item type.
+- **[TIR-A1](#tir-a1):** `top_level_never_to_any_is_explicit_in_typed_ir`
+  and `call_argument_never_to_any_is_explicit_in_typed_ir` inspect
+  source-driven completed bodies whose `NeverToAny` nodes have a `!` operand
+  and `u32` result. `struct_field_never_to_any_uses_the_value_span` additionally
+  verifies that the node retains the value expression's span. The
+  `basics/never_to_any.rs` oracle case compares the independently emitted Sage
+  and rustc function-result, direct-call, and struct-field trees exactly.
+- **[TIR-A3](#tir-a3):** `alias_variants_copy_fold_and_display_without_erasing_identity` and
+  `aliases_round_trip_through_canonical_query_and_response_stashes` exercise
+  the shared alias representation.
+- **[TIR-A5](#tir-a5):** `clone_method_body_has_a_narrow_reusable_semantic_query_trace`
+  rejects callee-body reads and proves warm reuse for the pinned method body.
+
+### Current limitations
+
+- `TyExprData` still contains source-shaped variants for constructs whose
+  general elaboration is not implemented. Such variants are not permitted in
+  a successful oracle slice that claims their semantics.
+- Closures/captures, async/coroutine bodies, overloaded operators, indexing,
+  callable dispatch, general coercions/unsizing, `for`, `?`, and fully
+  elaborated `.await` remain planned.
+- Method resolution is limited to the conservative external trait/inherent
+  slices and selected local obligations, so TIR-A2's full dispatch-family
+  matrix is not yet established.
+- Named-alias expansion and opaque reveal are planned; associated projection
+  normalization covers the pinned first slice rather than GATs in general, so
+  TIR-A3's reveal-boundary matrix remains incomplete.
+- `Lifetime::Dummy` and the absence of borrow checking remain the deliberate
+  temporary soundness hole described above. The exhaustive lifetime-origin
+  evidence required by TIR-A4 is not yet assembled.
+- TIR-A5 has focused no-callee-body evidence but not yet the complete
+  callee-body edit matrix.
+
+### Related roadmap slices
+
+- [Shutdown::recv](../implementation/roadmap.md#next-application-slice-shutdownrecv)
+  is the next Typed-IR application target.
+- [Mini-redis library
+  coverage](../implementation/roadmap.md#future-slice-mini-redis-library-coverage)
+  expands the construct table through vertical acceptance slices.
+- [Semantic inspector and persistent edit
+  testing](../implementation/roadmap.md#implemented-slice-semantic-inspector-and-persistent-edit-testing)
+  will provide a readable typed-tree view independent of oracle JSON.

@@ -22,6 +22,9 @@ pub struct RawChild {
 #[derive(Clone, Debug)]
 pub struct ExternalDefPath {
     pub krate: String,
+    /// Rustc's stable crate identity, distinguishing multiple versions or
+    /// renamings of crates with the same display name.
+    pub crate_disambiguator: u64,
     pub segments: Vec<ExternalDefPathSegment>,
 }
 
@@ -30,6 +33,8 @@ pub struct ExternalDefPathSegment {
     pub name: String,
     /// The actual definition kind of this segment, not merely its namespace.
     pub kind: SymExtKind,
+    /// Rustc's sibling disambiguator for otherwise identical path segments.
+    pub disambiguator: u32,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -249,8 +254,25 @@ pub enum RawGenericDefault {
 /// Returns only owned, `'static` data. The caller is responsible for
 /// interning into salsa types (`Name`, `Symbol`). This keeps the trait
 /// free of salsa lifetimes, enabling channel-based implementations.
+// ANCHOR: architecture_external_metadata_interface
 pub trait TcxDb: Send + Sync {
     fn extern_crate(&self, name: &str) -> Option<CrateNum>;
+
+    /// Resolve one precise external crate instance. This is used by stable
+    /// inspector navigation when two dependency versions have the same crate
+    /// name.
+    fn extern_crate_with_disambiguator(
+        &self,
+        name: &str,
+        crate_disambiguator: u64,
+    ) -> Option<CrateNum> {
+        let crate_num = self.extern_crate(name)?;
+        (self
+            .canonical_def_path(crate_num, DefIndex(0))?
+            .crate_disambiguator
+            == crate_disambiguator)
+            .then_some(crate_num)
+    }
 
     fn module_children(&self, crate_num: CrateNum, def_index: DefIndex) -> Vec<RawChild>;
 
@@ -268,16 +290,32 @@ pub trait TcxDb: Send + Sync {
     fn is_module(&self, crate_num: CrateNum, def_index: DefIndex) -> bool;
 
     fn is_builtin_derive(&self, crate_num: CrateNum, def_index: DefIndex) -> bool;
+    // ANCHOR_END: architecture_external_metadata_interface
 
     /// Human-readable path for an external definition, e.g. `"core::option::Option::Some"`.
     fn def_path(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<String>;
 
-    /// Structured def path with crate name and per-segment namespace info.
+    // ANCHOR: semantic_inspector_external_paths
+    /// Structured def path used by the exact conformance adapter. Anonymous
+    /// rustc ownership segments remain omitted to preserve that existing
+    /// shared representation.
     fn structured_def_path(
         &self,
         crate_num: CrateNum,
         def_index: DefIndex,
     ) -> Option<ExternalDefPath>;
+
+    /// Canonical navigation path for an external definition. Unlike the
+    /// conformance-oriented structured path, this includes anonymous owner
+    /// segments needed to distinguish constructors and other generated defs.
+    fn canonical_def_path(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+    ) -> Option<ExternalDefPath> {
+        self.structured_def_path(crate_num, def_index)
+    }
+    // ANCHOR_END: semantic_inspector_external_paths
 
     /// Checked signature data for an external trait, expressed without rustc
     /// or Salsa lifetimes. Missing/incomplete data cannot justify a proof.

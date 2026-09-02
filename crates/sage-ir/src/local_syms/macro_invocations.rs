@@ -14,6 +14,7 @@ use crate::symbol::MacroDefSymbol;
 pub struct LocalMacroInvocationSym<'db> {
     pub scope: ScopeSymbol<'db>,
 
+    #[tracked]
     #[returns(ref)]
     pub cst: MacroInvocationCst<'db>,
 

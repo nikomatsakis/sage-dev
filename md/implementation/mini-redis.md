@@ -9,6 +9,11 @@ the [Typed IR](../design/typed-ir.md), [Checking](../design/checking.md), and
 [Trait Solver](../design/trait-solver.md) pages. Per-RFD implementation steps
 remain in each RFD's `implementation.md`.
 
+This is the application-specific companion to the general [Build-Out
+Roadmap](./roadmap.md). Each body is a cross-cutting acceptance slice; after a
+slice lands, the affected architecture chapters record their local Current
+Status and evidence.
+
 ## Initial target
 
 The first package-wide target is the `mini_redis` library target at the pinned

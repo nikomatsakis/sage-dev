@@ -12,7 +12,7 @@ use crate::symbol::Symbol;
 // GenericParamKind
 // ---------------------------------------------------------------------------
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update, sage_reflect::Reflect)]
 pub enum GenericParamKind {
     Type,
     Lifetime,
@@ -29,6 +29,7 @@ impl sage_stash::StashDirect for GenericParamKind {}
 pub struct AstGenericParam<'db> {
     pub kind: GenericParamKind,
     pub name: Option<Name<'db>>,
+    #[tracked]
     pub span: RelativeSpan,
     pub parent: Symbol<'db>,
     pub index: u32,
@@ -36,6 +37,8 @@ pub struct AstGenericParam<'db> {
 
 impl sage_stash::StashDirect for AstGenericParam<'_> {}
 
+// Safety: `AstGenericParam` is `Copy`, and `StaticSelf` changes only the Salsa
+// database lifetime carried by its handles; it contains no borrowed data.
 unsafe impl<'db> sage_stash::StashData<'db> for AstGenericParam<'db> {
     type StaticSelf = AstGenericParam<'static>;
 }
@@ -56,6 +59,8 @@ pub struct ExtGenericParam<'db> {
 
 impl sage_stash::StashDirect for ExtGenericParam<'_> {}
 
+// Safety: `ExtGenericParam` is `Copy`, and `StaticSelf` changes only the Salsa
+// database lifetime carried by its handles; it contains no borrowed data.
 unsafe impl<'db> sage_stash::StashData<'db> for ExtGenericParam<'db> {
     type StaticSelf = ExtGenericParam<'static>;
 }
@@ -74,6 +79,8 @@ pub struct AlphaEquivParam<'db> {
 
 impl sage_stash::StashDirect for AlphaEquivParam<'_> {}
 
+// Safety: `AlphaEquivParam` is `Copy`, and `StaticSelf` changes only the Salsa
+// database lifetime carried by its handles; it contains no borrowed data.
 unsafe impl<'db> sage_stash::StashData<'db> for AlphaEquivParam<'db> {
     type StaticSelf = AlphaEquivParam<'static>;
 }
@@ -111,8 +118,35 @@ impl<'db> GenericParam<'db> {
 
 impl sage_stash::StashDirect for GenericParam<'_> {}
 
+// Safety: `GenericParam` is `Copy`, and `StaticSelf` changes only the Salsa
+// database lifetime carried by its handles; it contains no borrowed data.
 unsafe impl<'db> sage_stash::StashData<'db> for GenericParam<'db> {
     type StaticSelf = GenericParam<'static>;
 }
 
 impl<'db> sage_stash::AllocStashData<'db> for GenericParam<'db> {}
+
+impl<'db> sage_reflect::Reflect<'db> for GenericParam<'db> {
+    fn reflect(
+        &self,
+        context: &mut sage_reflect::ReflectionContext<'_>,
+        _stash: Option<&sage_stash::Stash>,
+    ) -> sage_reflect::ValueNode {
+        use salsa::plumbing::AsId;
+
+        let (family, id) = match self {
+            GenericParam::Ast(param) => ("generic-param-ast", param.as_id()),
+            GenericParam::Ext(param) => ("generic-param-external", param.as_id()),
+            GenericParam::AlphaEquiv(param) => ("generic-param-alpha", param.as_id()),
+        };
+        let key = sage_reflect::ReferenceKey {
+            family,
+            id: id.as_bits(),
+        };
+        context.reflect_node("GenericParam", |context| {
+            context.reflected_value(&key).unwrap_or_else(|| {
+                sage_reflect::ValueNode::scalar("GenericParam", format!("{family}:{}", key.id))
+            })
+        })
+    }
+}

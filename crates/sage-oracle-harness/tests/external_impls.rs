@@ -16,6 +16,7 @@ use sage_ir::ty::{
 use sage_ir::tytree::{CallDispatch, TyExprData};
 use sage_oracle_harness::{Fixture, combined};
 use sage_stash::{Stash, StashCopy};
+use sage_test_harness::local_function_named;
 
 #[test]
 fn into_iter_iterator_proof_reads_only_relevant_external_headers() {
@@ -536,6 +537,78 @@ fn external_inherent_discovery_excludes_static_associated_functions() {
     );
     assert!(!cold.contains("tcx::fn_signature"));
     assert!(!warm.contains("tcx::inherent_method_candidates"));
+}
+
+#[test]
+fn external_inherent_call_accepts_a_never_argument() {
+    let fixture = Fixture::SingleFile(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test-fixtures/solver/external_vec_inherent_methods.rs"),
+    );
+
+    let (diagnostics, _cold, _warm) = combined::with_proxy_database(&fixture, |database, files| {
+        let refs: Vec<_> = files
+            .iter()
+            .map(|(path, source)| (path.as_str(), source.as_str()))
+            .collect();
+        sage_test_harness::with_test_crate_files_twice_using_db(database, &refs, |db, root| {
+            let function = local_function_named(db, root, "push_never");
+            function
+                .body(db)
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.render(db))
+                .collect::<Vec<_>>()
+        })
+    });
+
+    assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+}
+
+#[test]
+fn external_generic_method_defers_never_until_other_constraints_settle() {
+    let fixture = Fixture::SingleFile(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test-fixtures/solver/external_option_ok_or.rs"),
+    );
+
+    let (diagnostics, _cold, _warm) = combined::with_proxy_database(&fixture, |database, files| {
+        let refs: Vec<_> = files
+            .iter()
+            .map(|(path, source)| (path.as_str(), source.as_str()))
+            .collect();
+        sage_test_harness::with_test_crate_files_twice_using_db(database, &refs, |db, root| {
+            let function = local_function_named(db, root, "never_error");
+            let checked = function.body(db);
+            let diagnostics = checked
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.render(db))
+                .collect::<Vec<_>>();
+            if !diagnostics.is_empty() {
+                return diagnostics;
+            }
+
+            let (stash, body) = checked.body.open_deref();
+            let TyExprData::Block(_, Some(call)) = stash[body.root].data else {
+                panic!("expected method call as body tail")
+            };
+            let TyExprData::ResolvedCall(_, arguments) = stash[call].data else {
+                panic!("ok_or must be a resolved call")
+            };
+            let [_, error_argument] = stash[arguments] else {
+                panic!("ok_or must have receiver and error arguments")
+            };
+            let TyExprData::NeverToAny(source) = stash[error_argument].data else {
+                panic!("expected explicit never-to-bool conversion")
+            };
+            assert!(matches!(stash[stash[error_argument].ty], Ty::Bool));
+            assert!(matches!(stash[stash[source].ty], Ty::Never));
+            diagnostics
+        })
+    });
+
+    assert!(diagnostics.is_empty(), "{diagnostics:#?}");
 }
 
 #[test]

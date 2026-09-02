@@ -1,0 +1,2116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sage Semantic Inspector — interaction mockup</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17211d;
+      --muted: #66716c;
+      --faint: #f1f4f1;
+      --line: #dbe1dc;
+      --paper: #fbfcfa;
+      --panel: #ffffff;
+      --sage: #315c49;
+      --sage-dark: #234536;
+      --sage-soft: #e3eee7;
+      --amber: #a45c18;
+      --amber-soft: #fff0dd;
+      --blue: #355b8a;
+      --blue-soft: #e9f0fa;
+      --violet: #675083;
+      --violet-soft: #f0ebf7;
+      --shadow: 0 12px 36px rgba(36, 57, 47, 0.09);
+      --mono: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-width: 1040px;
+      background: var(--paper);
+      color: var(--ink);
+      font: 14px/1.45 var(--sans);
+    }
+
+    button, input, select { font: inherit; }
+    button { color: inherit; }
+
+    .prototype-banner {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 30px;
+      padding: 5px 18px;
+      background: #f7e8ca;
+      border-bottom: 1px solid #e7c98f;
+      color: #6b4818;
+      font-size: 12px;
+      letter-spacing: 0.01em;
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: 270px minmax(380px, 1fr) 330px;
+      align-items: center;
+      min-height: 62px;
+      padding: 0 18px;
+      background: var(--sage-dark);
+      color: #f8fbf9;
+      box-shadow: 0 2px 8px rgba(20, 38, 30, 0.16);
+    }
+
+    .brand { display: flex; align-items: center; gap: 11px; }
+    .mark {
+      display: grid;
+      width: 31px;
+      height: 31px;
+      place-items: center;
+      border: 1px solid rgba(255,255,255,.35);
+      border-radius: 8px;
+      background: rgba(255,255,255,.1);
+      font: 700 18px/1 Georgia, serif;
+    }
+    .brand strong { display: block; font-size: 15px; letter-spacing: .01em; }
+    .brand span { display: block; color: #bcd0c5; font-size: 11px; }
+
+    .command {
+      width: min(680px, 92%);
+      justify-self: center;
+      padding: 9px 13px;
+      border: 1px solid rgba(255,255,255,.18);
+      border-radius: 7px;
+      background: rgba(0,0,0,.16);
+      color: #dce8e1;
+      font: 12px var(--mono);
+    }
+
+    .session {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 9px;
+      color: #c7d8cf;
+      font-size: 12px;
+    }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: #79c692; box-shadow: 0 0 0 3px rgba(121,198,146,.14); }
+    .session-id { padding-left: 9px; border-left: 1px solid rgba(255,255,255,.2); font-family: var(--mono); }
+
+    .workspace {
+      --trace-width: 356px;
+      display: grid;
+      grid-template-columns: 270px minmax(520px, 1fr) var(--trace-width);
+      height: calc(100vh - 93px);
+      min-height: 670px;
+    }
+
+    .sidebar, .trace-panel { background: var(--panel); overflow: auto; }
+    .sidebar { border-right: 1px solid var(--line); }
+    .trace-panel { position: relative; border-left: 1px solid var(--line); }
+    .trace-resizer { position: absolute; z-index: 5; top: 0; bottom: 0; left: 0; width: 7px; cursor: col-resize; background: transparent; }
+    .trace-resizer:hover, .trace-resizer.dragging { background: rgba(49, 92, 73, .18); }
+    .main { min-width: 0; overflow: auto; padding: 24px 28px 38px; }
+
+    .panel-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 48px;
+      padding: 0 15px;
+      border-bottom: 1px solid var(--line);
+      color: #39443e;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .09em;
+      text-transform: uppercase;
+    }
+    .panel-actions { display: flex; align-items: center; gap: 6px; }
+    .panel-action { padding: 4px 7px; border: 1px solid var(--line); border-radius: 5px; background: white; color: #526058; cursor: pointer; font-size: 10px; font-weight: 650; letter-spacing: 0; text-transform: none; }
+    .panel-action:hover { border-color: #a9b9af; background: var(--faint); }
+    .growable:fullscreen, .growable.grown-panel { width: 100%; height: 100%; margin: 0; border: 0; border-radius: 0; background: var(--panel); overflow: auto; }
+    .growable.grown-panel { position: fixed; inset: 0; z-index: 100; box-shadow: 0 24px 80px rgba(20, 38, 30, .28); }
+    .grow-button { display: inline-grid; width: 25px; height: 25px; flex: 0 0 auto; place-items: center; border: 1px solid var(--line); border-radius: 5px; background: white; color: var(--sage); cursor: pointer; font: 700 14px/1 var(--sans); }
+    .grow-button:hover { border-color: #91aa9b; background: var(--sage-soft); }
+    .heading-controls { display: flex; align-items: center; gap: 7px; }
+
+    .count { color: var(--muted); font-weight: 500; letter-spacing: 0; }
+    .search-wrap { padding: 12px 12px 8px; }
+    .search {
+      width: 100%;
+      padding: 8px 9px 8px 31px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      outline: none;
+      background: var(--paper) no-repeat 9px center;
+      color: var(--ink);
+    }
+    .search:focus { border-color: #89a896; box-shadow: 0 0 0 3px var(--sage-soft); }
+    .search-wrap { position: relative; }
+    .search-wrap::before { content: "⌕"; position: absolute; z-index: 1; top: 19px; left: 22px; color: var(--muted); font-size: 17px; }
+
+    .tree { padding: 4px 8px 24px; }
+    .tree-group { margin-top: 7px; }
+    .tree-label {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 5px 7px;
+      color: #3d4942;
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .chevron { display: grid; width: 17px; height: 19px; flex: 0 0 17px; place-items: center; border-radius: 4px; color: #66766d; font: 10px var(--mono); cursor: pointer; }
+    .chevron:hover { background: #dfe8e2; color: var(--sage-dark); }
+    .tree-indent { margin-left: 13px; border-left: 1px solid #e6eae7; padding-left: 5px; }
+    .symbol-children.collapsed { display: none; }
+    .symbol {
+      display: flex;
+      width: 100%;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+    }
+    .symbol:hover { background: var(--faint); }
+    .symbol.active { background: var(--sage-soft); color: var(--sage-dark); }
+    .filter-hidden { display: none !important; }
+    .filter-status { min-height: 20px; padding: 1px 15px 7px; color: var(--muted); font-size: 10.5px; }
+    .filter-status.empty { color: #995322; }
+    .kind {
+      display: inline-grid;
+      width: 19px;
+      height: 19px;
+      flex: 0 0 auto;
+      place-items: center;
+      border-radius: 4px;
+      background: var(--faint);
+      color: #5c6b63;
+      font: 700 10px var(--mono);
+    }
+    .active .kind { background: #cadfd1; color: var(--sage-dark); }
+    .symbol-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px var(--mono); }
+    .tree-scope-note { margin: 8px 12px 14px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--faint); color: var(--muted); font-size: 10.5px; }
+
+    .symbol-reference {
+      display: inline;
+      padding: 0;
+      border: 0;
+      border-bottom: 1px solid #8aa99a;
+      background: transparent;
+      color: var(--sage);
+      cursor: pointer;
+      font: inherit;
+      text-align: left;
+    }
+    .symbol-reference:hover { border-bottom-color: var(--sage-dark); color: var(--sage-dark); background: var(--sage-soft); }
+    .symbol-reference::after { content: " ↗"; font-size: .82em; }
+
+    .navigation-bar { display: flex; align-items: center; gap: 7px; margin-bottom: 14px; }
+    .navigation-button { padding: 5px 9px; border: 1px solid var(--line); border-radius: 6px; background: white; color: var(--sage); cursor: pointer; font-size: 11px; }
+    .navigation-button:disabled { color: #a0aaa4; cursor: default; }
+    .navigation-location { margin-left: 4px; color: var(--muted); font: 11px var(--mono); }
+
+    .eyebrow { color: var(--muted); font-size: 12px; }
+    .breadcrumbs { margin-bottom: 7px; color: var(--muted); font: 12px var(--mono); }
+    .breadcrumbs span { color: #9aa39e; padding: 0 5px; }
+    .item-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+    h1 { margin: 0; font: 650 26px/1.2 var(--mono); letter-spacing: -.03em; }
+    .item-meta { margin-top: 8px; color: var(--muted); font-size: 12px; }
+    .badge-row { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
+    .badge { padding: 4px 8px; border-radius: 999px; font-size: 11px; font-weight: 650; white-space: nowrap; }
+    .badge.complete { background: var(--sage-soft); color: var(--sage-dark); }
+    .badge.cold { background: var(--blue-soft); color: var(--blue); }
+    .badge.zero { background: var(--faint); color: #4f5d55; }
+    .badge.external { background: var(--amber-soft); color: var(--amber); }
+
+    .external-notice { margin-top: 20px; padding: 13px 15px; border: 1px solid #e7cfaa; border-radius: 8px; background: #fff8ec; color: #654f30; }
+    .external-notice strong { display: block; margin-bottom: 3px; }
+    .relationship-card { margin-top: 18px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 9px; background: white; box-shadow: var(--shadow); }
+    .relationship-card h2 { margin: 0 0 10px; font-size: 14px; }
+    .relationship-grid { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 9px 14px; align-items: baseline; }
+    .relationship-label { color: var(--muted); font-size: 11px; }
+    .relationship-values { display: flex; flex-wrap: wrap; gap: 7px 12px; font: 11.5px var(--mono); }
+    .external-artifact { margin-top: 18px; border: 1px solid var(--line); border-radius: 9px; background: white; box-shadow: var(--shadow); overflow: hidden; }
+    .external-artifact-body { padding: 17px; }
+    .external-artifact-body pre { margin-top: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 6px; background: #fafbfa; }
+    [hidden] { display: none !important; }
+
+    .source-card {
+      margin-top: 22px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .card-titlebar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 42px;
+      padding: 0 13px;
+      border-bottom: 1px solid var(--line);
+      background: #f7f9f7;
+      color: #536159;
+      font-size: 12px;
+    }
+    .card-titlebar code { font-family: var(--mono); color: #344139; }
+    .card-actions { display: flex; align-items: center; gap: 7px; }
+    .plain-button { border: 0; background: transparent; color: var(--sage); cursor: pointer; font-size: 12px; }
+
+    pre {
+      margin: 0;
+      overflow: auto;
+      tab-size: 2;
+      white-space: pre;
+      font: 12.5px/1.62 var(--mono);
+    }
+    .source-code { padding: 14px 17px; color: #26332c; }
+    .kw { color: #7a3e83; }
+    .fn { color: #285b75; }
+    .ty { color: #8a4f18; }
+    .method { background: #eef5f0; border-bottom: 2px solid #83a891; }
+
+    .artifact-card {
+      margin-top: 18px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .artifact-tabs { display: flex; align-items: center; gap: 2px; padding: 0 12px; border-bottom: 1px solid var(--line); background: #f7f9f7; }
+    .artifact-tab {
+      padding: 12px 10px 10px;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .artifact-tab.active { border-bottom-color: var(--sage); color: var(--sage-dark); font-weight: 650; }
+    .artifact-tab:hover { color: var(--ink); }
+    .artifact-tools { margin-left: auto; display: flex; align-items: center; gap: 7px; }
+    .segmented { display: flex; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
+    .segmented button { padding: 4px 7px; border: 0; border-right: 1px solid var(--line); background: white; color: var(--muted); cursor: pointer; font-size: 10px; }
+    .segmented button:last-child { border-right: 0; }
+    .segmented button.active { background: var(--sage-soft); color: var(--sage-dark); }
+
+    .artifact-heading { display: flex; align-items: center; justify-content: space-between; padding: 13px 17px 0; }
+    .artifact-heading h2 { margin: 0; font-size: 15px; font-weight: 650; }
+    .artifact-type { padding: 3px 6px; border-radius: 4px; background: var(--violet-soft); color: var(--violet); font: 10px var(--mono); }
+    .artifact-description { min-height: 20px; margin: 5px 17px 0; color: var(--muted); font-size: 12px; }
+    .artifact-code { min-height: 315px; max-height: 440px; padding: 15px 17px 20px; color: #26332c; }
+    .artifact-code[hidden], .ir-explorer[hidden], .signature-inspector[hidden] { display: none; }
+    .signature-inspector { min-height: 315px; margin-top: 10px; padding: 15px 17px 20px; border-top: 1px solid var(--line); }
+    .ir-explorer { min-height: 390px; margin-top: 10px; border-top: 1px solid var(--line); }
+    .ir-tree-pane { min-width: 0; min-height: 390px; padding: 12px 10px 18px; overflow: auto; }
+    .ir-pane-heading { display: flex; align-items: center; justify-content: space-between; min-height: 32px; padding: 3px 8px 10px; color: #748078; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    .ir-tree, .ir-tree ul { margin: 0; padding: 0; list-style: none; }
+    .ir-tree ul { margin-left: 17px; padding-left: 9px; border-left: 1px solid #dce4df; }
+    .ir-tree details { margin: 1px 0; }
+    .ir-tree summary, .ir-leaf { display: flex; align-items: baseline; gap: 6px; min-height: 27px; padding: 4px 7px; border: 1px solid transparent; border-radius: 5px; cursor: pointer; font: 11.5px/1.45 var(--mono); white-space: nowrap; }
+    .ir-tree summary { list-style: none; }
+    .ir-tree summary::-webkit-details-marker { display: none; }
+    .ir-tree summary::before { content: "▶"; width: 12px; flex: 0 0 12px; color: #66766d; font-size: 10px; transform-origin: 45% 55%; transition: transform 90ms ease; }
+    .ir-tree details[open] > summary::before { transform: rotate(90deg); }
+    .ir-leaf::before { content: "·"; width: 12px; flex: 0 0 12px; color: #a5aea9; font-size: 15px; line-height: 10px; text-align: center; }
+    .ir-tree summary:hover, .ir-leaf:hover { background: var(--faint); }
+    .ir-field { color: #66736c; }
+    .ir-node-kind { color: #60477c; font-weight: 650; }
+    .ir-node-type { margin-left: auto; padding-left: 14px; color: #8a4f18; font-size: 10.5px; }
+    .ir-value { color: #315b76; }
+    #artifact-panel:fullscreen .ir-explorer, #artifact-panel.grown-panel .ir-explorer { min-height: calc(100vh - 155px); }
+    .artifact-footer { display: flex; gap: 22px; padding: 11px 17px; border-top: 1px solid var(--line); background: #fafbfa; color: var(--muted); font-size: 11px; }
+    .artifact-footer strong { color: #344139; font-weight: 650; }
+
+    .trace-summary { padding: 13px 14px; border-bottom: 1px solid var(--line); }
+    .trace-summary strong { display: block; font-size: 13px; }
+    .trace-summary span { color: var(--muted); font-size: 11px; }
+    .trace-controls { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 11px; }
+    .trace-controls select { flex: 1; padding: 6px 7px; border: 1px solid var(--line); border-radius: 5px; background: white; color: #455149; font-size: 11px; }
+    .trace-search { flex: 1 0 100%; width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 5px; background: white; color: #455149; font-size: 11px; }
+    .trace-search:focus { border-color: #89a896; outline: none; box-shadow: 0 0 0 3px var(--sage-soft); }
+    .tree-action { padding: 6px 8px; border: 1px solid var(--line); border-radius: 5px; background: white; color: #526058; cursor: pointer; font-size: 10px; }
+    .tree-action:hover { border-color: #a9b9af; background: var(--faint); }
+    .trace-legend { display: flex; align-items: center; gap: 12px; margin-top: 9px; color: var(--muted); font-size: 10px; }
+    .legend-item { display: flex; align-items: center; gap: 5px; }
+    .legend-dot { width: 7px; height: 7px; border-radius: 50%; background: #779586; }
+    .legend-dot.cached { background: white; border: 2px solid #779586; }
+
+    .trace-section { padding: 10px 10px 3px; }
+    .trace-section-title { padding: 4px 5px 6px; color: #78837d; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    .execution-tree { padding: 10px 10px 2px; }
+    .event-children {
+      margin: 1px 0 3px 16px;
+      padding-left: 9px;
+      border-left: 1px solid #dce4df;
+    }
+    .event-children.collapsed { display: none; }
+    .event {
+      position: relative;
+      display: block;
+      width: 100%;
+      margin-bottom: 4px;
+      padding: 9px 9px 9px 34px;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+    }
+    .event::before { content: ""; position: absolute; top: 14px; left: 14px; width: 7px; height: 7px; border-radius: 50%; background: #779586; }
+    .event.has-children { padding-left: 48px; }
+    .event.has-children::before { left: 28px; }
+    .branch-toggle { position: absolute; top: 7px; left: 5px; display: grid; width: 19px; height: 22px; place-items: center; border-radius: 4px; color: #65736b; font: 12px var(--mono); }
+    .branch-toggle:hover { background: #dfe8e2; color: var(--sage-dark); }
+    .event:hover { background: var(--faint); }
+    .event.active { border-color: #bdd1c4; background: var(--sage-soft); }
+    .event.root { padding-top: 11px; padding-bottom: 11px; border-color: var(--line); background: #f7f9f7; }
+    .event.root::before { background: var(--sage-dark); box-shadow: 0 0 0 3px var(--sage-soft); }
+    .event.cached::before { width: 7px; height: 7px; top: 12px; left: 12px; border: 2px solid #779586; background: white; }
+    .event.semantic::before { background: var(--blue); }
+    .event.metadata::before { background: var(--amber); }
+    .event.solver::before { background: var(--violet); }
+    .event-name { display: block; color: #303c35; font-size: 12px; font-weight: 600; }
+    .event-key { display: block; margin-top: 2px; overflow: hidden; color: var(--muted); font: 10.5px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+    .event-kind { float: right; margin-left: 6px; padding: 2px 5px; border-radius: 4px; background: var(--faint); color: #69766f; font-size: 9px; font-weight: 700; text-transform: uppercase; }
+    .event.semantic .event-kind { background: var(--blue-soft); color: var(--blue); }
+    .event.metadata .event-kind { background: var(--amber-soft); color: var(--amber); }
+    .event.solver .event-kind { background: var(--violet-soft); color: var(--violet); }
+    .event-state { float: right; margin: 1px 5px 0 0; padding: 2px 5px; border-radius: 4px; background: #edf3ef; color: #496253; font-size: 9px; font-weight: 700; text-transform: uppercase; }
+    .event.cached .event-state { border: 1px solid #ccd9d1; background: white; color: #66766d; }
+    .event.filtered { display: none; }
+
+    .trace-note { margin: 12px 14px 18px; padding: 10px 11px; border: 1px solid #ead8bc; border-radius: 6px; background: #fff8ec; color: #6c5736; font-size: 10.5px; }
+
+    @media (max-height: 760px) {
+      .artifact-code { min-height: 230px; }
+      .source-code { max-height: 105px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="prototype-banner">
+    Interaction mockup · representative data only · no Sage backend is running
+  </div>
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="mark">S</div>
+      <div><strong>Sage Inspector</strong><span>Semantic workspace</span></div>
+    </div>
+    <div class="command">cargo sage inspect --package mini-redis</div>
+    <div class="session"><span class="dot"></span><span>mini-redis · lib</span><span class="session-id">read-only inspection</span></div>
+  </header>
+
+  <div class="workspace">
+    <aside id="symbols-panel" class="sidebar growable">
+      <div class="panel-heading"><span>Workspace symbols</span><span class="heading-controls"><span class="count">126 local</span><button class="grow-button" type="button" data-grow-target="symbols-panel" aria-label="Grow symbol panel" title="Grow panel">↗</button></span></div>
+      <div class="search-wrap"><input id="symbol-search" class="search" type="search" placeholder="Search paths and kinds" aria-label="Search symbols"></div>
+      <div id="symbol-filter-status" class="filter-status">Showing the example symbol tree</div>
+      <div class="tree-scope-note">Dependency symbols are omitted from this tree. Follow a linked semantic reference to inspect one.</div>
+      <nav class="tree" aria-label="Symbol tree">
+        <div class="tree-group">
+          <div class="tree-label" data-search="crate mini_redis"><span class="chevron symbol-toggle" role="button" tabindex="0" aria-expanded="true" data-target="crate-symbols">▼</span><span class="kind">C</span><span>mini_redis</span></div>
+          <div id="crate-symbols" class="tree-indent symbol-children">
+            <div class="tree-label" data-search="module mini_redis db"><span class="chevron symbol-toggle" role="button" tabindex="0" aria-expanded="true" data-target="db-symbols">▼</span><span class="kind">M</span><span>db</span></div>
+            <div id="db-symbols" class="tree-indent symbol-children">
+              <button class="symbol" data-search="struct db mini_redis db"><span class="kind">S</span><span class="symbol-name">Db</span></button>
+              <button class="symbol" data-search="struct dbdropguard mini_redis db"><span class="kind">S</span><span class="symbol-name">DbDropGuard</span></button>
+              <div class="tree-indent">
+                <button class="symbol" data-search="function associated new dbdropguard"><span class="kind">F</span><span class="symbol-name">DbDropGuard::new</span></button>
+                <button class="symbol active" data-search="function associated db dbdropguard clone"><span class="kind">F</span><span class="symbol-name">DbDropGuard::db</span></button>
+                <button class="symbol" data-search="function drop dbdropguard"><span class="kind">F</span><span class="symbol-name">DbDropGuard::drop</span></button>
+              </div>
+              <button class="symbol" data-search="struct shared mini_redis db"><span class="kind">S</span><span class="symbol-name">Shared</span></button>
+            </div>
+            <div class="tree-label" data-search="module mini_redis parse"><span class="chevron symbol-toggle" role="button" tabindex="0" aria-expanded="false" data-target="parse-symbols">▶</span><span class="kind">M</span><span>parse</span></div>
+            <div id="parse-symbols" class="tree-indent symbol-children collapsed">
+              <button class="symbol" data-search="struct parse mini_redis parse parser"><span class="kind">S</span><span class="symbol-name">Parse</span></button>
+              <button class="symbol" data-search="function associated parse new mini_redis"><span class="kind">F</span><span class="symbol-name">Parse::new</span></button>
+              <button class="symbol" data-search="function associated parse next iterator item normalize mini_redis"><span class="kind">F</span><span class="symbol-name">Parse::next</span></button>
+            </div>
+            <div class="tree-label" data-search="module mini_redis server"><span class="chevron symbol-toggle" role="button" tabindex="0" aria-expanded="false" data-target="server-symbols">▶</span><span class="kind">M</span><span>server</span></div>
+            <div id="server-symbols" class="tree-indent symbol-children collapsed">
+              <button class="symbol" data-search="function server run mini_redis"><span class="kind">F</span><span class="symbol-name">server::run</span></button>
+              <button class="symbol" data-search="struct listener server mini_redis"><span class="kind">S</span><span class="symbol-name">Listener</span></button>
+            </div>
+            <div class="tree-label" data-search="module mini_redis cmd command"><span class="chevron symbol-toggle" role="button" tabindex="0" aria-expanded="false" data-target="cmd-symbols">▶</span><span class="kind">M</span><span>cmd</span></div>
+            <div id="cmd-symbols" class="tree-indent symbol-children collapsed">
+              <button class="symbol" data-search="module command get mini_redis"><span class="kind">M</span><span class="symbol-name">cmd::get</span></button>
+              <button class="symbol" data-search="module command set mini_redis"><span class="kind">M</span><span class="symbol-name">cmd::set</span></button>
+              <button class="symbol" data-search="module command publish mini_redis"><span class="kind">M</span><span class="symbol-name">cmd::publish</span></button>
+            </div>
+            <button class="symbol" data-search="trait command mini_redis"><span class="kind">T</span><span class="symbol-name">Command</span></button>
+            <button class="symbol" data-search="struct connection mini_redis"><span class="kind">S</span><span class="symbol-name">Connection</span></button>
+          </div>
+        </div>
+      </nav>
+    </aside>
+
+    <main class="main">
+      <div class="navigation-bar">
+        <button id="navigation-back" class="navigation-button" type="button" disabled>← Back</button>
+        <button id="navigation-home" class="navigation-button" type="button" disabled>⌂ Selected local symbol</button>
+        <span id="navigation-location" class="navigation-location">crate::db::DbDropGuard::db</span>
+      </div>
+      <div id="local-symbol-view">
+      <div class="eyebrow">Associated function</div>
+      <div class="item-header">
+        <div>
+          <div class="breadcrumbs">mini_redis <span>›</span> db <span>›</span> DbDropGuard</div>
+          <h1>DbDropGuard::db</h1>
+          <div class="item-meta">test-fixtures/mini-redis/src/db.rs:108 · source-written · private(crate)</div>
+        </div>
+        <div class="badge-row">
+          <span class="badge complete">Complete</span>
+          <span class="badge zero">0 diagnostics</span>
+          <span class="badge cold">Local symbol</span>
+        </div>
+      </div>
+
+      <section id="source-panel" class="source-card growable">
+        <div class="card-titlebar"><code>src/db.rs:108–110</code><span class="card-actions"><button class="plain-button" type="button">Open source ↗</button><button class="grow-button" type="button" data-grow-target="source-panel" aria-label="Grow source panel" title="Grow panel">↗</button></span></div>
+        <pre class="source-code"><span class="kw">pub(crate) fn</span> <span class="fn">db</span>(&amp;self) -&gt; <span class="ty">Db</span> {
+    self.db.<span class="method">clone()</span>
+}</pre>
+      </section>
+
+      <section id="artifact-panel" class="artifact-card growable">
+        <div class="artifact-tabs">
+          <button class="artifact-tab" data-artifact="concrete">Concrete IR</button>
+          <button class="artifact-tab active" data-artifact="body">Typed body</button>
+          <button class="artifact-tab" data-artifact="signature">Signature</button>
+          <button class="artifact-tab" data-artifact="diagnostics">Diagnostics</button>
+          <div class="artifact-tools">
+            <span class="eyebrow">View</span>
+            <div class="segmented">
+              <button id="tree-view" class="active" type="button">IR tree</button>
+              <button id="structural-view" type="button">Raw shape</button>
+            </div>
+            <button class="grow-button" type="button" data-grow-target="artifact-panel" aria-label="Grow typed result panel" title="Grow panel">↗</button>
+          </div>
+        </div>
+        <div class="artifact-heading"><h2 id="artifact-title">Completed typed body</h2><span id="artifact-type" class="artifact-type">CheckedBody</span></div>
+        <div id="artifact-description" class="artifact-description">Method syntax has been consumed; dispatch and receiver adjustments are explicit.</div>
+        <div id="concrete-tree" class="signature-inspector" hidden>
+          <div class="ir-pane-heading"><span>Lossless reflected Rust structure · source CST remains unelaborated</span></div>
+          <ul class="ir-tree">
+            <li><details open><summary><span class="ir-node-kind">FnCst</span><span class="ir-value">Stashed&lt;Ptr&lt;FnCstData&gt;&gt;</span></summary>
+              <ul><li><details open><summary><span class="ir-field">root:</span><span class="ir-node-kind">Ptr&lt;FnCstData&gt;</span></summary>
+                <ul><li><details open><summary><span class="ir-field">pointee:</span><span class="ir-node-kind">FnCstData</span></summary>
+                  <ul>
+                    <li><details><summary><span class="ir-field">attrs:</span><span class="ir-node-kind">Slice&lt;AttrCst&gt;</span><span class="ir-value">length 0</span></summary><ul><li><div class="ir-leaf"><span class="ir-value">[]</span></div></li></ul></details></li>
+                    <li><div class="ir-leaf"><span class="ir-field">name:</span><span class="ir-node-kind">Name</span><span class="ir-value">db</span></div></li>
+                    <li><details><summary><span class="ir-field">generics:</span><span class="ir-node-kind">Slice&lt;GenericParamCst&gt;</span><span class="ir-value">length 0</span></summary><ul><li><div class="ir-leaf"><span class="ir-value">[]</span></div></li></ul></details></li>
+                    <li><details open><summary><span class="ir-field">params:</span><span class="ir-node-kind">Slice&lt;ParamCst&gt;</span><span class="ir-value">length 1</span></summary>
+                      <ul><li><details open><summary><span class="ir-field">[0]:</span><span class="ir-node-kind">ParamCst</span><span class="ir-value">&amp;self</span></summary>
+                        <ul>
+                          <li><details><summary><span class="ir-field">name:</span><span class="ir-node-kind">Option&lt;Name&gt;::Some</span></summary><ul><li><div class="ir-leaf"><span class="ir-field">value:</span><span class="ir-node-kind">Name</span><span class="ir-value">self</span></div></li></ul></details></li>
+                          <li><details><summary><span class="ir-field">ty:</span><span class="ir-node-kind">Ptr&lt;TypeCst&gt;</span></summary><ul><li><details><summary><span class="ir-field">pointee:</span><span class="ir-node-kind">TypeCst</span></summary><ul><li><div class="ir-leaf"><span class="ir-field">kind:</span><span class="ir-node-kind">TypeCstKind::Infer</span></div></li><li><div class="ir-leaf"><span class="ir-field">span:</span><span class="ir-node-kind">RelativeSpan</span><span class="ir-value">src/db.rs:108:22–27</span></div></li></ul></details></li></ul></details></li>
+                          <li><details open><summary><span class="ir-field">receiver:</span><span class="ir-node-kind">Option&lt;ReceiverCst&gt;::Some</span></summary><ul><li><details open><summary><span class="ir-field">value:</span><span class="ir-node-kind">ReceiverCst::Ref</span></summary><ul><li><div class="ir-leaf"><span class="ir-field">mutability:</span><span class="ir-node-kind">Mutability::Shared</span></div></li><li><div class="ir-leaf"><span class="ir-field">lifetime:</span><span class="ir-node-kind">Option&lt;Name&gt;::None</span></div></li></ul></details></li></ul></details></li>
+                          <li><div class="ir-leaf"><span class="ir-field">span:</span><span class="ir-node-kind">RelativeSpan</span><span class="ir-value">src/db.rs:108:22–27</span></div></li>
+                        </ul>
+                      </details></li></ul>
+                    </details></li>
+                    <li><details open><summary><span class="ir-field">ret:</span><span class="ir-node-kind">Option&lt;Ptr&lt;TypeCst&gt;&gt;::Some</span></summary>
+                      <ul><li><details open><summary><span class="ir-field">value:</span><span class="ir-node-kind">Ptr&lt;TypeCst&gt;</span></summary><ul><li><details open><summary><span class="ir-field">pointee:</span><span class="ir-node-kind">TypeCst</span><span class="ir-value">Db</span></summary>
+                        <ul><li><details open><summary><span class="ir-field">kind:</span><span class="ir-node-kind">TypeCstKind::Path</span></summary><ul><li><details open><summary><span class="ir-field">0:</span><span class="ir-node-kind">Ptr&lt;Path&gt;</span></summary><ul><li><details open><summary><span class="ir-field">pointee:</span><span class="ir-node-kind">Path::Relative</span></summary><ul><li><details open><summary><span class="ir-field">0:</span><span class="ir-node-kind">PathSegment</span></summary><ul><li><div class="ir-leaf"><span class="ir-field">name:</span><span class="ir-node-kind">Name</span><span class="ir-value">Db</span></div></li><li><div class="ir-leaf"><span class="ir-field">type_args:</span><span class="ir-node-kind">Slice&lt;TypeCst&gt;</span><span class="ir-value">[]</span></div></li><li><div class="ir-leaf"><span class="ir-field">span:</span><span class="ir-node-kind">RelativeSpan</span><span class="ir-value">src/db.rs:108:32–34</span></div></li></ul></details></li><li><div class="ir-leaf"><span class="ir-field">1:</span><span class="ir-node-kind">Slice&lt;PathSegment&gt;</span><span class="ir-value">[]</span></div></li></ul></details></li></ul></details></li></ul></details></li><li><div class="ir-leaf"><span class="ir-field">span:</span><span class="ir-node-kind">RelativeSpan</span><span class="ir-value">src/db.rs:108:32–34</span></div></li></ul>
+                      </details></li></ul></details></li></ul>
+                    </details></li>
+                    <li><details open><summary><span class="ir-field">body:</span><span class="ir-node-kind">Option&lt;Ptr&lt;ExprCst&gt;&gt;::Some</span></summary>
+                      <ul><li><details open><summary><span class="ir-field">value:</span><span class="ir-node-kind">Ptr&lt;ExprCst&gt;</span></summary><ul><li><details open><summary><span class="ir-field">pointee:</span><span class="ir-node-kind">ExprCst</span></summary>
+                        <ul><li><details open><summary><span class="ir-field">kind:</span><span class="ir-node-kind">ExprCstKind::Block</span></summary><ul><li><div class="ir-leaf"><span class="ir-field">0:</span><span class="ir-node-kind">Slice&lt;StmtCst&gt;</span><span class="ir-value">[]</span></div></li><li><details open><summary><span class="ir-field">1:</span><span class="ir-node-kind">Option&lt;Ptr&lt;ExprCst&gt;&gt;::Some</span></summary><ul><li><details open><summary><span class="ir-field">value:</span><span class="ir-node-kind">Ptr&lt;ExprCst&gt;</span></summary><ul><li><details open><summary><span class="ir-field">pointee:</span><span class="ir-node-kind">ExprCst</span><span class="ir-value">self.db.clone()</span></summary>
+                          <ul><li><details open><summary><span class="ir-field">kind:</span><span class="ir-node-kind">ExprCstKind::MethodCall</span></summary><ul><li><details open><summary><span class="ir-field">0:</span><span class="ir-node-kind">Ptr&lt;ExprCst&gt;</span></summary><ul><li><details open><summary><span class="ir-field">pointee:</span><span class="ir-node-kind">ExprCst</span><span class="ir-value">self.db</span></summary><ul><li><details open><summary><span class="ir-field">kind:</span><span class="ir-node-kind">ExprCstKind::Field</span></summary><ul><li><details><summary><span class="ir-field">0:</span><span class="ir-node-kind">Ptr&lt;ExprCst&gt;</span><span class="ir-value">self</span></summary><ul><li><details><summary><span class="ir-field">pointee:</span><span class="ir-node-kind">ExprCst</span></summary><ul><li><details><summary><span class="ir-field">kind:</span><span class="ir-node-kind">ExprCstKind::Path</span></summary><ul><li><details><summary><span class="ir-field">0:</span><span class="ir-node-kind">Ptr&lt;Path&gt;</span></summary><ul><li><details><summary><span class="ir-field">pointee:</span><span class="ir-node-kind">Path::Relative</span></summary><ul><li><details><summary><span class="ir-field">0:</span><span class="ir-node-kind">PathSegment</span></summary><ul><li><div class="ir-leaf"><span class="ir-field">name:</span><span class="ir-node-kind">Name</span><span class="ir-value">self</span></div></li><li><div class="ir-leaf"><span class="ir-field">type_args:</span><span class="ir-node-kind">Slice&lt;TypeCst&gt;</span><span class="ir-value">[]</span></div></li><li><div class="ir-leaf"><span class="ir-field">span:</span><span class="ir-node-kind">RelativeSpan</span><span class="ir-value">src/db.rs:109:9–13</span></div></li></ul></details></li><li><div class="ir-leaf"><span class="ir-field">1:</span><span class="ir-node-kind">Slice&lt;PathSegment&gt;</span><span class="ir-value">[]</span></div></li></ul></details></li></ul></details></li></ul></details></li><li><div class="ir-leaf"><span class="ir-field">span:</span><span class="ir-node-kind">RelativeSpan</span><span class="ir-value">src/db.rs:109:9–13</span></div></li></ul></details></li></ul></details></li><li><div class="ir-leaf"><span class="ir-field">1:</span><span class="ir-node-kind">Name</span><span class="ir-value">db</span></div></li></ul></details></li><li><div class="ir-leaf"><span class="ir-field">span:</span><span class="ir-node-kind">RelativeSpan</span><span class="ir-value">src/db.rs:109:9–16</span></div></li></ul></details></li></ul></details></li><li><div class="ir-leaf"><span class="ir-field">1:</span><span class="ir-node-kind">Name</span><span class="ir-value">clone</span></div></li><li><div class="ir-leaf"><span class="ir-field">2:</span><span class="ir-node-kind">Slice&lt;ExprCst&gt;</span><span class="ir-value">[]</span></div></li></ul></details></li><li><div class="ir-leaf"><span class="ir-field">span:</span><span class="ir-node-kind">RelativeSpan</span><span class="ir-value">src/db.rs:109:9–24</span></div></li></ul>
+                        </details></li></ul></details></li></ul></details></li></ul></details></li><li><div class="ir-leaf"><span class="ir-field">span:</span><span class="ir-node-kind">RelativeSpan</span><span class="ir-value">src/db.rs:108:35–110:6</span></div></li></ul>
+                      </details></li></ul></details></li></ul>
+                    </details></li>
+                    <li><details><summary><span class="ir-field">where_clauses:</span><span class="ir-node-kind">Slice&lt;WhereClauseCst&gt;</span><span class="ir-value">length 0</span></summary><ul><li><div class="ir-leaf"><span class="ir-value">[]</span></div></li></ul></details></li>
+                    <li><div class="ir-leaf"><span class="ir-field">span:</span><span class="ir-node-kind">RelativeSpan</span><span class="ir-value">src/db.rs:108:5–110:6</span></div></li>
+                  </ul>
+                </details></li></ul>
+              </details></li></ul>
+            </details></li>
+          </ul>
+        </div>
+        <div id="body-tree" class="ir-explorer">
+          <div id="ir-tree-panel" class="ir-tree-pane growable">
+            <div class="ir-pane-heading"><span>Precise typed IR structure</span><button class="grow-button" type="button" data-grow-target="ir-tree-panel" aria-label="Grow IR tree panel" title="Grow panel">↗</button></div>
+            <ul class="ir-tree">
+              <li><details open><summary data-ir-node="checked"><span class="ir-node-kind">CheckedBody</span></summary>
+                <ul>
+                  <li><details open><summary><span class="ir-field">body:</span><span class="ir-node-kind">TyBody</span><span class="ir-value">Stashed&lt;Ptr&lt;TyBodyData&gt;&gt;</span></summary>
+                    <ul>
+                      <li><details open><summary><span class="ir-field">root:</span><span class="ir-node-kind">Ptr&lt;TyBodyData&gt;</span></summary>
+                        <ul><li><details open><summary data-ir-node="body-data"><span class="ir-field">pointee:</span><span class="ir-node-kind">TyBodyData</span></summary>
+                          <ul>
+                            <li><details open><summary><span class="ir-field">root:</span><span class="ir-node-kind">Ptr&lt;TyExpr&gt;</span></summary>
+                              <ul><li><details open><summary data-ir-node="block"><span class="ir-field">pointee:</span><span class="ir-node-kind">TyExpr</span><span class="ir-node-type">Db</span></summary>
+                                <ul>
+                                  <li><details open><summary><span class="ir-field">data:</span><span class="ir-node-kind">TyExprData::Block</span></summary>
+                                    <ul>
+                                      <li><div class="ir-leaf" data-ir-node="statements"><span class="ir-field">0:</span><span class="ir-node-kind">Slice&lt;TyStmt&gt;</span><span class="ir-value">[]</span></div></li>
+                                      <li><details open><summary><span class="ir-field">1:</span><span class="ir-node-kind">Option&lt;Ptr&lt;TyExpr&gt;&gt;::Some</span></summary>
+                                        <ul><li><details open><summary><span class="ir-field">value:</span><span class="ir-node-kind">Ptr&lt;TyExpr&gt;</span></summary>
+                                          <ul><li><details open><summary data-ir-node="call"><span class="ir-field">pointee:</span><span class="ir-node-kind">TyExpr</span><span class="ir-node-type">Db</span></summary>
+                                            <ul>
+                                              <li><details open><summary><span class="ir-field">data:</span><span class="ir-node-kind">TyExprData::ResolvedCall</span></summary>
+                                                <ul>
+                                                  <li><details open><summary data-ir-node="target"><span class="ir-field">0:</span><span class="ir-node-kind">ResolvedCallTarget</span></summary>
+                                                    <ul>
+                                                      <li><div class="ir-leaf" data-ir-node="function"><span class="ir-field">function:</span><span class="ir-node-kind">FnSymbol</span><button class="symbol-reference" type="button" data-symbol-ref="clone-method">core::clone::Clone::clone</button></div></li>
+                                                      <li><details open><summary data-ir-node="dispatch"><span class="ir-field">dispatch:</span><span class="ir-node-kind">CallDispatch::StaticTrait</span></summary>
+                                                        <ul>
+                                                          <li><details><summary data-ir-node="self-ty"><span class="ir-field">self_ty:</span><span class="ir-node-kind">Ptr&lt;Ty&gt;</span><span class="ir-node-type">Db</span></summary><ul><li><details><summary><span class="ir-field">pointee:</span><span class="ir-node-kind">Ty::Adt</span></summary><ul><li><div class="ir-leaf"><span class="ir-field">0:</span><span class="ir-node-kind">Symbol</span><button class="symbol-reference" type="button" data-symbol-ref="local-db">crate::db::Db</button></div></li><li><div class="ir-leaf"><span class="ir-field">1:</span><span class="ir-node-kind">Slice&lt;Ptr&lt;Ty&gt;&gt;</span><span class="ir-value">[]</span></div></li></ul></details></li></ul></details></li>
+                                                          <li><details open><summary data-ir-node="trait-ref"><span class="ir-field">trait_ref:</span><span class="ir-node-kind">TraitRef</span></summary><ul><li><div class="ir-leaf"><span class="ir-field">trait_sym:</span><span class="ir-node-kind">TraitSymbol</span><button class="symbol-reference" type="button" data-symbol-ref="clone-trait">core::clone::Clone</button></div></li><li><div class="ir-leaf"><span class="ir-field">args:</span><span class="ir-node-kind">Slice&lt;Ptr&lt;Ty&gt;&gt;</span><span class="ir-value">[]</span></div></li></ul></details></li>
+                                                        </ul>
+                                                      </details></li>
+                                                      <li><details><summary data-ir-node="owner-args"><span class="ir-field">owner_type_args:</span><span class="ir-node-kind">Slice&lt;Ptr&lt;Ty&gt;&gt;</span><span class="ir-value">length 1</span></summary><ul><li><details><summary><span class="ir-field">[0]:</span><span class="ir-node-kind">Ptr&lt;Ty&gt;</span></summary><ul><li><details><summary><span class="ir-field">pointee:</span><span class="ir-node-kind">Ty::Adt</span><span class="ir-node-type">Db</span></summary><ul><li><div class="ir-leaf"><span class="ir-field">0:</span><span class="ir-node-kind">Symbol</span><button class="symbol-reference" type="button" data-symbol-ref="local-db">crate::db::Db</button></div></li><li><div class="ir-leaf"><span class="ir-field">1:</span><span class="ir-node-kind">Slice&lt;Ptr&lt;Ty&gt;&gt;</span><span class="ir-value">[]</span></div></li></ul></details></li></ul></details></li></ul></details></li>
+                                                      <li><div class="ir-leaf" data-ir-node="method-args"><span class="ir-field">method_type_args:</span><span class="ir-node-kind">Slice&lt;Ptr&lt;Ty&gt;&gt;</span><span class="ir-value">[]</span></div></li>
+                                                    </ul>
+                                                  </details></li>
+                                                  <li><details open><summary data-ir-node="arguments"><span class="ir-field">1:</span><span class="ir-node-kind">Slice&lt;Ptr&lt;TyExpr&gt;&gt;</span><span class="ir-value">length 1</span></summary>
+                                                    <ul><li><details open><summary><span class="ir-field">[0]:</span><span class="ir-node-kind">Ptr&lt;TyExpr&gt;</span></summary>
+                                                      <ul><li><details open><summary data-ir-node="ref"><span class="ir-field">pointee:</span><span class="ir-node-kind">TyExpr</span><span class="ir-node-type">&amp;Dummy Db</span></summary>
+                                                        <ul>
+                                                          <li><details open><summary><span class="ir-field">data:</span><span class="ir-node-kind">TyExprData::Ref</span></summary>
+                                                            <ul>
+                                                              <li><details open><summary><span class="ir-field">0:</span><span class="ir-node-kind">Ptr&lt;TyExpr&gt;</span></summary>
+                                                                <ul><li><details open><summary data-ir-node="field"><span class="ir-field">pointee:</span><span class="ir-node-kind">TyExpr</span><span class="ir-node-type">Db</span></summary>
+                                                                  <ul>
+                                                                    <li><details open><summary><span class="ir-field">data:</span><span class="ir-node-kind">TyExprData::Field</span></summary>
+                                                                      <ul>
+                                                                        <li><details open><summary><span class="ir-field">0:</span><span class="ir-node-kind">Ptr&lt;TyExpr&gt;</span></summary>
+                                                                          <ul><li><details open><summary data-ir-node="deref"><span class="ir-field">pointee:</span><span class="ir-node-kind">TyExpr</span><span class="ir-node-type">DbDropGuard</span></summary>
+                                                                            <ul>
+                                                                              <li><details open><summary><span class="ir-field">data:</span><span class="ir-node-kind">TyExprData::Deref</span></summary>
+                                                                                <ul><li><details open><summary><span class="ir-field">0:</span><span class="ir-node-kind">Ptr&lt;TyExpr&gt;</span></summary>
+                                                                                  <ul><li><details open><summary data-ir-node="local"><span class="ir-field">pointee:</span><span class="ir-node-kind">TyExpr</span><span class="ir-node-type">&amp;Dummy DbDropGuard</span></summary>
+                                                                                    <ul>
+                                                                                      <li><details open><summary><span class="ir-field">data:</span><span class="ir-node-kind">TyExprData::Path</span></summary><ul><li><details open><summary><span class="ir-field">0:</span><span class="ir-node-kind">PathResolution::Local</span></summary><ul><li><div class="ir-leaf"><span class="ir-field">0:</span><span class="ir-node-kind">LocalId</span><span class="ir-value">0</span></div></li></ul></details></li></ul></details></li>
+                                                                                      <li><details><summary><span class="ir-field">ty:</span><span class="ir-node-kind">Ptr&lt;Ty&gt;</span><span class="ir-node-type">&amp;Dummy DbDropGuard</span></summary><ul><li><details><summary><span class="ir-field">pointee:</span><span class="ir-node-kind">Ty::Ref</span></summary><ul><li><details><summary><span class="ir-field">0:</span><span class="ir-node-kind">Ptr&lt;Ty&gt;</span></summary><ul><li><details><summary><span class="ir-field">pointee:</span><span class="ir-node-kind">Ty::Adt</span><span class="ir-node-type">DbDropGuard</span></summary><ul><li><div class="ir-leaf"><span class="ir-field">0:</span><span class="ir-node-kind">Symbol</span><button class="symbol-reference" type="button" data-symbol-ref="local-guard">crate::db::DbDropGuard</button></div></li><li><div class="ir-leaf"><span class="ir-field">1:</span><span class="ir-node-kind">Slice&lt;Ptr&lt;Ty&gt;&gt;</span><span class="ir-value">[]</span></div></li></ul></details></li></ul></details></li><li><div class="ir-leaf"><span class="ir-field">1:</span><span class="ir-node-kind">Mutability::Shared</span></div></li><li><div class="ir-leaf"><span class="ir-field">2:</span><span class="ir-node-kind">Lifetime::Dummy</span></div></li></ul></details></li></ul></details></li>
+                                                                                      <li><div class="ir-leaf"><span class="ir-field">span:</span><span class="ir-node-kind">RelativeSpan</span><span class="ir-value">src/db.rs:109:9–13</span></div></li>
+                                                                                    </ul>
+                                                                                  </details></li></ul>
+                                                                                </details></li></ul>
+                                                                              </details></li>
+                                                                              <li><details><summary><span class="ir-field">ty:</span><span class="ir-node-kind">Ptr&lt;Ty&gt;</span><span class="ir-node-type">DbDropGuard</span></summary><ul><li><details><summary><span class="ir-field">pointee:</span><span class="ir-node-kind">Ty::Adt</span></summary><ul><li><div class="ir-leaf"><span class="ir-field">0:</span><span class="ir-node-kind">Symbol</span><button class="symbol-reference" type="button" data-symbol-ref="local-guard">crate::db::DbDropGuard</button></div></li><li><div class="ir-leaf"><span class="ir-field">1:</span><span class="ir-node-kind">Slice&lt;Ptr&lt;Ty&gt;&gt;</span><span class="ir-value">[]</span></div></li></ul></details></li></ul></details></li>
+                                                                              <li><div class="ir-leaf"><span class="ir-field">span:</span><span class="ir-node-kind">RelativeSpan</span><span class="ir-value">src/db.rs:109:9–13</span></div></li>
+                                                                            </ul>
+                                                                          </details></li></ul>
+                                                                        </details></li>
+                                                                        <li><details open><summary><span class="ir-field">1:</span><span class="ir-node-kind">ResolvedField</span></summary><ul><li><details><summary data-ir-node="field-owner"><span class="ir-field">owner:</span><span class="ir-node-kind">FieldOwner::Struct</span></summary><ul><li><div class="ir-leaf"><span class="ir-field">0:</span><span class="ir-node-kind">StructSymbol</span><button class="symbol-reference" type="button" data-symbol-ref="local-guard">crate::db::DbDropGuard</button></div></li></ul></details></li><li><div class="ir-leaf" data-ir-node="field-index"><span class="ir-field">index:</span><span class="ir-node-kind">u32</span><span class="ir-value">0</span></div></li></ul></details></li>
+                                                                      </ul>
+                                                                    </details></li>
+                                                                    <li><details><summary><span class="ir-field">ty:</span><span class="ir-node-kind">Ptr&lt;Ty&gt;</span><span class="ir-node-type">Db</span></summary><ul><li><details><summary><span class="ir-field">pointee:</span><span class="ir-node-kind">Ty::Adt</span></summary><ul><li><div class="ir-leaf"><span class="ir-field">0:</span><span class="ir-node-kind">Symbol</span><button class="symbol-reference" type="button" data-symbol-ref="local-db">crate::db::Db</button></div></li><li><div class="ir-leaf"><span class="ir-field">1:</span><span class="ir-node-kind">Slice&lt;Ptr&lt;Ty&gt;&gt;</span><span class="ir-value">[]</span></div></li></ul></details></li></ul></details></li>
+                                                                    <li><div class="ir-leaf"><span class="ir-field">span:</span><span class="ir-node-kind">RelativeSpan</span><span class="ir-value">src/db.rs:109:9–16</span></div></li>
+                                                                  </ul>
+                                                                </details></li></ul>
+                                                              </details></li>
+                                                              <li><div class="ir-leaf"><span class="ir-field">1:</span><span class="ir-node-kind">Mutability::Shared</span></div></li>
+                                                            </ul>
+                                                          </details></li>
+                                                          <li><details open><summary><span class="ir-field">ty:</span><span class="ir-node-kind">Ptr&lt;Ty&gt;</span><span class="ir-node-type">&amp;Dummy Db</span></summary><ul><li><details open><summary><span class="ir-field">pointee:</span><span class="ir-node-kind">Ty::Ref</span></summary><ul><li><details><summary><span class="ir-field">0:</span><span class="ir-node-kind">Ptr&lt;Ty&gt;</span></summary><ul><li><details><summary><span class="ir-field">pointee:</span><span class="ir-node-kind">Ty::Adt</span><span class="ir-node-type">Db</span></summary><ul><li><div class="ir-leaf"><span class="ir-field">0:</span><span class="ir-node-kind">Symbol</span><button class="symbol-reference" type="button" data-symbol-ref="local-db">crate::db::Db</button></div></li><li><div class="ir-leaf"><span class="ir-field">1:</span><span class="ir-node-kind">Slice&lt;Ptr&lt;Ty&gt;&gt;</span><span class="ir-value">[]</span></div></li></ul></details></li></ul></details></li><li><div class="ir-leaf"><span class="ir-field">1:</span><span class="ir-node-kind">Mutability::Shared</span></div></li><li><div class="ir-leaf" data-ir-node="lifetime"><span class="ir-field">2:</span><span class="ir-node-kind">Lifetime::Dummy</span></div></li></ul></details></li></ul></details></li>
+                                                          <li><div class="ir-leaf"><span class="ir-field">span:</span><span class="ir-node-kind">RelativeSpan</span><span class="ir-value">src/db.rs:109:9–24</span></div></li>
+                                                        </ul>
+                                                      </details></li></ul>
+                                                    </details></li></ul>
+                                                  </details></li>
+                                                </ul>
+                                              </details></li>
+                                              <li><details><summary><span class="ir-field">ty:</span><span class="ir-node-kind">Ptr&lt;Ty&gt;</span><span class="ir-node-type">Db</span></summary><ul><li><details><summary><span class="ir-field">pointee:</span><span class="ir-node-kind">Ty::Adt</span></summary><ul><li><div class="ir-leaf"><span class="ir-field">0:</span><span class="ir-node-kind">Symbol</span><button class="symbol-reference" type="button" data-symbol-ref="local-db">crate::db::Db</button></div></li><li><div class="ir-leaf"><span class="ir-field">1:</span><span class="ir-node-kind">Slice&lt;Ptr&lt;Ty&gt;&gt;</span><span class="ir-value">[]</span></div></li></ul></details></li></ul></details></li>
+                                              <li><div class="ir-leaf"><span class="ir-field">span:</span><span class="ir-node-kind">RelativeSpan</span><span class="ir-value">src/db.rs:109:9–24</span></div></li>
+                                            </ul>
+                                          </details></li></ul>
+                                        </details></li></ul>
+                                      </details></li>
+                                    </ul>
+                                  </details></li>
+                                  <li><details><summary><span class="ir-field">ty:</span><span class="ir-node-kind">Ptr&lt;Ty&gt;</span><span class="ir-node-type">Db</span></summary><ul><li><details><summary><span class="ir-field">pointee:</span><span class="ir-node-kind">Ty::Adt</span></summary><ul><li><div class="ir-leaf"><span class="ir-field">0:</span><span class="ir-node-kind">Symbol</span><button class="symbol-reference" type="button" data-symbol-ref="local-db">crate::db::Db</button></div></li><li><div class="ir-leaf"><span class="ir-field">1:</span><span class="ir-node-kind">Slice&lt;Ptr&lt;Ty&gt;&gt;</span><span class="ir-value">[]</span></div></li></ul></details></li></ul></details></li>
+                                  <li><div class="ir-leaf"><span class="ir-field">span:</span><span class="ir-node-kind">RelativeSpan</span><span class="ir-value">src/db.rs:108:35–110:6</span></div></li>
+                                </ul>
+                              </details></li></ul>
+                            </details></li>
+                            <li><details open><summary data-ir-node="locals"><span class="ir-field">locals:</span><span class="ir-node-kind">Slice&lt;LocalVar&gt;</span><span class="ir-value">length 1</span></summary><ul><li><details open><summary><span class="ir-field">[0]:</span><span class="ir-node-kind">LocalVar</span></summary><ul><li><div class="ir-leaf"><span class="ir-field">name:</span><span class="ir-node-kind">Name</span><span class="ir-value">self</span></div></li><li><div class="ir-leaf"><span class="ir-field">span:</span><span class="ir-node-kind">RelativeSpan</span><span class="ir-value">src/db.rs:108:22–27</span></div></li></ul></details></li></ul></details></li>
+                            <li><div class="ir-leaf"><span class="ir-field">span:</span><span class="ir-node-kind">RelativeSpan</span><span class="ir-value">src/db.rs:108:35–110:6</span></div></li>
+                          </ul>
+                        </details></li></ul>
+                      </details></li>
+                    </ul>
+                  </details></li>
+                  <li><div class="ir-leaf" data-ir-node="diagnostic-list"><span class="ir-field">diagnostics:</span><span class="ir-node-kind">Vec&lt;Diagnostic&gt;</span><span class="ir-value">[]</span></div></li>
+                </ul>
+              </details></li>
+            </ul>
+          </div>
+        </div>
+        <div id="signature-tree" class="signature-inspector" hidden>
+          <div class="ir-pane-heading"><span>Lossless reflected Rust structure · symbols remain navigable</span></div>
+          <ul class="ir-tree">
+            <li><details open><summary><span class="ir-node-kind">Binder&lt;FnSig&gt;</span></summary>
+              <ul>
+                <li><details open><summary><span class="ir-field">value:</span><span class="ir-node-kind">FnSig</span></summary>
+                  <ul>
+                    <li><div class="ir-leaf"><span class="ir-field">owner_generic_count:</span><span class="ir-node-kind">u32</span><span class="ir-value">0</span></div></li>
+                    <li><details open><summary><span class="ir-field">owner_self_ty:</span><span class="ir-node-kind">Option&lt;Ptr&lt;Ty&gt;&gt;::Some</span></summary>
+                      <ul><li><details open><summary><span class="ir-field">value:</span><span class="ir-node-kind">Ptr&lt;Ty&gt;</span><span class="ir-value">shared value #ty1</span></summary>
+                        <ul><li><details open><summary><span class="ir-field">pointee:</span><span class="ir-node-kind">Ty::Adt</span><span class="ir-node-type">DbDropGuard</span></summary>
+                          <ul>
+                            <li><div class="ir-leaf"><span class="ir-field">0:</span><span class="ir-node-kind">Symbol</span><button class="symbol-reference" type="button" data-symbol-ref="local-guard">crate::db::DbDropGuard</button></div></li>
+                            <li><details><summary><span class="ir-field">1:</span><span class="ir-node-kind">Slice&lt;Ptr&lt;Ty&gt;&gt;</span><span class="ir-value">length 0</span></summary><ul><li><div class="ir-leaf"><span class="ir-value">[]</span></div></li></ul></details></li>
+                          </ul>
+                        </details></li></ul>
+                      </details></li></ul>
+                    </details></li>
+                    <li><details open><summary><span class="ir-field">receiver:</span><span class="ir-node-kind">Option&lt;CheckedReceiver&gt;::Some</span></summary>
+                      <ul><li><details open><summary><span class="ir-field">value:</span><span class="ir-node-kind">CheckedReceiver</span></summary>
+                        <ul>
+                          <li><details><summary><span class="ir-field">owner_self_ty:</span><span class="ir-node-kind">Ptr&lt;Ty&gt;</span><span class="ir-value">shared value #ty1</span></summary>
+                            <ul><li><details><summary><span class="ir-field">pointee:</span><span class="ir-node-kind">Ty::Adt</span><span class="ir-node-type">DbDropGuard</span></summary>
+                              <ul>
+                                <li><div class="ir-leaf"><span class="ir-field">0:</span><span class="ir-node-kind">Symbol</span><button class="symbol-reference" type="button" data-symbol-ref="local-guard">crate::db::DbDropGuard</button></div></li>
+                                <li><div class="ir-leaf"><span class="ir-field">1:</span><span class="ir-node-kind">Slice&lt;Ptr&lt;Ty&gt;&gt;</span><span class="ir-value">[]</span></div></li>
+                              </ul>
+                            </details></li></ul>
+                          </details></li>
+                          <li><details open><summary><span class="ir-field">form:</span><span class="ir-node-kind">MethodReceiver::Ref</span></summary>
+                            <ul><li><div class="ir-leaf"><span class="ir-field">mutability:</span><span class="ir-node-kind">Mutability::Shared</span></div></li></ul>
+                          </details></li>
+                        </ul>
+                      </details></li></ul>
+                    </details></li>
+                    <li><details><summary><span class="ir-field">params:</span><span class="ir-node-kind">Slice&lt;Ptr&lt;Ty&gt;&gt;</span><span class="ir-value">length 0</span></summary>
+                      <ul><li><div class="ir-leaf"><span class="ir-value">[]</span></div></li></ul>
+                    </details></li>
+                    <li><details open><summary><span class="ir-field">ret:</span><span class="ir-node-kind">Ptr&lt;Ty&gt;</span><span class="ir-value">value #ty2</span></summary>
+                      <ul><li><details open><summary><span class="ir-field">pointee:</span><span class="ir-node-kind">Ty::Adt</span><span class="ir-node-type">Db</span></summary>
+                        <ul>
+                          <li><div class="ir-leaf"><span class="ir-field">0:</span><span class="ir-node-kind">Symbol</span><button class="symbol-reference" type="button" data-symbol-ref="local-db">crate::db::Db</button></div></li>
+                          <li><details><summary><span class="ir-field">1:</span><span class="ir-node-kind">Slice&lt;Ptr&lt;Ty&gt;&gt;</span><span class="ir-value">length 0</span></summary><ul><li><div class="ir-leaf"><span class="ir-value">[]</span></div></li></ul></details></li>
+                        </ul>
+                      </details></li></ul>
+                    </details></li>
+                    <li><details open><summary><span class="ir-field">parameter_env:</span><span class="ir-node-kind">CheckedParameterEnv</span></summary>
+                      <ul>
+                        <li><details><summary><span class="ir-field">where_clauses:</span><span class="ir-node-kind">Slice&lt;WherePredicate&gt;</span><span class="ir-value">length 0</span></summary><ul><li><div class="ir-leaf"><span class="ir-value">[]</span></div></li></ul></details></li>
+                        <li><div class="ir-leaf"><span class="ir-field">solver_eligibility:</span><span class="ir-node-kind">SolverEligibility::Eligible</span></div></li>
+                      </ul>
+                    </details></li>
+                    <li><div class="ir-leaf"><span class="ir-field">method_candidate_eligibility:</span><span class="ir-node-kind">SolverEligibility::Eligible</span></div></li>
+                    <li><div class="ir-leaf"><span class="ir-field">const_call_complete:</span><span class="ir-node-kind">bool</span><span class="ir-value">false</span></div></li>
+                  </ul>
+                </details></li>
+                <li><details><summary><span class="ir-field">generics:</span><span class="ir-node-kind">Slice&lt;GenericParam&gt;</span><span class="ir-value">length 0</span></summary><ul><li><div class="ir-leaf"><span class="ir-value">[]</span></div></li></ul></details></li>
+              </ul>
+            </details></li>
+          </ul>
+        </div>
+        <pre id="artifact-code" class="artifact-code" hidden></pre>
+        <div class="artifact-footer">
+          <span>Completeness <strong id="footer-complete">complete</strong></span>
+          <span>Diagnostics <strong id="footer-diagnostics">0</strong></span>
+          <span>Selected from <strong id="footer-origin">LocalFnSym::body</strong></span>
+        </div>
+      </section>
+      </div>
+
+      <section id="linked-local-symbol-view" hidden>
+        <div id="linked-local-eyebrow" class="eyebrow">Local struct</div>
+        <div class="item-header">
+          <div>
+            <div id="linked-local-breadcrumbs" class="breadcrumbs">mini_redis <span>›</span> db</div>
+            <h1 id="linked-local-title">Db</h1>
+            <div id="linked-local-meta" class="item-meta">src/db.rs · source-written · local symbol</div>
+          </div>
+          <div class="badge-row"><span class="badge cold">Local symbol</span><span class="badge complete">Represented</span></div>
+        </div>
+        <section class="relationship-card">
+          <h2>Symbol relationships</h2>
+          <div class="relationship-grid">
+            <span class="relationship-label">Parent</span><div id="linked-local-parent" class="relationship-values"></div>
+            <span class="relationship-label">Children</span><div id="linked-local-children" class="relationship-values"></div>
+          </div>
+        </section>
+        <section class="external-artifact">
+          <div class="card-titlebar"><code id="linked-local-query">LocalStructSym::fields</code><span>local semantic result</span></div>
+          <div class="external-artifact-body">
+            <div class="artifact-heading" style="padding: 0"><h2 id="linked-local-artifact-title">Local symbol summary</h2><span id="linked-local-artifact-type" class="artifact-type">StructSig</span></div>
+            <div id="linked-local-description" class="artifact-description" style="margin-left: 0"></div>
+            <pre id="linked-local-structure"></pre>
+          </div>
+        </section>
+      </section>
+
+      <section id="external-symbol-view" hidden>
+        <div class="eyebrow" id="external-eyebrow">External associated function</div>
+        <div class="item-header">
+          <div>
+            <div id="external-breadcrumbs" class="breadcrumbs"></div>
+            <h1 id="external-title">Clone::clone</h1>
+            <div id="external-meta" class="item-meta">dependency metadata</div>
+          </div>
+          <div class="badge-row">
+            <span class="badge external">External symbol</span>
+            <span class="badge complete">Metadata available</span>
+          </div>
+        </div>
+
+        <div class="external-notice">
+          <strong>Dependency metadata view</strong>
+          External definitions do not appear in the workspace symbol tree. This page shows only facts Sage can request from dependency metadata.
+        </div>
+
+        <section class="relationship-card">
+          <h2>Symbol relationships</h2>
+          <div class="relationship-grid">
+            <span class="relationship-label">Parent</span><div id="external-parent" class="relationship-values"></div>
+            <span class="relationship-label">Children</span><div id="external-children" class="relationship-values"></div>
+          </div>
+        </section>
+
+        <section class="external-artifact">
+          <div id="external-product-tabs" class="artifact-tabs" aria-label="External symbol products"></div>
+          <div class="card-titlebar"><code id="external-query">FnSymbol::sig</code><span>authoritative dependency interface</span></div>
+          <div class="external-artifact-body">
+            <div class="artifact-heading" style="padding: 0"><h2 id="external-artifact-title">Checked signature</h2><span id="external-artifact-type" class="artifact-type">Binder&lt;FnSig&gt;</span></div>
+            <div id="external-description" class="artifact-description" style="margin-left: 0"></div>
+            <div class="signature-inspector" style="min-height: 0; margin-top: 10px; padding: 12px 0 0;">
+              <ul id="external-structure" class="ir-tree"></ul>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <aside id="trace-panel" class="trace-panel growable">
+      <div id="trace-resizer" class="trace-resizer" title="Drag to resize the execution tree"></div>
+      <div class="panel-heading"><span>Execution tree</span><span class="panel-actions"><span class="count">destination sketch</span><button class="grow-button" type="button" data-grow-target="trace-panel" aria-label="Grow execution tree panel" title="Grow panel">↗</button></span></div>
+      <div class="trace-summary">
+        <strong>Which computation requested this work?</strong>
+        <span>Indentation records causal nesting. Select a node to inspect its output structure.</span>
+        <div class="trace-controls">
+          <input id="execution-search" class="trace-search" type="search" placeholder="Filter queries, keys, and operations" aria-label="Filter execution tree">
+          <select id="event-filter" aria-label="Filter execution events">
+            <option value="all">All recorded work</option>
+            <option value="salsa">Salsa executions</option>
+            <option value="semantic">Semantic lookups</option>
+            <option value="solver">Solver operations</option>
+            <option value="metadata">Metadata reads</option>
+          </select>
+          <button id="expand-all" class="tree-action" type="button">Expand all</button>
+          <button id="collapse-all" class="tree-action" type="button">Collapse all</button>
+        </div>
+        <div id="execution-filter-status" class="filter-status">10 operations in this request</div>
+        <div class="trace-legend"><span class="legend-item"><span class="legend-dot"></span> executed</span><span class="legend-item"><span class="legend-dot cached"></span> cache hit</span></div>
+      </div>
+
+      <div class="execution-tree">
+        <button class="event root has-children" data-kind="root" data-artifact="body"><span class="branch-toggle" role="button" tabindex="0" aria-expanded="true" data-target="request-children">▼</span><span class="event-kind">Request</span><span class="event-name">Inspect completed body</span><span class="event-key">crate::db::DbDropGuard::db</span></button>
+        <div id="request-children" class="event-children">
+          <button class="event semantic has-children" data-kind="semantic" data-artifact="selected"><span class="branch-toggle" role="button" tabindex="0" aria-expanded="true" data-target="selection-children">▼</span><span class="event-kind">Lookup</span><span class="event-name">Resolve semantic path</span><span class="event-key">crate::db::DbDropGuard::db</span></button>
+          <div id="selection-children" class="event-children">
+            <button class="event salsa cached" data-kind="salsa" data-artifact="selection"><span class="event-kind">Salsa</span><span class="event-state">cache hit</span><span class="event-name">Expand module symbols</span><span class="event-key">RootModule::expanded_module_items</span></button>
+          </div>
+          <button class="event salsa active has-children" data-kind="salsa" data-artifact="body"><span class="branch-toggle" role="button" tabindex="0" aria-expanded="true" data-target="body-children">▼</span><span class="event-kind">Salsa</span><span class="event-state">executed</span><span class="event-name">Check function body</span><span class="event-key">LocalFnSym::body(DbDropGuard::db)</span></button>
+          <div id="body-children" class="event-children">
+            <button class="event salsa" data-kind="salsa" data-artifact="signature"><span class="event-kind">Salsa</span><span class="event-state">executed</span><span class="event-name">Lower function signature</span><span class="event-key">LocalFnSym::sig(DbDropGuard::db)</span></button>
+            <button class="event semantic" data-kind="semantic" data-artifact="field"><span class="event-kind">Lookup</span><span class="event-name">Resolve receiver field</span><span class="event-key">DbDropGuard · field db</span></button>
+            <button class="event semantic has-children" data-kind="semantic" data-artifact="candidates"><span class="branch-toggle" role="button" tabindex="0" aria-expanded="true" data-target="candidate-children">▼</span><span class="event-kind">Lookup</span><span class="event-name">Discover method candidates</span><span class="event-key">receiver Db · method clone</span></button>
+            <div id="candidate-children" class="event-children">
+              <button class="event metadata" data-kind="metadata" data-artifact="metadata"><span class="event-kind">rustc</span><span class="event-name">Read candidate interfaces</span><span class="event-key">Clone · Clone::clone</span></button>
+              <button class="event solver" data-kind="solver" data-artifact="solver"><span class="event-kind">Solver</span><span class="event-name">Prove candidate applicability</span><span class="event-key">Prove(Db: Clone) → Proven</span></button>
+            </div>
+            <button class="event semantic" data-kind="semantic" data-artifact="call"><span class="event-kind">IR</span><span class="event-name">Elaborate resolved call</span><span class="event-key">ResolvedCallTarget · StaticTrait</span></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="trace-note">
+        Destination sketch: the dynamic request tree records work caused by this inspection. Persistent edits and revision comparison are not drawn in this mockup.
+      </div>
+    </aside>
+  </div>
+
+  <script>
+    const artifacts = {
+      concrete: {
+        title: "Expanded concrete function",
+        type: "FnCst",
+        description: "The source CST retains written method syntax. The tree exposes the actual FnCstData, ExprCst, TypeCst, and Path fields and variants; provenance belongs to the enclosing symbol, not FnCstData.",
+        origin: "LocalFnSym::cst",
+        complete: "complete",
+        diagnostics: "0",
+        readable: `pub(crate) fn db(&self) -> Db {
+  self.db.clone()
+}
+
+provenance: source-written
+owner: crate::db::DbDropGuard`,
+        structural: `FnCst = Stashed<Ptr<FnCstData>> {
+  /* Stash storage and fingerprint infrastructure omitted. */
+  root: Ptr(FnCstData {
+    attrs: [],
+    name: Name("db"),
+    generics: [],
+    params: [ParamCst {
+      name: Some(Name("self")),
+      ty: Ptr(TypeCst { kind: TypeCstKind::Infer, span }),
+      receiver: Some(ReceiverCst::Ref {
+        mutability: Mutability::Shared,
+        lifetime: None,
+      }),
+      span,
+    }],
+    ret: Some(Ptr(TypeCst {
+      kind: TypeCstKind::Path(Ptr(Path::Relative(
+        PathSegment { name: Name("Db"), type_args: [], span },
+        [],
+      ))),
+      span,
+    })),
+    body: Some(Ptr(ExprCst {
+      kind: ExprCstKind::Block([], Some(Ptr(ExprCst {
+        kind: ExprCstKind::MethodCall(
+          Ptr(ExprCst {
+            kind: ExprCstKind::Field(
+              Ptr(ExprCst {
+                kind: ExprCstKind::Path(Ptr(Path::Relative(
+                  PathSegment { name: Name("self"), type_args: [], span },
+                  [],
+                ))),
+                span,
+              }),
+              Name("db"),
+            ),
+            span,
+          }),
+          Name("clone"),
+          [],
+        ),
+        span,
+      }))),
+      span,
+    })),
+    where_clauses: [],
+    span,
+  }),
+}`
+      },
+      body: {
+        title: "Completed typed body",
+        type: "CheckedBody",
+        description: "Method syntax has been consumed; dispatch and receiver adjustments are explicit.",
+        origin: "LocalFnSym::body",
+        complete: "complete",
+        diagnostics: "0",
+        readable: `fn DbDropGuard::db(&self) -> Db {
+  <Db as core::clone::Clone>::clone(
+    &/* Dummy */ (*self).db
+  )
+}
+
+result type: Db
+dispatch: static trait call`,
+        structural: `CheckedBody {
+  body: TyBody = Stashed<Ptr<TyBodyData>> {
+    /* Stash storage and fingerprint infrastructure omitted. */
+    root: Ptr(TyBodyData {
+      root: Ptr(TyExpr {
+        data: TyExprData::Block(
+          [],
+          Some(Ptr(TyExpr {
+            data: TyExprData::ResolvedCall(
+              ResolvedCallTarget {
+        function: core::clone::Clone::clone,
+                dispatch: CallDispatch::StaticTrait {
+                  self_ty: Ptr(Ty::Adt(crate::db::Db, [])),
+                  trait_ref: TraitRef {
+                    trait_sym: core::clone::Clone,
+                    args: [],
+                  },
+        },
+                owner_type_args: [Ptr(Ty::Adt(crate::db::Db, []))],
+        method_type_args: [],
+      },
+              [Ptr(TyExpr {
+                data: TyExprData::Ref(
+                  Ptr(TyExpr {
+                    data: TyExprData::Field(
+                      Ptr(TyExpr {
+                        data: TyExprData::Deref(Ptr(TyExpr {
+                          data: TyExprData::Path(
+                            PathResolution::Local(LocalId(0)),
+                          ),
+                          ty: Ptr(Ty::Ref(
+                            Ptr(Ty::Adt(crate::db::DbDropGuard, [])),
+                            Mutability::Shared,
+                            Lifetime::Dummy,
+                          )),
+                          span,
+                        })),
+                        ty: Ptr(Ty::Adt(crate::db::DbDropGuard, [])),
+                        span,
+                      }),
+                      ResolvedField {
+                        owner: FieldOwner::Struct(crate::db::DbDropGuard),
+                        index: 0,
+                      },
+                    ),
+                    ty: Ptr(Ty::Adt(crate::db::Db, [])),
+                    span,
+                  }),
+                  Mutability::Shared,
+                ),
+                ty: Ptr(Ty::Ref(
+                  Ptr(Ty::Adt(crate::db::Db, [])),
+                  Mutability::Shared,
+                  Lifetime::Dummy,
+                )),
+                span,
+              })],
+            ),
+            ty: Ptr(Ty::Adt(crate::db::Db, [])),
+            span,
+          })),
+        ),
+        ty: Ptr(Ty::Adt(crate::db::Db, [])),
+        span,
+      }),
+      locals: [LocalVar { name: Name("self"), span }],
+      span,
+    }),
+  },
+  diagnostics: Vec::new(),
+}`
+      },
+      signature: {
+        title: "Checked function signature",
+        type: "Binder<FnSig>",
+        description: "Every Binder and FnSig field is present; Ptr<Ty> values recursively expose the precise Ty variant. CheckedReceiver records its owner type and form, not a lifetime field.",
+        origin: "LocalFnSym::sig",
+        complete: "complete",
+        diagnostics: "0",
+        readable: `fn crate::db::DbDropGuard::db(
+  self: &/* Dummy */ DbDropGuard
+) -> Db
+
+where clauses: none
+solver eligibility: Eligible`,
+        structural: `Binder {
+  value: FnSig {
+    owner_generic_count: 0,
+    owner_self_ty: Some(Ptr(Ty::Adt(
+      Symbol(crate::db::DbDropGuard),
+      [],
+    ))),
+    receiver: Some(CheckedReceiver {
+      owner_self_ty: Ptr(Ty::Adt(
+        Symbol(crate::db::DbDropGuard),
+        [],
+      )),
+      form: MethodReceiver::Ref {
+        mutability: Mutability::Shared,
+      },
+    }),
+    params: [],
+    ret: Ptr(Ty::Adt(Symbol(crate::db::Db), [])),
+    parameter_env: CheckedParameterEnv {
+      where_clauses: [],
+      solver_eligibility: SolverEligibility::Eligible,
+    },
+    method_candidate_eligibility: SolverEligibility::Eligible,
+    const_call_complete: false,
+  },
+  generics: [],
+}`
+      },
+      diagnostics: {
+        title: "Checking diagnostics",
+        type: "Vec<Diagnostic>",
+        description: "Completeness is reported independently from the absence of diagnostics.",
+        origin: "CheckedBody::diagnostics",
+        complete: "complete",
+        diagnostics: "0",
+        readable: `No diagnostics.
+
+Body checking completed without unsupported syntax,
+candidate-source incompleteness, ambiguity, or overflow.`,
+        structural: `[]`
+      },
+      selection: {
+        title: "Expanded module items",
+        type: "Vec<Symbol>",
+        description: "The searchable symbol skeleton produced by module expansion; bodies are not checked to build it.",
+        origin: "expanded_module_items",
+        complete: "complete",
+        diagnostics: "0",
+        readable: `crate::db::Db                 struct
+crate::db::DbDropGuard        struct
+crate::db::DbDropGuard::new   function
+crate::db::DbDropGuard::db    function  ← selected
+crate::db::DbDropGuard::drop  function
+crate::db::Shared             struct
+…`,
+        structural: `[
+  Symbol::Struct(crate::db::Db),
+  Symbol::Struct(crate::db::DbDropGuard),
+  Symbol::Function(crate::db::DbDropGuard::new),
+  Symbol::Function(crate::db::DbDropGuard::db),
+  Symbol::Function(crate::db::DbDropGuard::drop),
+  Symbol::Struct(crate::db::Shared),
+  /* … */
+]`
+      },
+      selected: {
+        title: "Selected semantic item",
+        type: "SelectedItem",
+        description: "A stable user-facing path resolves to a local function without exposing an arena or Salsa identity.",
+        origin: "semantic selector",
+        complete: "complete",
+        diagnostics: "0",
+        readable: `path: crate::db::DbDropGuard::db
+kind: associated function
+owner: crate::db::DbDropGuard
+location: src/db.rs:108
+provenance: source-written`,
+        structural: `SelectedItem::Function {
+  path: "crate::db::DbDropGuard::db",
+  owner: Some("crate::db::DbDropGuard"),
+  source: SourceLocation {
+    file: "src/db.rs",
+    line: 108,
+  },
+}`
+      },
+      field: {
+        title: "Resolved field",
+        type: "ResolvedField",
+        description: "The field expression records its semantic owner and index instead of retaining only the written name.",
+        origin: "expression checking",
+        complete: "complete",
+        diagnostics: "0",
+        readable: `expression: (*self).db
+base type: DbDropGuard
+field owner: crate::db::DbDropGuard
+field index: 0
+field type: Db`,
+        structural: `TyExpr {
+  data: TyExprData::Field(
+    Ptr(TyExpr {
+      data: TyExprData::Deref(Ptr(TyExpr {
+        data: TyExprData::Path(
+          PathResolution::Local(LocalId(0)),
+        ),
+        ty: Ptr(Ty::Ref(
+          Ptr(Ty::Adt(crate::db::DbDropGuard, [])),
+          Mutability::Shared,
+          Lifetime::Dummy,
+        )),
+        span,
+      })),
+      ty: Ptr(Ty::Adt(crate::db::DbDropGuard, [])),
+      span,
+    }),
+    ResolvedField {
+      owner: FieldOwner::Struct(crate::db::DbDropGuard),
+      index: 0,
+    },
+  ),
+  ty: Ptr(Ty::Adt(crate::db::Db, [])),
+  span,
+}`
+      },
+      candidates: {
+        title: "Method candidate discovery",
+        type: "CandidateSet",
+        description: "Candidates are discovered from the receiver, written name, and traits in scope before one is classified as applicable.",
+        origin: "resolve_method",
+        complete: "complete",
+        diagnostics: "0",
+        readable: `receiver: Db
+method name: clone
+traits in scope: [core::clone::Clone]
+
+definite candidates:
+  core::clone::Clone::clone(&Self) -> Self
+
+unknown provider present: false`,
+        structural: `CandidateSet {
+  receiver_ty: Db,
+  method_name: clone,
+  definite: [
+    TraitMethod {
+      trait_ref: Clone<Db>,
+      function: Clone::clone,
+    },
+  ],
+  unknown: false,
+}`
+      },
+      metadata: {
+        title: "External interface reads",
+        type: "MetadataObservation[]",
+        description: "Only declarations needed for dispatch are read. External function bodies are not inputs.",
+        origin: "TcxDb",
+        complete: "complete",
+        diagnostics: "0",
+        readable: `read trait signature    core::clone::Clone
+read associated items   core::clone::Clone
+read function signature core::clone::Clone::clone
+
+external callee bodies read: none`,
+        structural: `[
+  TraitSignature(core::clone::Clone),
+  AssociatedItems(core::clone::Clone),
+  FnSignature(core::clone::Clone::clone),
+]`
+      },
+      solver: {
+        title: "Trait proof response",
+        type: "SolverResponse<Proven>",
+        description: "Proof returns the operation-specific Proven value. It deliberately does not expose a selected impl.",
+        origin: "solver::solve",
+        complete: "complete",
+        diagnostics: "0",
+        readable: `operation: Prove
+goal: Db: core::clone::Clone
+
+certainty: Yes
+output: Proven
+constraints: none`,
+        structural: `SolverResponse {
+  certainty: Yes,
+  output: GoalOutput::Proven,
+  substitutions: [],
+  external_constraints: [],
+}`
+      },
+      call: {
+        title: "Resolved call target",
+        type: "ResolvedCallTarget",
+        description: "The completed IR records static trait dispatch and instantiated owner arguments.",
+        origin: "resolve_trait_method",
+        complete: "complete",
+        diagnostics: "0",
+        readable: `function: core::clone::Clone::clone
+dispatch: static trait
+Self: Db
+trait reference: Clone (explicit args: [])
+owner arguments: [Db]
+method arguments: []`,
+        structural: `ResolvedCallTarget {
+  function: core::clone::Clone::clone,
+  dispatch: CallDispatch::StaticTrait {
+    self_ty: Ptr(Ty::Adt(crate::db::Db, [])),
+    trait_ref: TraitRef {
+      trait_sym: core::clone::Clone,
+      args: [],
+    },
+  },
+  owner_type_args: [Ptr(Ty::Adt(crate::db::Db, []))],
+  method_type_args: [],
+}`
+      }
+    };
+
+    const localSymbols = {
+      "local-db": {
+        path: "crate::db::Db",
+        eyebrow: "Local struct",
+        title: "Db",
+        meta: "src/db.rs:51 · source-written · private(crate)",
+        parent: [{ text: "crate::db" }],
+        children: [],
+        query: "LocalStructSym::fields",
+        artifactTitle: "Checked struct interface",
+        artifactType: "StructSig",
+        description: "This local destination exposes source, concrete representation, fields, and checked interface products on demand.",
+        structure: `struct crate::db::Db {
+  shared: alloc::sync::Arc<crate::db::Shared>,
+}
+
+products: source, Concrete IR, fields, signature`
+      },
+      "local-guard": {
+        path: "crate::db::DbDropGuard",
+        eyebrow: "Local struct",
+        title: "DbDropGuard",
+        meta: "src/db.rs:98 · source-written · private(crate)",
+        parent: [{ text: "crate::db" }],
+        children: [{ text: "crate::db::DbDropGuard::db", target: "local-home" }],
+        query: "LocalStructSym::fields",
+        artifactTitle: "Checked struct interface",
+        artifactType: "StructSig",
+        description: "Associated items remain local symbols and can return to the originally selected method.",
+        structure: `struct crate::db::DbDropGuard {
+  db: crate::db::Db,
+}
+
+represented child:
+  fn crate::db::DbDropGuard::db(&Self) -> crate::db::Db`
+      }
+    };
+
+    const reflected = (field, kind, options = {}) => ({ field, kind, ...options });
+
+    function externalIdentity(kind, path, field = null) {
+      return reflected(field, "SymExt", {
+        open: true,
+        children: [
+          reflected("crate_num:", "CrateNum", { value: "session-local metadata crate" }),
+          reflected("def_index:", "DefIndex", { value: "session-local definition index" }),
+          reflected("kind:", `SymExtKind::${kind}`),
+        ],
+        value: path,
+      });
+    }
+
+    function externalGenericParam(field, ownerTarget, ownerPath) {
+      return reflected(field, "GenericParam::Ext", {
+        children: [reflected("0:", "ExtGenericParam", {
+          children: [
+            reflected("kind:", "GenericParamKind::Type"),
+            reflected("name:", "Option<Name>::Some", {
+              children: [reflected("value:", "Name", { value: "Self" })],
+            }),
+            reflected("parent:", "Symbol", { value: ownerPath, target: ownerTarget }),
+            reflected("index:", "u32", { value: "0" }),
+          ],
+        })],
+      });
+    }
+
+    function ptrSelfTy(field, ownerTarget, ownerPath) {
+      return reflected(field, "Ptr<Ty>", {
+        children: [reflected("pointee:", "Ty::Param", {
+          children: [externalGenericParam("0:", ownerTarget, ownerPath)],
+          value: "Self",
+        })],
+      });
+    }
+
+    function ptrRefSelfTy(field, ownerTarget, ownerPath, mutability = "Shared") {
+      return reflected(field, "Ptr<Ty>", {
+        children: [reflected("pointee:", "Ty::Ref", {
+          children: [
+            ptrSelfTy("0:", ownerTarget, ownerPath),
+            reflected("1:", `Mutability::${mutability}`),
+            reflected("2:", "Lifetime::Dummy"),
+          ],
+          value: mutability === "Shared" ? "&Dummy Self" : "&Dummy mut Self",
+        })],
+      });
+    }
+
+    function ptrUnitTy(field) {
+      return reflected(field, "Ptr<Ty>", {
+        children: [reflected("pointee:", "Ty::Tuple", {
+          children: [reflected("0:", "Slice<Ptr<Ty>>", { value: "[]" })],
+          value: "()",
+        })],
+      });
+    }
+
+    function wherePredicate(index, ownerTarget, ownerPath, traitTarget, traitPath) {
+      return reflected(`[${index}]:`, "WherePredicate", {
+        children: [
+          ptrSelfTy("self_ty:", ownerTarget, ownerPath),
+          reflected("trait_ref:", "TraitRef", {
+            children: [
+              reflected("trait_sym:", "TraitSymbol", { value: traitPath, target: traitTarget }),
+              reflected("args:", "Slice<Ptr<Ty>>", { value: "[]" }),
+            ],
+          }),
+        ],
+        value: `Self: ${traitPath}`,
+      });
+    }
+
+    function externalFnSignature(ownerTarget, ownerPath, receiverMutability, params, returnsSelf) {
+      const parameterNodes = params === "ref-self"
+        ? [ptrRefSelfTy("[0]:", ownerTarget, ownerPath)]
+        : [];
+      return reflected(null, "Option<Stashed<Binder<FnSig>>>::Some", {
+        open: true,
+        children: [reflected("value:", "Stashed<Binder<FnSig>>", {
+          open: true,
+          children: [reflected("root:", "Binder<FnSig>", {
+            open: true,
+            children: [
+              reflected("value:", "FnSig", {
+                open: true,
+                children: [
+                  reflected("owner_generic_count:", "u32", { value: "1" }),
+                  reflected("owner_self_ty:", "Option<Ptr<Ty>>::Some", {
+                    children: [ptrSelfTy("value:", ownerTarget, ownerPath)],
+                  }),
+                  reflected("receiver:", "Option<CheckedReceiver>::Some", {
+                    children: [reflected("value:", "CheckedReceiver", {
+                      children: [
+                        ptrSelfTy("owner_self_ty:", ownerTarget, ownerPath),
+                        reflected("form:", "MethodReceiver::Ref", {
+                          children: [reflected("mutability:", `Mutability::${receiverMutability}`)],
+                        }),
+                      ],
+                    })],
+                  }),
+                  reflected("params:", "Slice<Ptr<Ty>>", {
+                    children: parameterNodes,
+                    value: `length ${parameterNodes.length}`,
+                  }),
+                  returnsSelf
+                    ? ptrSelfTy("ret:", ownerTarget, ownerPath)
+                    : ptrUnitTy("ret:"),
+                  reflected("parameter_env:", "CheckedParameterEnv", {
+                    children: [
+                      reflected("where_clauses:", "Slice<WherePredicate>", {
+                        children: [
+                          wherePredicate(0, ownerTarget, ownerPath, "clone-trait", "core::clone::Clone"),
+                          wherePredicate(1, ownerTarget, ownerPath, "sized-trait", "core::marker::Sized"),
+                        ],
+                        value: "length 2",
+                      }),
+                      reflected("solver_eligibility:", "SolverEligibility::Eligible"),
+                    ],
+                  }),
+                  reflected("method_candidate_eligibility:", "SolverEligibility::Eligible"),
+                  reflected("const_call_complete:", "bool", { value: "false" }),
+                ],
+              }),
+              reflected("generics:", "Slice<GenericParam>", {
+                children: [externalGenericParam("[0]:", ownerTarget, ownerPath)],
+                value: "length 1",
+              }),
+            ],
+          })],
+          value: "storage infrastructure omitted",
+        })],
+      });
+    }
+
+    function externalTraitSignature(target, path, predicates, semantics) {
+      return reflected(null, "Option<Stashed<TraitSignature>>::Some", {
+        open: true,
+        children: [reflected("value:", "Stashed<TraitSignature>", {
+          open: true,
+          children: [reflected("root:", "TraitSignature = Binder<TraitSignatureData>", {
+            open: true,
+            children: [
+              reflected("value:", "TraitSignatureData", {
+                open: true,
+                children: [
+                  externalGenericParam("self_param:", target, path),
+                  reflected("where_clauses:", "Slice<WherePredicate>", {
+                    children: predicates.map((predicate, index) => wherePredicate(
+                      index,
+                      target,
+                      path,
+                      predicate.target,
+                      predicate.path,
+                    )),
+                    value: `length ${predicates.length}`,
+                  }),
+                  reflected("solver_eligibility:", "SolverEligibility::Eligible"),
+                  reflected("semantics:", `TraitSemantics::${semantics}`),
+                ],
+              }),
+              reflected("generics:", "Slice<GenericParam>", {
+                children: [externalGenericParam("[0]:", target, path)],
+                value: "length 1",
+              }),
+            ],
+          })],
+          value: "storage infrastructure omitted",
+        })],
+      });
+    }
+
+    function externalTraitItems() {
+      const item = (index, target, path) => reflected(`[${index}]:`, "TraitItemDef::Function", {
+        children: [reflected("0:", "FnSymbol::Ext", {
+          children: [externalIdentity("Fn", path, "0:")],
+          value: path,
+          target,
+        })],
+      });
+      return reflected(null, "Option<Stashed<TraitItems>>::Some", {
+        open: true,
+        children: [reflected("value:", "Stashed<TraitItems>", {
+          open: true,
+          children: [reflected("root:", "TraitItems = Binder<Slice<TraitItemDef>>", {
+            open: true,
+            children: [
+              reflected("value:", "Slice<TraitItemDef>", {
+                open: true,
+                children: [
+                  item(0, "clone-method", "core::clone::Clone::clone"),
+                  item(1, "clone-from-method", "core::clone::Clone::clone_from"),
+                ],
+                value: "length 2",
+              }),
+              reflected("generics:", "Slice<GenericParam>", { value: "[]" }),
+            ],
+          })],
+          value: "storage infrastructure omitted",
+        })],
+      });
+    }
+
+    function externalModuleItems(children) {
+      return reflected(null, "Vec<Symbol>", {
+        open: true,
+        children: [
+          ...children.map((child, index) => reflected(`[${index}]:`, "Symbol", {
+            children: [reflected("data():", `SymbolData::${child.symbolData}`, {
+              children: [reflected("0:", `${child.symbolKind}::Ext`, {
+                children: [externalIdentity(child.extKind, child.path, "0:")],
+              })],
+            })],
+            value: child.path,
+            target: child.target,
+          })),
+          reflected("continuation:", "Truncated", {
+            value: "other returned metadata children omitted by this bounded mockup",
+          }),
+        ],
+        value: "bounded rendering of the complete query result",
+      });
+    }
+
+    const externalSymbols = {
+      "clone-method": {
+        path: "core::clone::Clone::clone",
+        eyebrow: "External associated function",
+        title: "Clone::clone",
+        meta: "core · dependency metadata · external associated function",
+        breadcrumbs: [
+          { text: "core", target: "core-crate" },
+          { text: "clone", target: "clone-module" },
+          { text: "Clone", target: "clone-trait" }
+        ],
+        parent: [{ text: "core::clone::Clone", target: "clone-trait" }],
+        children: [],
+        defaultProduct: "signature",
+        products: {
+          identity: {
+            label: "Identity",
+            query: "retained NavigationTarget::External",
+            title: "External symbol identity",
+            type: "SymExt",
+            description: "The display path is a label. External identity is the interned crate number, definition index, and kind.",
+            tree: [externalIdentity("Fn", "core::clone::Clone::clone")],
+          },
+          signature: {
+            label: "Signature",
+            query: "FnSymbol::sig",
+            title: "Lowered external function signature",
+            type: "Option<Stashed<Binder<FnSig>>>",
+            description: "This is Sage's complete lowered FnSig. The owning-trait and Sized predicates are distinct entries in its parameter environment.",
+            tree: [externalFnSignature("clone-method", "core::clone::Clone::clone", "Shared", "none", true)],
+          },
+        },
+      },
+      "clone-from-method": {
+        path: "core::clone::Clone::clone_from",
+        eyebrow: "External associated function",
+        title: "Clone::clone_from",
+        meta: "core · dependency metadata · external associated function",
+        breadcrumbs: [
+          { text: "core", target: "core-crate" },
+          { text: "clone", target: "clone-module" },
+          { text: "Clone", target: "clone-trait" }
+        ],
+        parent: [{ text: "core::clone::Clone", target: "clone-trait" }],
+        children: [],
+        defaultProduct: "signature",
+        products: {
+          identity: {
+            label: "Identity",
+            query: "retained NavigationTarget::External",
+            title: "External symbol identity",
+            type: "SymExt",
+            description: "The metadata identity remains separate from all products requested for it.",
+            tree: [externalIdentity("Fn", "core::clone::Clone::clone_from")],
+          },
+          signature: {
+            label: "Signature",
+            query: "FnSymbol::sig",
+            title: "Lowered external function signature",
+            type: "Option<Stashed<Binder<FnSig>>>",
+            description: "The default method body is not imported. Only its lowered callable interface is available.",
+            tree: [externalFnSignature("clone-from-method", "core::clone::Clone::clone_from", "Mut", "ref-self", false)],
+          },
+        },
+      },
+      "clone-trait": {
+        path: "core::clone::Clone",
+        eyebrow: "External trait",
+        title: "Clone",
+        meta: "core · dependency metadata · external trait",
+        breadcrumbs: [{ text: "core", target: "core-crate" }, { text: "clone", target: "clone-module" }],
+        parent: [{ text: "core::clone", target: "clone-module" }],
+        children: [
+          { text: "core::clone::Clone::clone", target: "clone-method" },
+          { text: "core::clone::Clone::clone_from", target: "clone-from-method" }
+        ],
+        defaultProduct: "signature",
+        products: {
+          identity: {
+            label: "Identity",
+            query: "retained NavigationTarget::External",
+            title: "External symbol identity",
+            type: "SymExt",
+            description: "SymExt carries identity only; it does not contain the trait signature or associated items.",
+            tree: [externalIdentity("Trait", "core::clone::Clone")],
+          },
+          signature: {
+            label: "Signature",
+            query: "TraitSymbol::sig",
+            title: "Lowered external trait signature",
+            type: "Option<Stashed<TraitSignature>>",
+            description: "TraitSignature is Binder<TraitSignatureData>. Its Sized bound is a where-clause entry; associated items are a different query product.",
+            tree: [externalTraitSignature(
+              "clone-trait",
+              "core::clone::Clone",
+              [{ target: "sized-trait", path: "core::marker::Sized" }],
+              "Ordinary",
+            )],
+          },
+          items: {
+            label: "Associated items",
+            query: "TraitSymbol::items",
+            title: "External trait items",
+            type: "Option<Stashed<TraitItems>>",
+            description: "Item-name discovery is separate from both the trait signature and each associated function signature.",
+            tree: [externalTraitItems()],
+          },
+        },
+      },
+      "clone-module": {
+        path: "core::clone",
+        eyebrow: "External module",
+        title: "clone",
+        meta: "core · dependency metadata · external module",
+        breadcrumbs: [{ text: "core", target: "core-crate" }],
+        parent: [{ text: "core", target: "core-crate" }],
+        children: [{ text: "core::clone::Clone", target: "clone-trait" }],
+        defaultProduct: "items",
+        products: {
+          identity: {
+            label: "Identity",
+            query: "retained NavigationTarget::External",
+            title: "External symbol identity",
+            type: "SymExt",
+            description: "The module is represented by the same external reference shape as every other dependency definition.",
+            tree: [externalIdentity("Mod", "core::clone")],
+          },
+          items: {
+            label: "Module items",
+            query: "SymExt::expanded_module_items",
+            title: "Expanded external module items",
+            type: "Vec<Symbol>",
+            description: "The query returns the module's represented metadata children. This prototype bounds the rendering explicitly instead of claiming the shown branch is the whole result.",
+            tree: [externalModuleItems([
+              { symbolData: "TraitSymbol", symbolKind: "TraitSymbol", extKind: "Trait", path: "core::clone::Clone", target: "clone-trait" },
+            ])],
+          },
+        },
+      },
+      "sized-trait": {
+        path: "core::marker::Sized",
+        eyebrow: "External trait",
+        title: "Sized",
+        meta: "core · dependency metadata · external trait",
+        breadcrumbs: [{ text: "core", target: "core-crate" }, { text: "marker" }],
+        parent: [{ text: "core::marker" }],
+        children: [],
+        defaultProduct: "signature",
+        products: {
+          identity: {
+            label: "Identity",
+            query: "retained NavigationTarget::External",
+            title: "External symbol identity",
+            type: "SymExt",
+            description: "The identity reached from Clone's where-clause remains the metadata definition, not its display path.",
+            tree: [externalIdentity("Trait", "core::marker::Sized")],
+          },
+          signature: {
+            label: "Signature",
+            query: "TraitSymbol::sig",
+            title: "Lowered external trait signature",
+            type: "Option<Stashed<TraitSignature>>",
+            description: "The lang-item distinction is represented explicitly by TraitSemantics::Sized.",
+            tree: [externalTraitSignature("sized-trait", "core::marker::Sized", [], "Sized")],
+          },
+        },
+      },
+      "core-crate": {
+        path: "core",
+        eyebrow: "External crate",
+        title: "core",
+        meta: "dependency metadata · external crate root",
+        breadcrumbs: [],
+        parent: [],
+        children: [{ text: "core::clone", target: "clone-module" }],
+        defaultProduct: "items",
+        products: {
+          identity: {
+            label: "Identity",
+            query: "retained NavigationTarget::External",
+            title: "External crate-root identity",
+            type: "SymExt",
+            description: "Sage represents an external crate root as DefIndex(0) with module kind; the crate number remains session-local.",
+            tree: [externalIdentity("Mod", "core")],
+          },
+          items: {
+            label: "Root items",
+            query: "SymExt::expanded_module_items",
+            title: "Expanded external root items",
+            type: "Vec<Symbol>",
+            description: "Opening this product requests the root module's actual child query. The bounded mockup shows the navigated branch and an explicit truncation node.",
+            tree: [externalModuleItems([
+              { symbolData: "ModSymbol", symbolKind: "ModSymbol", extKind: "Mod", path: "core::clone", target: "clone-module" },
+            ])],
+          },
+        },
+      }
+    };
+
+    let currentSymbol = "local-home";
+    const symbolHistory = [];
+    const localSymbolView = document.getElementById("local-symbol-view");
+    const linkedLocalSymbolView = document.getElementById("linked-local-symbol-view");
+    const externalSymbolView = document.getElementById("external-symbol-view");
+    const navigationBack = document.getElementById("navigation-back");
+    const navigationHome = document.getElementById("navigation-home");
+
+    function appendSymbolLinks(container, links, emptyText) {
+      container.replaceChildren();
+      if (!links.length) {
+        container.textContent = emptyText;
+        return;
+      }
+      links.forEach(item => {
+        if (item.target) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "symbol-reference";
+          button.dataset.symbolRef = item.target;
+          button.textContent = item.text;
+          container.append(button);
+        } else {
+          const text = document.createElement("span");
+          text.textContent = item.text;
+          container.append(text);
+        }
+      });
+      wireSymbolReferences(container);
+    }
+
+    function renderReflectedNode(node) {
+      const item = document.createElement("li");
+      const hasChildren = Array.isArray(node.children) && node.children.length > 0;
+      const row = document.createElement(hasChildren ? "summary" : "div");
+      if (!hasChildren) row.className = "ir-leaf";
+
+      if (node.field) {
+        const field = document.createElement("span");
+        field.className = "ir-field";
+        field.textContent = node.field;
+        row.append(field);
+      }
+      const kind = document.createElement("span");
+      kind.className = "ir-node-kind";
+      kind.textContent = node.kind;
+      row.append(kind);
+      if (node.value !== undefined) {
+        if (node.target) {
+          const reference = document.createElement("button");
+          reference.type = "button";
+          reference.className = "symbol-reference";
+          reference.dataset.symbolRef = node.target;
+          reference.textContent = node.value;
+          row.append(reference);
+        } else {
+          const value = document.createElement("span");
+          value.className = "ir-value";
+          value.textContent = node.value;
+          row.append(value);
+        }
+      }
+
+      if (!hasChildren) {
+        item.append(row);
+        return item;
+      }
+
+      const details = document.createElement("details");
+      details.open = Boolean(node.open);
+      details.append(row);
+      const children = document.createElement("ul");
+      node.children.forEach(child => children.append(renderReflectedNode(child)));
+      details.append(children);
+      item.append(details);
+      return item;
+    }
+
+    function showExternalProduct(symbol, productKey) {
+      const product = symbol.products[productKey] || symbol.products[symbol.defaultProduct];
+      document.getElementById("external-query").textContent = product.query;
+      document.getElementById("external-artifact-title").textContent = product.title;
+      document.getElementById("external-artifact-type").textContent = product.type;
+      document.getElementById("external-description").textContent = product.description;
+      const structure = document.getElementById("external-structure");
+      structure.replaceChildren(...product.tree.map(renderReflectedNode));
+      wireSymbolReferences(structure);
+      document.querySelectorAll("#external-product-tabs .artifact-tab").forEach(tab => {
+        tab.classList.toggle("active", tab.dataset.externalProduct === productKey);
+      });
+    }
+
+    function updateNavigation() {
+      navigationBack.disabled = symbolHistory.length === 0;
+      navigationHome.disabled = currentSymbol === "local-home";
+      const path = currentSymbol === "local-home"
+        ? "crate::db::DbDropGuard::db"
+        : (localSymbols[currentSymbol] || externalSymbols[currentSymbol]).path;
+      document.getElementById("navigation-location").textContent = path;
+    }
+
+    function showLocalSymbol(recordHistory = true) {
+      if (recordHistory && currentSymbol !== "local-home") symbolHistory.push(currentSymbol);
+      currentSymbol = "local-home";
+      localSymbolView.hidden = false;
+      linkedLocalSymbolView.hidden = true;
+      externalSymbolView.hidden = true;
+      updateNavigation();
+    }
+
+    function showLinkedLocalSymbol(key, recordHistory = true) {
+      const symbol = localSymbols[key];
+      if (!symbol) return;
+      if (recordHistory && currentSymbol !== key) symbolHistory.push(currentSymbol);
+      currentSymbol = key;
+      localSymbolView.hidden = true;
+      linkedLocalSymbolView.hidden = false;
+      externalSymbolView.hidden = true;
+      document.getElementById("linked-local-eyebrow").textContent = symbol.eyebrow;
+      document.getElementById("linked-local-title").textContent = symbol.title;
+      document.getElementById("linked-local-meta").textContent = symbol.meta;
+      document.getElementById("linked-local-query").textContent = symbol.query;
+      document.getElementById("linked-local-artifact-title").textContent = symbol.artifactTitle;
+      document.getElementById("linked-local-artifact-type").textContent = symbol.artifactType;
+      document.getElementById("linked-local-description").textContent = symbol.description;
+      document.getElementById("linked-local-structure").textContent = symbol.structure;
+      appendSymbolLinks(document.getElementById("linked-local-parent"), symbol.parent, "No represented parent");
+      appendSymbolLinks(document.getElementById("linked-local-children"), symbol.children, "No represented children");
+      updateNavigation();
+    }
+
+    function showExternalSymbol(key, recordHistory = true) {
+      const symbol = externalSymbols[key];
+      if (!symbol) return;
+      if (recordHistory && currentSymbol !== key) symbolHistory.push(currentSymbol);
+      currentSymbol = key;
+      localSymbolView.hidden = true;
+      linkedLocalSymbolView.hidden = true;
+      externalSymbolView.hidden = false;
+      document.getElementById("external-eyebrow").textContent = symbol.eyebrow;
+      document.getElementById("external-title").textContent = symbol.title;
+      document.getElementById("external-meta").textContent = symbol.meta;
+      const productTabs = document.getElementById("external-product-tabs");
+      productTabs.replaceChildren();
+      Object.entries(symbol.products).forEach(([productKey, product]) => {
+        const tab = document.createElement("button");
+        tab.type = "button";
+        tab.className = "artifact-tab";
+        tab.dataset.externalProduct = productKey;
+        tab.textContent = product.label;
+        tab.addEventListener("click", () => showExternalProduct(symbol, productKey));
+        productTabs.append(tab);
+      });
+      showExternalProduct(symbol, symbol.defaultProduct);
+      appendSymbolLinks(document.getElementById("external-parent"), symbol.parent, "No represented parent");
+      appendSymbolLinks(document.getElementById("external-children"), symbol.children, "No represented children");
+
+      const breadcrumbs = document.getElementById("external-breadcrumbs");
+      breadcrumbs.replaceChildren();
+      symbol.breadcrumbs.forEach((item, index) => {
+        if (index) {
+          const separator = document.createElement("span");
+          separator.textContent = "›";
+          breadcrumbs.append(separator);
+        }
+        if (item.target) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "symbol-reference";
+          button.dataset.symbolRef = item.target;
+          button.textContent = item.text;
+          breadcrumbs.append(button);
+        } else {
+          breadcrumbs.append(document.createTextNode(item.text));
+        }
+      });
+      wireSymbolReferences(breadcrumbs);
+      updateNavigation();
+    }
+
+    function wireSymbolReferences(root = document) {
+      root.querySelectorAll("[data-symbol-ref]").forEach(link => {
+        if (link.dataset.symbolWired) return;
+        link.dataset.symbolWired = "true";
+        link.addEventListener("click", event => {
+          event.stopPropagation();
+          const target = link.dataset.symbolRef;
+          if (target === "local-home") showLocalSymbol();
+          else if (localSymbols[target]) showLinkedLocalSymbol(target);
+          else showExternalSymbol(target);
+        });
+      });
+    }
+
+    navigationBack.addEventListener("click", () => {
+      const previous = symbolHistory.pop();
+      if (!previous) return;
+      if (previous === "local-home") showLocalSymbol(false);
+      else if (localSymbols[previous]) showLinkedLocalSymbol(previous, false);
+      else showExternalSymbol(previous, false);
+    });
+    navigationHome.addEventListener("click", () => showLocalSymbol());
+
+    let currentArtifact = { key: "body", view: "tree" };
+    const code = document.getElementById("artifact-code");
+    const concreteTree = document.getElementById("concrete-tree");
+    const bodyTree = document.getElementById("body-tree");
+    const signatureTree = document.getElementById("signature-tree");
+
+    function showArtifact(key) {
+      const artifact = artifacts[key] || artifacts.body;
+      currentArtifact.key = key;
+      document.getElementById("artifact-title").textContent = artifact.title;
+      document.getElementById("artifact-type").textContent = artifact.type;
+      document.getElementById("artifact-description").textContent = artifact.description;
+      document.getElementById("footer-origin").textContent = artifact.origin;
+      document.getElementById("footer-complete").textContent = artifact.complete;
+      document.getElementById("footer-diagnostics").textContent = artifact.diagnostics;
+      const showConcreteTree = key === "concrete" && currentArtifact.view === "tree";
+      const showBodyTree = key === "body" && currentArtifact.view === "tree";
+      const showSignatureTree = key === "signature" && currentArtifact.view === "tree";
+      concreteTree.hidden = !showConcreteTree;
+      bodyTree.hidden = !showBodyTree;
+      signatureTree.hidden = !showSignatureTree;
+      code.hidden = showConcreteTree || showBodyTree || showSignatureTree;
+      code.textContent = artifact[currentArtifact.view === "structural" ? "structural" : "readable"];
+
+      document.querySelectorAll(".artifact-tab").forEach(tab => {
+        tab.classList.toggle("active", tab.dataset.artifact === key);
+      });
+    }
+
+    document.querySelectorAll("[data-artifact]").forEach(element => {
+      element.addEventListener("click", () => {
+        showArtifact(element.dataset.artifact);
+        if (element.classList.contains("event")) {
+          document.querySelectorAll(".event").forEach(event => event.classList.remove("active"));
+          element.classList.add("active");
+        }
+      });
+    });
+
+    function setView(view) {
+      currentArtifact.view = view;
+      document.getElementById("tree-view").classList.toggle("active", view === "tree");
+      document.getElementById("structural-view").classList.toggle("active", view === "structural");
+      showArtifact(currentArtifact.key);
+    }
+    document.getElementById("tree-view").addEventListener("click", () => setView("tree"));
+    document.getElementById("structural-view").addEventListener("click", () => setView("structural"));
+
+    const executionSearch = document.getElementById("execution-search");
+    const eventFilter = document.getElementById("event-filter");
+    function applyExecutionFilter() {
+      const terms = executionSearch.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      const kind = eventFilter.value;
+      const events = [...document.querySelectorAll(".event")];
+      const directMatches = [];
+      events.forEach(item => {
+        const textMatches = terms.every(term => item.textContent.toLowerCase().includes(term));
+        const kindMatches = kind === "all" || item.dataset.kind === kind;
+        const matches = textMatches && kindMatches;
+        item.classList.toggle("filter-hidden", !matches);
+        if (matches) directMatches.push(item);
+      });
+
+      directMatches.forEach(item => {
+        let group = item.parentElement;
+        while (group?.classList.contains("event-children")) {
+          group.classList.remove("collapsed");
+          const parent = group.previousElementSibling;
+          if (!parent?.classList.contains("event")) break;
+          parent.classList.remove("filter-hidden");
+          group = parent.parentElement;
+        }
+      });
+
+      const status = document.getElementById("execution-filter-status");
+      const filtering = terms.length > 0 || kind !== "all";
+      status.textContent = filtering ? `${directMatches.length} matching operation${directMatches.length === 1 ? "" : "s"}` : `${events.length} operations in this request`;
+      status.classList.toggle("empty", filtering && directMatches.length === 0);
+    }
+    executionSearch.addEventListener("input", applyExecutionFilter);
+    eventFilter.addEventListener("change", applyExecutionFilter);
+
+    function setBranch(toggle, expanded) {
+      const children = document.getElementById(toggle.dataset.target);
+      children.classList.toggle("collapsed", !expanded);
+      toggle.textContent = expanded ? "▼" : "▶";
+      toggle.setAttribute("aria-expanded", String(expanded));
+    }
+
+    document.querySelectorAll(".branch-toggle").forEach(toggle => {
+      const toggleBranch = event => {
+        event.stopPropagation();
+        setBranch(toggle, toggle.getAttribute("aria-expanded") !== "true");
+      };
+      toggle.addEventListener("click", toggleBranch);
+      toggle.addEventListener("keydown", event => {
+        if (event.key === "Enter" || event.key === " ") toggleBranch(event);
+      });
+    });
+
+    document.getElementById("expand-all").addEventListener("click", () => {
+      document.querySelectorAll(".branch-toggle").forEach(toggle => setBranch(toggle, true));
+    });
+    document.getElementById("collapse-all").addEventListener("click", () => {
+      document.querySelectorAll(".branch-toggle").forEach(toggle => setBranch(toggle, false));
+    });
+
+    const workspace = document.querySelector(".workspace");
+    const tracePanel = document.getElementById("trace-panel");
+    const traceResizer = document.getElementById("trace-resizer");
+    traceResizer.addEventListener("pointerdown", event => {
+      traceResizer.setPointerCapture(event.pointerId);
+      traceResizer.classList.add("dragging");
+    });
+    traceResizer.addEventListener("pointermove", event => {
+      if (!traceResizer.hasPointerCapture(event.pointerId)) return;
+      const bounds = workspace.getBoundingClientRect();
+      const width = Math.max(300, Math.min(bounds.width - 560, bounds.right - event.clientX));
+      workspace.style.setProperty("--trace-width", `${width}px`);
+    });
+    traceResizer.addEventListener("pointerup", event => {
+      traceResizer.releasePointerCapture(event.pointerId);
+      traceResizer.classList.remove("dragging");
+    });
+
+    function updateGrowButtons() {
+      document.querySelectorAll("[data-grow-target]").forEach(button => {
+        const target = document.getElementById(button.dataset.growTarget);
+        const grown = document.fullscreenElement === target || target.classList.contains("grown-panel");
+        button.textContent = grown ? "↙" : "↗";
+        button.title = grown ? "Restore panel" : "Grow panel";
+        button.setAttribute("aria-label", grown ? "Restore panel" : "Grow panel");
+      });
+    }
+
+    document.querySelectorAll("[data-grow-target]").forEach(button => {
+      button.addEventListener("click", async event => {
+        event.stopPropagation();
+        const target = document.getElementById(button.dataset.growTarget);
+        if (document.fullscreenElement === target) {
+          await document.exitFullscreen();
+        } else if (target.classList.contains("grown-panel")) {
+          target.classList.remove("grown-panel");
+        } else if (target.requestFullscreen) {
+          try {
+            await target.requestFullscreen();
+          } catch (_) {
+            document.querySelectorAll(".grown-panel").forEach(panel => panel.classList.remove("grown-panel"));
+            target.classList.add("grown-panel");
+          }
+        } else {
+          document.querySelectorAll(".grown-panel").forEach(panel => panel.classList.remove("grown-panel"));
+          target.classList.add("grown-panel");
+        }
+        updateGrowButtons();
+      });
+    });
+    document.addEventListener("fullscreenchange", updateGrowButtons);
+    document.addEventListener("keydown", event => {
+      if (event.key !== "Escape" || document.fullscreenElement) return;
+      document.querySelectorAll(".grown-panel").forEach(panel => panel.classList.remove("grown-panel"));
+      updateGrowButtons();
+    });
+
+    const symbolSearch = document.getElementById("symbol-search");
+    function setSymbolBranch(toggle, expanded) {
+      const children = document.getElementById(toggle.dataset.target);
+      children.classList.toggle("collapsed", !expanded);
+      toggle.textContent = expanded ? "▼" : "▶";
+      toggle.setAttribute("aria-expanded", String(expanded));
+    }
+
+    document.querySelectorAll(".symbol-toggle").forEach(toggle => {
+      const toggleBranch = event => {
+        event.stopPropagation();
+        setSymbolBranch(toggle, toggle.getAttribute("aria-expanded") !== "true");
+      };
+      toggle.addEventListener("click", toggleBranch);
+      toggle.addEventListener("keydown", event => {
+        if (event.key === "Enter" || event.key === " ") toggleBranch(event);
+      });
+    });
+
+    function applySymbolFilter() {
+      const terms = symbolSearch.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      const rows = [...document.querySelectorAll(".tree [data-search]")];
+      const matches = [];
+      rows.forEach(row => {
+        const visible = terms.every(term => row.dataset.search.includes(term));
+        row.classList.toggle("filter-hidden", !visible);
+        if (visible) matches.push(row);
+      });
+
+      if (terms.length) {
+        matches.forEach(row => {
+          let group = row.parentElement;
+          while (group?.classList.contains("symbol-children")) {
+            const parent = group.previousElementSibling;
+            if (!parent?.classList.contains("tree-label")) break;
+            parent.classList.remove("filter-hidden");
+            const toggle = parent.querySelector(".symbol-toggle");
+            if (toggle) setSymbolBranch(toggle, true);
+            group = parent.parentElement;
+          }
+        });
+      }
+
+      const status = document.getElementById("symbol-filter-status");
+      status.textContent = terms.length ? `${matches.length} matching symbol${matches.length === 1 ? "" : "s"}` : "Showing the example symbol tree";
+      status.classList.toggle("empty", terms.length > 0 && matches.length === 0);
+    }
+    symbolSearch.addEventListener("input", applySymbolFilter);
+
+    document.querySelectorAll(".symbol:not(.active)").forEach(symbol => {
+      symbol.addEventListener("click", () => {
+        symbolSearch.value = "";
+        applySymbolFilter();
+      });
+    });
+
+    wireSymbolReferences();
+    showArtifact("body");
+  </script>
+</body>
+</html>

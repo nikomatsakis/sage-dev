@@ -19,6 +19,7 @@ use crate::ty::{
     TraitSignature, TraitSignatureData, Ty, WherePredicate,
 };
 
+// ANCHOR: architecture_external_trait_signature_query
 #[salsa::tracked]
 pub fn external_trait_signature<'db>(
     db: &'db dyn crate::Db,
@@ -29,6 +30,7 @@ pub fn external_trait_signature<'db>(
         .trait_signature(trait_sym.crate_num(db), trait_sym.def_index(db))?;
     Some(lower_trait_signature(db, trait_sym, raw))
 }
+// ANCHOR_END: architecture_external_trait_signature_query
 
 #[salsa::tracked]
 pub fn external_adt_is_always_sized<'db>(db: &'db dyn crate::Db, adt: SymExt<'db>) -> Option<bool> {

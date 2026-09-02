@@ -10,7 +10,7 @@ use crate::span::RelativeSpan;
 
 pub type FnCst<'db> = Stashed<Ptr<FnCstData<'db>>>;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct FnCstData<'db> {
     pub attrs: Slice<AttrCst<'db>>,
     pub name: Name<'db>,
@@ -22,7 +22,7 @@ pub struct FnCstData<'db> {
     pub span: RelativeSpan,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct ParamCst<'db> {
     pub name: Option<Name<'db>>,
     pub ty: Ptr<TypeCst<'db>>,
@@ -30,7 +30,7 @@ pub struct ParamCst<'db> {
     pub span: RelativeSpan,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub enum ReceiverCst<'db> {
     Value {
         mutable_binding: bool,

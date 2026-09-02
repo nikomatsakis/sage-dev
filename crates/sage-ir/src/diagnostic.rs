@@ -11,14 +11,14 @@ use crate::span::{AbsoluteSpan, RelativeSpan};
 // Core types
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, sage_reflect::Reflect)]
 pub enum Severity {
     Error,
     Warning,
 }
 
 /// A source location, resolvable to an absolute file position at rendering time.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, sage_reflect::Reflect)]
 pub enum Span<'db> {
     /// A byte range within a symbol's body.
     Relative(LocalModItemSym<'db>, RelativeSpan),
@@ -40,13 +40,13 @@ impl<'db> Span<'db> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, sage_reflect::Reflect)]
 pub enum LabelStyle {
     Primary,
     Secondary,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, sage_reflect::Reflect)]
 pub struct Label<'db> {
     pub span: Span<'db>,
     pub message: String,
@@ -54,7 +54,7 @@ pub struct Label<'db> {
 }
 
 /// A single diagnostic emitted by sage.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, sage_reflect::Reflect)]
 pub struct Diagnostic<'db> {
     pub severity: Severity,
     pub span: Span<'db>,
@@ -119,7 +119,7 @@ impl<'db> Diagnostic<'db> {
 /// diagnostic into a collection. This guarantees at the type level that
 /// every `Ty::Error(e)` and `Res::Error(e)` was preceded by a user-visible
 /// diagnostic message.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, sage_reflect::Reflect)]
 pub struct ErrorReported(());
 
 impl sage_stash::StashDirect for ErrorReported {}

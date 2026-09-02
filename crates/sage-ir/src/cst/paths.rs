@@ -7,7 +7,7 @@ use crate::resolve::{Namespace, Resolution};
 use crate::span::RelativeSpan;
 use crate::ty::Ty;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub enum Path<'db> {
     /// Explicit anchor keyword like `self::foo::bar`.
     Anchored(PathAnchor<'db>, Slice<PathSegment<'db>>),
@@ -15,20 +15,20 @@ pub enum Path<'db> {
     Relative(PathSegment<'db>, Slice<PathSegment<'db>>),
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct PathSegment<'db> {
     pub name: Name<'db>,
     pub type_args: Slice<TypeCst<'db>>,
     pub span: RelativeSpan,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct PathAnchor<'db> {
     pub kind: PathAnchorKind<'db>,
     pub span: RelativeSpan,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub enum PathAnchorKind<'db> {
     /// `::foo` — extern crate lookup. Parser consumes `::` + first ident together.
     ExternCrate(Name<'db>),

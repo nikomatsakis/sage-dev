@@ -6,7 +6,7 @@ use crate::span::RelativeSpan;
 
 pub type MacroInvocationCst<'db> = Stashed<Ptr<MacroInvocationCstData<'db>>>;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct MacroInvocationCstData<'db> {
     pub attrs: Slice<AttrCst<'db>>,
     pub path: Ptr<Path<'db>>,

@@ -12,7 +12,7 @@ use crate::span::RelativeSpan;
 
 pub type TraitCst<'db> = Stashed<Ptr<TraitCstData<'db>>>;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub struct TraitCstData<'db> {
     pub attrs: Slice<AttrCst<'db>>,
     pub name: Name<'db>,
@@ -25,11 +25,20 @@ pub struct TraitCstData<'db> {
     pub span: RelativeSpan,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 pub enum TraitItemCst<'db> {
-    Fn(Ptr<FnCstData<'db>>),
-    Type(Ptr<TypeAliasCstData<'db>>),
-    Const(Ptr<ConstCstData<'db>>),
+    Fn {
+        cst: Ptr<FnCstData<'db>>,
+        placement: RelativeSpan,
+    },
+    Type {
+        cst: Ptr<TypeAliasCstData<'db>>,
+        placement: RelativeSpan,
+    },
+    Const {
+        cst: Ptr<ConstCstData<'db>>,
+        placement: RelativeSpan,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -86,9 +95,9 @@ impl<'db> ToTokens<'db> for TraitCstData<'db> {
 impl<'db> ToTokens<'db> for TraitItemCst<'db> {
     fn to_tokens(&self, ctx: &TokenCtx<'_, 'db>, sink: &mut dyn TokenSink) {
         match *self {
-            TraitItemCst::Fn(ptr) => ctx.stash[ptr].to_tokens(ctx, sink),
-            TraitItemCst::Type(ptr) => ctx.stash[ptr].to_tokens(ctx, sink),
-            TraitItemCst::Const(ptr) => ctx.stash[ptr].to_tokens(ctx, sink),
+            TraitItemCst::Fn { cst, .. } => ctx.stash[cst].to_tokens(ctx, sink),
+            TraitItemCst::Type { cst, .. } => ctx.stash[cst].to_tokens(ctx, sink),
+            TraitItemCst::Const { cst, .. } => ctx.stash[cst].to_tokens(ctx, sink),
         }
     }
 }

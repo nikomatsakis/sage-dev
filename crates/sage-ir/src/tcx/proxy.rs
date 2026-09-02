@@ -16,6 +16,11 @@ pub enum TcxRequest {
         name: String,
         reply: mpsc::Sender<Option<CrateNum>>,
     },
+    ExternCrateWithDisambiguator {
+        name: String,
+        crate_disambiguator: u64,
+        reply: mpsc::Sender<Option<CrateNum>>,
+    },
     ModuleChildren {
         crate_num: CrateNum,
         def_index: DefIndex,
@@ -42,6 +47,11 @@ pub enum TcxRequest {
         reply: mpsc::Sender<Option<String>>,
     },
     StructuredDefPath {
+        crate_num: CrateNum,
+        def_index: DefIndex,
+        reply: mpsc::Sender<Option<ExternalDefPath>>,
+    },
+    CanonicalDefPath {
         crate_num: CrateNum,
         def_index: DefIndex,
         reply: mpsc::Sender<Option<ExternalDefPath>>,
@@ -127,20 +137,34 @@ pub enum TcxRequest {
 pub struct ProxyTcxDb {
     tx: mpsc::Sender<TcxRequest>,
     log: Arc<Mutex<Vec<String>>>,
+    inspection_log: Arc<Mutex<Vec<crate::db::InspectionEvent>>>,
 }
 
 impl ProxyTcxDb {
-    pub fn new(tx: mpsc::Sender<TcxRequest>, log: Arc<Mutex<Vec<String>>>) -> Self {
-        Self { tx, log }
+    pub fn new(
+        tx: mpsc::Sender<TcxRequest>,
+        log: Arc<Mutex<Vec<String>>>,
+        inspection_log: Arc<Mutex<Vec<crate::db::InspectionEvent>>>,
+    ) -> Self {
+        Self {
+            tx,
+            log,
+            inspection_log,
+        }
+    }
+
+    fn record(&self, operation: String) {
+        self.log.lock().unwrap().push(operation.clone());
+        self.inspection_log
+            .lock()
+            .unwrap()
+            .push(crate::db::InspectionEvent::ExternalMetadata { operation });
     }
 }
 
 impl TcxDb for ProxyTcxDb {
     fn extern_crate(&self, name: &str) -> Option<CrateNum> {
-        self.log
-            .lock()
-            .unwrap()
-            .push(format!("tcx::extern_crate(\"{name}\")"));
+        self.record(format!("tcx::extern_crate(\"{name}\")"));
         let (reply, rx) = mpsc::channel();
         self.tx
             .send(TcxRequest::ExternCrate {
@@ -151,8 +175,27 @@ impl TcxDb for ProxyTcxDb {
         rx.recv().expect("TyCtxt thread hung up")
     }
 
+    fn extern_crate_with_disambiguator(
+        &self,
+        name: &str,
+        crate_disambiguator: u64,
+    ) -> Option<CrateNum> {
+        self.record(format!(
+            "tcx::extern_crate_with_disambiguator({name:?}, {crate_disambiguator:016x})"
+        ));
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::ExternCrateWithDisambiguator {
+                name: name.to_owned(),
+                crate_disambiguator,
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
     fn module_children(&self, crate_num: CrateNum, def_index: DefIndex) -> Vec<RawChild> {
-        self.log.lock().unwrap().push(format!(
+        self.record(format!(
             "tcx::module_children({}, {})",
             crate_num.0, def_index.0
         ));
@@ -168,10 +211,7 @@ impl TcxDb for ProxyTcxDb {
     }
 
     fn item_name(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<String> {
-        self.log
-            .lock()
-            .unwrap()
-            .push(format!("tcx::item_name({}, {})", crate_num.0, def_index.0));
+        self.record(format!("tcx::item_name({}, {})", crate_num.0, def_index.0));
         let (reply, rx) = mpsc::channel();
         self.tx
             .send(TcxRequest::ItemName {
@@ -184,7 +224,7 @@ impl TcxDb for ProxyTcxDb {
     }
 
     fn is_builtin_derive(&self, crate_num: CrateNum, def_index: DefIndex) -> bool {
-        self.log.lock().unwrap().push(format!(
+        self.record(format!(
             "tcx::is_builtin_derive({}, {})",
             crate_num.0, def_index.0
         ));
@@ -200,10 +240,7 @@ impl TcxDb for ProxyTcxDb {
     }
 
     fn is_module(&self, crate_num: CrateNum, def_index: DefIndex) -> bool {
-        self.log
-            .lock()
-            .unwrap()
-            .push(format!("tcx::is_module({}, {})", crate_num.0, def_index.0));
+        self.record(format!("tcx::is_module({}, {})", crate_num.0, def_index.0));
         let (reply, rx) = mpsc::channel();
         self.tx
             .send(TcxRequest::IsModule {
@@ -216,6 +253,7 @@ impl TcxDb for ProxyTcxDb {
     }
 
     fn def_path(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<String> {
+        self.record(format!("tcx::def_path({}, {})", crate_num.0, def_index.0));
         let (reply, rx) = mpsc::channel();
         self.tx
             .send(TcxRequest::DefPath {
@@ -232,9 +270,33 @@ impl TcxDb for ProxyTcxDb {
         crate_num: CrateNum,
         def_index: DefIndex,
     ) -> Option<ExternalDefPath> {
+        self.record(format!(
+            "tcx::structured_def_path({}, {})",
+            crate_num.0, def_index.0
+        ));
         let (reply, rx) = mpsc::channel();
         self.tx
             .send(TcxRequest::StructuredDefPath {
+                crate_num,
+                def_index,
+                reply,
+            })
+            .expect("TyCtxt thread hung up");
+        rx.recv().expect("TyCtxt thread hung up")
+    }
+
+    fn canonical_def_path(
+        &self,
+        crate_num: CrateNum,
+        def_index: DefIndex,
+    ) -> Option<ExternalDefPath> {
+        self.record(format!(
+            "tcx::canonical_def_path({}, {})",
+            crate_num.0, def_index.0
+        ));
+        let (reply, rx) = mpsc::channel();
+        self.tx
+            .send(TcxRequest::CanonicalDefPath {
                 crate_num,
                 def_index,
                 reply,
@@ -248,7 +310,7 @@ impl TcxDb for ProxyTcxDb {
         crate_num: CrateNum,
         def_index: DefIndex,
     ) -> Option<RawTraitSignature> {
-        self.log.lock().unwrap().push(format!(
+        self.record(format!(
             "tcx::trait_signature({}, {})",
             crate_num.0, def_index.0
         ));
@@ -268,7 +330,7 @@ impl TcxDb for ProxyTcxDb {
         crate_num: CrateNum,
         def_index: DefIndex,
     ) -> Option<RawAssociatedItems> {
-        self.log.lock().unwrap().push(format!(
+        self.record(format!(
             "tcx::associated_items({}, {})",
             crate_num.0, def_index.0
         ));
@@ -284,7 +346,7 @@ impl TcxDb for ProxyTcxDb {
     }
 
     fn fn_signature(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<RawFnSignature> {
-        self.log.lock().unwrap().push(format!(
+        self.record(format!(
             "tcx::fn_signature({}, {})",
             crate_num.0, def_index.0
         ));
@@ -300,7 +362,7 @@ impl TcxDb for ProxyTcxDb {
     }
 
     fn adt_signature(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<RawAdtSignature> {
-        self.log.lock().unwrap().push(format!(
+        self.record(format!(
             "tcx::adt_signature({}, {})",
             crate_num.0, def_index.0
         ));
@@ -321,7 +383,7 @@ impl TcxDb for ProxyTcxDb {
         def_index: DefIndex,
         method_name: &str,
     ) -> Option<RawInherentMethodCandidates> {
-        self.log.lock().unwrap().push(format!(
+        self.record(format!(
             "tcx::inherent_method_candidates({}, {}, {:?})",
             crate_num.0, def_index.0, method_name
         ));
@@ -343,7 +405,7 @@ impl TcxDb for ProxyTcxDb {
         def_index: DefIndex,
         self_head: Option<RawSelfTypeHead>,
     ) -> Option<RawRelevantImpls> {
-        self.log.lock().unwrap().push(format!(
+        self.record(format!(
             "tcx::relevant_trait_impls({}, {}, {:?})",
             crate_num.0, def_index.0, self_head
         ));
@@ -360,7 +422,7 @@ impl TcxDb for ProxyTcxDb {
     }
 
     fn impl_signature(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<RawImplSignature> {
-        self.log.lock().unwrap().push(format!(
+        self.record(format!(
             "tcx::impl_signature({}, {})",
             crate_num.0, def_index.0
         ));
@@ -382,7 +444,7 @@ impl TcxDb for ProxyTcxDb {
         associated_crate_num: CrateNum,
         associated_def_index: DefIndex,
     ) -> Option<RawAssociatedTypeValue> {
-        self.log.lock().unwrap().push(format!(
+        self.record(format!(
             "tcx::associated_type_value({}, {}, {}, {})",
             impl_crate_num.0, impl_def_index.0, associated_crate_num.0, associated_def_index.0,
         ));
@@ -400,7 +462,7 @@ impl TcxDb for ProxyTcxDb {
     }
 
     fn adt_is_always_sized(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<bool> {
-        self.log.lock().unwrap().push(format!(
+        self.record(format!(
             "tcx::adt_is_always_sized({}, {})",
             crate_num.0, def_index.0
         ));
@@ -416,7 +478,7 @@ impl TcxDb for ProxyTcxDb {
     }
 
     fn adt_is_fundamental(&self, crate_num: CrateNum, def_index: DefIndex) -> Option<bool> {
-        self.log.lock().unwrap().push(format!(
+        self.record(format!(
             "tcx::adt_is_fundamental({}, {})",
             crate_num.0, def_index.0
         ));
@@ -437,6 +499,10 @@ impl TcxDb for ProxyTcxDb {
         def_index: DefIndex,
         item_source: &str,
     ) -> Option<String> {
+        self.record(format!(
+            "tcx::expand_proc_macro_derive({}, {})",
+            crate_num.0, def_index.0
+        ));
         let (reply, rx) = mpsc::channel();
         self.tx
             .send(TcxRequest::ExpandDerive {
@@ -455,6 +521,10 @@ impl TcxDb for ProxyTcxDb {
         def_index: DefIndex,
         input_tokens: &str,
     ) -> Option<String> {
+        self.record(format!(
+            "tcx::expand_proc_macro_bang({}, {})",
+            crate_num.0, def_index.0
+        ));
         let (reply, rx) = mpsc::channel();
         self.tx
             .send(TcxRequest::ExpandBang {
@@ -474,6 +544,10 @@ impl TcxDb for ProxyTcxDb {
         attr_args: &str,
         item_source: &str,
     ) -> Option<String> {
+        self.record(format!(
+            "tcx::expand_proc_macro_attr({}, {})",
+            crate_num.0, def_index.0
+        ));
         let (reply, rx) = mpsc::channel();
         self.tx
             .send(TcxRequest::ExpandAttr {

@@ -189,6 +189,7 @@ impl<'db> RecordErr<'db> for Result<(), TypeError<'db>> {
 /// Shared inference state — one per function body, eventually shared by all
 /// concurrent tasks. Protected by `RefCell` since the executor is
 /// single-threaded and cooperative.
+// ANCHOR: architecture_infer_context
 pub struct InferCtx<'check, 'db> {
     pub db: &'db dyn crate::Db,
     pub(crate) source_stash: &'check Stash,
@@ -214,9 +215,15 @@ pub struct InferCtx<'check, 'db> {
     // Processed by block_on between polls (avoids double-borrow of runtime).
     pending_wakes: RefCell<Vec<InferVarIndex>>,
 
+    // Inference targets reached only from `!` coercion sites. Other
+    // constraints get first choice; any still-unbound target falls back to
+    // `!` before unresolved-variable diagnostics are emitted.
+    deferred_never_targets: RefCell<Vec<Ptr<Ty<'db>>>>,
+
     // Diagnostic accumulator
     diagnostics: RefCell<Vec<Diagnostic<'db>>>,
 }
+// ANCHOR_END: architecture_infer_context
 
 impl<'check, 'db> InferCtx<'check, 'db> {
     pub fn new(
@@ -259,6 +266,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
             assumptions_complete: RefCell::new(true),
             obligations: RefCell::new(ObligationManager::default()),
             pending_wakes: RefCell::new(Vec::new()),
+            deferred_never_targets: RefCell::new(Vec::new()),
             diagnostics: RefCell::new(Vec::new()),
         }
     }
@@ -556,10 +564,14 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         drop(stash);
 
         match (a_data, b_data) {
-            (Ty::Never, _) => Ok(()),
-            (Ty::Ref(inner_a, m_a, _), Ty::Ref(inner_b, m_b, _)) if m_a == m_b => {
-                self.require_sub(inner_a, inner_b, span)
-            }
+            (
+                Ty::Ref(inner_a, crate::cst::Mutability::Shared, _),
+                Ty::Ref(inner_b, crate::cst::Mutability::Shared, _),
+            ) => self.require_sub(inner_a, inner_b, span),
+            (
+                Ty::Ref(inner_a, crate::cst::Mutability::Mut, _),
+                Ty::Ref(inner_b, crate::cst::Mutability::Mut, _),
+            ) => self.require_eq(inner_a, inner_b, span),
             (
                 Ty::Bool
                 | Ty::Char
@@ -576,6 +588,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
                 | Ty::FnPtr(_, _)
                 | Ty::Param(_)
                 | Ty::InferVar(_)
+                | Ty::Never
                 | Ty::Error(_),
                 _,
             ) => self.require_eq(a_canon, b_canon, span),
@@ -588,7 +601,128 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         b: Ptr<Ty<'db>>,
         span: RelativeSpan,
     ) -> Result<(), TypeError<'db>> {
-        self.require_sub(a, b, span)
+        if self.is_never_to_any_coercion(a, b) {
+            self.defer_never_target_if_infer(b);
+            Ok(())
+        } else {
+            self.require_sub(a, b, span)
+        }
+    }
+
+    /// Relate an expression at a coercion site and materialize any selected
+    /// conversion in the typed tree.
+    pub fn coerce_expr(
+        &self,
+        expr: Ptr<TyExpr<'db>>,
+        target: Ptr<Ty<'db>>,
+        span: RelativeSpan,
+    ) -> Result<Ptr<TyExpr<'db>>, TypeError<'db>> {
+        let source = self.target_stash.borrow()[expr].ty;
+        let never_to_any = self.is_never_to_any_coercion(source, target);
+        if !never_to_any {
+            self.require_sub(source, target, span)?;
+        } else {
+            self.defer_never_target_if_infer(target);
+        }
+        if never_to_any {
+            let data = self.target_stash.borrow()[expr].data;
+            match data {
+                TyExprData::Block(statements, Some(tail)) => {
+                    let tail_span = self.target_stash.borrow()[tail].span;
+                    let tail = self.coerce_expr(tail, target, tail_span)?;
+                    Ok(self.alloc_expr(TyExprData::Block(statements, Some(tail)), target, span))
+                }
+                TyExprData::Literal(_)
+                | TyExprData::Path(_)
+                | TyExprData::Block(_, None)
+                | TyExprData::Call(_, _)
+                | TyExprData::ResolvedCall(_, _)
+                | TyExprData::MethodCall(_, _, _)
+                | TyExprData::Field(_, _)
+                | TyExprData::Binary(_, _, _)
+                | TyExprData::Unary(_, _)
+                | TyExprData::Deref(_)
+                | TyExprData::Ref(_, _)
+                | TyExprData::NeverToAny(_)
+                | TyExprData::If(_, _, _)
+                | TyExprData::IfLet(_, _, _, _)
+                | TyExprData::Match(_, _)
+                | TyExprData::Loop(_)
+                | TyExprData::While(_, _)
+                | TyExprData::WhileLet(_, _, _)
+                | TyExprData::For(_, _, _)
+                | TyExprData::Break(_)
+                | TyExprData::Continue
+                | TyExprData::Return(_)
+                | TyExprData::Assign(_, _)
+                | TyExprData::Await(_)
+                | TyExprData::Try(_)
+                | TyExprData::Closure(_, _)
+                | TyExprData::Tuple(_)
+                | TyExprData::Array(_)
+                | TyExprData::Index(_, _)
+                | TyExprData::Cast(_, _)
+                | TyExprData::StructLit(_, _)
+                | TyExprData::Range(_, _)
+                | TyExprData::MacroCall(_, _)
+                | TyExprData::Error(_)
+                | TyExprData::Unresolved(_)
+                | TyExprData::Missing => {
+                    Ok(self.alloc_expr(TyExprData::NeverToAny(expr), target, span))
+                }
+            }
+        } else {
+            Ok(expr)
+        }
+    }
+
+    pub fn coerce_expr_or_original(
+        &self,
+        expr: Ptr<TyExpr<'db>>,
+        target: Ptr<Ty<'db>>,
+        span: RelativeSpan,
+    ) -> Ptr<TyExpr<'db>> {
+        self.coerce_expr(expr, target, span)
+            .unwrap_or_else(|error| {
+                self.catch(error);
+                expr
+            })
+    }
+
+    pub fn coerce_expr_or_original_with_context(
+        &self,
+        expr: Ptr<TyExpr<'db>>,
+        target: Ptr<Ty<'db>>,
+        span: RelativeSpan,
+        error_context: ErrorContext,
+    ) -> Ptr<TyExpr<'db>> {
+        self.coerce_expr(expr, target, span)
+            .unwrap_or_else(|error| {
+                self.catch(error.with_context(error_context));
+                expr
+            })
+    }
+
+    fn is_never_to_any_coercion(&self, source: Ptr<Ty<'db>>, target: Ptr<Ty<'db>>) -> bool {
+        let (source, target) = {
+            let mut egraph = self.egraph.borrow_mut();
+            (
+                egraph.find_mut(Version::ROOT, source),
+                egraph.find_mut(Version::ROOT, target),
+            )
+        };
+        let stash = self.target_stash.borrow();
+        matches!(stash[source], Ty::Never) && !matches!(stash[target], Ty::Never)
+    }
+
+    fn defer_never_target_if_infer(&self, target: Ptr<Ty<'db>>) {
+        let target = self.egraph.borrow_mut().find_mut(Version::ROOT, target);
+        if matches!(self.target_stash.borrow()[target], Ty::InferVar(_)) {
+            let mut deferred = self.deferred_never_targets.borrow_mut();
+            if !deferred.contains(&target) {
+                deferred.push(target);
+            }
+        }
     }
 
     // ------------------------------------------------------------------
@@ -622,6 +756,20 @@ impl<'check, 'db> InferCtx<'check, 'db> {
             right,
         )
         .is_ok()
+    }
+
+    pub(crate) fn try_eq_or_never_in(
+        &self,
+        version: Version,
+        source: Ptr<Ty<'db>>,
+        target: Ptr<Ty<'db>>,
+    ) -> bool {
+        let source = self.egraph.borrow_mut().find_mut(version, source);
+        if matches!(self.target_stash.borrow()[source], Ty::Never) {
+            true
+        } else {
+            self.try_eq_in(version, source, target)
+        }
     }
 
     pub(crate) fn commit_branch(&self, version: Version) {
@@ -736,24 +884,20 @@ impl<'check, 'db> InferCtx<'check, 'db> {
                     // The main task is suspended. Flush wakes and drain
                     // background tasks — they may resolve the variable the
                     // main task is waiting on. If nothing moved, deadlock.
-                    let wakes_before = self.pending_wakes.borrow().len();
                     self.flush_and_drain();
                     let quiescent = self.runtime.borrow().is_quiescent()
                         && self.pending_wakes.borrow().is_empty();
-                    if quiescent {
-                        // Nothing running, nothing pending — if we just
-                        // flushed wakes, try once more (the main task
-                        // may have been unblocked). Otherwise, deadlock.
-                        if wakes_before == 0 && !notified.0.load(Ordering::Acquire) {
-                            if recover_at_quiescence {
-                                self.finalize();
-                                self.flush_and_drain();
-                                if notified.0.load(Ordering::Acquire) {
-                                    continue;
-                                }
+                    if quiescent && !notified.0.load(Ordering::Acquire) {
+                        if recover_at_quiescence {
+                            let blocking_variables =
+                                self.runtime.borrow().variables_waited_on_by(main_task_id);
+                            self.default_deferred_never_targets(Some(&blocking_variables));
+                            self.flush_and_drain();
+                            if notified.0.load(Ordering::Acquire) {
+                                continue;
                             }
-                            panic!("deadlock: main task pending with no runnable tasks");
                         }
+                        panic!("deadlock: main task pending with no runnable tasks");
                     }
                 }
             }
@@ -1540,9 +1684,45 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     // Finalization
     // ------------------------------------------------------------------
 
+    fn default_deferred_never_targets(&self, only: Option<&[InferVarIndex]>) {
+        let deferred_never_targets = self.deferred_never_targets.borrow().clone();
+        if deferred_never_targets.is_empty() {
+            return;
+        }
+
+        let never = self.target_stash.borrow_mut().alloc(Ty::Never);
+        for target in deferred_never_targets {
+            let target = self.egraph.borrow_mut().find_mut(Version::ROOT, target);
+            let Ty::InferVar(variable) = self.target_stash.borrow()[target] else {
+                continue;
+            };
+            if only.is_some_and(|variables| !variables.contains(&variable)) {
+                continue;
+            }
+            if !matches!(
+                self.egraph.borrow().get_bound(Version::ROOT, target),
+                Bound::None
+            ) {
+                continue;
+            }
+
+            let effects = try_unify(
+                &mut self.egraph.borrow_mut(),
+                &mut self.target_stash.borrow_mut(),
+                Version::ROOT,
+                target,
+                never,
+            )
+            .expect("deferred never fallback must bind an unconstrained variable");
+            self.publish_commit_effects(effects);
+        }
+    }
+
     pub fn finalize(&self) {
         // First consume every proof that current inference already enables.
         self.process_ready_obligations();
+
+        self.default_deferred_never_targets(None);
 
         let mut unresolved_vars = Vec::new();
 
@@ -1626,26 +1806,6 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         self.runtime.borrow_mut().drain();
     }
 
-    pub fn resolve_types(&self) {
-        let variables: Vec<_> = self
-            .egraph
-            .borrow()
-            .version_tree()
-            .visible_variables(Version::ROOT)
-            .collect();
-
-        let mut stash = self.target_stash.borrow_mut();
-        let mut egraph = self.egraph.borrow_mut();
-        for idx in variables {
-            let ty_ptr = stash.alloc(Ty::InferVar(idx));
-            let resolved = egraph.find_mut(Version::ROOT, ty_ptr);
-            if resolved != ty_ptr {
-                let resolved_ty = stash[resolved];
-                stash[ty_ptr] = resolved_ty;
-            }
-        }
-    }
-
     // ------------------------------------------------------------------
     // Finish — consumes self, produces CheckedBody
     // ------------------------------------------------------------------
@@ -1667,12 +1827,11 @@ impl<'check, 'db> InferCtx<'check, 'db> {
             self.pending_wakes.borrow().is_empty(),
             "body finished with unpublished inference wakes"
         );
-        let mut stash = self.target_stash.into_inner();
         let local_vars = self.local_vars.into_inner();
-        let locals = stash.alloc_slice(&local_vars);
-        let body_data = stash.alloc(TyBodyData { root, locals, span });
+        let source = self.target_stash.into_inner();
+        let egraph = self.egraph.into_inner();
         CheckedBody {
-            body: Stashed::new(stash, body_data),
+            body: super::finalize::finalize_typed_body(&source, &egraph, root, &local_vars, span),
             diagnostics: self.diagnostics.into_inner(),
         }
     }

@@ -2,7 +2,7 @@ use std::any::TypeId;
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::num::NonZeroU32;
-use std::ops::{Index, IndexMut};
+use std::ops::Index;
 #[cfg(debug_assertions)]
 use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
@@ -203,6 +203,14 @@ impl<T> Hash for Ptr<T> {
     }
 }
 
+impl<T> Ptr<T> {
+    /// Stable within one stash value; used to identify recursive reentry while
+    /// reflecting that stash. This is not a semantic or cross-revision identity.
+    pub fn reflection_index(self) -> u32 {
+        self.index.get()
+    }
+}
+
 impl<'db, T: StashData<'db> + StashHash> StashHash for Ptr<T> {
     fn stash_hash(&self, stash: &Stash, hasher: &mut impl StashHasher) {
         hasher.stash_hash_ptr(*self, stash);
@@ -241,6 +249,14 @@ impl<T> Eq for Slice<T> {}
 impl<T> Hash for Slice<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.index.hash(state);
+    }
+}
+
+impl<T> Slice<T> {
+    /// Stable within one stash value; used to identify recursive reentry while
+    /// reflecting that stash. This is not a semantic or cross-revision identity.
+    pub fn reflection_index(self) -> u32 {
+        self.index.get()
     }
 }
 
@@ -626,7 +642,11 @@ struct InternKey {
     collision: u32,
 }
 
-/// Type-erased heterogeneous storage for `Copy`-only data with thin handles.
+/// Append-only, type-erased heterogeneous storage for `Copy` data with thin handles.
+///
+/// Allocation grows the stash, but an existing entry cannot be mutated
+/// through the safe public API. This preserves the content-addressed meaning
+/// of every `Ptr` and `Slice` returned by the stash.
 #[derive(Clone)]
 pub struct Stash {
     buf: Vec<u8>,
@@ -783,22 +803,6 @@ impl Stash {
         }
     }
 
-    unsafe fn read_one_mut<T: Copy>(&mut self, offset: u32) -> &mut T {
-        unsafe { &mut *(self.buf.as_mut_ptr().add(offset as usize) as *mut T) }
-    }
-
-    unsafe fn read_slice_mut<T: Copy>(&mut self, offset: u32, count: u32) -> &mut [T] {
-        if count == 0 {
-            return &mut [];
-        }
-        unsafe {
-            std::slice::from_raw_parts_mut(
-                self.buf.as_mut_ptr().add(offset as usize) as *mut T,
-                count as usize,
-            )
-        }
-    }
-
     /// Allocate a new slice consisting of the contents of `existing` plus
     /// one appended element. Returns a fresh `Slice` handle (the original
     /// handle remains valid and unchanged).
@@ -865,28 +869,6 @@ impl<'db, T: StashData<'db>> Index<Slice<T>> for Stash {
         self.validate_stash_id::<T>(slice.stash_id);
         let entry = self.validate_entry::<T>(slice.index, TypeId::of::<T::StaticSelf>());
         unsafe { self.read_slice(entry.offset, entry.count) }
-    }
-}
-
-impl<'db, T: StashData<'db>> IndexMut<Ptr<T>> for Stash {
-    fn index_mut(&mut self, ptr: Ptr<T>) -> &mut T {
-        #[cfg(debug_assertions)]
-        self.validate_stash_id::<T>(ptr.stash_id);
-        let entry = self.validate_entry::<T>(ptr.index, TypeId::of::<T::StaticSelf>());
-        debug_assert_eq!(entry.count, 1);
-        let offset = entry.offset;
-        unsafe { self.read_one_mut(offset) }
-    }
-}
-
-impl<'db, T: StashData<'db>> IndexMut<Slice<T>> for Stash {
-    fn index_mut(&mut self, slice: Slice<T>) -> &mut [T] {
-        #[cfg(debug_assertions)]
-        self.validate_stash_id::<T>(slice.stash_id);
-        let entry = self.validate_entry::<T>(slice.index, TypeId::of::<T::StaticSelf>());
-        let offset = entry.offset;
-        let count = entry.count;
-        unsafe { self.read_slice_mut(offset, count) }
     }
 }
 
