@@ -245,8 +245,10 @@ targets remain available to constraints in the rest of the body.
 Type variables, transactional equality-class domains, structural equality, a
 limited subtyping/coercion relation, transactional candidate work, wake-driven
 obligation retries, error-sentinel recovery, and final quiescence support the
-two completed mini-redis bodies. Source literals do not yet allocate the new
-numeric domains.
+two completed mini-redis bodies. Numeric expression literals now use the domain
+substrate: suffixes produce their declared primitive types, while unsuffixed
+integer and float literals begin in `Integer` and `Float` classes and do not
+default during finalization.
 
 ### Implemented capabilities and evidence
 
@@ -257,18 +259,19 @@ numeric domains.
 | [INF-A3](#inf-a3) | Partial | `canonical_equality_round_trips_transactionally`, `local_associated_type_normalization_produces_a_type_output`, and `response_local_type_output_round_trips_with_sharing` cover the implemented equality and type-output boundary; `conjunction_retries_after_a_sibling_pins_its_input` verifies retained work observes later hard information. No caller-side expected-type test yet proves that an expectation cannot select one of two otherwise ambiguous normalization candidates. |
 | [INF-A4](#inf-a4) | Partial | `clone_method_body_has_a_narrow_reusable_semantic_query_trace` verifies warm reuse for one completed body slice; scheduler-order perturbation is not covered. |
 | [INF-A5](#inf-a5) | Partial | The source-driven integrations `never_to_any_does_not_apply_beneath_mutable_reference`, `top_level_never_to_any_is_explicit_in_typed_ir`, `call_argument_never_to_any_is_explicit_in_typed_ir`, `struct_field_never_to_any_uses_the_value_span`, `external_inherent_call_accepts_a_never_argument`, `external_generic_method_defers_never_until_other_constraints_settle`, `never_result_does_not_create_a_never_to_never_coercion`, `inferred_never_join_does_not_retain_never_to_never_coercions`, `generic_call_arguments_are_order_independent_and_fall_back_to_never`, `never_fallback_wakes_suspended_method_lookup`, and `quiescent_never_fallback_does_not_settle_unrelated_targets` reject never-to-any beneath an invariant mutable reference; accept it at function-result, direct-call, struct-field, and resolved-method argument sites; preserve operand spans; exclude redundant `!`-to-`!` conversions for known and inferred targets; establish order-independent inference when a target is constrained by both divergence and another argument; and show that quiescent `!` fallback wakes a suspended consumer without prematurely settling unrelated targets. The `basics/never_to_any.rs` oracle case establishes exact Sage/rustc output for the function-result, direct-call, and struct-field conversions. Mutable-reference subtyping relates pointee types by equality. The complete subtype/coercion rule and layout matrix is not yet established. |
-| [INF-A6](#inf-a6) | Partial | `variable_union_intersects_domains_in_both_orders`, `incompatible_transitive_domain_union_rolls_back`, `numeric_domains_accept_members_and_reject_other_families`, `exact_bounds_join_the_validated_equality_class`, `domain_narrowing_follows_child_commit_and_discard`, and `reported_error_recovery_is_admitted_by_numeric_domains` cover the versioned equality and recovery substrate. `canonical_domains_distinguish_query_keys_and_reinstantiate`, `proof_narrowing_of_input_domain_round_trips_to_the_caller`, `response_local_domain_round_trips_to_the_caller`, `incompatible_domain_response_is_rejected_atomically`, `distinct_response_domains_do_not_subsume_each_other`, `merged_bare_hints_preserve_a_common_response_domain`, and `merged_nested_hints_preserve_a_common_response_domain` cover canonical identity, propagation, answer merging, and rollback. Literal construction and the source-driven completion evidence required by INF-A6 remain unimplemented. |
+| [INF-A6](#inf-a6) | Partial | `variable_union_intersects_domains_in_both_orders`, `incompatible_transitive_domain_union_rolls_back`, `required_conflict_tracks_provisional_class_without_unvisited_siblings`, `numeric_domains_accept_members_and_reject_other_families`, `exact_bounds_join_the_validated_equality_class`, `domain_narrowing_follows_child_commit_and_discard`, and `reported_error_recovery_is_admitted_by_numeric_domains` cover the versioned equality and recovery substrate. `canonical_domains_distinguish_query_keys_and_reinstantiate`, `proof_narrowing_of_input_domain_round_trips_to_the_caller`, `response_local_domain_round_trips_to_the_caller`, `incompatible_domain_response_is_rejected_atomically`, `distinct_response_domains_do_not_subsume_each_other`, `merged_bare_hints_preserve_a_common_response_domain`, and `merged_nested_hints_preserve_a_common_response_domain` cover canonical identity, propagation, answer merging, and rollback. Source tests `suffixed_numeric_literals_have_declared_types`, `context_constrains_unsuffixed_numeric_literals_through_generic_calls`, `literal_domain_narrows_an_existing_generic_argument`, `literal_domain_filters_rigid_head_impl_candidates_after_later_narrowing`, `numeric_literal_domain_conflicts_report_once_and_recover`, `conflicting_numeric_domains_recover_both_classes`, `domain_recovery_replays_compatible_structural_siblings`, and `unconstrained_numeric_literals_do_not_default` establish expression-literal construction, ordinary generic/ADT propagation, a retained obligation which observes later narrowing, source-category recovery, and inference-free completed types. Explicit let annotations, numeric literal patterns, the complete where-clause/wake/isolation matrix, and trait-first operator checking remain, so the anchor stays partial. |
 
 ### Current limitations
 
 - Subtyping and coercions currently cover only a small structural subset.
-- Numeric literal construction, operator checking, closures, casts, patterns,
-  and control-flow joins are incomplete relative to Rust. The domain substrate
-  exists, but all current source-facing literal constructors still allocate
-  `Any`. In particular,
+- Numeric expression-literal construction now distinguishes suffixes and
+  integer/float domains, but explicit let annotations, numeric literal
+  patterns, operator checking, closures, casts, and control-flow joins remain
+  incomplete relative to Rust.
   [KD-7](../../implementation/known-deviations.md#kd-7-arithmetic-operators-do-not-require-numeric-operands)
-  records that an unconstrained integer literal can currently unify with
-  `bool` beneath `+` without an operator diagnostic.
+  remains open because binary operators still equate their operands without a
+  trait proof and successful overloadable operations still retain `Binary`
+  nodes.
 - All lifetime syntax becomes `Lifetime::Dummy`; no lifetime variables or
   borrow checks are performed.
 - The executor is single-threaded and cooperative; planned solver fairness and
@@ -286,8 +289,8 @@ progress](../../implementation/roadmap.md#planned-slice-solver-recursion-schedul
 will change task progress and wake behavior. [Shutdown::recv](../../implementation/roadmap.md#next-application-slice-shutdownrecv)
 will extend body-level inference coverage. [Numeric inference and operator
 soundness](../../implementation/roadmap.md#next-correctness-slice-numeric-inference-and-operator-soundness)
-has established INF-A6's transactional substrate. Its remaining literal,
-operator, diagnostics, and source-evidence checkpoints will complete
-[INF-A6](#inf-a6) and close KD-7.
+has established INF-A6's transactional substrate and expression-literal
+checkpoint. Its remaining propagation, operator, and closure-evidence
+checkpoints will complete [INF-A6](#inf-a6) and close KD-7.
 
 [numeric-rfd]: ../../rfds/numeric-inference-variables/README.md

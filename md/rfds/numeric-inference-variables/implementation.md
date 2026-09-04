@@ -1,10 +1,12 @@
 # Implementation plan and status
 
-The source-neutral domain substrate in checkpoint 1 is implemented. Existing
-inference-variable call sites continue to allocate `Any`, so literal and
-operator behavior remains unchanged until the later checkpoints. Each step
-must leave the workspace building and keep unsupported operator paths
-diagnostic.
+The source-neutral domain substrate and the numeric expression-literal work in
+checkpoints 1 and 2 are implemented. Unsuffixed expression literals now create
+`Integer` or `Float` variables, suffixes lower directly, and failed required
+domain relations report and recover without exposing inference indices.
+Operator-checking logic and operator IR are unchanged. Explicit let-annotation
+enforcement and the full propagation matrix remain later work. Each step must
+leave the workspace building and keep unsupported operator paths diagnostic.
 
 ## Landing strategy
 
@@ -27,8 +29,8 @@ Land the work in dependency order rather than as one source-visible change:
 
 Each checkpoint is independently reviewable, keeps successful completed IR
 free of inference-domain metadata, and updates the checkboxes below as it
-lands. The first implementation change should be checkpoint 1 only; it should
-not mix operator lookup or literal lowering into the equality substrate.
+lands. Checkpoint 1 remains a separate substrate boundary: it excludes operator
+lookup and literal lowering from the equality machinery.
 
 ## Implementation seams
 
@@ -39,9 +41,9 @@ well-known-item lookups for operators are new. The expected code map is:
 |---|---|---|
 | Domain declared at variable creation | `check/infer/version.rs` (`VarInfo`, `VersionTree::alloc_var`) and `check/infer_ctx.rs` (`fresh_ty_var`) | Add `InferDomain` and a domain-aware constructor; preserve the existing constructor as `Any`. |
 | Versioned class state | `check/infer/egraph.rs` (`VersionState`, `union`, `set_bound_in`) | Store effective class domains, intersect them transactionally, and include committed narrowing in revisions and wakes. |
-| Equality enforcement and diagnostics | `check/infer/unify.rs` (`try_unify`, `unify_in_probe`, `bind_variable`) and `check/infer_ctx.rs` (`require_eq`) | Reject an empty domain intersection or an out-of-domain concrete type with a structured `DomainConflict`; keep probe rejection silent and render required source relations without exposing inference indices. |
+| Equality enforcement and diagnostics | `check/infer/unify.rs` (`try_unify`, `try_unify_required`, `unify_in_probe`, `bind_variable`) and `check/infer_ctx.rs` (`require_eq`) | Reject an empty domain intersection or an out-of-domain concrete type with a structured `DomainConflict`; keep probe rejection silent and render required source relations without exposing inference indices. |
 | Solver cache boundary | `check/solve/goal.rs` (`CanonicalVarInfo`), `canonical.rs`, and `boundary.rs` (`apply_query_response`) | Put effective input domains in the canonical key and recreate/recheck them while importing a response through the existing child transaction. Response-local variables begin as `Any` unless their binder metadata says otherwise. |
-| Literal and binary-expression checking | `check/expr.rs` (`check_literal_ty`, `check_binary_op_ty`) | Lower suffixes directly, allocate `Integer`/`Float` variables for unsuffixed literals, and replace blanket binary equality with the selected operator-trait operation. |
+| Literal and binary-expression checking | `check/expr.rs` (`check_literal`, `check_binary_op_ty`) | Suffix lowering and `Integer`/`Float` expression-literal variables are implemented; replacing blanket binary equality with the selected operator-trait operation remains. |
 | Operator semantic identity | `check/resolve/mod.rs`, external module/item lookup, and a new Sage-owned well-known-item query module | Add individually cached queries such as the addition-trait query. Each resolves a fixed `core`/`std` path such as `core::ops::Add` through ordinary symbol lookup and finds the method through ordinary associated-item lookup. Return typed `TraitSymbol`/`FnSymbol` identities; missing or ambiguous results are incomplete, never proof. No new operator-specific `TcxDb` operation is required. |
 | Ordinary primitive/user impl discovery | `external_syms.rs` (`external_relevant_impls`) and `check/solve/clauses.rs` | Reuse the selected trait identity with the existing relevant-impl and impl-signature queries. Do not add a primitive operator candidate or signature matrix. |
 | Successful operator IR | `tytree/mod.rs` (`ResolvedCallTarget`, `CallDispatch`, `TyExprData`) | Reuse resolved static trait-call representation for overloadable operators. Reserve source-shaped `Binary` for non-overloadable/lazy forms still needing it; future codegen performs primitive recognition. |
@@ -94,19 +96,30 @@ and canonical-response tests. Source-level numeric tests belong to checkpoint
 
 ## Step 2: Numeric literal domains
 
-- [ ] Lower suffixed numeric literals directly to their declared primitive
+- [x] Lower suffixed numeric literals directly to their declared primitive
   types and unsuffixed literals to domain-constrained variables.
 - [ ] Propagate domain-constrained variables through annotations, generic
   arguments, selected impls, where-clauses, and ordinary egraph wakes.
-- [ ] Preserve unresolved numeric classes through inference without choosing
+- [x] Preserve unresolved numeric classes through inference without choosing
   `i32` or `f64`; apply explicit terminal diagnostics and recovery ([NIV-A2]).
-- [ ] Render the structured unification domain-conflict error at required
+- [x] Render the structured unification domain-conflict error at required
   source relations using expected and actual source categories, report no
   internal variable index, and install `Ty::Error(ErrorReported)` recovery
   without a follow-on unresolved error. Candidate probes already treat the
   structured conflict as silent rejection.
-- [ ] Add completed-Typed-IR assertions for constrained concrete literals and
+- [x] Add completed-Typed-IR assertions for constrained concrete literals and
   diagnostic-recovery assertions for unconstrained literals.
+
+Ordinary equality propagation is now covered through generic calls, nested ADT
+assignment, and a retained rigid-head impl obligation which observes later
+domain narrowing. The broader propagation item remains open because explicit
+let type annotations are not yet related to their pattern or initializer, and
+the full where-clause, wake, and isolation matrix has not been assembled. After
+a required relation fails, its source-only transaction retains the unresolved
+classes represented by the conflicting types before rollback, including class
+members joined provisionally during that transaction. Recovery does not poison
+unvisited sibling components of the larger structural relation; it replays
+compatible sibling relations after installing the primary error.
 
 ## Step 3: Trait-first operator checking and elaboration
 

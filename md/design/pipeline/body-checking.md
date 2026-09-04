@@ -271,7 +271,10 @@ to static `Clone::clone` dispatch and compared exactly with rustc output.
 Body checking and elaboration pass exact oracle comparison for the pinned
 mini-redis `DbDropGuard::db` and `Parse::next` bodies. Those slices cover local
 field access, external trait dispatch, explicit adjustments, generic
-obligations, and associated-type normalization.
+obligations, and associated-type normalization. Numeric expression literals
+now complete with concrete suffix or context-selected types, or with an error
+type after one source-category diagnostic when their domain is incompatible or
+remains unresolved.
 
 ### Implemented capabilities and evidence
 
@@ -290,6 +293,16 @@ obligations, and associated-type normalization.
   `basics/never_to_any.rs` oracle case independently emits function-result,
   direct-call, and struct-field trees from Sage and rustc and compares them by
   exact text.
+- **[BODY-A1](#body-a1) — Numeric literal completion.**
+  `suffixed_numeric_literals_have_declared_types` and
+  `context_constrains_unsuffixed_numeric_literals_through_generic_calls`
+  inspect concrete literal types in completed IR.
+  `numeric_literal_domain_conflicts_report_once_and_recover`,
+  `conflicting_numeric_domains_recover_both_classes`, and
+  `domain_recovery_replays_compatible_structural_siblings` inspect precise
+  conflict recovery without leaking inference indices.
+  `unconstrained_numeric_literals_do_not_default` establishes error-typed
+  terminal recovery without choosing a numeric default.
 - **[BODY-A1](#body-a1) — Exact conformance.** The [oracle-checked method
   walkthrough](../examples/oracle-checked-method.md) links the structural Sage
   assertion, independent emitters, exact shared snapshot, and byte identity.
@@ -332,6 +345,7 @@ cargo test -p sage-test-harness clone_method_body_has_a_narrow_reusable_semantic
 cargo test -p sage-test-harness unrelated_body_edit_exposes_current_body_invalidation
 cargo test -p sage-ir external_method_mismatch_discards_partial_generic_bindings
 cargo test -p sage-test-harness trait_obligation_tests
+cargo test --test type_check_tests
 cargo test --test type_check_tests never
 cargo test --test type_check_tests direct_call
 cargo test -p sage-oracle-harness --test external_impls external_inherent_call_accepts_a_never_argument
@@ -344,10 +358,12 @@ cargo test -p sage-oracle-harness --test oracle_compare -- mini_redis/db_drop_gu
 - Rust expression, pattern, coercion, and method-resolution coverage is
   incomplete; diagnostics or recovery nodes mark unsupported paths.
 - [KD-7](../../implementation/known-deviations.md#kd-7-arithmetic-operators-do-not-require-numeric-operands)
-  records the confirmed exception to that diagnostic guarantee: current
-  binary-operator checking relates operand types, does not yet require
-  arithmetic operands to be numeric, and retains successful source-shaped
-  `Binary` nodes instead of the resolved calls required by BODY-A5.
+  remains open. Numeric domains now make `1 + true` fail through the interim
+  operand-equality relation, but binary-operator checking still does not prove
+  the operator trait: it accepts same-typed invalid operations such as
+  `bool + bool`, rejects valid operations whose `Rhs` differs from `Self`, and
+  retains successful source-shaped `Binary` nodes instead of the resolved
+  calls required by BODY-A5.
 - Sage does not yet have the cached well-known-item queries that find operator
   traits and methods. For example, body checking cannot yet ask Sage to resolve
   `core::ops::Add` and its `add` method before constructing the trait

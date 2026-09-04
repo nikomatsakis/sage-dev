@@ -1,5 +1,6 @@
-use sage_ir::ty::{Ty, UintTy};
-use sage_ir::tytree::TyExprData;
+use sage_ir::cst::expr::Literal;
+use sage_ir::ty::{FloatTy, IntTy, Ty, UintTy};
+use sage_ir::tytree::{TyExprData, TyStmtKind};
 use sage_test_harness::{TestCrate, expect, local_function_named, with_test_crate};
 
 #[test]
@@ -35,6 +36,19 @@ fn binary_add_type_mismatch() {
 }
 
 #[test]
+fn integer_literal_domain_rejects_bool_binary_operand() {
+    with_test_crate("fn bad() { 1 + true; }", |db, root| {
+        let function = local_function_named(db, root, "bad");
+        let checked = function.body(db);
+        assert_eq!(checked.diagnostics.len(), 1, "{:?}", checked.diagnostics);
+        assert_eq!(
+            checked.diagnostics[0].message,
+            "type mismatch: expected an integer, found `bool`",
+        );
+    });
+}
+
+#[test]
 fn if_else_same_type() {
     TestCrate::in_memory("fn pick(b: bool) -> u32 { if b { 1 } else { 2 } }").check_ok();
 }
@@ -43,13 +57,11 @@ fn if_else_same_type() {
 fn if_else_branch_mismatch() {
     TestCrate::in_memory("fn bad(b: bool) -> u32 { if b { 1 } else { true } }").check_errors(
         expect![[r#"
-            error: type mismatch: expected `u32`, found `bool`
-             --> lib.rs:1:24
+            error: type mismatch: expected an integer, found `bool`
+             --> lib.rs:1:42
               |
             1 | fn bad(b: bool) -> u32 { if b { 1 } else { true } }
-              |                    --- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ found `bool`
-              |                    |
-              |                    expected `u32` because of return type"#]],
+              |                                          ^^^^^^^^ found `bool`"#]],
     );
 }
 
@@ -322,6 +334,384 @@ fn unit_return() {
 #[test]
 fn bool_literal() {
     TestCrate::in_memory("fn f() -> bool { true }").check_ok();
+}
+
+#[test]
+fn suffixed_numeric_literals_have_declared_types() {
+    with_test_crate(
+        "fn literals() { \
+         let v0 = 1i8; let v1 = 1i16; let v2 = 1i32; let v3 = 1i64; \
+         let v4 = 1i128; let v5 = 1isize; let v6 = 0xff_u8; let v7 = 1u16; \
+         let v8 = 1u32; let v9 = 1u64; let v10 = 1u128; let v11 = 1usize; \
+         let v12 = 1f32; let v13 = 1_f64; }",
+        |db, root| {
+            let function = local_function_named(db, root, "literals");
+            let checked = function.body(db);
+            assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+            let (stash, body) = checked.body.open_deref();
+            let TyExprData::Block(statements, None) = stash[body.root].data else {
+                panic!("expected a block containing literal statements");
+            };
+            let expected = [
+                Ty::Int(IntTy::I8),
+                Ty::Int(IntTy::I16),
+                Ty::Int(IntTy::I32),
+                Ty::Int(IntTy::I64),
+                Ty::Int(IntTy::I128),
+                Ty::Int(IntTy::Isize),
+                Ty::Uint(UintTy::U8),
+                Ty::Uint(UintTy::U16),
+                Ty::Uint(UintTy::U32),
+                Ty::Uint(UintTy::U64),
+                Ty::Uint(UintTy::U128),
+                Ty::Uint(UintTy::Usize),
+                Ty::Float(FloatTy::F32),
+                Ty::Float(FloatTy::F64),
+            ];
+            assert_eq!(stash[statements].len(), expected.len());
+            for (index, (statement, expected)) in stash[statements]
+                .iter()
+                .take(expected.len())
+                .zip(expected)
+                .enumerate()
+            {
+                let TyStmtKind::Let(_, None, Some(expression)) = statement.kind else {
+                    panic!("expected a literal initializer");
+                };
+                let TyExprData::Literal(literal) = stash[expression].data else {
+                    panic!("expected a literal initializer");
+                };
+                if index >= 12 {
+                    assert!(matches!(literal, Literal::Float(_)));
+                } else {
+                    assert!(matches!(literal, Literal::Int(_)));
+                }
+                assert_eq!(stash[stash[expression].ty], expected);
+            }
+        },
+    );
+}
+
+#[test]
+fn numeric_literal_spelling_boundaries_are_classified() {
+    with_test_crate(
+        "fn compact() -> u32 { 0xf32 } \
+         fn separated() -> u32 { 0xff_f32 } \
+         fn exponent() -> f64 { 1e+3f64 }",
+        |db, root| {
+            for (name, expected) in [
+                ("compact", Ty::Uint(UintTy::U32)),
+                ("separated", Ty::Uint(UintTy::U32)),
+                ("exponent", Ty::Float(FloatTy::F64)),
+            ] {
+                let function = local_function_named(db, root, name);
+                let checked = function.body(db);
+                assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+                let (stash, body) = checked.body.open_deref();
+                let TyExprData::Block(_, Some(literal)) = stash[body.root].data else {
+                    panic!("expected a block with a literal tail");
+                };
+                assert!(matches!(stash[literal].data, TyExprData::Literal(_)));
+                assert_eq!(stash[stash[literal].ty], expected);
+            }
+        },
+    );
+}
+
+#[test]
+fn context_constrains_unsuffixed_numeric_literals_through_generic_calls() {
+    with_test_crate(
+        "fn id<T>(value: T) -> T { value } \
+         fn integer() -> u16 { id(22) } \
+         fn float() -> f32 { id(1.0) }",
+        |db, root| {
+            for (name, expected) in [
+                ("integer", Ty::Uint(UintTy::U16)),
+                ("float", Ty::Float(FloatTy::F32)),
+            ] {
+                let function = local_function_named(db, root, name);
+                let checked = function.body(db);
+                assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+                let (stash, body) = checked.body.open_deref();
+                let TyExprData::Block(_, Some(call)) = stash[body.root].data else {
+                    panic!("expected a block with a call tail");
+                };
+                let TyExprData::Call(_, arguments) = stash[call].data else {
+                    panic!("expected a direct call");
+                };
+                let [literal] = stash[arguments] else {
+                    panic!("expected one literal argument");
+                };
+                assert!(matches!(stash[literal].data, TyExprData::Literal(_)));
+                assert_eq!(stash[stash[literal].ty], expected);
+            }
+        },
+    );
+}
+
+#[test]
+fn numeric_literal_domain_conflicts_report_once_and_recover() {
+    with_test_crate(
+        "fn integer() -> bool { 22 } \
+         fn integer_as_float() -> f32 { 22 } \
+         fn float() -> u32 { 1.0 }",
+        |db, root| {
+            for (name, expected_message) in [
+                (
+                    "integer",
+                    "type mismatch: expected `bool`, found an integer",
+                ),
+                (
+                    "integer_as_float",
+                    "type mismatch: expected `f32`, found an integer",
+                ),
+                (
+                    "float",
+                    "type mismatch: expected `u32`, found a floating-point type",
+                ),
+            ] {
+                let function = local_function_named(db, root, name);
+                let checked = function.body(db);
+                assert_eq!(checked.diagnostics.len(), 1, "{:?}", checked.diagnostics);
+                assert_eq!(checked.diagnostics[0].message, expected_message);
+                assert!(!checked.diagnostics[0].message.contains('?'));
+                let (stash, body) = checked.body.open_deref();
+                let TyExprData::Block(_, Some(literal)) = stash[body.root].data else {
+                    panic!("expected a block with a literal tail");
+                };
+                assert!(matches!(stash[stash[literal].ty], Ty::Error(_)));
+                assert!(matches!(stash[stash[body.root].ty], Ty::Error(_)));
+            }
+        },
+    );
+}
+
+#[test]
+fn conflicting_numeric_domains_recover_both_classes() {
+    with_test_crate(
+        "fn test() { let mut value = 22; value = 1.0; return; }",
+        |db, root| {
+            let function = local_function_named(db, root, "test");
+            let checked = function.body(db);
+            assert_eq!(checked.diagnostics.len(), 1, "{:?}", checked.diagnostics);
+            assert_eq!(
+                checked.diagnostics[0].message,
+                "type mismatch: expected an integer, found a floating-point type",
+            );
+            assert!(!checked.diagnostics[0].message.contains('?'));
+
+            let (stash, body) = checked.body.open_deref();
+            let TyExprData::Block(statements, Some(_)) = stash[body.root].data else {
+                panic!("expected a statement block");
+            };
+            let [declaration, assignment] = stash[statements] else {
+                panic!("expected a declaration and assignment");
+            };
+            let TyStmtKind::Let(_, None, Some(integer)) = declaration.kind else {
+                panic!("expected an initialized declaration");
+            };
+            let TyStmtKind::Expr(assignment) = assignment.kind else {
+                panic!("expected an assignment statement");
+            };
+            let TyExprData::Assign(_, float) = stash[assignment].data else {
+                panic!("expected an assignment expression");
+            };
+            assert!(matches!(stash[stash[integer].ty], Ty::Error(_)));
+            assert!(matches!(stash[stash[float].ty], Ty::Error(_)));
+        },
+    );
+}
+
+#[test]
+fn domain_conflict_hides_nested_inference_indices() {
+    with_test_crate(
+        "enum Maybe<T> { None } \
+         fn consume(_: Maybe<bool>) {} \
+         fn test() { \
+             let maybe = Maybe::None; \
+             let mut value = 22; \
+             value = maybe; \
+             consume(maybe); \
+             return; \
+         }",
+        |db, root| {
+            let function = local_function_named(db, root, "test");
+            let checked = function.body(db);
+            assert_eq!(checked.diagnostics.len(), 1, "{:?}", checked.diagnostics);
+            assert_eq!(
+                checked.diagnostics[0].message,
+                "type mismatch: expected an integer, found `Maybe<_>`",
+            );
+            assert!(!checked.diagnostics[0].message.contains('?'));
+
+            let (stash, body) = checked.body.open_deref();
+            let TyExprData::Block(statements, Some(_)) = stash[body.root].data else {
+                panic!("expected a statement block");
+            };
+            let TyStmtKind::Let(_, None, Some(maybe)) = stash[statements][0].kind else {
+                panic!("expected the Maybe declaration");
+            };
+            let Ty::Adt(_, arguments) = stash[stash[maybe].ty] else {
+                panic!("expected a Maybe type");
+            };
+            let [argument] = stash[arguments] else {
+                panic!("expected one Maybe argument");
+            };
+            assert!(matches!(stash[argument], Ty::Bool));
+        },
+    );
+}
+
+#[test]
+fn recovered_numeric_domain_does_not_cascade_into_trait_errors() {
+    with_test_crate(
+        "trait Marker {} \
+         fn require_marker<T: Marker>(_: T) {} \
+         fn test() { \
+             let mut value = 22; \
+             require_marker(value); \
+             value = true; \
+         }",
+        |db, root| {
+            let function = local_function_named(db, root, "test");
+            let checked = function.body(db);
+            assert_eq!(checked.diagnostics.len(), 1, "{:?}", checked.diagnostics);
+            assert_eq!(
+                checked.diagnostics[0].message,
+                "type mismatch: expected an integer, found `bool`",
+            );
+        },
+    );
+}
+
+#[test]
+fn domain_recovery_replays_compatible_structural_siblings() {
+    with_test_crate("fn bad() -> (bool, u32) { (22, 33) }", |db, root| {
+        let function = local_function_named(db, root, "bad");
+        let checked = function.body(db);
+        assert_eq!(checked.diagnostics.len(), 1, "{:?}", checked.diagnostics);
+        assert_eq!(
+            checked.diagnostics[0].message,
+            "type mismatch: expected `bool`, found an integer",
+        );
+        let (stash, body) = checked.body.open_deref();
+        let TyExprData::Block(_, Some(tuple)) = stash[body.root].data else {
+            panic!("expected a block with a tuple tail");
+        };
+        let TyExprData::Tuple(elements) = stash[tuple].data else {
+            panic!("expected a tuple expression");
+        };
+        let [invalid, valid] = stash[elements] else {
+            panic!("expected two tuple elements");
+        };
+        assert!(matches!(stash[stash[invalid].ty], Ty::Error(_)));
+        assert!(matches!(stash[stash[valid].ty], Ty::Uint(UintTy::U32)));
+    });
+}
+
+#[test]
+fn literal_domain_narrows_an_existing_generic_argument() {
+    with_test_crate(
+        "enum Maybe<T> { None, Some(T) } \
+         fn test() { \
+             let mut value = Maybe::None; \
+             value = Maybe::Some(22); \
+             value = Maybe::Some(true); \
+         }",
+        |db, root| {
+            let function = local_function_named(db, root, "test");
+            let checked = function.body(db);
+            assert_eq!(checked.diagnostics.len(), 1, "{:?}", checked.diagnostics);
+            assert_eq!(
+                checked.diagnostics[0].message,
+                "type mismatch: expected an integer, found `bool`",
+            );
+        },
+    );
+}
+
+#[test]
+fn literal_domain_filters_rigid_head_impl_candidates_after_later_narrowing() {
+    with_test_crate(
+        "enum Maybe<T> { None, Some(T) } \
+         trait Marker {} \
+         impl Marker for Maybe<u8> {} \
+         impl Marker for Maybe<bool> {} \
+         fn require_marker<T>(_: &Maybe<T>) where Maybe<T>: Marker {} \
+         fn test() { \
+             let mut value = Maybe::None; \
+             require_marker(&value); \
+             value = Maybe::Some(22); \
+             return; \
+         }",
+        |db, root| {
+            let function = local_function_named(db, root, "test");
+            let checked = function.body(db);
+            assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+            let (stash, body) = checked.body.open_deref();
+            let TyExprData::Block(statements, Some(_)) = stash[body.root].data else {
+                panic!("expected a statement block");
+            };
+            let Some(assignment) = stash[statements].get(2) else {
+                panic!("expected the assignment statement");
+            };
+            let TyStmtKind::Expr(assignment) = assignment.kind else {
+                panic!("expected an assignment expression statement");
+            };
+            let TyExprData::Assign(_, constructor) = stash[assignment].data else {
+                panic!("expected an assignment");
+            };
+            let TyExprData::Call(_, arguments) = stash[constructor].data else {
+                panic!("expected a tuple-variant constructor call");
+            };
+            let [literal] = stash[arguments] else {
+                panic!("expected one constructor argument");
+            };
+            assert!(matches!(stash[stash[literal].ty], Ty::Uint(UintTy::U8)));
+        },
+    );
+}
+
+#[test]
+fn unconstrained_numeric_literals_do_not_default() {
+    with_test_crate(
+        "fn integer() { let value = 22; } fn float() { let value = 1.0; }",
+        |db, root| {
+            for (name, expected_message) in [
+                ("integer", "could not infer an integer type"),
+                ("float", "could not infer a floating-point type"),
+            ] {
+                let function = local_function_named(db, root, name);
+                let checked = function.body(db);
+                assert_eq!(checked.diagnostics.len(), 1, "{:?}", checked.diagnostics);
+                assert_eq!(checked.diagnostics[0].message, expected_message);
+                let (stash, body) = checked.body.open_deref();
+                let TyExprData::Block(statements, None) = stash[body.root].data else {
+                    panic!("expected a statement block");
+                };
+                let Some(statement) = stash[statements].first() else {
+                    panic!("expected a literal initializer");
+                };
+                let TyStmtKind::Let(_, None, Some(literal)) = statement.kind else {
+                    panic!("expected a literal initializer");
+                };
+                assert!(matches!(stash[stash[literal].ty], Ty::Error(_)));
+            }
+        },
+    );
+}
+
+#[test]
+fn invalid_numeric_suffix_is_not_hidden_by_context() {
+    with_test_crate("fn invalid() -> f32 { 1.0u8 }", |db, root| {
+        let function = local_function_named(db, root, "invalid");
+        let checked = function.body(db);
+        assert_eq!(checked.diagnostics.len(), 1, "{:?}", checked.diagnostics);
+        assert_eq!(
+            checked.diagnostics[0].message,
+            "invalid floating-point literal",
+        );
+    });
 }
 
 // ---------------------------------------------------------------------------

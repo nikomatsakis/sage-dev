@@ -20,21 +20,23 @@ close it. The affected architecture chapter links back to the entry from its
   [INF-A6](../design/subsystems/type-inference.md#inf-a6), including the
   body-phase guarantee that user type errors produce diagnostics rather than
   an apparently valid typed operation.
-- **Observed implementation:** Unsuffixed integer literals begin as
-  unconstrained type variables, and binary `+` currently equates its two
-  operand types without also requiring a numeric operator domain. While adding
-  surplus-argument diagnostic coverage, the expression `1 + true` was checked
-  but produced no type diagnostic: the integer variable unified with `bool`.
-- **Consequence:** A ground, ill-typed arithmetic expression can survive body
-  checking as an apparently valid binary operation instead of producing an
-  error and recovery node.
-- **Closure evidence:** Add a source-driven integration reproducer which
-  rejects `1 + true`, implement numeric literal constraints and trait-first
-  operator checking without relying on a caller's expected type, and cover
-  representative integer, float, boolean, comparison, mixed-operand, generic,
-  and user-defined operator cases against the independent rustc oracle.
-  Inspect completed IR to require resolved trait calls for every overloadable
-  operator, including primitive operands, and explicit lazy boolean nodes.
+- **Observed implementation:** Numeric expression literals now begin in their
+  integer or floating-point domain, so `1 + true` is rejected by the current
+  operand-equality relation. Binary operators still do not prove the
+  corresponding trait obligation: `check_binary_op_ty` blanket-equates the two
+  operand types and successful operations remain source-shaped `Binary` nodes.
+- **Consequence:** Same-typed but invalid operations such as `true + false` can
+  still survive as apparently valid binary operations, while valid overloads
+  whose `Rhs` differs from `Self` are rejected. Successful overloadable syntax
+  also lacks the resolved trait-call identity required downstream.
+- **Closure evidence:** The literal-side reproducer and recovery are covered by
+  `integer_literal_domain_rejects_bool_binary_operand` and the numeric domain
+  source tests. To close this deviation, implement trait-first operator
+  checking without relying on a caller's expected type, cover representative
+  integer, float, boolean, comparison, mixed-operand, generic, and user-defined
+  operator cases against the independent rustc oracle, and inspect completed
+  IR to require resolved trait calls for every overloadable operator, including
+  primitive operands, plus explicit lazy boolean nodes.
 
 ### KD-3: Derive helper attributes do not produce the promised warning
 

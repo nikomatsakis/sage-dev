@@ -32,6 +32,12 @@ pub enum UnifyError<'db> {
     Reported(ErrorReported),
 }
 
+#[derive(Debug)]
+pub(crate) struct RequiredUnifyFailure<'db> {
+    pub error: UnifyError<'db>,
+    pub affected: Vec<InferVarIndex>,
+}
+
 /// Apply one structural equality atomically against `parent`.
 pub fn try_unify<'db>(
     egraph: &mut VersionedEGraph<'db>,
@@ -41,6 +47,83 @@ pub fn try_unify<'db>(
     right: Ptr<Ty<'db>>,
 ) -> Result<CommitEffects, UnifyError<'db>> {
     try_unify_batch(egraph, stash, parent, &[(left, right)])
+}
+
+/// Apply a required source equality and retain the variables implicated by a
+/// domain conflict before its transactional state is discarded.
+pub(crate) fn try_unify_required<'db>(
+    egraph: &mut VersionedEGraph<'db>,
+    stash: &mut Stash,
+    parent: Version,
+    left: Ptr<Ty<'db>>,
+    right: Ptr<Ty<'db>>,
+) -> Result<CommitEffects, RequiredUnifyFailure<'db>> {
+    let child = egraph.branch_from(parent);
+    match unify_in_probe(egraph, stash, child, left, right) {
+        Ok(()) => {
+            egraph.rebuild(child, stash);
+            Ok(egraph.collapse_into(child, parent))
+        }
+        Err(error) => {
+            let affected = match error {
+                UnifyError::DomainConflict { left, right, .. } => {
+                    affected_variables(egraph, stash, parent, child, left, right)
+                }
+                UnifyError::Mismatch { .. }
+                | UnifyError::OccursCheck { .. }
+                | UnifyError::UniverseLeak { .. }
+                | UnifyError::Reported(_) => Vec::new(),
+            };
+            egraph.discard(child);
+            Err(RequiredUnifyFailure { error, affected })
+        }
+    }
+}
+
+/// Expand the unresolved classes represented by the two conflicting child
+/// types to every parent-visible member. Variables nested inside a rigid side
+/// are not part of the conflicting equality class and remain inferable.
+fn affected_variables<'db>(
+    egraph: &VersionedEGraph<'db>,
+    stash: &mut Stash,
+    parent: Version,
+    child: Version,
+    left: Ptr<Ty<'db>>,
+    right: Ptr<Ty<'db>>,
+) -> Vec<InferVarIndex> {
+    let mut roots = Vec::new();
+    for ty in [left, right] {
+        let root = egraph.find(child, ty);
+        match stash[root] {
+            Ty::InferVar(_) => roots.push(root),
+            Ty::Bool
+            | Ty::Char
+            | Ty::Int(_)
+            | Ty::Uint(_)
+            | Ty::Float(_)
+            | Ty::Str
+            | Ty::Adt(_, _)
+            | Ty::Alias(_)
+            | Ty::Ref(_, _, _)
+            | Ty::Tuple(_)
+            | Ty::Slice(_)
+            | Ty::Array(_, _)
+            | Ty::FnPtr(_, _)
+            | Ty::Param(_)
+            | Ty::Never
+            | Ty::Error(_) => {}
+        }
+    }
+
+    let visible: Vec<_> = egraph.version_tree().visible_variables(parent).collect();
+    let mut affected = Vec::new();
+    for variable in visible {
+        let ty = stash.alloc(Ty::InferVar(variable));
+        if roots.contains(&egraph.find(child, ty)) {
+            affected.push(variable);
+        }
+    }
+    affected
 }
 
 /// Apply a batch of structural equalities in one transaction.
@@ -667,6 +750,55 @@ mod tests {
             Some(InferDomain::Integer)
         );
         assert_eq!(egraph.semantic_revision(Version::ROOT), revision);
+    }
+
+    #[test]
+    fn required_conflict_tracks_provisional_class_without_unvisited_siblings() {
+        let mut egraph = VersionedEGraph::new();
+        let mut stash = Stash::new();
+        let any = variable(&mut egraph, &mut stash, Version::ROOT, Universe::ROOT);
+        let integer = variable_in_domain(
+            &mut egraph,
+            &mut stash,
+            Version::ROOT,
+            Universe::ROOT,
+            InferDomain::Integer,
+        );
+        let float = variable_in_domain(
+            &mut egraph,
+            &mut stash,
+            Version::ROOT,
+            Universe::ROOT,
+            InferDomain::Float,
+        );
+        let unvisited = variable_in_domain(
+            &mut egraph,
+            &mut stash,
+            Version::ROOT,
+            Universe::ROOT,
+            InferDomain::Integer,
+        );
+        let u32_ty = stash.alloc(Ty::Uint(UintTy::U32));
+        let left_elements = stash.alloc_slice(&[any, integer, unvisited]);
+        let left = stash.alloc(Ty::Tuple(left_elements));
+        let right_elements = stash.alloc_slice(&[integer, float, u32_ty]);
+        let right = stash.alloc(Ty::Tuple(right_elements));
+
+        let failure =
+            try_unify_required(&mut egraph, &mut stash, Version::ROOT, left, right).unwrap_err();
+
+        assert!(matches!(failure.error, UnifyError::DomainConflict { .. }));
+        assert_eq!(
+            failure.affected,
+            [any, integer, float].map(|ty| variable_index(&stash, ty)),
+        );
+        assert!(
+            !failure
+                .affected
+                .contains(&variable_index(&stash, unvisited))
+        );
+        assert_eq!(egraph.find(Version::ROOT, any), any);
+        assert_eq!(egraph.find(Version::ROOT, integer), integer);
     }
 
     #[test]

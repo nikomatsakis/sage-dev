@@ -265,12 +265,13 @@ contains concrete types and no domain metadata.
 
 ### Why this slice
 
-The existing checker can complete a ground, invalid arithmetic expression as
-an apparently valid binary operation because numeric literals are ordinary
-unconstrained variables and every binary operator initially equates its
-operands. This is a small surface defect with a cross-cutting fix: literal
-construction, transactional inference, operator checking, diagnostics,
-canonicalization, and Typed IR completion must agree.
+The literal checkpoint now prevents an unsuffixed numeric literal from
+becoming `bool`, but the existing checker can still complete a ground,
+same-typed invalid arithmetic expression as an apparently valid binary
+operation because every binary operator initially only equates its operands.
+The remaining surface defect still has a cross-cutting fix: transactional
+inference, operator checking, diagnostics, canonicalization, and Typed IR
+completion must agree.
 
 ### Scope and non-goals
 
@@ -332,14 +333,16 @@ intentionally deferred answer-merging and fallback questions.
 
 ### Progress
 
-**In progress.** The source-neutral domain substrate is operational:
-inference classes carry transactional `Any`, `Integer`, or `Float` domains;
-unification and exact bounds enforce membership; and canonical queries and
-responses preserve those constraints without conflating cache keys. Existing
-source-facing constructors still allocate `Any`, so literal behavior, KD-7,
-and operator Typed IR are unchanged. The [implementation
-chapter][numeric-plan] maps the remaining literal, well-known-item, operator,
-and closure checkpoints to their code seams.
+**In progress.** The source-neutral domain substrate and numeric expression
+literal checkpoint are operational: inference classes carry transactional
+`Any`, `Integer`, or `Float` domains; suffixes lower directly; required source
+conflicts report category-level diagnostics and recover once; unresolved
+numeric classes do not default; and completed-IR tests cover generic and nested
+ADT propagation plus rigid-head impl filtering after later narrowing. Explicit
+let annotations and the full propagation matrix remain open. KD-7 also remains
+open because cached operator items, trait-first binary checking, resolved-call
+elaboration, and closure evidence are not implemented. The [implementation
+chapter][numeric-plan] maps those remaining checkpoints to their code seams.
 
 ## Planned slice: trait-partitioned impl discovery
 
