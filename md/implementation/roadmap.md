@@ -338,11 +338,13 @@ literal checkpoint are operational: inference classes carry transactional
 `Any`, `Integer`, or `Float` domains; suffixes lower directly; required source
 conflicts report category-level diagnostics and recover once; unresolved
 numeric classes do not default; and completed-IR tests cover generic and nested
-ADT propagation plus rigid-head impl filtering after later narrowing. Explicit
-let annotations and the full propagation matrix remain open. KD-7 also remains
-open because cached operator items, trait-first binary checking, resolved-call
-elaboration, and closure evidence are not implemented. The [implementation
-chapter][numeric-plan] maps those remaining checkpoints to their code seams.
+ADT propagation plus rigid-head impl filtering after later narrowing. Cached
+typed queries for all represented well-known operator traits and methods are
+also operational. Explicit let annotations and the full propagation matrix
+remain open. KD-7 remains open because body checking does not yet consume the
+identities for trait-first checking, resolved-call elaboration, and closure
+evidence. The [implementation chapter][numeric-plan] maps those remaining
+checkpoints to their code seams.
 
 ## Planned slice: trait-partitioned impl discovery
 

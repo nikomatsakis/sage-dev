@@ -277,6 +277,10 @@ types and the implemented Typed IR slices are operational.
   inspects a resolved field owner in Typed IR, and the [oracle-checked method
   example](../examples/oracle-checked-method.md) inspects external definition
   identities in exact conformance output.
+- **[SYM-A4](#sym-a4) — Typed operator identities.**
+  `all_operator_traits_and_methods_resolve_to_typed_symbols` verifies that
+  fixed operator paths and associated-item names produce `TraitSymbol` and
+  `FnSymbol` results, while the failure tests reject wrong-kind definitions.
 
 The implementation entry points are the anchored local, external, and wrapper
 definitions above. Run the focused harness evidence with:
@@ -286,6 +290,7 @@ cargo test -p sage-test-harness moving_source_item_preserves_derive_expansion_id
 cargo test -p sage-test-harness trait_items_have_stable_symbols_and_owner_identity
 cargo test -p sage-test-harness detail_edits_preserve_local_symbol_query_keys
 cargo test -p sage-test-harness moving_associated_items_preserves_symbol_query_keys
+cargo test -p sage-ir well_known
 ```
 
 ### Current limitations

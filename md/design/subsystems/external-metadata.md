@@ -141,10 +141,11 @@ without issuing the raw metadata operation again.
 
 ### Current frontier
 
-External module/name lookup, traits, associated items, function methods, ADT
+External module/name lookup, traits, associated items, cached well-known
+operator trait and method identities, function methods, ADT
 generics/defaults/predicates, inherent method candidates, relevant trait impls,
 impl headers, associated type values, selected structural ADT properties, and
-macro expansion facts support the completed mini-redis slices.
+macro expansion facts support the implemented slices.
 
 ### Implemented capabilities and evidence
 
@@ -152,8 +153,8 @@ macro expansion facts support the completed mini-redis slices.
 |---|---|---|
 | [META-A1](#meta-a1) | Partial | The `architecture_external_metadata_interface` source anchor exposes typed owned facts rather than solver verdicts; `external_clone_contract_proves_the_derived_impl` exercises Sage proof after importing external data. A dedicated interface-surface audit is not yet checked in. |
 | [META-A2](#meta-a2) | Partial | `external_adt_missing_required_argument_is_not_inferred` and `unsupported_external_default_is_metadata_unavailable_not_an_arity_error` preserve two unavailable-metadata cases without inventing defaults; the full boundary matrix is not present. |
-| [META-A3](#meta-a3) | Partial | `external_clone_items_and_method_signature_are_typed_metadata` verifies separate trait-item enumeration and selected method-signature lowering. `clone_method_body_has_a_narrow_reusable_semantic_query_trace` rejects callee-body reads. The local analogue `local_normalization_reads_one_keyed_value_without_impl_item_enumeration` covers keyed associated-value demand, but no focused external normalization trace establishes that portion yet. |
-| [META-A4](#meta-a4) | Implemented for selected products | `clone_method_body_has_a_narrow_reusable_semantic_query_trace` pins cold calls and warm reuse for the method slice. `external_adt_default_and_predicate_have_one_narrow_reusable_dependency` pins one ADT-signature read and warm reuse. |
+| [META-A3](#meta-a3) | Partial | `external_clone_items_and_method_signature_are_typed_metadata` verifies separate trait-item enumeration and selected method-signature lowering. `operator_identity_queries_are_layered_cached_and_narrow` verifies that operator-method identity reads associated items and names without loading trait or function signatures or impls. `clone_method_body_has_a_narrow_reusable_semantic_query_trace` rejects callee-body reads. The local analogue `local_normalization_reads_one_keyed_value_without_impl_item_enumeration` covers keyed associated-value demand, but no focused external normalization trace establishes that portion yet. |
+| [META-A4](#meta-a4) | Implemented for selected products | `clone_method_body_has_a_narrow_reusable_semantic_query_trace` pins cold calls and warm reuse for the method slice. `external_adt_default_and_predicate_have_one_narrow_reusable_dependency` pins one ADT-signature read and warm reuse. `operator_identity_queries_are_layered_cached_and_narrow` separately pins layered trait/method lookup and a metadata-free warm repeat. |
 
 ### Current limitations
 
@@ -182,5 +183,6 @@ macro expansion facts support the completed mini-redis slices.
   will add only the metadata forms required by that vertical slice.
 - [Numeric inference and operator
   soundness](../../implementation/roadmap.md#next-correctness-slice-numeric-inference-and-operator-soundness)
-  adds cached well-known-item queries over ordinary path resolution and traces
-  the resulting `core` impl discovery through this boundary.
+  uses cached well-known-item queries over ordinary path and associated-item
+  resolution; trait-first checking will trace the resulting `core` impl
+  discovery through this boundary.

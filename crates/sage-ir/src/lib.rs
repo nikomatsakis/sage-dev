@@ -23,6 +23,7 @@ pub mod ty;
 pub mod ty_fold;
 pub mod types;
 pub mod tytree;
+pub mod well_known;
 
 /// The salsa database trait for sage-ir.
 #[salsa::db]

@@ -170,6 +170,12 @@ slice adds no hardcoded operator-specific inference relationships. Any future
 extraction of facts shared by several ambiguous candidates must use the actual
 complete candidate answers through the general inference and solver design.
 
+The cached identity boundary is independent from body checking:
+
+```{anchor}
+well_known_operator_queries
+```
+
 After inference and trait selection settle, every proven non-short-circuit
 operator becomes a resolved static trait-method call with its substitutions,
 explicit adjustments, and result type. This includes operations over concrete
@@ -263,6 +269,7 @@ to static `Clone::clone` dispatch and compared exactly with rustc output.
 | `check/method.rs` | method candidate discovery, selection, and instantiation |
 | `check/solve/` | canonical trait proof and alias normalization |
 | `tytree/` | completed typed body representation |
+| `well_known.rs` | cached fixed-path operator trait and associated-method identities |
 
 ## Current status
 
@@ -336,6 +343,13 @@ remains unresolved.
   shows that an arity mismatch does not suppress diagnostics within surplus
   argument expressions. Recursive consumption of the expectation by
   expression-specific rules is not yet implemented.
+- **[BODY-A5](#body-a5) prerequisite — Operator identities.**
+  `all_operator_traits_and_methods_resolve_to_typed_symbols` covers all twelve
+  trait identities and sixteen associated methods, including comparison
+  methods which share one trait. The failure and cache tests cover external
+  export identity, unavailable and wrong-kind results, narrow metadata demand,
+  and warm reuse. Body checking does not yet consume these identities, so this
+  evidence does not establish BODY-A5.
 
 Run the review evidence with:
 
@@ -344,6 +358,7 @@ cargo test -p sage-test-harness clone_method_call_is_elaborated_to_a_resolved_tr
 cargo test -p sage-test-harness clone_method_body_has_a_narrow_reusable_semantic_query_trace
 cargo test -p sage-test-harness unrelated_body_edit_exposes_current_body_invalidation
 cargo test -p sage-ir external_method_mismatch_discards_partial_generic_bindings
+cargo test -p sage-ir well_known
 cargo test -p sage-test-harness trait_obligation_tests
 cargo test --test type_check_tests
 cargo test --test type_check_tests never
@@ -364,11 +379,9 @@ cargo test -p sage-oracle-harness --test oracle_compare -- mini_redis/db_drop_gu
   `bool + bool`, rejects valid operations whose `Rhs` differs from `Self`, and
   retains successful source-shaped `Binary` nodes instead of the resolved
   calls required by BODY-A5.
-- Sage does not yet have the cached well-known-item queries that find operator
-  traits and methods. For example, body checking cannot yet ask Sage to resolve
-  `core::ops::Add` and its `add` method before constructing the trait
-  obligation. The numeric/operator implementation plan adds these queries on
-  top of ordinary path and associated-item lookup.
+- Cached queries resolve the well-known operator traits and methods, but body
+  checking does not yet consume those identities when constructing operator
+  obligations. Binary checking therefore still has the KD-7 behavior above.
 - Expected-type checking currently synthesizes an expression before applying
   its coercion expectation. Only ordinary direct-call arguments use this
   boundary; literals, closures, nested expression forms, and method arguments
