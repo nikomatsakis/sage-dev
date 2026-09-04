@@ -49,8 +49,13 @@ pub fn try_unify<'db>(
     try_unify_batch(egraph, stash, parent, &[(left, right)])
 }
 
-/// Apply a required source equality and retain the variables implicated by a
-/// domain conflict before its transactional state is discarded.
+/// Attempt a source-required equality in a child transaction.
+///
+/// On a domain conflict, capture every parent-visible member of either
+/// unresolved conflicting class, including members joined only in the child,
+/// before rolling the child back. The diagnostic boundary uses that list to
+/// install precise `Ty::Error` recovery. Speculative solver probes do not need
+/// this additional recovery metadata.
 pub(crate) fn try_unify_required<'db>(
     egraph: &mut VersionedEGraph<'db>,
     stash: &mut Stash,
