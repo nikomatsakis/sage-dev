@@ -317,10 +317,11 @@ intentionally deferred answer-merging and fallback questions.
 2. Construct suffixed and domain-constrained literals, propagate
    proof-derived constraints, and diagnose unresolved numeric classes without
    defaulting them.
-3. Add a typed external-metadata query from an operator kind to its rustc
-   language-item trait and associated method identities. Missing metadata is
-   incomplete; body checking does not recover identity through a textual
-   `core::ops` path or prelude lookup.
+3. Add Sage-owned cached queries for the well-known operator items. Each query
+   uses ordinary semantic lookup for a fixed `core`/`std` path—for example,
+   the addition-trait query resolves `core::ops::Add`—and ordinary
+   associated-item lookup for its method. A missing or ambiguous lookup is
+   incomplete, not proof.
 4. Replace blanket binary equality with retained operator-trait goals, import
    ordinary local or `core` impl responses through the existing candidate
    path, and elaborate every proven overloadable operation as a resolved trait

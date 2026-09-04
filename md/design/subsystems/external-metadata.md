@@ -67,10 +67,11 @@ identities, then load only the selected function signature. Trait candidate
 discovery loads relevant impl identities, then matching candidate headers.
 Associated-type normalization requests one associated value only after its
 impl header matches. No operation reads an external function body.
-Operator checking first asks a typed metadata operation for the exact
-language-item trait and associated method identities selected by the operator
-kind. The rustc-backed provider obtains those identities from compiler
-semantics; the checker does not reconstruct them by resolving a library path.
+Operator checking obtains its well-known trait identities through ordinary
+Sage path resolution. Cached queries such as the addition-trait query resolve
+fixed paths such as `core::ops::Add`, then associated-item lookup finds the
+method. Those lookups consume this subsystem's ordinary external module and
+item facts; the raw metadata provider has no operator-specific identity query.
 Ordinary primitive operator impls defined in `core` use this same relevant-impl
 path; the metadata boundary does not replace them with a compiler-authored
 operator table or proof result.
@@ -163,9 +164,6 @@ macro expansion facts support the completed mini-redis slices.
 - META-A1 lacks a mechanical interface-surface check, META-A2 lacks a complete
   unavailable-metadata matrix, and META-A3 lacks a focused external
   associated-value trace.
-- `TcxDb` does not yet expose operator language-item trait/method identities.
-  The [numeric inference and operator soundness slice] adds this typed identity
-  lookup before reusing the existing relevant-impl path.
 - External module children are broader than several desired semantic lookup
   keys; finer queries should be introduced when evidence shows unnecessary
   invalidation.
@@ -184,5 +182,5 @@ macro expansion facts support the completed mini-redis slices.
   will add only the metadata forms required by that vertical slice.
 - [Numeric inference and operator
   soundness](../../implementation/roadmap.md#next-correctness-slice-numeric-inference-and-operator-soundness)
-  adds operator semantic-identity lookup and traces ordinary `core` impl
-  discovery through this boundary.
+  adds cached well-known-item queries over ordinary path resolution and traces
+  the resulting `core` impl discovery through this boundary.

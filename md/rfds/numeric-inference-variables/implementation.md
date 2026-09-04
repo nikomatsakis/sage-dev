@@ -15,10 +15,10 @@ Land the work in dependency order rather than as one source-visible change:
    literals, lower suffixes directly, and add terminal diagnostics and recovery.
    This is the first checkpoint that closes the unsound literal-to-`bool`
    unification independently of operator elaboration.
-3. **Operator proof and elaboration.** Add typed operator-language-item
-   metadata, retain the trait obligation, reuse normal impl discovery, and emit
-   resolved trait calls. Keep lazy boolean operators on their existing
-   short-circuit path.
+3. **Operator proof and elaboration.** Add cached well-known-item lookups for
+   the operator traits and methods, retain the trait obligation, reuse normal
+   impl discovery, and emit resolved trait calls. Keep lazy boolean operators
+   on their existing short-circuit path.
 4. **Closure evidence.** Complete the source matrix, oracle comparisons,
    query-trace assertions, and living-document evidence before closing KD-7.
 
@@ -29,8 +29,8 @@ not mix operator lookup or literal lowering into the equality substrate.
 
 ## Implementation seams
 
-The current code provides most of the required boundaries, but the operator
-language-item lookup is new. The expected code map is:
+The current code provides most of the required boundaries, but the cached
+well-known-item lookups for operators are new. The expected code map is:
 
 | Responsibility | Current seam | Planned change |
 |---|---|---|
@@ -39,15 +39,17 @@ language-item lookup is new. The expected code map is:
 | Equality enforcement and diagnostics | `check/infer/unify.rs` (`try_unify`, `unify_in_probe`, `bind_variable`) and `check/infer_ctx.rs` (`require_eq`) | Reject an empty domain intersection or an out-of-domain concrete type with a structured `DomainConflict`; keep probe rejection silent and render required source relations without exposing inference indices. |
 | Solver cache boundary | `check/solve/goal.rs` (`CanonicalVarInfo`), `canonical.rs`, and `boundary.rs` (`apply_query_response`) | Put effective input domains in the canonical key and recreate/recheck them while importing a response through the existing child transaction. Response-local variables begin as `Any` unless their binder metadata says otherwise. |
 | Literal and binary-expression checking | `check/expr.rs` (`check_literal_ty`, `check_binary_op_ty`) | Lower suffixes directly, allocate `Integer`/`Float` variables for unsuffixed literals, and replace blanket binary equality with the selected operator-trait operation. |
-| Operator semantic identity | `tcx/mod.rs` (`TcxDb`), `tcx/proxy.rs`, and the request loop plus `tcx_impl.rs` in `sage-rustc-bridge` | Add a typed query from Sage's closed binary-operator kind to the exact external trait and method definitions. The rustc-backed provider obtains the trait from rustc's language-item table and validates the associated method under that trait; body checking does not resolve a textual `core::ops` path or prelude name. Missing or inconsistent metadata is incomplete, never proof. |
+| Operator semantic identity | `check/resolve/mod.rs`, external module/item lookup, and a new Sage-owned well-known-item query module | Add individually cached queries such as the addition-trait query. Each resolves a fixed `core`/`std` path such as `core::ops::Add` through ordinary symbol lookup and finds the method through ordinary associated-item lookup. Return typed `TraitSymbol`/`FnSymbol` identities; missing or ambiguous results are incomplete, never proof. No new operator-specific `TcxDb` operation is required. |
 | Ordinary primitive/user impl discovery | `external_syms.rs` (`external_relevant_impls`) and `check/solve/clauses.rs` | Reuse the selected trait identity with the existing relevant-impl and impl-signature queries. Do not add a primitive operator candidate or signature matrix. |
 | Successful operator IR | `tytree/mod.rs` (`ResolvedCallTarget`, `CallDispatch`, `TyExprData`) | Reuse resolved static trait-call representation for overloadable operators. Reserve source-shaped `Binary` for non-overloadable/lazy forms still needing it; future codegen performs primitive recognition. |
 
-The language-item operation should return an owned, provider-neutral record
-containing both definitions, following the other `Raw*` metadata in `TcxDb`.
-Its exact Rust type name is an implementation detail, but operator kind,
-missing-data behavior, and semantic identities are part of the boundary and
-need focused proxy/provider tests.
+The well-known-item queries may share an internal path-resolution helper, but
+each public cached query has one semantic meaning and a typed result. The
+fixed path and associated-item name are an accepted bootstrap mechanism for
+now. Keeping them behind these queries lets a future first-class lang-item
+source replace the lookup without changing body checking or trait solving.
+Focused tests must cover successful resolution, reexports where supported,
+wrong-kind results, missing/ambiguous paths, and cache reuse.
 
 ## First landing checkpoint
 
@@ -106,10 +108,12 @@ and canonical-response tests. Source-level numeric tests belong to checkpoint
 
 - [ ] Replace blanket operand equality with a retained operator-trait goal and
   normalized method result for every non-short-circuit operator ([NIV-A3]).
-- [ ] Map the token only to its operator language-item trait/method; discover
-  primitive implementations as ordinary `core` impls through external
-  metadata and the normal trait-candidate path, with no synthetic primitive
-  candidate or hardcoded signature matrix.
+- [ ] Add cached well-known-item queries that resolve each operator trait from
+  its fixed `core`/`std` path and its method through ordinary associated-item
+  lookup. Map tokens to those typed identities, then discover primitive
+  implementations as ordinary `core` impls through external metadata and the
+  normal trait-candidate path, with no synthetic primitive candidate or
+  hardcoded signature matrix.
 - [ ] Prove that operator syntax alone neither narrows operand domains nor
   equates them; import only constraints from selected impls and where-clauses.
 - [ ] After selection and type finalization, emit a resolved static trait call

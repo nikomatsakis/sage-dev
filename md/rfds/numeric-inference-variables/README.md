@@ -232,14 +232,20 @@ part of the same operation for traits such as `Add` and `Shl`. The selected
 trait proof and instantiated method signature are the semantic authority for
 both primitive and user-defined operands.
 
-The operator token selects the language-item trait and method, not a special
-primitive implementation family. Candidate discovery then follows the normal
-trait path across local source and reachable external crates. Implementations
-such as `u8: Add<u8>` and `u8: Shl<i16>` are ordinary impls defined in `core`;
-Sage obtains their identities and headers through external metadata and proves
-them exactly as it does other external impls. They are not solver
-`BuiltinImpl` candidates of the kind needed for structural compiler traits
-such as `Sized` or auto traits.
+The operator token selects the well-known operator trait and method, not a
+special primitive implementation family. For this implementation, Sage-owned
+cached queries identify those items with ordinary semantic lookup at fixed
+`core`/`std` paths. For example, the addition-trait query resolves
+`core::ops::Add`, and ordinary associated-item lookup finds `add` beneath that
+trait. This small path/name table bootstraps semantic identities only: it does
+not encode signatures, applicable operand types, or primitive results.
+
+Candidate discovery then follows the normal trait path across local source and
+reachable external crates. Implementations such as `u8: Add<u8>` and
+`u8: Shl<i16>` are ordinary impls defined in `core`; Sage obtains their
+identities and headers through external metadata and proves them exactly as it
+does other external impls. They are not solver `BuiltinImpl` candidates of the
+kind needed for structural compiler traits such as `Sized` or auto traits.
 
 Operator spelling adds no independent domain restriction or equality between
 its operands. A goal such as `Lhs: Shl<Rhs>` may select a user-defined impl
@@ -492,9 +498,11 @@ keeps calls uniform through Typed IR and defers that split to codegen.
    variables for unsuffixed literals. Propagate constraints normally, but leave
    an otherwise unresolved numeric variable for terminal diagnostic recovery
    rather than defaulting it.
-3. **Replace binary equality with trait-first checking.** Map each
-   non-short-circuit operator token to its language-item trait method, create
-   the trait and result-normalization obligations, and discover both local and
+3. **Replace binary equality with trait-first checking.** Add cached
+   well-known-item queries which resolve each operator trait at its fixed
+   `core`/`std` path and find its method through ordinary associated-item
+   lookup. Map each non-short-circuit token to that typed result, create the
+   trait and result-normalization obligations, and discover both local and
    ordinary `core` impls through the existing candidate machinery. Import only
    proof-derived constraints; do not introduce a primitive candidate or
    hardcoded operator matrix.

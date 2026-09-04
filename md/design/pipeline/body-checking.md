@@ -158,13 +158,17 @@ operator-trait operation. Checking creates the applicable trait goal,
 instantiates its method signature, and relates the expression type to the
 method result. The operator token alone neither narrows operand domains nor
 equates their types: a selected user-defined impl may accept arbitrary operand
-types. It selects only the operator language-item trait and method. Candidate
-discovery uses the ordinary local and external impl path; primitive arithmetic
-and shift implementations arrive as `core` impl metadata, not synthetic
-builtin candidates. This first slice adds no hardcoded operator-specific
-inference relationships. Any future extraction of facts shared by several
-ambiguous candidates must use the actual complete candidate answers through
-the general inference and solver design.
+types. It selects only the operator trait and method. Sage obtains those
+identities through cached well-known-item queries: for example, the query for
+the addition trait resolves `core::ops::Add` through ordinary path lookup, then
+finds `add` among that trait's associated items. The fixed path and item name
+bootstrap semantic identity; they do not encode an operator signature or
+primitive implementation. Candidate discovery uses the ordinary local and
+external impl path, so primitive arithmetic and shift implementations arrive
+as `core` impl metadata rather than synthetic builtin candidates. This first
+slice adds no hardcoded operator-specific inference relationships. Any future
+extraction of facts shared by several ambiguous candidates must use the actual
+complete candidate answers through the general inference and solver design.
 
 After inference and trait selection settle, every proven non-short-circuit
 operator becomes a resolved static trait-method call with its substitutions,
@@ -344,11 +348,11 @@ cargo test -p sage-oracle-harness --test oracle_compare -- mini_redis/db_drop_gu
   binary-operator checking relates operand types, does not yet require
   arithmetic operands to be numeric, and retains successful source-shaped
   `Binary` nodes instead of the resolved calls required by BODY-A5.
-- The external metadata interface can enumerate impls for a known trait but
-  does not yet expose the operator-language-item trait and method identities.
-  The numeric/operator implementation plan adds that typed lookup before body
-  checking begins retaining operator obligations; textual `core::ops` or
-  prelude lookup is not a substitute for it.
+- Sage does not yet have the cached well-known-item queries that find operator
+  traits and methods. For example, body checking cannot yet ask Sage to resolve
+  `core::ops::Add` and its `add` method before constructing the trait
+  obligation. The numeric/operator implementation plan adds these queries on
+  top of ordinary path and associated-item lookup.
 - Expected-type checking currently synthesizes an expression before applying
   its coercion expectation. Only ordinary direct-call arguments use this
   boundary; literals, closures, nested expression forms, and method arguments
