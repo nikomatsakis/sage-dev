@@ -1,4 +1,69 @@
-use crate::ty::InferVarIndex;
+use sage_stash::AllocStashData;
+
+use crate::ty::{InferVarIndex, Ty};
+
+// ANCHOR: inference_domain_lattice
+/// Concrete type family permitted for an inference equality class.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, AllocStashData)]
+pub enum InferDomain {
+    #[default]
+    Any,
+    Integer,
+    Float,
+}
+
+impl InferDomain {
+    pub fn intersect(self, other: Self) -> Option<Self> {
+        match (self, other) {
+            (Self::Any, domain) | (domain, Self::Any) => Some(domain),
+            (Self::Integer, Self::Integer) => Some(Self::Integer),
+            (Self::Float, Self::Float) => Some(Self::Float),
+            (Self::Integer, Self::Float) | (Self::Float, Self::Integer) => None,
+        }
+    }
+
+    pub fn admits(self, ty: Ty<'_>) -> bool {
+        match self {
+            Self::Any => true,
+            Self::Integer => match ty {
+                Ty::Int(_) | Ty::Uint(_) | Ty::Error(_) => true,
+                Ty::Bool
+                | Ty::Char
+                | Ty::Float(_)
+                | Ty::Str
+                | Ty::Adt(_, _)
+                | Ty::Alias(_)
+                | Ty::Ref(_, _, _)
+                | Ty::Tuple(_)
+                | Ty::Slice(_)
+                | Ty::Array(_, _)
+                | Ty::FnPtr(_, _)
+                | Ty::Param(_)
+                | Ty::InferVar(_)
+                | Ty::Never => false,
+            },
+            Self::Float => match ty {
+                Ty::Float(_) | Ty::Error(_) => true,
+                Ty::Bool
+                | Ty::Char
+                | Ty::Int(_)
+                | Ty::Uint(_)
+                | Ty::Str
+                | Ty::Adt(_, _)
+                | Ty::Alias(_)
+                | Ty::Ref(_, _, _)
+                | Ty::Tuple(_)
+                | Ty::Slice(_)
+                | Ty::Array(_, _)
+                | Ty::FnPtr(_, _)
+                | Ty::Param(_)
+                | Ty::InferVar(_)
+                | Ty::Never => false,
+            },
+        }
+    }
+}
+// ANCHOR_END: inference_domain_lattice
 
 /// Stable version-tree node identifier.
 ///
@@ -25,6 +90,7 @@ impl Universe {
 pub struct VarInfo {
     pub owner: Version,
     pub creation_universe: Universe,
+    pub initial_domain: InferDomain,
 }
 
 /// A node in the version tree.
@@ -128,11 +194,22 @@ impl VersionTree {
 
     /// Allocate a globally unique variable owned by a leaf version.
     pub fn alloc_var(&mut self, version: Version, creation_universe: Universe) -> InferVarIndex {
+        self.alloc_var_in_domain(version, creation_universe, InferDomain::Any)
+    }
+
+    /// Allocate a globally unique variable with an explicit initial domain.
+    pub fn alloc_var_in_domain(
+        &mut self,
+        version: Version,
+        creation_universe: Universe,
+        initial_domain: InferDomain,
+    ) -> InferVarIndex {
         self.assert_mutable(version);
         let index = InferVarIndex(self.variables.len() as u32);
         self.variables.push(VarInfo {
             owner: version,
             creation_universe,
+            initial_domain,
         });
         self.nodes[version.0 as usize].owned_variables.push(index);
         index
@@ -244,6 +321,58 @@ impl Iterator for AncestorIter<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ty::{FloatTy, IntTy, UintTy};
+
+    #[test]
+    fn inference_domain_intersection_is_commutative() {
+        assert_eq!(
+            InferDomain::Any.intersect(InferDomain::Integer),
+            Some(InferDomain::Integer)
+        );
+        assert_eq!(
+            InferDomain::Integer.intersect(InferDomain::Any),
+            Some(InferDomain::Integer)
+        );
+        assert_eq!(
+            InferDomain::Float.intersect(InferDomain::Float),
+            Some(InferDomain::Float)
+        );
+        assert_eq!(InferDomain::Integer.intersect(InferDomain::Float), None);
+        assert_eq!(InferDomain::Float.intersect(InferDomain::Integer), None);
+    }
+
+    #[test]
+    fn numeric_domains_admit_only_their_primitive_families() {
+        for integer in [
+            IntTy::I8,
+            IntTy::I16,
+            IntTy::I32,
+            IntTy::I64,
+            IntTy::I128,
+            IntTy::Isize,
+        ] {
+            assert!(InferDomain::Integer.admits(Ty::Int(integer)));
+            assert!(!InferDomain::Float.admits(Ty::Int(integer)));
+        }
+        for integer in [
+            UintTy::U8,
+            UintTy::U16,
+            UintTy::U32,
+            UintTy::U64,
+            UintTy::U128,
+            UintTy::Usize,
+        ] {
+            assert!(InferDomain::Integer.admits(Ty::Uint(integer)));
+            assert!(!InferDomain::Float.admits(Ty::Uint(integer)));
+        }
+        for float in [FloatTy::F32, FloatTy::F64] {
+            assert!(InferDomain::Float.admits(Ty::Float(float)));
+            assert!(!InferDomain::Integer.admits(Ty::Float(float)));
+        }
+        assert!(InferDomain::Any.admits(Ty::Bool));
+        assert!(!InferDomain::Integer.admits(Ty::Bool));
+        assert!(!InferDomain::Float.admits(Ty::Bool));
+    }
 
     #[test]
     fn sibling_variables_are_globally_unique_and_invisible() {
@@ -259,6 +388,22 @@ mod tests {
 
         let sibling_access = std::panic::catch_unwind(|| tree.get_variable(right, left_var));
         assert!(sibling_access.is_err());
+    }
+
+    #[test]
+    fn variable_metadata_preserves_its_initial_domain() {
+        let mut tree = VersionTree::new();
+        let any = tree.alloc_var(Version::ROOT, Universe::ROOT);
+        let integer = tree.alloc_var_in_domain(Version::ROOT, Universe::ROOT, InferDomain::Integer);
+
+        assert_eq!(
+            tree.get_variable(Version::ROOT, any).initial_domain,
+            InferDomain::Any
+        );
+        assert_eq!(
+            tree.get_variable(Version::ROOT, integer).initial_domain,
+            InferDomain::Integer
+        );
     }
 
     #[test]

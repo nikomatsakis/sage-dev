@@ -1,6 +1,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use sage_stash::{Ptr, Stash, Stashed};
 
+use crate::check::infer::version::InferDomain;
 use crate::generic_param::{AlphaEquivParam, GenericParam};
 use crate::ty::Ty;
 
@@ -12,6 +13,7 @@ pub(crate) fn merge_candidate_results<'db>(
     db: &'db dyn crate::Db,
     next_response_param: u32,
     input_universes: &FxHashMap<AlphaEquivParam<'db>, u32>,
+    input_domains: &FxHashMap<AlphaEquivParam<'db>, InferDomain>,
     mut candidates: Vec<Stashed<QueryResult<'db>>>,
     saw_incomplete_source: bool,
 ) -> Stashed<QueryResult<'db>> {
@@ -38,7 +40,7 @@ pub(crate) fn merge_candidate_results<'db>(
         .filter(|candidate| matches!(candidate.root().value, QueryResultData::Yes { .. }))
         .cloned()
         .collect();
-    let yes = non_dominated_yes(db, input_universes, yes_candidates);
+    let yes = non_dominated_yes(db, input_universes, input_domains, yes_candidates);
     let maybe: Vec<_> = candidates
         .iter()
         .filter(|candidate| matches!(candidate.root().value, QueryResultData::Maybe { .. }))
@@ -60,6 +62,7 @@ pub(crate) fn merge_candidate_results<'db>(
         db,
         next_response_param,
         input_universes,
+        input_domains,
         &possible,
         saw_incomplete_source,
     )
@@ -69,6 +72,7 @@ pub(crate) fn merge_candidate_results<'db>(
 fn non_dominated_yes<'db>(
     db: &'db dyn crate::Db,
     input_universes: &FxHashMap<AlphaEquivParam<'db>, u32>,
+    input_domains: &FxHashMap<AlphaEquivParam<'db>, InferDomain>,
     answers: Vec<Stashed<QueryResult<'db>>>,
 ) -> Vec<Stashed<QueryResult<'db>>> {
     let mut keep = vec![true; answers.len()];
@@ -77,8 +81,20 @@ fn non_dominated_yes<'db>(
             if index == other {
                 continue;
             }
-            let other_subsumes = subsumes(db, input_universes, &answers[other], &answers[index]);
-            let index_subsumes = subsumes(db, input_universes, &answers[index], &answers[other]);
+            let other_subsumes = subsumes(
+                db,
+                input_universes,
+                input_domains,
+                &answers[other],
+                &answers[index],
+            );
+            let index_subsumes = subsumes(
+                db,
+                input_universes,
+                input_domains,
+                &answers[index],
+                &answers[other],
+            );
             if other_subsumes && (!index_subsumes || other < index) {
                 keep[index] = false;
                 break;
@@ -96,6 +112,7 @@ fn non_dominated_yes<'db>(
 fn subsumes<'db>(
     db: &'db dyn crate::Db,
     input_universes: &FxHashMap<AlphaEquivParam<'db>, u32>,
+    input_domains: &FxHashMap<AlphaEquivParam<'db>, InferDomain>,
     consequent: &Stashed<QueryResult<'db>>,
     antecedent: &Stashed<QueryResult<'db>>,
 ) -> bool {
@@ -110,6 +127,9 @@ fn subsumes<'db>(
     let mut parameter_universes = input_universes.clone();
     parameter_universes.extend(antecedent.parameter_universes);
     parameter_universes.extend(consequent.parameter_universes.clone());
+    let mut parameter_domains = input_domains.clone();
+    parameter_domains.extend(antecedent.parameter_domains);
+    parameter_domains.extend(consequent.parameter_domains.clone());
     let flexible: FxHashSet<_> = consequent.parameter_universes.keys().copied().collect();
     let mut bindings = FxHashMap::default();
 
@@ -122,6 +142,7 @@ fn subsumes<'db>(
                 known,
                 &flexible,
                 &parameter_universes,
+                &parameter_domains,
                 &mut bindings,
             ) {
                 return false;
@@ -146,6 +167,7 @@ fn subsumes<'db>(
             known.value,
             &flexible,
             &parameter_universes,
+            &parameter_domains,
             &mut bindings,
         ) {
             return false;
@@ -164,6 +186,7 @@ fn subsumes<'db>(
                 *known,
                 &flexible,
                 &parameter_universes,
+                &parameter_domains,
                 &mut trial,
             ) {
                 bindings = trial;
@@ -183,6 +206,7 @@ struct AnswerView<'db> {
     substitution: Vec<SubstEntry<'db>>,
     modulo: Goal<'db>,
     parameter_universes: FxHashMap<AlphaEquivParam<'db>, u32>,
+    parameter_domains: FxHashMap<AlphaEquivParam<'db>, InferDomain>,
 }
 
 fn copy_answer_apart<'db>(
@@ -202,12 +226,14 @@ fn copy_answer_apart<'db>(
     };
     let mut mapping = FxHashMap::default();
     let mut parameter_universes = FxHashMap::default();
+    let mut parameter_domains = FxHashMap::default();
     for info in &source[result.bound_vars] {
         let renamed = AlphaEquivParam::new(db, info.kind, *next_param);
         *next_param += 1;
         let ty = target.alloc(Ty::Param(GenericParam::AlphaEquiv(renamed)));
         mapping.insert(GenericParam::AlphaEquiv(info.param), ty);
         parameter_universes.insert(renamed, info.relative_universe);
+        parameter_domains.insert(renamed, info.domain);
     }
     let mut copier = IrCopier::new(source, target, mapping, Some((db, *next_param)));
     let substitution = copier
@@ -225,6 +251,7 @@ fn copy_answer_apart<'db>(
         substitution,
         modulo,
         parameter_universes,
+        parameter_domains,
     }
 }
 
@@ -234,6 +261,7 @@ fn directional_match_goal<'db>(
     known: Goal<'db>,
     flexible: &FxHashSet<AlphaEquivParam<'db>>,
     universes: &FxHashMap<AlphaEquivParam<'db>, u32>,
+    domains: &FxHashMap<AlphaEquivParam<'db>, InferDomain>,
     bindings: &mut FxHashMap<AlphaEquivParam<'db>, Ptr<Ty<'db>>>,
 ) -> bool {
     match (required, known) {
@@ -256,13 +284,14 @@ fn directional_match_goal<'db>(
                     known_self,
                     flexible,
                     universes,
+                    domains,
                     bindings,
                 ) && stash[required_ref.args]
                     .iter()
                     .zip(&stash[known_ref.args])
                     .all(|(required, known)| {
                         directional_match_ty(
-                            stash, *required, *known, flexible, universes, bindings,
+                            stash, *required, *known, flexible, universes, domains, bindings,
                         )
                     })
             }
@@ -278,6 +307,7 @@ fn directional_match_goal<'db>(
                     known_left,
                     flexible,
                     universes,
+                    domains,
                     &mut direct,
                 ) && directional_match_ty(
                     stash,
@@ -285,6 +315,7 @@ fn directional_match_goal<'db>(
                     known_right,
                     flexible,
                     universes,
+                    domains,
                     &mut direct,
                 ) {
                     *bindings = direct;
@@ -296,6 +327,7 @@ fn directional_match_goal<'db>(
                         known_right,
                         flexible,
                         universes,
+                        domains,
                         bindings,
                     ) && directional_match_ty(
                         stash,
@@ -303,6 +335,7 @@ fn directional_match_goal<'db>(
                         known_left,
                         flexible,
                         universes,
+                        domains,
                         bindings,
                     )
                 }
@@ -331,6 +364,7 @@ fn directional_match_ty<'db>(
     known: Ptr<Ty<'db>>,
     flexible: &FxHashSet<AlphaEquivParam<'db>>,
     universes: &FxHashMap<AlphaEquivParam<'db>, u32>,
+    domains: &FxHashMap<AlphaEquivParam<'db>, InferDomain>,
     bindings: &mut FxHashMap<AlphaEquivParam<'db>, Ptr<Ty<'db>>>,
 ) -> bool {
     if required == known {
@@ -341,6 +375,10 @@ fn directional_match_ty<'db>(
     {
         if let Some(previous) = bindings.get(&parameter) {
             return structural_ty_eq(stash, *previous, known);
+        }
+        let required_domain = domains.get(&parameter).copied().unwrap_or(InferDomain::Any);
+        if !type_satisfies_domain(stash, known, required_domain, domains) {
+            return false;
         }
         let ceiling = universes.get(&parameter).copied().unwrap_or(0);
         if contains_newer_parameter(stash, known, ceiling, universes) {
@@ -359,8 +397,28 @@ fn directional_match_ty<'db>(
             .iter()
             .zip(known.children.iter())
             .all(|(required, known)| {
-                directional_match_ty(stash, *required, *known, flexible, universes, bindings)
+                directional_match_ty(
+                    stash, *required, *known, flexible, universes, domains, bindings,
+                )
             })
+}
+
+fn type_satisfies_domain(
+    stash: &Stash,
+    ty: Ptr<Ty<'_>>,
+    required: InferDomain,
+    domains: &FxHashMap<AlphaEquivParam<'_>, InferDomain>,
+) -> bool {
+    if required == InferDomain::Any {
+        return true;
+    }
+    match stash[ty] {
+        Ty::Param(GenericParam::AlphaEquiv(param)) => {
+            let actual = domains.get(&param).copied().unwrap_or(InferDomain::Any);
+            actual.intersect(required) == Some(actual)
+        }
+        ty => required.admits(ty),
+    }
 }
 
 fn structural_ty_eq(stash: &Stash, left: Ptr<Ty<'_>>, right: Ptr<Ty<'_>>) -> bool {
@@ -465,7 +523,14 @@ mod tests {
     #[test]
     fn unconditional_yes_wins_over_incomplete_source() {
         let db = Database::default();
-        let result = merge_candidate_results(&db, 0, &FxHashMap::default(), vec![yes(true)], true);
+        let result = merge_candidate_results(
+            &db,
+            0,
+            &FxHashMap::default(),
+            &FxHashMap::default(),
+            vec![yes(true)],
+            true,
+        );
         assert!(matches!(result.root().value, QueryResultData::Yes { .. }));
     }
 
@@ -488,7 +553,14 @@ mod tests {
                 },
             },
         );
-        let result = merge_candidate_results(&db, 0, &FxHashMap::default(), vec![answer], true);
+        let result = merge_candidate_results(
+            &db,
+            0,
+            &FxHashMap::default(),
+            &FxHashMap::default(),
+            vec![answer],
+            true,
+        );
         assert!(matches!(result.root().value, QueryResultData::Maybe { .. }));
     }
 
@@ -500,6 +572,7 @@ mod tests {
             &db,
             0,
             &FxHashMap::default(),
+            &FxHashMap::default(),
             vec![answer.clone(), answer],
             false,
         );
@@ -510,15 +583,29 @@ mod tests {
     fn no_candidates_is_no_only_for_complete_source() {
         let db = Database::default();
         assert!(matches!(
-            merge_candidate_results(&db, 0, &FxHashMap::default(), Vec::new(), false)
-                .root()
-                .value,
+            merge_candidate_results(
+                &db,
+                0,
+                &FxHashMap::default(),
+                &FxHashMap::default(),
+                Vec::new(),
+                false,
+            )
+            .root()
+            .value,
             QueryResultData::No
         ));
         assert!(matches!(
-            merge_candidate_results(&db, 0, &FxHashMap::default(), Vec::new(), true)
-                .root()
-                .value,
+            merge_candidate_results(
+                &db,
+                0,
+                &FxHashMap::default(),
+                &FxHashMap::default(),
+                Vec::new(),
+                true,
+            )
+            .root()
+            .value,
             QueryResultData::Maybe { .. }
         ));
     }
@@ -547,13 +634,21 @@ mod tests {
             vec![unconditional.clone(), no.clone(), maybe.clone()],
             vec![maybe.clone(), unconditional.clone(), no.clone()],
         ] {
-            let result = merge_candidate_results(&db, 0, &FxHashMap::default(), candidates, false);
+            let result = merge_candidate_results(
+                &db,
+                0,
+                &FxHashMap::default(),
+                &FxHashMap::default(),
+                candidates,
+                false,
+            );
             assert_eq!(result, unconditional);
         }
 
         let all_maybe = merge_candidate_results(
             &db,
             0,
+            &FxHashMap::default(),
             &FxHashMap::default(),
             vec![maybe.clone(), maybe],
             false,
@@ -562,8 +657,14 @@ mod tests {
             all_maybe.root().value,
             QueryResultData::Maybe { .. }
         ));
-        let all_no =
-            merge_candidate_results(&db, 0, &FxHashMap::default(), vec![no.clone(), no], false);
+        let all_no = merge_candidate_results(
+            &db,
+            0,
+            &FxHashMap::default(),
+            &FxHashMap::default(),
+            vec![no.clone(), no],
+            false,
+        );
         assert!(matches!(all_no.root().value, QueryResultData::No));
     }
 
@@ -589,6 +690,138 @@ mod tests {
         )
     }
 
+    fn domain_witness_answer<'db>(
+        key: AlphaEquivParam<'db>,
+        witness: AlphaEquivParam<'db>,
+        domain: InferDomain,
+        tuple_tail: Option<Ty<'db>>,
+        definite: bool,
+    ) -> Stashed<QueryResult<'db>> {
+        let mut stash = Stash::new();
+        let witness_ty = stash.alloc(Ty::Param(GenericParam::AlphaEquiv(witness)));
+        let value = match tuple_tail {
+            Some(tail) => {
+                let tail = stash.alloc(tail);
+                let elements = stash.alloc_slice(&[witness_ty, tail]);
+                stash.alloc(Ty::Tuple(elements))
+            }
+            None => witness_ty,
+        };
+        let subst = stash.alloc_slice(&[SubstEntry { key, value }]);
+        let bound_vars = stash.alloc_slice(&[super::super::ResponseVarInfo {
+            param: witness,
+            kind: GenericParamKind::Type,
+            relative_universe: 0,
+            domain,
+        }]);
+        let value = if definite {
+            QueryResultData::Yes {
+                output: GoalOutput::Proven,
+                subst,
+                modulo: Goal::true_(&mut stash),
+            }
+        } else {
+            QueryResultData::Maybe { hints: subst }
+        };
+        Stashed::new(stash, QueryResult { bound_vars, value })
+    }
+
+    #[test]
+    fn distinct_response_domains_do_not_subsume_each_other() {
+        let db = Database::default();
+        let key = AlphaEquivParam::new(&db, GenericParamKind::Type, 0);
+        let witness = AlphaEquivParam::new(&db, GenericParamKind::Type, 1);
+        let input_universes = FxHashMap::from_iter([(key, 0)]);
+        let input_domains = FxHashMap::from_iter([(key, InferDomain::Any)]);
+
+        let result = merge_candidate_results(
+            &db,
+            1,
+            &input_universes,
+            &input_domains,
+            vec![
+                domain_witness_answer(key, witness, InferDomain::Integer, None, true),
+                domain_witness_answer(key, witness, InferDomain::Float, None, true),
+            ],
+            false,
+        );
+
+        assert!(matches!(result.root().value, QueryResultData::Maybe { .. }));
+    }
+
+    #[test]
+    fn merged_bare_hints_preserve_a_common_response_domain() {
+        let db = Database::default();
+        let key = AlphaEquivParam::new(&db, GenericParamKind::Type, 0);
+        let witness = AlphaEquivParam::new(&db, GenericParamKind::Type, 1);
+        let input_universes = FxHashMap::from_iter([(key, 0)]);
+        let input_domains = FxHashMap::from_iter([(key, InferDomain::Any)]);
+        let result = merge_candidate_results(
+            &db,
+            1,
+            &input_universes,
+            &input_domains,
+            vec![
+                domain_witness_answer(key, witness, InferDomain::Integer, None, true),
+                domain_witness_answer(key, witness, InferDomain::Integer, None, false),
+            ],
+            false,
+        );
+        let (stash, result) = result.open();
+        let QueryResultData::Maybe { hints } = result.value else {
+            panic!("mixed certainty must remain ambiguous")
+        };
+        let [hint] = &stash[hints] else {
+            panic!("a common restricted domain should remain a hint")
+        };
+        let Ty::Param(GenericParam::AlphaEquiv(param)) = stash[hint.value] else {
+            panic!("expected a response-local hint witness")
+        };
+        let [info] = &stash[result.bound_vars] else {
+            panic!("expected one response-local binder")
+        };
+        assert_eq!(info.param, param);
+        assert_eq!(info.domain, InferDomain::Integer);
+    }
+
+    #[test]
+    fn merged_nested_hints_preserve_a_common_response_domain() {
+        let db = Database::default();
+        let key = AlphaEquivParam::new(&db, GenericParamKind::Type, 0);
+        let witness = AlphaEquivParam::new(&db, GenericParamKind::Type, 1);
+        let input_universes = FxHashMap::from_iter([(key, 0)]);
+        let input_domains = FxHashMap::from_iter([(key, InferDomain::Any)]);
+        let result = merge_candidate_results(
+            &db,
+            1,
+            &input_universes,
+            &input_domains,
+            vec![
+                domain_witness_answer(key, witness, InferDomain::Integer, Some(Ty::Bool), true),
+                domain_witness_answer(key, witness, InferDomain::Integer, Some(Ty::Char), true),
+            ],
+            false,
+        );
+        let (stash, result) = result.open();
+        let QueryResultData::Maybe { hints } = result.value else {
+            panic!("incomparable answers must remain ambiguous")
+        };
+        let [hint] = &stash[hints] else {
+            panic!("the common tuple shape should remain a hint")
+        };
+        let Ty::Tuple(elements) = stash[hint.value] else {
+            panic!("expected a tuple hint")
+        };
+        let Ty::Param(GenericParam::AlphaEquiv(first)) = stash[stash[elements][0]] else {
+            panic!("expected a response-local first element")
+        };
+        let info = stash[result.bound_vars]
+            .iter()
+            .find(|info| info.param == first)
+            .expect("hint witness must have binder metadata");
+        assert_eq!(info.domain, InferDomain::Integer);
+    }
+
     #[test]
     fn divergent_bare_values_produce_empty_hard_hint() {
         let db = Database::default();
@@ -598,6 +831,7 @@ mod tests {
             &db,
             1,
             &inputs,
+            &FxHashMap::default(),
             vec![
                 conditional_answer(key, Ty::Int(IntTy::I32)),
                 conditional_answer(key, Ty::Bool),
@@ -645,6 +879,7 @@ mod tests {
             &db,
             1,
             &inputs,
+            &FxHashMap::default(),
             vec![
                 tuple_answer(key, Ty::Int(IntTy::I32)),
                 tuple_answer(key, Ty::Bool),
@@ -707,7 +942,14 @@ mod tests {
                 },
             )
         };
-        let result = merge_candidate_results(&db, 1, &inputs, vec![specific, general], false);
+        let result = merge_candidate_results(
+            &db,
+            1,
+            &inputs,
+            &FxHashMap::default(),
+            vec![specific, general],
+            false,
+        );
         assert!(matches!(result.root().value, QueryResultData::Yes { .. }));
         let QueryResultData::Yes { subst, .. } = result.root().value else {
             unreachable!()
@@ -730,6 +972,7 @@ mod tests {
             param: witness,
             kind: GenericParamKind::Type,
             relative_universe: universe,
+            domain: crate::check::infer::version::InferDomain::Any,
         }]);
         let modulo = Goal::true_(&mut stash);
         let _ = db;
@@ -781,12 +1024,25 @@ mod tests {
         }
 
         let repeated = tuple_answer(key, Ty::Int(IntTy::I32), Ty::Int(IntTy::I32));
-        let result =
-            merge_candidate_results(&db, 2, &inputs, vec![repeated, general.clone()], false);
+        let result = merge_candidate_results(
+            &db,
+            2,
+            &inputs,
+            &FxHashMap::default(),
+            vec![repeated, general.clone()],
+            false,
+        );
         assert_eq!(result, general);
 
         let non_repeated = tuple_answer(key, Ty::Int(IntTy::I32), Ty::Bool);
-        let result = merge_candidate_results(&db, 2, &inputs, vec![non_repeated, general], false);
+        let result = merge_candidate_results(
+            &db,
+            2,
+            &inputs,
+            &FxHashMap::default(),
+            vec![non_repeated, general],
+            false,
+        );
         assert!(matches!(result.root().value, QueryResultData::Maybe { .. }));
     }
 
@@ -805,6 +1061,7 @@ mod tests {
                 param: witness,
                 kind: GenericParamKind::Type,
                 relative_universe: 0,
+                domain: crate::check::infer::version::InferDomain::Any,
             }]);
             let modulo = Goal::true_(&mut stash);
             Stashed::new(
@@ -820,7 +1077,14 @@ mod tests {
             )
         };
         let specific = conditional_answer(key, Ty::Param(GenericParam::AlphaEquiv(newer)));
-        let result = merge_candidate_results(&db, 3, &inputs, vec![specific, general], false);
+        let result = merge_candidate_results(
+            &db,
+            3,
+            &inputs,
+            &FxHashMap::default(),
+            vec![specific, general],
+            false,
+        );
         assert!(matches!(result.root().value, QueryResultData::Maybe { .. }));
     }
 }

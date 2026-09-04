@@ -3,7 +3,7 @@ use sage_stash::{Ptr, Slice, Stash, Stashed};
 
 use crate::check::infer::egraph::{CommitEffects, VersionedEGraph};
 use crate::check::infer::unify::{UnifyError, unify_in_probe};
-use crate::check::infer::version::{Universe, Version};
+use crate::check::infer::version::{InferDomain, Universe, Version};
 use crate::generic_param::{AlphaEquivParam, GenericParam, GenericParamKind};
 use crate::scope::LocalCrateSymbol;
 use crate::ty::{
@@ -20,6 +20,7 @@ use super::result::{
 pub struct InputInstance<'db> {
     pub param: AlphaEquivParam<'db>,
     pub role: CanonicalVarRole,
+    pub domain: InferDomain,
     pub ty: Ptr<Ty<'db>>,
 }
 
@@ -57,7 +58,7 @@ pub fn instantiate_query<'db>(query: &Stashed<GoalQueryData<'db>>) -> QueryProof
             }
             CanonicalVarRole::ExistentialInput => {
                 assert_eq!(info.kind, GenericParamKind::Type);
-                let index = egraph.alloc_var(version, universe);
+                let index = egraph.alloc_var_in_domain(version, universe, info.domain);
                 stash.alloc(Ty::InferVar(index))
             }
         };
@@ -65,6 +66,7 @@ pub fn instantiate_query<'db>(query: &Stashed<GoalQueryData<'db>>) -> QueryProof
         inputs.push(InputInstance {
             param: info.param,
             role: info.role,
+            domain: info.domain,
             ty,
         });
     }
@@ -388,7 +390,7 @@ pub fn apply_query_response<'db>(
                     .checked_add(info.relative_universe)
                     .ok_or(ApplyResponseError::UniverseOverflow)?,
             );
-            let index = caller_egraph.alloc_var(child, universe);
+            let index = caller_egraph.alloc_var_in_domain(child, universe, info.domain);
             let ty = caller_stash.alloc(Ty::InferVar(index));
             type_mapping.insert(GenericParam::AlphaEquiv(info.param), ty);
         }
@@ -484,7 +486,13 @@ impl<'state, 'target, 'db> ResponseExtractor<'state, 'target, 'db> {
             };
             input_indices.insert(index, input.param);
             let root = state.egraph.find(version, input.ty);
-            class_inputs.entry(root).or_insert(input.param);
+            if state
+                .egraph
+                .effective_domain(version, &state.stash, root)
+                .is_some_and(|effective_domain| input.domain == effective_domain)
+            {
+                class_inputs.entry(root).or_insert(input.param);
+            }
         }
         Self {
             db,
@@ -689,6 +697,11 @@ impl<'state, 'target, 'db> ResponseExtractor<'state, 'target, 'db> {
                             .egraph
                             .current_universe(self.version, index)
                             .0,
+                        domain: self
+                            .state
+                            .egraph
+                            .effective_domain(self.version, &self.state.stash, root)
+                            .expect("response inference variable must have a domain"),
                     });
                     param
                 };

@@ -430,6 +430,7 @@ impl<'db> BodyFinalizer<'_, '_, 'db> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::infer::unify::try_unify;
     use super::super::infer::version::Universe;
     use super::*;
     use crate::span::RelativeSpan;
@@ -443,7 +444,14 @@ mod tests {
         let variable = egraph.alloc_var(Version::ROOT, Universe::ROOT);
         let inference_ty = source.alloc(Ty::InferVar(variable));
         let resolved_ty = source.alloc(Ty::Int(IntTy::I32));
-        egraph.union(Version::ROOT, &source, inference_ty, resolved_ty);
+        try_unify(
+            &mut egraph,
+            &mut source,
+            Version::ROOT,
+            inference_ty,
+            resolved_ty,
+        )
+        .unwrap();
         let tuple_elements = source.alloc_slice(&[inference_ty]);
         let tuple_ty = source.alloc(Ty::Tuple(tuple_elements));
 

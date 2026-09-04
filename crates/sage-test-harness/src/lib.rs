@@ -2885,19 +2885,21 @@ mod trait_solver_boundary_tests {
     use super::*;
     use sage_ir::check::infer::egraph::VersionedEGraph;
     use sage_ir::check::infer::unify::{UnifyError, try_unify};
-    use sage_ir::check::infer::version::{Universe, Version};
+    use sage_ir::check::infer::version::{InferDomain, Universe, Version};
     use sage_ir::check::solve::{
-        AppliedCertainty, Assumption, Atom, CanonicalVarRole, Goal, GoalOutput, GoalResult,
-        QueryResultData, SolverGoal, apply_query_response, canonicalize_goal, extract_query_result,
+        AppliedCertainty, ApplyResponseError, Assumption, Atom, CallerCanonicalVar,
+        CanonicalVarRole, Goal, GoalOutput, GoalQuery, GoalResult, QueryResult, QueryResultData,
+        SolverGoal, SubstEntry, apply_query_response, canonicalize_goal, extract_query_result,
         extract_query_result_with_output, instantiate_query,
     };
     use sage_ir::generic_param::{AlphaEquivParam, GenericParam, GenericParamKind};
     use sage_ir::scope::ScopeSymbol;
     use sage_ir::symbol::{SymbolData, TraitSymbol};
     use sage_ir::ty::{
-        AliasTy, IntTy, NamedAliasTy, OpaqueAliasTy, ProjectionTy, TraitItemDef, TraitRef, Ty,
+        AliasTy, FloatTy, IntTy, NamedAliasTy, OpaqueAliasTy, ProjectionTy, TraitItemDef, TraitRef,
+        Ty,
     };
-    use sage_stash::StashCopy;
+    use sage_stash::{StashCopy, Stashed};
 
     fn crate_from_root_items<'db>(
         db: &'db dyn Db,
@@ -2966,6 +2968,271 @@ mod trait_solver_boundary_tests {
 
             assert!(matches!(applied.certainty, AppliedCertainty::Yes { .. }));
             assert_eq!(caller_egraph.find(Version::ROOT, input), integer);
+        });
+    }
+
+    #[test]
+    fn canonical_domains_distinguish_query_keys_and_reinstantiate() {
+        with_test_crate("trait Marker {}", |db, root| {
+            let krate = crate_from_root_items(db, root);
+
+            let canonical = |domain| {
+                let mut stash = Stash::new();
+                let mut egraph = VersionedEGraph::new();
+                let input_index = egraph.alloc_var_in_domain(Version::ROOT, Universe(1), domain);
+                let input = stash.alloc(Ty::InferVar(input_index));
+                let assumptions = stash.alloc_slice::<Assumption>(&[]);
+                canonicalize_goal(
+                    db,
+                    &stash,
+                    &egraph,
+                    Version::ROOT,
+                    krate,
+                    Universe(1),
+                    true,
+                    assumptions,
+                    Goal::Atom(Atom::Equals(input, input)),
+                )
+            };
+
+            let integer = canonical(InferDomain::Integer);
+            let float = canonical(InferDomain::Float);
+            let integer_query = GoalQuery::new(db, integer.data.clone());
+            let float_query = GoalQuery::new(db, float.data.clone());
+            assert_ne!(integer_query, float_query);
+
+            for (canonical, expected) in
+                [(integer, InferDomain::Integer), (float, InferDomain::Float)]
+            {
+                let proof = instantiate_query(&canonical.data);
+                let input = proof.inputs[0].ty;
+                assert_eq!(
+                    proof
+                        .egraph
+                        .effective_domain(proof.version, &proof.stash, input),
+                    Some(expected)
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn response_local_domain_round_trips_to_the_caller() {
+        with_test_crate("trait Marker {}", |db, root| {
+            let krate = crate_from_root_items(db, root);
+            let mut caller_stash = Stash::new();
+            let mut caller_egraph = VersionedEGraph::new();
+            let assumptions = caller_stash.alloc_slice::<Assumption>(&[]);
+            let canonical = canonicalize_goal(
+                db,
+                &caller_stash,
+                &caller_egraph,
+                Version::ROOT,
+                krate,
+                Universe::ROOT,
+                true,
+                assumptions,
+                Goal::Maybe,
+            );
+            let mut proof = instantiate_query(&canonical.data);
+            let response_index = proof.egraph.alloc_var_in_domain(
+                proof.version,
+                Universe::ROOT,
+                InferDomain::Integer,
+            );
+            let response_ty = proof.stash.alloc(Ty::InferVar(response_index));
+            let response = extract_query_result(
+                db,
+                &proof,
+                GoalResult::Yes {
+                    modulo: Goal::Atom(Atom::Equals(response_ty, response_ty)),
+                },
+            );
+            let [response_var] = response.stash()[response.root().bound_vars] else {
+                panic!("expected one response-local variable")
+            };
+            assert_eq!(response_var.domain, InferDomain::Integer);
+
+            let applied = apply_query_response(
+                db,
+                &mut caller_stash,
+                &mut caller_egraph,
+                Version::ROOT,
+                &canonical.data,
+                &canonical.mapping,
+                &response,
+            )
+            .unwrap();
+            let AppliedCertainty::Yes {
+                output: GoalOutput::Proven,
+                modulo: Goal::Atom(Atom::Equals(left, right)),
+            } = applied.certainty
+            else {
+                panic!("expected an equality residual")
+            };
+            assert_eq!(left, right);
+            assert_eq!(
+                caller_egraph.effective_domain(Version::ROOT, &caller_stash, left),
+                Some(InferDomain::Integer)
+            );
+        });
+    }
+
+    #[test]
+    fn proof_narrowing_of_input_domain_round_trips_to_the_caller() {
+        with_test_crate("trait Marker {}", |db, root| {
+            let krate = crate_from_root_items(db, root);
+            let mut caller_stash = Stash::new();
+            let mut caller_egraph = VersionedEGraph::new();
+            let input_index = caller_egraph.alloc_var(Version::ROOT, Universe(1));
+            let input = caller_stash.alloc(Ty::InferVar(input_index));
+            let assumptions = caller_stash.alloc_slice::<Assumption>(&[]);
+            let canonical = canonicalize_goal(
+                db,
+                &caller_stash,
+                &caller_egraph,
+                Version::ROOT,
+                krate,
+                Universe(1),
+                true,
+                assumptions,
+                Goal::Atom(Atom::Equals(input, input)),
+            );
+            let mut proof = instantiate_query(&canonical.data);
+            let narrowed_index =
+                proof
+                    .egraph
+                    .alloc_var_in_domain(proof.version, Universe(1), InferDomain::Integer);
+            let narrowed = proof.stash.alloc(Ty::InferVar(narrowed_index));
+            try_unify(
+                &mut proof.egraph,
+                &mut proof.stash,
+                proof.version,
+                proof.inputs[0].ty,
+                narrowed,
+            )
+            .unwrap();
+            let modulo = Goal::true_(&mut proof.stash);
+            let response = extract_query_result(db, &proof, GoalResult::Yes { modulo });
+            let [response_var] = response.stash()[response.root().bound_vars] else {
+                panic!("expected one narrowed response variable")
+            };
+            assert_eq!(response_var.domain, InferDomain::Integer);
+            let QueryResultData::Yes { subst, .. } = response.root().value else {
+                panic!("expected a definite response")
+            };
+            let [entry] = response.stash()[subst] else {
+                panic!("expected the narrowed input substitution")
+            };
+            assert_eq!(entry.key, proof.inputs[0].param);
+
+            apply_query_response(
+                db,
+                &mut caller_stash,
+                &mut caller_egraph,
+                Version::ROOT,
+                &canonical.data,
+                &canonical.mapping,
+                &response,
+            )
+            .unwrap();
+            assert_eq!(
+                caller_egraph.effective_domain(Version::ROOT, &caller_stash, input),
+                Some(InferDomain::Integer)
+            );
+        });
+    }
+
+    #[test]
+    fn incompatible_domain_response_is_rejected_atomically() {
+        with_test_crate("trait Marker {}", |db, root| {
+            let krate = crate_from_root_items(db, root);
+            let mut caller_stash = Stash::new();
+            let mut caller_egraph = VersionedEGraph::new();
+            let preceding_index = caller_egraph.alloc_var(Version::ROOT, Universe(1));
+            let preceding = caller_stash.alloc(Ty::InferVar(preceding_index));
+            let input_index =
+                caller_egraph.alloc_var_in_domain(Version::ROOT, Universe(1), InferDomain::Integer);
+            let input = caller_stash.alloc(Ty::InferVar(input_index));
+            let elements = caller_stash.alloc_slice(&[preceding, input]);
+            let pair = caller_stash.alloc(Ty::Tuple(elements));
+            let assumptions = caller_stash.alloc_slice::<Assumption>(&[]);
+            let canonical = canonicalize_goal(
+                db,
+                &caller_stash,
+                &caller_egraph,
+                Version::ROOT,
+                krate,
+                Universe(1),
+                true,
+                assumptions,
+                Goal::Atom(Atom::Equals(pair, pair)),
+            );
+            let (query_stash, query_data) = canonical.data.open();
+            let canonical_vars = &query_stash[query_data.canonical_vars];
+            let key_for = |index| {
+                canonical_vars
+                    .iter()
+                    .zip(&canonical.mapping.inputs)
+                    .find_map(|(info, caller)| {
+                        (*caller == CallerCanonicalVar::Existential(index)).then_some(info.param)
+                    })
+                    .expect("caller input must have a canonical key")
+            };
+
+            let mut response_stash = Stash::new();
+            let boolean = response_stash.alloc(Ty::Bool);
+            let float = response_stash.alloc(Ty::Float(FloatTy::F32));
+            let subst = response_stash.alloc_slice(&[
+                SubstEntry {
+                    key: key_for(preceding_index),
+                    value: boolean,
+                },
+                SubstEntry {
+                    key: key_for(input_index),
+                    value: float,
+                },
+            ]);
+            let modulo = Goal::true_(&mut response_stash);
+            let bound_vars = response_stash.alloc_slice(&[]);
+            let response = Stashed::new(
+                response_stash,
+                QueryResult {
+                    bound_vars,
+                    value: QueryResultData::Yes {
+                        output: GoalOutput::Proven,
+                        subst,
+                        modulo,
+                    },
+                },
+            );
+            let revision = caller_egraph.semantic_revision(Version::ROOT);
+
+            assert!(matches!(
+                apply_query_response(
+                    db,
+                    &mut caller_stash,
+                    &mut caller_egraph,
+                    Version::ROOT,
+                    &canonical.data,
+                    &canonical.mapping,
+                    &response,
+                ),
+                Err(ApplyResponseError::Unification(
+                    UnifyError::DomainConflict { .. }
+                ))
+            ));
+            assert_eq!(caller_egraph.find(Version::ROOT, preceding), preceding);
+            assert_eq!(
+                caller_egraph.effective_domain(Version::ROOT, &caller_stash, preceding),
+                Some(InferDomain::Any)
+            );
+            assert_eq!(caller_egraph.find(Version::ROOT, input), input);
+            assert_eq!(
+                caller_egraph.effective_domain(Version::ROOT, &caller_stash, input),
+                Some(InferDomain::Integer)
+            );
+            assert_eq!(caller_egraph.semantic_revision(Version::ROOT), revision);
         });
     }
 

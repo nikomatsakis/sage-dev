@@ -2,7 +2,7 @@ use rustc_hash::FxHashMap;
 use sage_stash::{Ptr, Slice, Stash, Stashed};
 
 use crate::check::infer::egraph::VersionedEGraph;
-use crate::check::infer::version::{Universe, Version};
+use crate::check::infer::version::{InferDomain, Universe, Version};
 use crate::generic_param::{AlphaEquivParam, GenericParam, GenericParamKind};
 use crate::scope::LocalCrateSymbol;
 use crate::ty::{
@@ -36,6 +36,7 @@ struct InputInfo<'db> {
     kind: GenericParamKind,
     role: CanonicalVarRole,
     absolute_universe: Universe,
+    domain: InferDomain,
     caller: CallerCanonicalVar<'db>,
 }
 
@@ -135,6 +136,7 @@ pub fn canonicalize_solver_goal<'db>(
                 .0
                 .checked_sub(absolute_universe_base.0)
                 .expect("input universe precedes canonical base"),
+            domain: info.domain,
         })
         .collect();
     let mapping = CanonicalMapping {
@@ -327,6 +329,10 @@ impl<'db> Canonicalizer<'_, 'db> {
                         kind: GenericParamKind::Type,
                         role: CanonicalVarRole::ExistentialInput,
                         absolute_universe: self.egraph.current_universe(self.version, index),
+                        domain: self
+                            .egraph
+                            .effective_domain(self.version, self.source, ty)
+                            .expect("canonical inference input must have a domain"),
                         caller: CallerCanonicalVar::Existential(index),
                     });
                     param
@@ -420,6 +426,7 @@ impl<'db> Canonicalizer<'_, 'db> {
             kind,
             role: CanonicalVarRole::RigidPlaceholder,
             absolute_universe: self.egraph.placeholder_universe(param),
+            domain: InferDomain::Any,
             caller: CallerCanonicalVar::Rigid(param),
         });
         GenericParam::AlphaEquiv(alpha)

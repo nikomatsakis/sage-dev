@@ -10,7 +10,7 @@ use sage_stash::{Ptr, Slice, StashCopy, Stashed};
 
 use crate::check::infer::runtime::{ReadyQueue, ScopedTasks};
 use crate::check::infer::unify::{UnifyError, try_unify, unify_in_probe};
-use crate::check::infer::version::Version;
+use crate::check::infer::version::{InferDomain, Version};
 use crate::generic_param::{GenericParam, GenericParamKind};
 use crate::ty::{TraitRef, Ty, WherePredicate};
 
@@ -668,6 +668,7 @@ async fn solve_normalize_frame<'db>(
         .collect();
     let normalization_fact_count = normalization_facts(frame, projection).len();
     let input_universes = input_universes(frame);
+    let input_domains = input_domains(frame);
     let next_response_param = frame.next_response_param;
 
     let answers = crate::db::InspectionFuture::new(
@@ -900,6 +901,7 @@ async fn solve_normalize_frame<'db>(
         db,
         next_response_param,
         &input_universes,
+        &input_domains,
         answers,
         incomplete,
     )
@@ -959,6 +961,16 @@ fn input_universes<'db>(
         .collect()
 }
 
+fn input_domains<'db>(
+    frame: &QueryProofState<'db>,
+) -> FxHashMap<crate::generic_param::AlphaEquivParam<'db>, InferDomain> {
+    frame
+        .inputs
+        .iter()
+        .map(|input| (input.param, input.domain))
+        .collect()
+}
+
 async fn solve_trait_frame<'db>(
     db: &'db dyn crate::Db,
     whiteboard: &Whiteboard<'db>,
@@ -971,6 +983,7 @@ async fn solve_trait_frame<'db>(
     let (candidates, incomplete) =
         assemble_candidates(db, frame, frame.version, frame.assumptions, atom);
     let input_universes = input_universes(frame);
+    let input_domains = input_domains(frame);
     let next_response_param = frame.next_response_param;
     let candidate_count = candidates.len();
     let answers = crate::db::InspectionFuture::new(
@@ -1049,6 +1062,7 @@ async fn solve_trait_frame<'db>(
         db,
         next_response_param,
         &input_universes,
+        &input_domains,
         answers,
         incomplete,
     )

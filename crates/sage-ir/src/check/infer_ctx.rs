@@ -25,8 +25,8 @@ use super::infer::obligations::{
     ObligationState, StagedObligationBatch,
 };
 use super::infer::runtime::Runtime;
-use super::infer::unify::{UnifyError, try_set_bound, try_unify};
-use super::infer::version::{Universe, Version};
+use super::infer::unify::{UnifyError, install_error_recovery, try_set_bound, try_unify};
+use super::infer::version::{InferDomain, Universe, Version};
 
 struct MainTaskWake(AtomicBool);
 
@@ -449,11 +449,27 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     // ------------------------------------------------------------------
 
     pub fn fresh_ty_var(&self) -> Ptr<Ty<'db>> {
-        self.fresh_ty_var_in(Version::ROOT, Universe(1))
+        self.fresh_ty_var_with_domain(InferDomain::Any)
+    }
+
+    pub(crate) fn fresh_ty_var_with_domain(&self, domain: InferDomain) -> Ptr<Ty<'db>> {
+        self.fresh_ty_var_in_domain(Version::ROOT, Universe(1), domain)
     }
 
     pub(crate) fn fresh_ty_var_in(&self, version: Version, universe: Universe) -> Ptr<Ty<'db>> {
-        let idx = self.egraph.borrow_mut().alloc_var(version, universe);
+        self.fresh_ty_var_in_domain(version, universe, InferDomain::Any)
+    }
+
+    pub(crate) fn fresh_ty_var_in_domain(
+        &self,
+        version: Version,
+        universe: Universe,
+        domain: InferDomain,
+    ) -> Ptr<Ty<'db>> {
+        let idx = self
+            .egraph
+            .borrow_mut()
+            .alloc_var_in_domain(version, universe, domain);
         let ty = Ty::InferVar(idx);
         self.target_stash.borrow_mut().alloc(ty)
     }
@@ -533,16 +549,18 @@ impl<'check, 'db> InferCtx<'check, 'db> {
                 span,
                 context: Vec::new(),
             }),
-            Err(UnifyError::OccursCheck { .. } | UnifyError::UniverseLeak { .. }) => {
-                Err(TypeError::Fresh {
-                    kind: TypeErrorKind::Mismatch {
-                        expected: self.find(b),
-                        actual: self.find(a),
-                    },
-                    span,
-                    context: Vec::new(),
-                })
-            }
+            Err(
+                UnifyError::OccursCheck { .. }
+                | UnifyError::UniverseLeak { .. }
+                | UnifyError::DomainConflict { .. },
+            ) => Err(TypeError::Fresh {
+                kind: TypeErrorKind::Mismatch {
+                    expected: self.find(b),
+                    actual: self.find(a),
+                },
+                span,
+                context: Vec::new(),
+            }),
         }
     }
 
@@ -1101,7 +1119,13 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         let transaction = egraph.branch_from(Version::ROOT);
         let result = try_unify(&mut egraph, &mut stash, transaction, left, right);
         egraph.discard(transaction);
-        !matches!(result, Err(UnifyError::Mismatch { .. }))
+        match result {
+            Ok(_)
+            | Err(UnifyError::OccursCheck { .. })
+            | Err(UnifyError::UniverseLeak { .. })
+            | Err(UnifyError::Reported(_)) => true,
+            Err(UnifyError::Mismatch { .. } | UnifyError::DomainConflict { .. }) => false,
+        }
     }
 
     fn elaborate_solver_predicates(
@@ -1770,30 +1794,15 @@ impl<'check, 'db> InferCtx<'check, 'db> {
             let e = self.catch(err);
 
             let error_ty = self.target_stash.borrow_mut().alloc(Ty::Error(e));
-            let effects = try_unify(
+            let effects = install_error_recovery(
                 &mut self.egraph.borrow_mut(),
                 &mut self.target_stash.borrow_mut(),
                 Version::ROOT,
                 ty,
                 error_ty,
-            );
-            match effects {
-                Ok(effects) => self.publish_commit_effects(effects),
-                // Error recovery deliberately relates an unresolved variable
-                // to the sentinel even though ordinary equality propagates it.
-                Err(UnifyError::Reported(_)) => {
-                    let child = self.egraph.borrow_mut().branch_from(Version::ROOT);
-                    {
-                        let stash = self.target_stash.borrow();
-                        let mut egraph = self.egraph.borrow_mut();
-                        egraph.set_bound_in(child, &stash, ty, Bound::Exactly(error_ty));
-                        egraph.union(child, &stash, ty, error_ty);
-                    }
-                    let effects = self.egraph.borrow_mut().collapse_into(child, Version::ROOT);
-                    self.publish_commit_effects(effects);
-                }
-                Err(error) => panic!("failed to install error recovery type: {error:?}"),
-            }
+            )
+            .expect("error recovery must accept a reported error type");
+            self.publish_commit_effects(effects);
         }
 
         // Fallback and final bounds may make retained goals concrete. Give

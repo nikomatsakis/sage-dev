@@ -332,12 +332,14 @@ intentionally deferred answer-merging and fallback questions.
 
 ### Progress
 
-**Planned.** The [Numeric Inference Domains and Binary Operator Typing RFD] is
-accepted and its implementation has not begun. Its [implementation
-chapter][numeric-plan] maps the landing checkpoints to the current inference,
-canonicalization, metadata, solver, and Typed IR seams. The first reviewable
-change is the source-neutral domain substrate; literal behavior and operator
-metadata follow separately.
+**In progress.** The source-neutral domain substrate is operational:
+inference classes carry transactional `Any`, `Integer`, or `Float` domains;
+unification and exact bounds enforce membership; and canonical queries and
+responses preserve those constraints without conflating cache keys. Existing
+source-facing constructors still allocate `Any`, so literal behavior, KD-7,
+and operator Typed IR are unchanged. The [implementation
+chapter][numeric-plan] maps the remaining literal, well-known-item, operator,
+and closure checkpoints to their code seams.
 
 ## Planned slice: trait-partitioned impl discovery
 

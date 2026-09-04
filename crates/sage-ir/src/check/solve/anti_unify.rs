@@ -1,6 +1,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use sage_stash::{Ptr, Stash, Stashed};
 
+use crate::check::infer::version::InferDomain;
 use crate::generic_param::{AlphaEquivParam, GenericParam, GenericParamKind};
 use crate::ty::Ty;
 
@@ -14,6 +15,7 @@ struct HintInput<'db> {
 struct AntiUnifier<'a, 'db> {
     db: &'db dyn crate::Db,
     stash: &'a mut Stash,
+    parameter_domains: &'a FxHashMap<AlphaEquivParam<'db>, InferDomain>,
     next_param: u32,
     key_universe: u32,
     witnesses: Vec<ResponseVarInfo<'db>>,
@@ -23,12 +25,14 @@ pub(crate) fn merge_hints<'db>(
     db: &'db dyn crate::Db,
     next_response_param: u32,
     input_universes: &FxHashMap<AlphaEquivParam<'db>, u32>,
+    input_domains: &FxHashMap<AlphaEquivParam<'db>, InferDomain>,
     candidates: &[Stashed<QueryResult<'db>>],
     include_unconstrained_possible: bool,
 ) -> Stashed<QueryResult<'db>> {
     let mut intermediate = Stash::new();
     let mut next_renamed = next_response_param;
     let mut hints = Vec::new();
+    let mut parameter_domains = input_domains.clone();
 
     for candidate in candidates {
         let (source, result) = candidate.open();
@@ -43,6 +47,7 @@ pub(crate) fn merge_hints<'db>(
             next_renamed += 1;
             let ty = intermediate.alloc(Ty::Param(GenericParam::AlphaEquiv(renamed)));
             mapping.insert(GenericParam::AlphaEquiv(info.param), ty);
+            parameter_domains.insert(renamed, info.domain);
         }
         let mut copier = IrCopier::new(source, &mut intermediate, mapping, None);
         let entries = copier.copy_substitution(substitution);
@@ -67,6 +72,7 @@ pub(crate) fn merge_hints<'db>(
     let mut anti = AntiUnifier {
         db,
         stash: &mut intermediate,
+        parameter_domains: &parameter_domains,
         next_param: next_renamed,
         key_universe: 0,
         witnesses: Vec::new(),
@@ -74,8 +80,8 @@ pub(crate) fn merge_hints<'db>(
     for key in common_keys {
         let values: Vec<_> = hints.iter().map(|hint| hint.entries[&key]).collect();
         anti.key_universe = input_universes.get(&key).copied().unwrap_or(0);
-        let (value, bare_witness) = anti.merge_types(&values);
-        if bare_witness
+        let (value, unconstrained_bare_witness) = anti.merge_types(&values);
+        if unconstrained_bare_witness
             || contains_inaccessible_input(anti.stash, value, anti.key_universe, input_universes)
         {
             continue;
@@ -100,6 +106,7 @@ pub(crate) fn merge_hints<'db>(
             param,
             kind: witness.kind,
             relative_universe: witness.relative_universe,
+            domain: witness.domain,
         });
     }
     let mut copier = IrCopier::new(&intermediate, &mut final_stash, mapping, None);
@@ -122,7 +129,7 @@ pub(crate) fn merge_hints<'db>(
 }
 
 impl<'db> AntiUnifier<'_, 'db> {
-    /// Returns `(merged, is_fresh_bare_witness)`.
+    /// Returns `(merged, is_fresh_unconstrained_bare_witness)`.
     fn merge_types(&mut self, values: &[Ptr<Ty<'db>>]) -> (Ptr<Ty<'db>>, bool) {
         debug_assert!(!values.is_empty());
         if values.iter().all(|value| *value == values[0]) {
@@ -154,17 +161,64 @@ impl<'db> AntiUnifier<'_, 'db> {
                 );
             }
         }
+        let domain = values
+            .iter()
+            .map(|value| self.explicit_parameter_domain(*value))
+            .reduce(common_domain)
+            .unwrap_or(InferDomain::Any);
         let param = AlphaEquivParam::new(self.db, GenericParamKind::Type, self.next_param);
         self.next_param += 1;
         self.witnesses.push(ResponseVarInfo {
             param,
             kind: GenericParamKind::Type,
             relative_universe: self.key_universe,
+            domain,
         });
         (
             self.stash.alloc(Ty::Param(GenericParam::AlphaEquiv(param))),
-            true,
+            domain == InferDomain::Any,
         )
+    }
+
+    /// Preserve domain facts already carried by response/input binders. This
+    /// does not derive a new inference hint from concrete candidate types.
+    fn explicit_parameter_domain(&self, ty: Ptr<Ty<'db>>) -> InferDomain {
+        match self.stash[ty] {
+            Ty::Param(GenericParam::AlphaEquiv(param)) => self
+                .parameter_domains
+                .get(&param)
+                .copied()
+                .unwrap_or(InferDomain::Any),
+            Ty::Bool
+            | Ty::Char
+            | Ty::Int(_)
+            | Ty::Uint(_)
+            | Ty::Float(_)
+            | Ty::Str
+            | Ty::Adt(_, _)
+            | Ty::Alias(_)
+            | Ty::Ref(_, _, _)
+            | Ty::Tuple(_)
+            | Ty::Slice(_)
+            | Ty::Array(_, _)
+            | Ty::FnPtr(_, _)
+            | Ty::Param(_)
+            | Ty::InferVar(_)
+            | Ty::Never
+            | Ty::Error(_) => InferDomain::Any,
+        }
+    }
+}
+
+/// Least domain in this lattice which admits both candidate domains.
+fn common_domain(left: InferDomain, right: InferDomain) -> InferDomain {
+    match (left, right) {
+        (InferDomain::Integer, InferDomain::Integer) => InferDomain::Integer,
+        (InferDomain::Float, InferDomain::Float) => InferDomain::Float,
+        (InferDomain::Any, _)
+        | (_, InferDomain::Any)
+        | (InferDomain::Integer, InferDomain::Float)
+        | (InferDomain::Float, InferDomain::Integer) => InferDomain::Any,
     }
 }
 

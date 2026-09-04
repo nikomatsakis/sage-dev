@@ -1,7 +1,10 @@
 # Implementation plan and status
 
-No implementation step in this accepted RFD has landed yet. Each step must
-leave the workspace building and keep unsupported operator paths diagnostic.
+The source-neutral domain substrate in checkpoint 1 is implemented. Existing
+inference-variable call sites continue to allocate `Any`, so literal and
+operator behavior remains unchanged until the later checkpoints. Each step
+must leave the workspace building and keep unsupported operator paths
+diagnostic.
 
 ## Landing strategy
 
@@ -76,16 +79,16 @@ and canonical-response tests. Source-level numeric tests belong to checkpoint
 
 ## Step 1: Versioned inference domains
 
-- [ ] Add `InferDomain::{Any, Integer, Float}` to inference-variable
+- [x] Add `InferDomain::{Any, Integer, Float}` to inference-variable
   allocation and class-domain lookup.
-- [ ] Implement transactional class-domain intersection, concrete membership
+- [x] Implement transactional class-domain intersection, concrete membership
   checks, semantic revisions, wakes, collapse, and discard ([NIV-A1]).
-- [ ] Make every exact class-changing path—including variable union, concrete
+- [x] Make every exact class-changing path—including variable union, concrete
   binding, and exact-bound installation—use one fallible domain-compatibility
   check; keep unchecked egraph mutation private to validated operations.
-- [ ] Preserve effective domains through both union orders and representative
+- [x] Preserve effective domains through both union orders and representative
   changes.
-- [ ] Carry effective domains through canonical goal/response round trips
+- [x] Carry effective domains through canonical goal/response round trips
   without conflating cache keys, and reject an incompatible imported response
   transactionally ([NIV-A5]).
 
@@ -97,10 +100,11 @@ and canonical-response tests. Source-level numeric tests belong to checkpoint
   arguments, selected impls, where-clauses, and ordinary egraph wakes.
 - [ ] Preserve unresolved numeric classes through inference without choosing
   `i32` or `f64`; apply explicit terminal diagnostics and recovery ([NIV-A2]).
-- [ ] Add a structured unification domain-conflict error. Candidate probes
-  treat it as silent rejection; required source relations render expected and
-  actual source categories, report no internal variable index, and install
-  `Ty::Error(ErrorReported)` recovery without a follow-on unresolved error.
+- [ ] Render the structured unification domain-conflict error at required
+  source relations using expected and actual source categories, report no
+  internal variable index, and install `Ty::Error(ErrorReported)` recovery
+  without a follow-on unresolved error. Candidate probes already treat the
+  structured conflict as silent rejection.
 - [ ] Add completed-Typed-IR assertions for constrained concrete literals and
   diagnostic-recovery assertions for unconstrained literals.
 
