@@ -97,7 +97,15 @@ impl<'db> VersionedEGraph<'db> {
         info.creation_universe
     }
 
-    /// Return the effective domain when `ty` represents an unresolved class.
+    /// Return the restriction on the unresolved equality class containing `ty`.
+    ///
+    /// `ty` is first resolved to its representative in `version`, so every
+    /// member of a class observes the same nearest versioned refinement (or the
+    /// representative variable's initial domain when none has been recorded).
+    /// A class already unified with a rigid type is resolved and returns
+    /// `None`; the unifier checks domain membership before performing that
+    /// union. Callers use the result to validate later equalities and to carry
+    /// unresolved restrictions across solver boundaries.
     pub fn effective_domain(
         &self,
         version: Version,
