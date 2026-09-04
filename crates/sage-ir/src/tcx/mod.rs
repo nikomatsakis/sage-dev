@@ -63,11 +63,19 @@ pub struct RawDefId {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum RawSelfTypeHead {
     Adt(RawDefId),
+    /// A nominal type declared in the crate currently being checked. Upstream
+    /// rigid impl heads cannot match it, while blanket heads still may.
+    LocalAdt,
     Bool,
     Char,
     Int,
     Uint,
-    Float,
+    /// Float widths are kept distinct because rustc exposes explicit impls for
+    /// `f16` and `f128`, whose signatures Sage cannot represent yet.
+    Float16,
+    Float32,
+    Float64,
+    Float128,
     Str,
     Ref,
     Tuple,

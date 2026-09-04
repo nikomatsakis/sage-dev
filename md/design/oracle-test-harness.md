@@ -354,8 +354,9 @@ omitted from JSON.
 ### Current frontier and evidence
 
 The harness independently emits rustc and Sage reference IR, validates
-fixture-specific coverage for the two pinned mini-redis slices, requires their
-checked-in exact snapshots, and then compares deterministic serialized text.
+fixture-specific coverage for the pinned mini-redis and binary-operator slices,
+requires checked-in snapshots where the slice defines one, and then compares
+deterministic serialized text.
 The [oracle-checked method review
 packet](./examples/oracle-checked-method.md#review-packet) links the source,
 structural Sage assertion, snapshot, exact comparison, query trace, and edit
@@ -364,6 +365,14 @@ comparison portion of [ORACLE-A1](#oracle-a1), the adjustment and external-kind 
 [ORACLE-A2](#oracle-a2), exercise [ORACLE-A3](#oracle-a3)'s local/external
 identity ordering, and provide the slice-specific coverage evidence currently
 available for [ORACLE-A4](#oracle-a4).
+`oracle_projects_operators_to_the_same_typed_tree_as_sage` additionally checks
+the fixed operator projection from rustc HIR into static trait calls for
+primitive addition, mixed-integer shift, comparison borrows, a local
+user-defined `Add`, and a lazy boolean expression. In particular, the rustc
+emitter reconstructs the language-item method when a primitive operation has
+no retained type-dependent method marker; it does not consult Sage's output.
+This is focused partial evidence for [ORACLE-A2](#oracle-a2) and
+[ORACLE-A4](#oracle-a4), not the complete operator matrix.
 The same full fixture suite is the regression gate that keeps the Semantic
 Inspector's richer canonical external-navigation paths out of this shared
 conformance projection.
@@ -373,6 +382,7 @@ with:
 
 ```bash
 cargo test -p sage-oracle-harness --test oracle_compare -- mini_redis/db_drop_guard.rs
+cargo test -p sage-oracle-harness --test binary_operators oracle_projects_operators
 ```
 
 ### Current limitations

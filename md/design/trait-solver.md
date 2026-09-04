@@ -653,7 +653,11 @@ The solver performs positive local and reachable-external explicit-impl proof,
 associated-type normalization with a type output, isolated asynchronous
 candidate evaluation, order-independent completed-answer reduction, final hard
 hints, conservative candidate-source completeness, a provisional inductive
-cycle cutoff, and a proof-depth limit.
+cycle cutoff, and a proof-depth limit. Operator checking now exercises this
+same path for ground primitive and local user-defined implementations. For a
+local nominal `Self`, the external query uses a coarse `LocalAdt` head: rigid
+upstream nominal impls cannot match, while blanket and otherwise unclassifiable
+upstream impls remain candidates.
 
 ### Implemented capabilities and evidence
 
@@ -662,7 +666,7 @@ cycle cutoff, and a proof-depth limit.
 | [SOL-A1](#sol-a1) | Partial | `aliases_round_trip_through_canonical_query_and_response_stashes` preserves the alias family, and `local_normalization_reads_one_keyed_value_without_impl_item_enumeration` verifies a narrow associated-value read; named expansion and opaque reveal are not implemented. |
 | [SOL-A2](#sol-a2) | Partial | `unresolved_item_macro_prevents_ground_no`, `unresolved_trait_impl_head_prevents_ground_no`, and `proof_depth_limit_is_maybe` establish that the implemented incomplete/depth cases do not manufacture `No`; the destination groundness and resource matrix is not built. |
 | [SOL-A3](#sol-a3) | Partial | `canonical_response_rejects_an_output_for_the_wrong_operation`, `local_associated_type_normalization_produces_a_type_output`, `response_local_type_output_round_trips_with_sharing`, and `incompatible_normalization_outputs_are_ambiguous_but_identical_outputs_merge` exercise operation pairing, response binding, and output-aware merging. The incompatible-output test constructs `SolverGoal::Normalize` directly, so it does not establish caller expected-type isolation. |
-| [SOL-A4](#sol-a4) | Partial | `generic_impl_where_clause_is_proved_by_nested_impl` covers nested local candidate obligations. The `Parse::next` evidence in the [Mini-redis roadmap](../implementation/mini-redis.md#slice-2-parsenext) covers trait/head-keyed reachable-external discovery and warm reuse; the local index remains provisional. |
+| [SOL-A4](#sol-a4) | Partial | `generic_impl_where_clause_is_proved_by_nested_impl` covers nested local candidate obligations. The `Parse::next` evidence in the [Mini-redis roadmap](../implementation/mini-redis.md#slice-2-parsenext) covers trait/head-keyed reachable-external discovery and warm reuse. `primitive_operators_use_core_impls_and_resolved_calls` traces relevant `core` impl identities, headers, and associated values for `Add` and mixed-integer `Shl`, then observes warm reuse. `local_operator_impl_can_choose_distinct_rhs_and_output` exercises the conservative `LocalAdt` external partition while selecting a local impl. The local index remains provisional, and the full indexed-versus-exhaustive matrix is not assembled. |
 | [SOL-A5](#sol-a5) | Not implemented | No current evidence claims the destination private local index or its edit-invalidation firewall. |
 | [SOL-A6](#sol-a6) | Partial | `incompatible_normalization_outputs_are_ambiguous_but_identical_outputs_merge` and the `final_answer_rules_are_order_independent` unit test cover completed answer reduction; concurrent conjunction and cancellation isolation remain planned. |
 | [SOL-A7](#sol-a7) | Partial | `same_parent_requests_share_one_live_producer_and_result` verifies shared producer identity and one equal final response; bounded polling rounds and monotone intermediate publication have no current evidence. |
@@ -683,6 +687,11 @@ cycle cutoff, and a proof-depth limit.
 - General negative reasoning, specialization, GATs, named-alias expansion,
   opaque reveal, and method/vtable output operations are outside the current
   frontier.
+- Generic operator bodies which rely on an associated-type equality such as
+  `T: Add<Output = T>` are not yet provable because that assumption is not
+  represented in the solver environment. Unknown-`Self` operator goals also
+  lack a general complete-answer hint mechanism; neither gap is filled by
+  operator-specific candidates.
 - SOL-A3 lacks an integration test in which the caller expects one of two
   incompatible normalization outputs and the solver nevertheless preserves
   ambiguity.

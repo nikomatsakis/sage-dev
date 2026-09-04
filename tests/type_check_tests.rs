@@ -21,34 +21,6 @@ fn return_type_mismatch() {
 }
 
 #[test]
-fn binary_add_same_type() {
-    TestCrate::in_memory("fn add(x: u32, y: u32) -> u32 { x + y }").check_ok();
-}
-
-#[test]
-fn binary_add_type_mismatch() {
-    TestCrate::in_memory("fn bad(x: u32, y: bool) -> u32 { x + y }").check_errors(expect![[r#"
-        error: type mismatch: expected `u32`, found `bool`
-         --> lib.rs:1:34
-          |
-        1 | fn bad(x: u32, y: bool) -> u32 { x + y }
-          |                                  ^^^^^ found `bool`"#]]);
-}
-
-#[test]
-fn integer_literal_domain_rejects_bool_binary_operand() {
-    with_test_crate("fn bad() { 1 + true; }", |db, root| {
-        let function = local_function_named(db, root, "bad");
-        let checked = function.body(db);
-        assert_eq!(checked.diagnostics.len(), 1, "{:?}", checked.diagnostics);
-        assert_eq!(
-            checked.diagnostics[0].message,
-            "type mismatch: expected an integer, found `bool`",
-        );
-    });
-}
-
-#[test]
 fn if_else_same_type() {
     TestCrate::in_memory("fn pick(b: bool) -> u32 { if b { 1 } else { 2 } }").check_ok();
 }
@@ -323,7 +295,8 @@ fn let_binding_mismatch_return() {
 
 #[test]
 fn multiple_params() {
-    TestCrate::in_memory("fn f(a: u32, b: u32, c: u32) -> u32 { a + b + c }").check_ok();
+    TestCrate::in_memory("fn f(a: u32, b: bool, c: f64) -> (u32, bool, f64) { (a, b, c) }")
+        .check_ok();
 }
 
 #[test]
@@ -1034,9 +1007,9 @@ fn return_unit_mismatch() {
 #[test]
 fn early_return_with_later_code() {
     TestCrate::in_memory(
-        "fn f(x: u32) -> u32 {
-             if x > 0 { return x; }
-             x + 1
+        "fn f(condition: bool, value: u32, fallback: u32) -> u32 {
+             if condition { return value; }
+             fallback
          }",
     )
     .check_ok();

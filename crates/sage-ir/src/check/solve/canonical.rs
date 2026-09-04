@@ -19,7 +19,7 @@ pub enum CallerCanonicalVar<'db> {
     Existential(crate::ty::InferVarIndex),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CanonicalMapping<'db> {
     pub absolute_universe_base: Universe,
     /// Same order as `GoalQueryData::canonical_vars`.

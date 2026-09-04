@@ -108,17 +108,71 @@ fn hello_rs_bodies() {
         Expr::Block {
             tail: Some(tail), ..
         } => match tail.as_ref() {
-            Expr::BinaryOp { op, lhs, rhs, ty } => {
-                assert_eq!(*op, BinOp::Add);
+            Expr::Call {
+                target,
+                dispatch,
+                owner_type_args,
+                method_type_args,
+                args,
+                ty,
+            } => {
                 assert_eq!(*ty, Type::Primitive("u32".to_string()));
-                match lhs.as_ref() {
+                let NormalizedDef::External(target) = target else {
+                    panic!("expected external Add::add target")
+                };
+                assert_eq!(target.krate, "core");
+                assert_eq!(
+                    target
+                        .segments
+                        .iter()
+                        .map(|segment| segment.name.as_str())
+                        .collect::<Vec<_>>(),
+                    ["ops", "arith", "Add", "add"]
+                );
+                let CallDispatch::StaticTrait {
+                    self_ty,
+                    trait_target,
+                    trait_type_args,
+                } = dispatch
+                else {
+                    panic!("expected static Add dispatch")
+                };
+                assert_eq!(*self_ty, Type::Primitive("u32".to_string()));
+                let NormalizedDef::External(trait_target) = trait_target else {
+                    panic!("expected external Add trait target")
+                };
+                assert_eq!(trait_target.krate, "core");
+                assert_eq!(
+                    trait_target
+                        .segments
+                        .iter()
+                        .map(|segment| segment.name.as_str())
+                        .collect::<Vec<_>>(),
+                    ["ops", "arith", "Add"]
+                );
+                assert_eq!(
+                    trait_type_args.as_slice(),
+                    [Type::Primitive("u32".to_string())]
+                );
+                assert_eq!(
+                    owner_type_args.as_slice(),
+                    [
+                        Type::Primitive("u32".to_string()),
+                        Type::Primitive("u32".to_string())
+                    ]
+                );
+                assert!(method_type_args.is_empty());
+                let [lhs, rhs] = args.as_slice() else {
+                    panic!("expected two Add::add arguments")
+                };
+                match lhs {
                     Expr::Local { name, index } => {
                         assert_eq!(name, "a");
                         assert_eq!(*index, 0);
                     }
                     other => panic!("expected Local for lhs, got {:?}", other),
                 }
-                match rhs.as_ref() {
+                match rhs {
                     Expr::Local { name, index } => {
                         assert_eq!(name, "b");
                         assert_eq!(*index, 1);
@@ -126,7 +180,7 @@ fn hello_rs_bodies() {
                     other => panic!("expected Local for rhs, got {:?}", other),
                 }
             }
-            other => panic!("expected BinaryOp in add body, got {:?}", other),
+            other => panic!("expected Add::add call in add body, got {:?}", other),
         },
         other => panic!("expected Block expr for add body, got {:?}", other),
     }

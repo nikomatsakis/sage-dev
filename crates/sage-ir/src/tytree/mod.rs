@@ -9,8 +9,9 @@ use crate::symbol::{FnSymbol, StructSymbol, Symbol, VariantSymbol};
 use crate::ty::{TraitRef, Ty};
 use crate::types::TokenTree;
 
-/// Placeholder for an expression that hasn't been checked yet.
-/// Used when a block spawns a background initializer check.
+/// Indirection for a transient expression whose final checked form is supplied
+/// later. Operator checking uses slots for provisional resolved calls that
+/// obligation recovery may replace.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, sage_reflect::Reflect)]
 pub struct ExprSlot(pub u32);
 

@@ -265,28 +265,29 @@ contains concrete types and no domain metadata.
 
 ### Why this slice
 
-The literal checkpoint now prevents an unsuffixed numeric literal from
-becoming `bool`, but the existing checker can still complete a ground,
-same-typed invalid arithmetic expression as an apparently valid binary
-operation because every binary operator initially only equates its operands.
-The remaining surface defect still has a cross-cutting fix: transactional
-inference, operator checking, diagnostics, canonicalization, and Typed IR
-completion must agree.
+The literal checkpoint constrains an unsuffixed numeric literal so it cannot
+become `bool`. Ground same-typed arithmetic without an applicable operator impl
+is rejected, while successful non-lazy operators complete as resolved calls.
+The remaining surface defect is concentrated in generic associated-binding
+assumptions, unknown-`Self` candidate hints, and closure coverage.
+Transactional inference, operator checking, diagnostics, canonicalization,
+and Typed IR completion must still agree across that full matrix.
 
 ### Scope and non-goals
 
 The slice covers suffixed and unsuffixed integer/float literals and binary
 operator syntax currently represented by `BinaryOp`. Non-short-circuit syntax
-uses the existing trait-solving and static-call elaboration boundaries; the
-slice replaces successful overloadable `Binary` nodes with resolved calls,
-including for primitive and generic operands. It includes a representative
-user-defined operator to establish that boundary, but not a new general method
-lookup system or codegen primitive-specialization design. Operator-specific
-hardcoded inference relationships are excluded. Common-constraint extraction
-from ambiguous candidates is deferred to a general inference-level design and
-must operate on the actual complete candidate answers. Literal range lints,
-implicit numeric coercions, complete casts, unary operators, and numeric
-defaulting also remain separate work. Defaulting must be designed later as
+uses the existing trait-solving and static-call elaboration boundaries, and
+successful supported operations are represented as resolved calls. The ground
+slice covers primitive operands and a representative user-defined operator;
+generic associated-output assumptions remain out of scope. It does not add a
+new general method lookup system or codegen primitive-specialization design.
+Operator-specific hardcoded inference relationships are excluded.
+Common-constraint extraction from ambiguous candidates is deferred to a
+general inference-level design and must operate on the actual complete
+candidate answers. Literal range lints, implicit numeric coercions, complete
+casts, unary operators, and numeric defaulting also remain separate work.
+Defaulting must be designed later as
 part of a holistic inference-commitment policy rather than introduced through
 scheduler-local quiescence.
 
@@ -339,12 +340,22 @@ literal checkpoint are operational: inference classes carry transactional
 conflicts report category-level diagnostics and recover once; unresolved
 numeric classes do not default; and completed-IR tests cover generic and nested
 ADT propagation plus rigid-head impl filtering after later narrowing. Cached
-typed queries for all represented well-known operator traits and methods are
-also operational. Explicit let annotations and the full propagation matrix
-remain open. KD-7 remains open because body checking does not yet consume the
-identities for trait-first checking, resolved-call elaboration, and closure
-evidence. The [implementation chapter][numeric-plan] maps those remaining
-checkpoints to their code seams.
+typed queries resolve all represented well-known operator traits and methods.
+Every non-lazy token now instantiates that real method signature, retains its
+ordinary proof and result-normalization work, and produces either a static
+trait call or obligation-linked recovery; `&&` and `||` remain direct lazy
+nodes. Source integrations cover ground `u32`, `f32`, and `f64` addition,
+mixed-integer shift, comparison borrows, a local `Left + Right -> Sum` impl,
+proof-derived narrowing of an unsuffixed operand, invalid and ambiguous
+operator recovery, recovery isolation, both lazy boolean tokens, and cold/warm
+`core` metadata reads. A representative independent oracle comparison matches
+the supported successful primitive, comparison, local user-defined, and lazy
+forms exactly; separate oracle coverage pins `NeverToAny` adjustment replay.
+Explicit let annotations, the full propagation and operator matrix, generic
+`T: Add<Output = T>` assumptions, and general unknown-`Self` candidate hints
+remain open. KD-7 therefore remains open pending those cases and complete
+oracle closure. The [implementation
+chapter][numeric-plan] maps the remaining checkpoints to their code seams.
 
 ## Planned slice: trait-partitioned impl discovery
 

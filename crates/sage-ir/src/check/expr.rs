@@ -163,21 +163,12 @@ impl<'db> ExprCst<'db> {
                                 .expect("resolved dot-call method must have a receiver");
                             cx.require_eq(receiver_ty, checked_receiver.owner_self_ty, span)
                                 .record_err(cx);
-                            let receiver = match checked_receiver.form {
-                                crate::ty::MethodReceiver::Value { .. } => ro,
-                                crate::ty::MethodReceiver::Ref { mutability } => {
-                                    let reference_ty = cx.alloc_ty(Ty::Ref(
-                                        receiver_ty,
-                                        mutability,
-                                        crate::ty::Lifetime::Dummy,
-                                    ));
-                                    cx.alloc_expr(
-                                        TyExprData::Ref(ro, mutability),
-                                        reference_ty,
-                                        span,
-                                    )
-                                }
-                            };
+                            let receiver = cx.adjust_method_receiver(
+                                ro,
+                                receiver_ty,
+                                checked_receiver.form,
+                                span,
+                            );
 
                             let params = cx.stash()[method.signature.params].to_vec();
                             if params.len() != rargs.len() {
@@ -240,10 +231,7 @@ impl<'db> ExprCst<'db> {
             ExprCstKind::Binary(lhs, op, rhs) => {
                 let rl = cx.source_stash[*lhs].check_with(cx, scope).await;
                 let rr = cx.source_stash[*rhs].check_with(cx, scope).await;
-                let lhs_ty = cx.stash()[rl].ty;
-                let rhs_ty = cx.stash()[rr].ty;
-                let ty = check_binary_op_ty(cx, *op, lhs_ty, rhs_ty, span);
-                (TyExprData::Binary(rl, *op, rr), ty)
+                super::operator::check_binary_operator(cx, scope, *op, rl, rr, span)
             }
             ExprCstKind::Unary(op, operand) => {
                 let ro = cx.source_stash[*operand].check_with(cx, scope).await;
@@ -1302,37 +1290,6 @@ fn instantiate_local_enum<'db>(
         crate::check::infer::obligations::ObligationReason::AdtWellFormedness,
     );
     (local_enum.into(), type_args_slice, instantiated)
-}
-
-fn check_binary_op_ty<'db>(
-    cx: &InferCtx<'_, 'db>,
-    op: BinaryOp,
-    lhs_ty: Ptr<Ty<'db>>,
-    rhs_ty: Ptr<Ty<'db>>,
-    span: RelativeSpan,
-) -> Ptr<Ty<'db>> {
-    cx.require_eq(rhs_ty, lhs_ty, span).record_err(cx);
-    match op {
-        BinaryOp::Eq
-        | BinaryOp::Ne
-        | BinaryOp::Lt
-        | BinaryOp::Le
-        | BinaryOp::Gt
-        | BinaryOp::Ge
-        | BinaryOp::And
-        | BinaryOp::Or => cx.alloc_ty(Ty::Bool),
-
-        BinaryOp::Add
-        | BinaryOp::Sub
-        | BinaryOp::Mul
-        | BinaryOp::Div
-        | BinaryOp::Rem
-        | BinaryOp::BitAnd
-        | BinaryOp::BitOr
-        | BinaryOp::BitXor
-        | BinaryOp::Shl
-        | BinaryOp::Shr => lhs_ty,
-    }
 }
 
 use sage_stash::Slice;

@@ -14,7 +14,7 @@ use crate::tcx::{
 };
 use crate::ty::{
     Binder, CheckedParameterEnv, CheckedReceiver, Const, ExternalAdtSignature,
-    ExternalAdtSignatureData, FnSig, GenericDefault, ImplSignature, ImplSignatureData,
+    ExternalAdtSignatureData, FloatTy, FnSig, GenericDefault, ImplSignature, ImplSignatureData,
     MethodReceiver, SolverEligibility, TraitItemDef, TraitItems, TraitRef, TraitSemantics,
     TraitSignature, TraitSignatureData, Ty, WherePredicate,
 };
@@ -58,11 +58,13 @@ pub fn external_adt_signature<'db>(
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub enum SimplifiedSelfType<'db> {
     Adt(SymExt<'db>),
+    LocalAdt,
     Bool,
     Char,
     Int,
     Uint,
-    Float,
+    Float32,
+    Float64,
     Str,
     Ref,
     Tuple,
@@ -80,11 +82,13 @@ impl SimplifiedSelfType<'_> {
                 def_index: adt.def_index(db),
                 kind: adt.kind(db),
             }),
+            Self::LocalAdt => RawSelfTypeHead::LocalAdt,
             Self::Bool => RawSelfTypeHead::Bool,
             Self::Char => RawSelfTypeHead::Char,
             Self::Int => RawSelfTypeHead::Int,
             Self::Uint => RawSelfTypeHead::Uint,
-            Self::Float => RawSelfTypeHead::Float,
+            Self::Float32 => RawSelfTypeHead::Float32,
+            Self::Float64 => RawSelfTypeHead::Float64,
             Self::Str => RawSelfTypeHead::Str,
             Self::Ref => RawSelfTypeHead::Ref,
             Self::Tuple => RawSelfTypeHead::Tuple,
@@ -237,8 +241,10 @@ pub fn simplify_self_type<'db>(
                 SimplifiedSelfType::Adt(external)
             }
             SymbolData::StructSymbol(StructSymbol::Local(_))
-            | SymbolData::EnumSymbol(crate::symbol::EnumSymbol::Local(_))
-            | SymbolData::FnSymbol(_)
+            | SymbolData::EnumSymbol(crate::symbol::EnumSymbol::Local(_)) => {
+                SimplifiedSelfType::LocalAdt
+            }
+            SymbolData::FnSymbol(_)
             | SymbolData::VariantSymbol(_)
             | SymbolData::VariantCtorSymbol(_)
             | SymbolData::TraitSymbol(_)
@@ -256,7 +262,8 @@ pub fn simplify_self_type<'db>(
         Ty::Char => SimplifiedSelfType::Char,
         Ty::Int(_) => SimplifiedSelfType::Int,
         Ty::Uint(_) => SimplifiedSelfType::Uint,
-        Ty::Float(_) => SimplifiedSelfType::Float,
+        Ty::Float(FloatTy::F32) => SimplifiedSelfType::Float32,
+        Ty::Float(FloatTy::F64) => SimplifiedSelfType::Float64,
         Ty::Str => SimplifiedSelfType::Str,
         Ty::Ref(..) => SimplifiedSelfType::Ref,
         Ty::Tuple(_) => SimplifiedSelfType::Tuple,

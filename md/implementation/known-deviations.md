@@ -13,30 +13,43 @@ close it. The affected architecture chapter links back to the entry from its
 
 ## Open deviations
 
-### KD-7: Arithmetic operators do not require numeric operands
+<a id="kd-7-arithmetic-operators-do-not-require-numeric-operands"></a>
+### KD-7: Operator typing lacks generic and unknown-`Self` closure
 
 - **Contracts:** [BODY-A1](../design/pipeline/body-checking.md#body-a1),
   [BODY-A5](../design/pipeline/body-checking.md#body-a5), and
-  [INF-A6](../design/subsystems/type-inference.md#inf-a6), including the
-  body-phase guarantee that user type errors produce diagnostics rather than
-  an apparently valid typed operation.
-- **Observed implementation:** Numeric expression literals now begin in their
-  integer or floating-point domain, so `1 + true` is rejected by the current
-  operand-equality relation. Binary operators still do not prove the
-  corresponding trait obligation: `check_binary_op_ty` blanket-equates the two
-  operand types and successful operations remain source-shaped `Binary` nodes.
-- **Consequence:** Same-typed but invalid operations such as `true + false` can
-  still survive as apparently valid binary operations, while valid overloads
-  whose `Rhs` differs from `Self` are rejected. Successful overloadable syntax
-  also lacks the resolved trait-call identity required downstream.
-- **Closure evidence:** The literal-side reproducer and recovery are covered by
-  `integer_literal_domain_rejects_bool_binary_operand` and the numeric domain
-  source tests. To close this deviation, implement trait-first operator
-  checking without relying on a caller's expected type, cover representative
-  integer, float, boolean, comparison, mixed-operand, generic, and user-defined
-  operator cases against the independent rustc oracle, and inspect completed
-  IR to require resolved trait calls for every overloadable operator, including
-  primitive operands, plus explicit lazy boolean nodes.
+  [INF-A6](../design/subsystems/type-inference.md#inf-a6), plus
+  [TIR-A6](../design/typed-ir.md#tir-a6). Together they require every proven
+  overloadable operation, including generic cases, to complete as a resolved
+  trait call, with ambiguity and user type errors represented diagnostically.
+- **Observed implementation:** Ground primitive, comparison, and local
+  user-defined binary expressions instantiate the well-known trait
+  method's real signature, use ordinary impl proof and result normalization,
+  and complete as static trait calls. Invalid `bool + bool` produces one
+  diagnostic and an error node. A generic body such as
+  `T: Add<Output = T>` is still rejected because Sage does not represent the
+  associated-type equality assumption. When `Self` is initially unknown, Sage
+  also lacks a general way to import constraints common to the complete viable
+  candidate set; even a valid expression such as `1 + 2u32` may therefore end
+  with unresolved integer inference rather than selecting the proof-derived
+  type.
+- **Consequence:** The covered ground slice rejects same-typed invalid
+  arithmetic and completes successful overloadable syntax as resolved calls,
+  but valid generic and unknown-`Self` programs can still be rejected. The
+  implementation cannot yet satisfy BODY-A5/TIR-A6 uniformly across primitive,
+  generic, and user-defined operands.
+- **Closure evidence:** Existing integrations inspect `u32` addition,
+  mixed-integer shift, comparison borrows, a local `Left + Right -> Sum` impl,
+  selected-impl narrowing, failed-proof recovery, and lazy boolean
+  preservation; an independent oracle comparison matches those representative
+  successful forms exactly. To close this deviation, represent and consume
+  applicable associated-type equality assumptions, add a general
+  completeness-aware candidate-answer hint mechanism rather than an
+  operator-specific table, cover the remaining token/domain/where-clause
+  matrix, and compare the remaining representative accepted and rejected cases
+  against the independent rustc oracle. Completed IR must contain resolved
+  calls for every successful overloadable case, including generic operands,
+  and explicit lazy boolean nodes for `&&` and `||`.
 
 ### KD-3: Derive helper attributes do not produce the promised warning
 

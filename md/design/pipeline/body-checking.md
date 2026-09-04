@@ -266,6 +266,7 @@ to static `Clone::clone` dispatch and compared exactly with rustc output.
 | `local_syms/fns.rs` | body query orchestration |
 | `check/infer_ctx.rs` and `check/infer/` | inference state, transactions, obligations, finalization |
 | `check/expr.rs` | expression/pattern checking and elaboration |
+| `check/operator.rs` | binary-token mapping, operator-signature instantiation, and provisional call elaboration |
 | `check/method.rs` | method candidate discovery, selection, and instantiation |
 | `check/solve/` | canonical trait proof and alias normalization |
 | `tytree/` | completed typed body representation |
@@ -281,7 +282,11 @@ field access, external trait dispatch, explicit adjustments, generic
 obligations, and associated-type normalization. Numeric expression literals
 now complete with concrete suffix or context-selected types, or with an error
 type after one source-category diagnostic when their domain is incompatible or
-remains unresolved.
+remains unresolved. Non-lazy binary expressions now use the cached operator
+trait method's real signature, ordinary local or `core` impl solving, and a
+provisional resolved-call node tied to obligation recovery. Ground primitive,
+comparison, and local user-defined operations complete through that path;
+`&&` and `||` retain their direct lazy form.
 
 ### Implemented capabilities and evidence
 
@@ -343,13 +348,31 @@ remains unresolved.
   shows that an arity mismatch does not suppress diagnostics within surplus
   argument expressions. Recursive consumption of the expectation by
   expression-specific rules is not yet implemented.
-- **[BODY-A5](#body-a5) prerequisite — Operator identities.**
+- **[BODY-A5](#body-a5) — Ground operator vertical slice.**
   `all_operator_traits_and_methods_resolve_to_typed_symbols` covers all twelve
   trait identities and sixteen associated methods, including comparison
   methods which share one trait. The failure and cache tests cover external
-  export identity, unavailable and wrong-kind results, narrow metadata demand,
-  and warm reuse. Body checking does not yet consume these identities, so this
-  evidence does not establish BODY-A5.
+  export identity, unavailable and wrong-kind results, narrow identity demand,
+  and warm reuse. `primitive_operators_use_core_impls_and_resolved_calls`
+  inspects resolved `Add::add` and mixed-integer `Shl::shl` calls and traces
+  ordinary `core` impl headers and associated values on a cold request with no
+  repeated metadata reads on the warm request.
+  `comparisons_materialize_signature_required_shared_borrows` checks that
+  `PartialEq::eq` and `PartialOrd::lt` use the shared borrows required by their
+  actual signatures. `local_operator_impl_can_choose_distinct_rhs_and_output`
+  checks a local `Left + Right -> Sum` impl, and
+  `selected_operator_impl_narrows_unsuffixed_integer_literal` shows that
+  narrowing comes from the selected `u32` impl rather than the `+` token.
+  `failed_operator_proof_becomes_one_diagnostic_and_an_error_node` and
+  `one_failed_operator_result_does_not_poison_an_equivalent_call` inspect
+  obligation-linked recovery, while
+  `lazy_boolean_operators_remain_control_flow_nodes` and
+  `lazy_boolean_operators_reject_non_boolean_operands_without_trait_lookup`
+  preserve the explicit boolean short-circuit path. The independent
+  `oracle_projects_operators_to_the_same_typed_tree_as_sage` comparison covers
+  these representative successful forms. Generic operator bodies,
+  unknown-`Self` candidate hints, and the complete source/oracle matrix remain
+  open, so BODY-A5 stays partial.
 
 Run the review evidence with:
 
@@ -360,6 +383,7 @@ cargo test -p sage-test-harness unrelated_body_edit_exposes_current_body_invalid
 cargo test -p sage-ir external_method_mismatch_discards_partial_generic_bindings
 cargo test -p sage-ir well_known
 cargo test -p sage-test-harness trait_obligation_tests
+cargo test -p sage-oracle-harness --test binary_operators
 cargo test --test type_check_tests
 cargo test --test type_check_tests never
 cargo test --test type_check_tests direct_call
@@ -373,15 +397,14 @@ cargo test -p sage-oracle-harness --test oracle_compare -- mini_redis/db_drop_gu
 - Rust expression, pattern, coercion, and method-resolution coverage is
   incomplete; diagnostics or recovery nodes mark unsupported paths.
 - [KD-7](../../implementation/known-deviations.md#kd-7-arithmetic-operators-do-not-require-numeric-operands)
-  remains open. Numeric domains now make `1 + true` fail through the interim
-  operand-equality relation, but binary-operator checking still does not prove
-  the operator trait: it accepts same-typed invalid operations such as
-  `bool + bool`, rejects valid operations whose `Rhs` differs from `Self`, and
-  retains successful source-shaped `Binary` nodes instead of the resolved
-  calls required by BODY-A5.
-- Cached queries resolve the well-known operator traits and methods, but body
-  checking does not yet consume those identities when constructing operator
-  obligations. Binary checking therefore still has the KD-7 behavior above.
+  remains open at the unproved parts of BODY-A5. Ground primitive and local
+  user-defined operations now prove their operator trait and complete as
+  resolved calls, and invalid `bool + bool` recovers diagnostically. Generic
+  bodies such as `T: Add<Output = T>` cannot yet use the associated-type
+  equality assumption, and an unknown `Self` still lacks the general
+  candidate-answer hints needed to accept cases such as `1 + 2u32` without
+  defaulting or operator-specific rules. The full source and exact-oracle
+  closure matrix is also not assembled.
 - Expected-type checking currently synthesizes an expression before applying
   its coercion expectation. Only ordinary direct-call arguments use this
   boundary; literals, closures, nested expression forms, and method arguments
@@ -417,7 +440,9 @@ cargo test -p sage-oracle-harness --test oracle_compare -- mini_redis/db_drop_gu
   will expose readable bodies and structured query traces.
 - [Numeric inference and operator
   soundness](../../implementation/roadmap.md#next-correctness-slice-numeric-inference-and-operator-soundness)
-  will establish [BODY-A5](#body-a5) and close KD-7.
+  has established BODY-A5's ground-operation vertical slice; its generic,
+  candidate-hint, and closure-evidence work will complete the anchor and close
+  KD-7.
 
 [numeric-rfd]: ../../rfds/numeric-inference-variables/README.md
 [rustc-operator-research]: ../research/rustc-binary-operator-typing.md

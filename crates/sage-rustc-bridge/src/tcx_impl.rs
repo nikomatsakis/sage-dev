@@ -720,17 +720,40 @@ impl<'tcx> RustcTcxDb<'tcx> {
         // can also have compiler-built candidates (for example scalar `Copy`
         // or coroutine `Iterator`), and auto traits are structural. Sage must
         // not turn the absence of an explicit header into `No` until it models
-        // the corresponding built-in source. A coroutine is not represented
-        // by Sage's rigid ADT self-type head, however, so an `Iterator` query
-        // for a known ADT cannot overlap rustc's coroutine candidate.
+        // the corresponding built-in source. Rustc has no built-in candidate
+        // source for the overloadable binary-operator traits; their primitive
+        // behavior is represented entirely by explicit core impls. A coroutine
+        // is not represented by Sage's rigid ADT self-type head, so an
+        // `Iterator` query for a known ADT cannot overlap rustc's coroutine
+        // candidate either.
         // `Sized` and `MetaSized` bypass this operation through their dedicated
         // structural candidates.
-        let rigid_head_excludes_iterator_builtin =
-            matches!(self_head, Some(sage_ir::tcx::RawSelfTypeHead::Adt(_)))
-                && self.tcx.lang_items().iterator_trait() == Some(trait_def_id);
+        let rigid_head_excludes_iterator_builtin = matches!(
+            self_head,
+            Some(sage_ir::tcx::RawSelfTypeHead::Adt(_) | sage_ir::tcx::RawSelfTypeHead::LocalAdt)
+        ) && self.tcx.lang_items().iterator_trait()
+            == Some(trait_def_id);
+        let operator_impls_are_explicit = matches!(
+            self.tcx.lang_items().from_def_id(trait_def_id),
+            Some(
+                rustc_hir::LangItem::Add
+                    | rustc_hir::LangItem::Sub
+                    | rustc_hir::LangItem::Mul
+                    | rustc_hir::LangItem::Div
+                    | rustc_hir::LangItem::Rem
+                    | rustc_hir::LangItem::BitXor
+                    | rustc_hir::LangItem::BitAnd
+                    | rustc_hir::LangItem::BitOr
+                    | rustc_hir::LangItem::Shl
+                    | rustc_hir::LangItem::Shr
+                    | rustc_hir::LangItem::PartialEq
+                    | rustc_hir::LangItem::PartialOrd
+            )
+        );
         let explicit_impls_are_exhaustive = !self.tcx.trait_is_auto(trait_def_id)
             && (self.tcx.lang_items().from_def_id(trait_def_id).is_none()
-                || rigid_head_excludes_iterator_builtin);
+                || rigid_head_excludes_iterator_builtin
+                || operator_impls_are_explicit);
         Some(RawRelevantImpls {
             impls,
             complete: explicit_impls_are_exhaustive,
@@ -1027,7 +1050,10 @@ fn simplify_self_type_head(
         ty::TyKind::Char => RawSelfTypeHead::Char,
         ty::TyKind::Int(_) => RawSelfTypeHead::Int,
         ty::TyKind::Uint(_) => RawSelfTypeHead::Uint,
-        ty::TyKind::Float(_) => RawSelfTypeHead::Float,
+        ty::TyKind::Float(ty::FloatTy::F16) => RawSelfTypeHead::Float16,
+        ty::TyKind::Float(ty::FloatTy::F32) => RawSelfTypeHead::Float32,
+        ty::TyKind::Float(ty::FloatTy::F64) => RawSelfTypeHead::Float64,
+        ty::TyKind::Float(ty::FloatTy::F128) => RawSelfTypeHead::Float128,
         ty::TyKind::Str => RawSelfTypeHead::Str,
         ty::TyKind::Ref(..) => RawSelfTypeHead::Ref,
         ty::TyKind::Tuple(_) => RawSelfTypeHead::Tuple,

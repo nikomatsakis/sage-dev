@@ -74,7 +74,19 @@ method. Those lookups consume this subsystem's ordinary external module and
 item facts; the raw metadata provider has no operator-specific identity query.
 Ordinary primitive operator impls defined in `core` use this same relevant-impl
 path; the metadata boundary does not replace them with a compiler-authored
-operator table or proof result.
+operator table or proof result. For the represented binary-operator traits,
+the rustc-backed provider can mark the explicit impl set complete because
+rustc has no additional built-in candidate source for those traits. That flag
+is a candidate-source fact, not a proof verdict; Sage still filters headers and
+solves the goal.
+
+When the known `Self` is a nominal type declared in the crate Sage is checking,
+the relevant-impl request uses the coarse `LocalAdt` head. An upstream impl
+with a different rigid nominal head cannot match that local identity and may be
+excluded, but blanket and otherwise unclassifiable upstream impls remain in
+the result. This partition lets local user-defined operator impls use an
+exhaustive external source without pretending that external nominal identities
+could equal the local type.
 
 <a id="meta-a3"></a>
 > **META-A3 — External demand is decomposed by semantic product.** Identity
@@ -145,7 +157,12 @@ External module/name lookup, traits, associated items, cached well-known
 operator trait and method identities, function methods, ADT
 generics/defaults/predicates, inherent method candidates, relevant trait impls,
 impl headers, associated type values, selected structural ADT properties, and
-macro expansion facts support the implemented slices.
+macro expansion facts support the implemented slices. Relevant-impl lookup
+also represents the coarse local-nominal self head and reports explicit binary
+operator impl sets as complete where rustc has no separate built-in candidate
+source. Float self heads retain their width: represented `f32` and `f64`
+queries can therefore exclude rustc's explicit `f16` and `f128` impls without
+trying to lower their unsupported signatures or weakening completeness.
 
 ### Implemented capabilities and evidence
 
@@ -153,8 +170,8 @@ macro expansion facts support the implemented slices.
 |---|---|---|
 | [META-A1](#meta-a1) | Partial | The `architecture_external_metadata_interface` source anchor exposes typed owned facts rather than solver verdicts; `external_clone_contract_proves_the_derived_impl` exercises Sage proof after importing external data. A dedicated interface-surface audit is not yet checked in. |
 | [META-A2](#meta-a2) | Partial | `external_adt_missing_required_argument_is_not_inferred` and `unsupported_external_default_is_metadata_unavailable_not_an_arity_error` preserve two unavailable-metadata cases without inventing defaults; the full boundary matrix is not present. |
-| [META-A3](#meta-a3) | Partial | `external_clone_items_and_method_signature_are_typed_metadata` verifies separate trait-item enumeration and selected method-signature lowering. `operator_identity_queries_are_layered_cached_and_narrow` verifies that operator-method identity reads associated items and names without loading trait or function signatures or impls. `clone_method_body_has_a_narrow_reusable_semantic_query_trace` rejects callee-body reads. The local analogue `local_normalization_reads_one_keyed_value_without_impl_item_enumeration` covers keyed associated-value demand, but no focused external normalization trace establishes that portion yet. |
-| [META-A4](#meta-a4) | Implemented for selected products | `clone_method_body_has_a_narrow_reusable_semantic_query_trace` pins cold calls and warm reuse for the method slice. `external_adt_default_and_predicate_have_one_narrow_reusable_dependency` pins one ADT-signature read and warm reuse. `operator_identity_queries_are_layered_cached_and_narrow` separately pins layered trait/method lookup and a metadata-free warm repeat. |
+| [META-A3](#meta-a3) | Partial | `external_clone_items_and_method_signature_are_typed_metadata` verifies separate trait-item enumeration and selected method-signature lowering. `operator_identity_queries_are_layered_cached_and_narrow` verifies that operator-method identity reads associated items and names without loading trait or function signatures or impls. `primitive_operators_use_core_impls_and_resolved_calls` then traces the independently demanded method signature, relevant impl identities, matching headers, and associated output values for ground `Add` and `Shl` bodies. `represented_float_operator_impls_resolve` checks the separate `Float32` and `Float64` keys, and `local_operator_impl_can_choose_distinct_rhs_and_output` observes the `LocalAdt` partition while Sage selects a local impl. `clone_method_body_has_a_narrow_reusable_semantic_query_trace` rejects callee-body reads, and `local_normalization_reads_one_keyed_value_without_impl_item_enumeration` covers keyed local associated-value demand. The full external product/isolation matrix is not assembled. |
+| [META-A4](#meta-a4) | Implemented for selected products | `clone_method_body_has_a_narrow_reusable_semantic_query_trace` pins cold calls and warm reuse for the method slice. `external_adt_default_and_predicate_have_one_narrow_reusable_dependency` pins one ADT-signature read and warm reuse. `operator_identity_queries_are_layered_cached_and_narrow` separately pins layered trait/method lookup and a metadata-free warm repeat. `primitive_operators_use_core_impls_and_resolved_calls` extends cold/warm reuse evidence through the operator method-signature, impl-header, and associated-value products. |
 
 ### Current limitations
 
@@ -168,6 +185,13 @@ macro expansion facts support the implemented slices.
 - External module children are broader than several desired semantic lookup
   keys; finer queries should be introduced when evidence shows unnecessary
   invalidation.
+- `LocalAdt` is intentionally a coarse safe partition. Finer local nominal
+  self-head keys and their full indexed-versus-exhaustive comparison remain
+  part of trait-partitioned impl-discovery work.
+- Float widths are intentionally finer than the other primitive families.
+  Sage represents `f32` and `f64`, while the metadata provider classifies
+  `f16` and `f128` as distinct rigid heads so their unsupported headers are
+  provably irrelevant to represented float queries.
 - The production frontend remains coupled to rustc's unstable private APIs
   through its driver implementation, though `TcxDb` isolates that coupling.
 
@@ -184,5 +208,6 @@ macro expansion facts support the implemented slices.
 - [Numeric inference and operator
   soundness](../../implementation/roadmap.md#next-correctness-slice-numeric-inference-and-operator-soundness)
   uses cached well-known-item queries over ordinary path and associated-item
-  resolution; trait-first checking will trace the resulting `core` impl
-  discovery through this boundary.
+  resolution. Its first trait-first vertical slice traces ground primitive
+  `core` impl discovery and local-nominal partitioning through this boundary;
+  the generic and closure matrices remain open.

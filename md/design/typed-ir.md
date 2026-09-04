@@ -141,7 +141,7 @@ represented by the implementation.
 | closure | Typed nested body, explicit parameters and captures (planned) |
 | async block or async function body | Typed nested coroutine body; no state-machine lowering (planned) |
 | `x.method(a)` | Resolved call with dispatch, owner/method substitutions, and receiver operations materialized (built for the conservative external trait and inherent method slices; general lookup planned) |
-| non-short-circuit operator syntax | Resolved trait-method call, including primitive and generic operands (planned) |
+| non-short-circuit operator syntax | Resolved trait-method call (built for ground primitive and local user-defined operands; generic bodies planned) |
 | `x && y`, `x || y` | Typed lazy logical operation with conditional RHS evaluation |
 | `x[i]` | Resolved `Index` or `IndexMut` call (planned) |
 | callable `f(a)` | Direct, pointer, dynamic, or `Fn*` call as resolved (planned) |
@@ -337,7 +337,10 @@ field identities, dereferences, `Dummy` borrows, selected functions, static or
 direct dispatch, owner/method substitutions, and associated-type normalization
 results. Never-to-any coercion is represented by an explicit `NeverToAny`
 expression node. The common rigid/alias family survives inference, canonical
-solver boundaries, display, and both semantic emitters.
+solver boundaries, display, and both semantic emitters. Ground non-lazy binary
+operations over primitive and local user-defined operands now produce the same
+static-trait `ResolvedCall` representation, while lazy boolean operations
+remain source-shaped control-flow nodes.
 
 ### Implemented capabilities and evidence
 
@@ -362,15 +365,31 @@ solver boundaries, display, and both semantic emitters.
   the shared alias representation.
 - **[TIR-A5](#tir-a5):** `clone_method_body_has_a_narrow_reusable_semantic_query_trace`
   rejects callee-body reads and proves warm reuse for the pinned method body.
+- **[TIR-A6](#tir-a6), partial:**
+  `primitive_operators_use_core_impls_and_resolved_calls` inspects `Add::add`
+  and mixed-integer `Shl::shl` as static trait calls with their owner
+  substitutions and final result types.
+  `comparisons_materialize_signature_required_shared_borrows` verifies the
+  explicit shared-reference operands required by `PartialEq` and `PartialOrd`,
+  and `local_operator_impl_can_choose_distinct_rhs_and_output` checks a local
+  `Left + Right -> Sum` call. Failed proof and normalization obligations replace
+  their provisional call with a diagnosed error node, and
+  `lazy_boolean_operators_remain_control_flow_nodes` checks that `&&` bypasses
+  trait-call elaboration. `oracle_projects_operators_to_the_same_typed_tree_as_sage`
+  compares the representative primitive, comparison, local user-defined, and
+  lazy forms exactly with rustc. Generic calls and the complete operator/oracle
+  matrix are still missing, so this evidence does not establish TIR-A6 in full.
 
 ### Current limitations
 
 - `TyExprData` still contains source-shaped variants for constructs whose
   general elaboration is not implemented. Such variants are not permitted in
   a successful oracle slice that claims their semantics.
-- Closures/captures, async/coroutine bodies, operator trait calls, indexing,
-  callable dispatch, general coercions/unsizing, `for`, `?`, and fully
-  elaborated `.await` remain planned.
+- Closures/captures, async/coroutine bodies, indexing, callable dispatch,
+  general coercions/unsizing, `for`, `?`, and fully elaborated `.await` remain
+  planned. Operator trait calls are built for the ground primitive and local
+  user-defined slice, but generic operator bodies and the full source/operator
+  matrix remain incomplete.
 - Method resolution is limited to the conservative external trait/inherent
   slices and selected local obligations, so TIR-A2's full dispatch-family
   matrix is not yet established.
@@ -393,3 +412,6 @@ solver boundaries, display, and both semantic emitters.
 - [Semantic inspector and persistent edit
   testing](../implementation/roadmap.md#implemented-slice-semantic-inspector-and-persistent-edit-testing)
   will provide a readable typed-tree view independent of oracle JSON.
+- [Numeric inference and operator
+  soundness](../implementation/roadmap.md#next-correctness-slice-numeric-inference-and-operator-soundness)
+  owns TIR-A6's remaining generic and closure-evidence matrix.

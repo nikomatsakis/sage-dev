@@ -45,9 +45,12 @@ bodies.
 Body type checking and inference are implemented, including retained body
 obligations, limited inherent/trait method resolution, reachable external impl
 discovery, and associated-type normalization for the pinned mini-redis
-`Parse::next` slice. General method coverage, higher-ranked solving,
-specialization/GATs, and the other deferred solver extensions remain on the
-roadmap.
+`Parse::next` slice. Unsuffixed numeric expressions retain integer or float
+family constraints without defaulting. Ground binary operators use ordinary
+core trait impls and complete as resolved static trait calls; generic operator
+associated bindings and inference from an initially unknown `Self` remain on
+the roadmap alongside general method coverage, higher-ranked solving, and
+specialization/GATs.
 
 ## Inspecting semantic results
 

@@ -5,8 +5,8 @@ use sage_stash::{Ptr, Slice, Stash, Stashed};
 
 use crate::ty::{AliasTy, NamedAliasTy, OpaqueAliasTy, ProjectionTy, TraitRef, Ty};
 use crate::tytree::{
-    CallDispatch, LocalVar, ResolvedCallTarget, TyBody, TyBodyData, TyClosureParam, TyExpr,
-    TyExprData, TyFieldInit, TyFieldPat, TyMatchArm, TyPat, TyPatKind, TyStmt, TyStmtKind,
+    CallDispatch, ExprSlot, LocalVar, ResolvedCallTarget, TyBody, TyBodyData, TyClosureParam,
+    TyExpr, TyExprData, TyFieldInit, TyFieldPat, TyMatchArm, TyPat, TyPatKind, TyStmt, TyStmtKind,
 };
 
 use super::infer::egraph::VersionedEGraph;
@@ -19,6 +19,7 @@ pub(super) fn finalize_typed_body<'db>(
     source: &Stash,
     egraph: &VersionedEGraph<'db>,
     root: Ptr<TyExpr<'db>>,
+    expr_slots: &[Ptr<TyExpr<'db>>],
     locals: &[LocalVar<'db>],
     span: crate::span::RelativeSpan,
 ) -> TyBody<'db> {
@@ -27,9 +28,11 @@ pub(super) fn finalize_typed_body<'db>(
         source,
         target: &mut target,
         egraph,
+        expr_slots,
         copied_types: FxHashMap::default(),
         active_types: FxHashSet::default(),
         copied_exprs: FxHashMap::default(),
+        active_exprs: FxHashSet::default(),
         copied_patterns: FxHashMap::default(),
     };
 
@@ -44,9 +47,11 @@ struct BodyFinalizer<'source, 'target, 'db> {
     source: &'source Stash,
     target: &'target mut Stash,
     egraph: &'source VersionedEGraph<'db>,
+    expr_slots: &'source [Ptr<TyExpr<'db>>],
     copied_types: FxHashMap<Ptr<Ty<'db>>, Ptr<Ty<'db>>>,
     active_types: FxHashSet<Ptr<Ty<'db>>>,
     copied_exprs: FxHashMap<Ptr<TyExpr<'db>>, Ptr<TyExpr<'db>>>,
+    active_exprs: FxHashSet<Ptr<TyExpr<'db>>>,
     copied_patterns: FxHashMap<Ptr<TyPat<'db>>, Ptr<TyPat<'db>>>,
 }
 
@@ -138,6 +143,54 @@ impl<'db> BodyFinalizer<'_, '_, 'db> {
             return target;
         }
         let TyExpr { data, ty, span } = self.source[source];
+        match data {
+            TyExprData::Unresolved(ExprSlot(slot)) => {
+                assert!(
+                    self.active_exprs.insert(source),
+                    "recursive expression slot escaped body checking"
+                );
+                let resolved = self.expr_slots[slot as usize];
+                let target = self.copy_expr(resolved);
+                assert!(self.active_exprs.remove(&source));
+                self.copied_exprs.insert(source, target);
+                return target;
+            }
+            TyExprData::Literal(_)
+            | TyExprData::Path(_)
+            | TyExprData::Block(_, _)
+            | TyExprData::Call(_, _)
+            | TyExprData::ResolvedCall(_, _)
+            | TyExprData::MethodCall(_, _, _)
+            | TyExprData::Field(_, _)
+            | TyExprData::Binary(_, _, _)
+            | TyExprData::Unary(_, _)
+            | TyExprData::Deref(_)
+            | TyExprData::Ref(_, _)
+            | TyExprData::NeverToAny(_)
+            | TyExprData::If(_, _, _)
+            | TyExprData::IfLet(_, _, _, _)
+            | TyExprData::Match(_, _)
+            | TyExprData::Loop(_)
+            | TyExprData::While(_, _)
+            | TyExprData::WhileLet(_, _, _)
+            | TyExprData::For(_, _, _)
+            | TyExprData::Break(_)
+            | TyExprData::Continue
+            | TyExprData::Return(_)
+            | TyExprData::Assign(_, _)
+            | TyExprData::Await(_)
+            | TyExprData::Try(_)
+            | TyExprData::Closure(_, _)
+            | TyExprData::Tuple(_)
+            | TyExprData::Array(_)
+            | TyExprData::Index(_, _)
+            | TyExprData::Cast(_, _)
+            | TyExprData::StructLit(_, _)
+            | TyExprData::Range(_, _)
+            | TyExprData::MacroCall(_, _)
+            | TyExprData::Error(_)
+            | TyExprData::Missing => {}
+        }
         let ty = self.copy_ty(ty);
         let data = self.copy_expr_data(data, ty);
         let target = self.target.alloc(TyExpr { data, ty, span });
@@ -247,7 +300,9 @@ impl<'db> BodyFinalizer<'_, '_, 'db> {
             ),
             TyExprData::MacroCall(resolution, tokens) => TyExprData::MacroCall(resolution, tokens),
             TyExprData::Error(error) => TyExprData::Error(error),
-            TyExprData::Unresolved(slot) => TyExprData::Unresolved(slot),
+            TyExprData::Unresolved(_) => {
+                unreachable!("expression slots are resolved before copying expression data")
+            }
             TyExprData::Missing => TyExprData::Missing,
         }
     }
@@ -461,7 +516,7 @@ mod tests {
             ty: tuple_ty,
             span,
         });
-        let body = finalize_typed_body(&source, &egraph, root, &[], span);
+        let body = finalize_typed_body(&source, &egraph, root, &[], &[], span);
 
         assert_eq!(source[inference_ty], Ty::InferVar(InferVarIndex(0)));
         let (target, body_root) = body.open_deref();

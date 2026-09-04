@@ -445,16 +445,28 @@ impl<'db> Resolver<'db> {
             .collect()
     }
 
-    /// Look up a name inside a "container" symbol. For modules this goes
-    /// through use-import resolution; for enums it's a flat child lookup.
+    /// Look up a name inside a "container" symbol. Local modules go through
+    /// use-import resolution, external modules read resolved export edges, and
+    /// enums use a flat child lookup.
     fn resolve_name_in(
         &mut self,
         sym: Symbol<'db>,
         name: Name<'db>,
         namespace: Namespace,
     ) -> Vec<Symbol<'db>> {
-        if let Some(m) = sym.module(self.db) {
-            return self.resolve_name_from_module(m, name, namespace);
+        if let Some(module) = sym.module(self.db) {
+            return match module {
+                // Qualified external paths can use the resolved export edge
+                // directly. Besides preserving reexport names and namespaces,
+                // this avoids materializing unrelated rustc definition kinds
+                // that Sage does not represent as `SymbolData` yet.
+                ModSymbol::Ext(external) => {
+                    external.named_children(self.db, name, namespace).to_vec()
+                }
+                ModSymbol::Local(local) => {
+                    self.resolve_name_from_module(ModSymbol::Local(local), name, namespace)
+                }
+            };
         }
         let children = sym.children(self.db).unwrap_or_default();
         children
@@ -666,31 +678,14 @@ impl<'db> Resolver<'db> {
         symbols
             .into_iter()
             .flat_map(|symbol| match rest {
-                [final_segment] => self.resolve_name_in_use(symbol, final_segment.name, namespace),
+                [final_segment] => self.resolve_name_in(symbol, final_segment.name, namespace),
                 [next_segment, rest @ ..] => {
-                    let next = self.resolve_name_in_use(symbol, next_segment.name, Namespace::Type);
+                    let next = self.resolve_name_in(symbol, next_segment.name, Namespace::Type);
                     self.resolve_use_remaining_segments(stash, next, rest, namespace)
                 }
                 [] => Vec::new(),
             })
             .collect()
-    }
-
-    fn resolve_name_in_use(
-        &mut self,
-        symbol: Symbol<'db>,
-        name: Name<'db>,
-        namespace: Namespace,
-    ) -> Vec<Symbol<'db>> {
-        match symbol.module(self.db) {
-            Some(ModSymbol::Ext(external)) => {
-                external.named_children(self.db, name, namespace).to_vec()
-            }
-            Some(ModSymbol::Local(module)) => {
-                self.resolve_name_from_module(ModSymbol::Local(module), name, namespace)
-            }
-            None => self.resolve_name_in(symbol, name, namespace),
-        }
     }
 
     fn resolve_glob(

@@ -1,13 +1,18 @@
 # Implementation plan and status
 
 The source-neutral domain substrate and the numeric expression-literal work in
-checkpoints 1 and 2 are implemented, together with the well-known-item lookup
-substep of checkpoint 3. Unsuffixed expression literals now create `Integer`
-or `Float` variables, suffixes lower directly, and failed required domain
-relations report and recover without exposing inference indices. Cached typed
-queries resolve all represented operator traits and methods. Operator-checking
-logic and operator IR are unchanged. Explicit let-annotation enforcement and
-the full propagation matrix remain later work. Each step must leave the
+checkpoints 1 and 2 are implemented, together with the first trait-first
+operator vertical slice in checkpoint 3. Unsuffixed expression literals now
+create `Integer` or `Float` variables, suffixes lower directly, and failed
+required domain relations report and recover without exposing inference
+indices. Cached typed queries resolve all represented operator traits and
+methods. Every non-lazy binary token now instantiates that method's real
+signature, retains its proof and result-normalization obligations, and builds
+a provisional resolved call whose failure is tied to diagnosed recovery;
+`&&` and `||` remain explicit lazy boolean operations. Ground primitive,
+comparison, and local user-defined cases are covered. Generic operator bodies,
+unknown-`Self` candidate hints, explicit let-annotation enforcement, and the
+full propagation/operator matrix remain later work. Each step must leave the
 workspace building and keep unsupported operator paths diagnostic.
 
 ## Landing strategy
@@ -44,10 +49,10 @@ The current implementation and remaining operator work map to these seams:
 | Versioned class state | `check/infer/egraph.rs` (`VersionState`, `union`, `set_bound_in`) | Store effective class domains, intersect them transactionally, and include committed narrowing in revisions and wakes. |
 | Equality enforcement and diagnostics | `check/infer/unify.rs` (`try_unify`, `try_unify_required`, `unify_in_probe`, `bind_variable`) and `check/infer_ctx.rs` (`require_eq`) | Reject an empty domain intersection or an out-of-domain concrete type with a structured `DomainConflict`; keep probe rejection silent and render required source relations without exposing inference indices. |
 | Solver cache boundary | `check/solve/goal.rs` (`CanonicalVarInfo`), `canonical.rs`, and `boundary.rs` (`apply_query_response`) | Put effective input domains in the canonical key and recreate/recheck them while importing a response through the existing child transaction. Response-local variables begin as `Any` unless their binder metadata says otherwise. |
-| Literal and binary-expression checking | `check/expr.rs` (`check_literal`, `check_binary_op_ty`) | Suffix lowering and `Integer`/`Float` expression-literal variables are implemented; replacing blanket binary equality with the selected operator-trait operation remains. |
-| Operator semantic identity | `well_known.rs` (`operator_trait`, `operator_method`), `check/resolve/mod.rs`, and `TraitSymbol::items` | Cached queries resolve each fixed `core` path through ordinary symbol lookup and each method through ordinary associated-item lookup. They return typed `TraitSymbol`/`FnSymbol` identities; missing, incomplete, ambiguous, or wrong-kind results are unavailable rather than proof. Body checking does not yet consume the identities. |
-| Ordinary primitive/user impl discovery | `external_syms.rs` (`external_relevant_impls`) and `check/solve/clauses.rs` | Reuse the selected trait identity with the existing relevant-impl and impl-signature queries. Do not add a primitive operator candidate or signature matrix. |
-| Successful operator IR | `tytree/mod.rs` (`ResolvedCallTarget`, `CallDispatch`, `TyExprData`) | Reuse resolved static trait-call representation for overloadable operators. Reserve source-shaped `Binary` for non-overloadable/lazy forms still needing it; future codegen performs primitive recognition. |
+| Literal and binary-expression checking | `check/expr.rs` (`check_literal`) and `check/operator.rs` | Suffix lowering and `Integer`/`Float` expression-literal variables are implemented. Non-lazy binary expressions now map to the cached operator identity, instantiate its metadata signature, retain proof/normalization work, and build a provisional resolved call; lazy boolean expressions stay on the direct boolean path. |
+| Operator semantic identity | `well_known.rs` (`operator_trait`, `operator_method`), `check/resolve/mod.rs`, and `TraitSymbol::items` | Cached queries resolve each fixed `core` path through ordinary symbol lookup and each method through ordinary associated-item lookup. They return typed `TraitSymbol`/`FnSymbol` identities; missing, incomplete, ambiguous, or wrong-kind results are unavailable rather than proof. Body checking consumes these identities without adding a second path/name table. |
+| Ordinary primitive/user impl discovery | `external_syms.rs` (`external_relevant_impls`) and `check/solve/clauses.rs` | The first operator slice reuses the selected trait identity with the existing relevant-impl, impl-signature, and associated-value queries. Primitive `core` impls and local user impls use the same candidate path; there is no primitive operator candidate or signature matrix. A coarse `LocalAdt` self-head keeps blanket external impls while excluding rigid upstream nominal heads which cannot match a local type. Width-specific float heads likewise prove rustc's unrepresented `f16`/`f128` headers disjoint from `f32`/`f64` queries instead of letting unsupported metadata weaken completeness. |
+| Successful operator IR | `check/operator.rs`, `check/infer/obligations.rs`, `check/finalize.rs`, and `tytree/mod.rs` | A non-lazy expression receives a provisional static `ResolvedCall`; proof and normalization obligations retain its recovery slot, and finalization admits only the settled call or an error node. Source-shaped `Binary` is reserved for lazy `&&`/`||`; future codegen performs primitive recognition. Generic operator bodies are not yet supported. |
 
 The well-known-item queries share the ordinary resolver and trait-item
 enumeration, while their enum keys cache every trait and method identity
@@ -125,13 +130,13 @@ compatible sibling relations after installing the primary error.
 
 ## Step 3: Trait-first operator checking and elaboration
 
-- [ ] Replace blanket operand equality with a retained operator-trait goal and
+- [x] Replace blanket operand equality with a retained operator-trait goal and
   normalized method result for every non-short-circuit operator ([NIV-A3]).
 - [x] Add cached well-known-item queries that resolve each operator trait from
   its fixed `core` path and each method through ordinary associated-item
   lookup. Return typed `TraitSymbol`/`FnSymbol` identities; unavailable,
   ambiguous, or wrong-kind lookup is not proof.
-- [ ] Map binary tokens to those identities in body checking, then discover
+- [x] Map binary tokens to those identities in body checking, then discover
   primitive implementations as ordinary `core` impls through external
   metadata and the normal trait-candidate path, with no synthetic primitive
   candidate or hardcoded signature matrix.
@@ -139,7 +144,9 @@ compatible sibling relations after installing the primary error.
   equates them; import only constraints from selected impls and where-clauses.
 - [ ] After selection and type finalization, emit a resolved static trait call
   for every proven non-short-circuit operation, including concrete primitive
-  and generic operands; diagnose failure or ambiguity ([NIV-A4]).
+  and generic operands; diagnose failure or ambiguity ([NIV-A4]). Ground
+  primitive and local user-defined cases now use this path, including
+  obligation-linked recovery, but generic bodies remain open.
 - [x] Add table-driven identity-lookup coverage for all twelve operator traits
   and sixteen methods, supported external exports, unavailable and wrong-kind
   results, narrow metadata demand, and cache reuse.
@@ -148,9 +155,21 @@ compatible sibling relations after installing the primary error.
   operator with distinct `Rhs` and `Output`. Assert that overloadable operators
   do not complete as `Binary` and that lazy boolean operators retain their
   short-circuit form.
-- [ ] Add query-trace coverage proving primitive arithmetic and shift goals
+- [x] Add query-trace coverage proving primitive arithmetic and shift goals
   load the relevant external `core` impl identities and headers rather than a
   compiler-builtin operator rule.
+
+The current source-driven checkpoint covers `u32 + u32`, `f32`/`f64`
+addition, `u8 << i16`, `==` and `<` with signature-required shared borrows, a
+local `Left + Right -> Sum` impl, and an unsuffixed right operand narrowed by
+the selected `u32` impl. It also checks one-diagnostic recovery for
+`bool + bool`, `u32 + bool`, and an unresolved comparison proof; recovery
+isolation between equivalent calls; current unknown-`Self` ambiguity; both
+lazy boolean tokens; and cold/warm `core` metadata demand. An independent
+oracle comparison matches the representative successful forms exactly, with
+additional oracle coverage for a comparison operand carrying `NeverToAny`.
+This establishes a reviewable ground-operation slice of [NIV-A3] and
+[NIV-A4], not their generic or full-matrix closure.
 
 ## Step 4: Source and oracle closure evidence
 
