@@ -597,3 +597,33 @@ executes semantic queries or watches edits.
 context initialization and method parameters; expand grouped operations into
 narrow source-backed methods; connect model edges to query-trace evidence.
 Derive and harness internals currently have crate-level descriptions only.
+
+## Architectural correspondence and runtime conformance
+
+**Goal and acceptance target:** A real compiler test records architectural
+operations, checks their declared permissions, and supplies a browser walkthrough
+from the same evidence. Every model correspondence unit has a crate-correct
+Rust `#[sage::item]` anchor; marker modules cover abstract concepts. Unexpected
+calls fail checked tests rather than becoming silent gaps or automatically
+permitted model changes.
+
+**Scope and dependencies:** Builds on the review language above and the
+Semantic Inspector's production provider and Salsa events. A source-index
+prototype must establish reliable query provenance, including tracked methods,
+generated code, and source/build compatibility first. Correspondence and runtime
+checking do not depend on ACP or MCP. Agent integration follows shared,
+scriptable model and trace tools.
+
+**High-level plan:** Prove source-to-query matching; register inert tool
+attributes and build a bidirectional index; migrate source links and remove
+`#[rust]`; implement cached contracts and the checking engine; integrate Salsa
+events, separate ordinary-function instrumentation, and async execution;
+enforce a caller/callee fixture and expand coverage; replay traces in the browser;
+then expose MCP tools and ACP-backed design/explanation workflows.
+
+**Progress: Draft planning only.** See [Sage Contracts and
+Walkthroughs](../rfds/sage-contracts/README.md) and its [staged implementation
+plan](../rfds/sage-contracts/implementation.md). Current `.sage` consistency and
+source browsing do not establish runtime conformance. Static implementation
+call analysis and dynamic checking of field reads/context creation are further
+work beyond the initial call-enforcement milestone.

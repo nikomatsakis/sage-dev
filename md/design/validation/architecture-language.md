@@ -110,6 +110,15 @@ external results as `None`.
 
 ## Rust correspondence annotations
 
+**Planned replacement:** The draft [Sage Contracts and Walkthroughs
+RFD](../../rfds/sage-contracts/README.md) replaces the annotations below with
+inert Rust-side `#[sage::item(...)]` tool attributes, including module anchors
+for abstract concepts. Runtime source indexing matches Salsa query provenance
+to model items. It stages bidirectional correspondence checking, runtime
+enforcement against a cached model, and shared trace-based walkthroughs. The
+following describes the implementation available today; none of that runtime
+instrumentation is implemented yet.
+
 Each top-level declaration in the repository model carries `#[rust(...)]`:
 
 ```sage
