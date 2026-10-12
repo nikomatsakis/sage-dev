@@ -6,6 +6,7 @@ use crate::scope::ScopeSymbol;
 use crate::span::AbsoluteSpan;
 
 #[salsa::tracked(debug)]
+#[sage::item(crate::symbols::LocalStaticSym)]
 pub struct LocalStaticSym<'db> {
     pub name: Name<'db>,
     pub scope: ScopeSymbol<'db>,

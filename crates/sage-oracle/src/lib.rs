@@ -1,3 +1,5 @@
+#![feature(register_tool)]
+#![register_tool(sage)]
 #![feature(rustc_private)]
 
 extern crate rustc_ast;
@@ -21,6 +23,7 @@ pub fn analyze_file(path: &Path) -> Result<Crate<NormalizedDef>, OracleError> {
     analyze_crate(path, &[path.to_path_buf()])
 }
 
+#[sage::item(crate::oracle::Oracle::analyze_crate)]
 pub fn analyze_crate(
     entry: &Path,
     _source_files: &[PathBuf],
@@ -81,4 +84,17 @@ impl rustc_driver::Callbacks for OracleCallbacks {
         *self.result.lock().unwrap() = Some(result);
         rustc_driver::Compilation::Stop
     }
+}
+
+// Source anchors for architectural modules and distributed representations.
+mod sage_model {
+    /// Architectural crate anchor.
+    #[sage::item(crate)]
+    mod crate_model {}
+    /// Architectural module anchor.
+    #[sage::item(crate::oracle)]
+    mod oracle_model {}
+    /// Groups analyze_crate and the rustc callbacks; there is no Oracle type.
+    #[sage::item(crate::oracle::Oracle)]
+    mod oracle_oracle_model {}
 }

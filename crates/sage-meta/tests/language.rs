@@ -177,19 +177,6 @@ fn repository_model_is_consistent() {
     let mut documents = Vec::new();
     collect(&root, &mut documents);
     assert!(!documents.is_empty());
-    for document in &documents {
-        for declaration in &document.declarations {
-            let (name, rust) = match declaration {
-                Declaration::Type(decl) => (&decl.name, &decl.rust),
-                Declaration::Class(class) => (&class.name, &class.rust),
-            };
-            assert!(
-                rust.is_some(),
-                "{}: {name} needs a Rust correspondence annotation",
-                document.file
-            );
-        }
-    }
     let errors = validate(&documents);
     assert!(
         errors.is_empty(),
@@ -399,81 +386,12 @@ fn rejects_malformed_value_declarations() {
 }
 
 #[test]
-fn rust_annotations_preserve_origins_without_resolving_them_as_sage_types() {
-    use sage_meta::{RustTarget, TypeExprKind};
-    let source = r#"crate demo { """Demo.""" }
-        #[rust(crate::ty::Binder)]
-        type Binder<T> { """Bound value.""" }
-        #[rust(crate::ty::Ty)]
-        enum Ty { Never }
-        #[rust(std::vec::Vec<crate::symbol::Symbol>)]
-        struct Items { items: Vec<Ty> }
-        #[rust(bool)]
-        type Boolean { """Boolean.""" }
-        #[rust(())]
-        type Unit { """Unit.""" }
-        #[rust(crate::check::InferCtx)]
-        context Inference { """Working state.""" }
-        #[rust(none, """Review-only grouping of free functions.""")]
-        class Group { """Logical namespace.""" }
-    "#;
-    let doc = parse("demo/crate.sage", source).unwrap();
-    assert!(validate(std::slice::from_ref(&doc)).is_empty());
-    let Declaration::Type(decl) = &doc.declarations[0] else {
-        panic!()
-    };
-    let rust = decl.rust.as_ref().unwrap();
-    assert_eq!(
-        &source[rust.span.start..rust.span.end],
-        "#[rust(crate::ty::Binder)]"
-    );
-    let RustTarget::Type(ty) = &rust.target else {
-        panic!()
-    };
-    assert!(
-        matches!(&ty.kind, TypeExprKind::Named { path, arguments } if path.root == "crate" && path.segments == ["ty", "Binder"] && arguments.is_empty())
-    );
-    let Declaration::Type(decl) = &doc.declarations[2] else {
-        panic!()
-    };
-    let RustTarget::Type(ty) = &decl.rust.as_ref().unwrap().target else {
-        panic!()
-    };
-    assert!(
-        matches!(&ty.kind, TypeExprKind::Named { path, arguments } if path.root == "std" && arguments.len() == 1)
-    );
-    let Declaration::Class(class) = &doc.declarations[6] else {
-        panic!()
-    };
-    assert!(
-        matches!(&class.rust.as_ref().unwrap().target, RustTarget::None { reason } if reason == "Review-only grouping of free functions.")
-    );
-}
-
-#[test]
-fn rejects_malformed_or_duplicate_rust_annotations() {
-    for annotation in [
-        "#[unknown(crate::Ty)]",
-        "#[rust()]",
-        "#[rust(crate)]",
-        "#[rust($other::Ty)]",
-        "#[rust(Vec<$other::Ty>)]",
-        "#[rust(self.field)]",
-        "#[rust(none)]",
-        "#[rust(none, \"\"\" \"\"\")]",
-        "#[rust(crate::Ty)] #[rust(crate::Other)]",
-        "#[rust(crate::Ty)",
-    ] {
-        let source = format!("crate demo {{ \"\"\"Demo.\"\"\" }} {annotation} struct Value {{}}");
-        assert!(
-            parse("demo/crate.sage", &source).is_err(),
-            "accepted {annotation}"
-        );
-    }
+fn correspondence_annotations_live_in_rust_only() {
     assert!(
         parse(
             "demo/crate.sage",
-            "crate demo { \"\"\"Demo.\"\"\" } #[rust(crate::Ty)]"
+            r#"crate demo { """Demo.""" }
+        #[rust(crate::Item)] type Item """Value.""";"#
         )
         .is_err()
     );

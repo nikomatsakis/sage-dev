@@ -20,7 +20,8 @@ cross-crate method reference; `crate::symbols::FnSymbol::signature` refers to
 the current crate. Cross-crate references require a declared dependency.
 
 Manifests describe logical structure rather than duplicating Rust source modules.
-The Rust implementation is linked from comments in the model. Third-party
+The Rust implementation declares correspondences with `#[sage::item(...)]`.
+Third-party
 libraries are currently outside the modeled crate graph.
 
 ## Objects and operations
@@ -108,44 +109,65 @@ not Rust runtime data structures. Fn/Trait/Impl methods use a uniform optional
 interface, lifting the Rust local results to `Some` while retaining unavailable
 external results as `None`.
 
-## Rust correspondence annotations
+## Rust-declared correspondence
 
-**Planned replacement:** The draft [Sage Contracts and Walkthroughs
-RFD](../../rfds/sage-contracts/README.md) replaces the annotations below with
-inert Rust-side `#[sage::item(...)]` tool attributes, including module anchors
-for abstract concepts. Runtime source indexing matches Salsa query provenance
-to model items. It stages bidirectional correspondence checking, runtime
-enforcement against a cached model, and shared trace-based walkthroughs. The
-following describes the implementation available today; none of that runtime
-instrumentation is implemented yet.
+Rust items carry inert `#[sage::item(...)]` tool attributes. Each Rust crate
+registers the `sage` tool namespace on the pinned nightly. Attribute arguments
+name architectural items, not Rust declarations; `crate` means the Cargo
+package's modeled crate, with hyphens normalized to underscores. An explicit
+crate name must identify that same owner. Cargo library and binary targets are
+both inventoried, even when their target names differ from their package name.
 
-Each top-level declaration in the repository model carries `#[rust(...)]`:
+Correspondence units are crate/module headers, named type/class/context
+declarations, and explicitly declared methods. Fields, variants, generic
+parameters, and envelope clauses remain parts of their containing declaration.
+Every unit requires at least one Rust anchor; every annotation must resolve to
+a compatible unit in its own crate. Rust attributes are the single
+correspondence authority; `.sage` declarations contain no Rust-origin annotation.
 
-```sage
-#[rust(crate::ty::Binder)]
-type Binder<T> {
-    """A value under the generic parameters binding its references."""
-}
-```
+A declaration can have several Rust implementations. Non-executable anchors
+may carry several correspondences; an executable function has one operation
+identity. An empty annotated `mod r#abstract {}` anchors a concept spread over
+multiple implementation sites, an abstract interface, or an external/primitive
+representation. A module anchor neither maps all descendants nor supplies
+runtime execution evidence. Concrete method markers count as source locations
+only; executable coverage is reported separately.
 
-`crate` refers to the containing Rust crate. Paths are Rust source names, not
-`.sage` namespace references: an external path uses `std::vec::Vec`, not a
-`$` prefix. The annotation supports named type constructors, applications,
-primitives, and tuples, and can name a trait for an interface. Rust lifetimes
-and generic arguments may be omitted when naming a constructor.
+The index reads unexpanded Rust syntax, preserves source ranges and textual cfg
+conditions, and traverses modules and methods. The known `define_kind_symbols!`
+input grammar has an explicit adapter; arbitrary macro token text is not proof
+of a generated declaration. Source coverage across cfg alternatives is distinct
+from resolving a query observed in a particular compiled binary.
+Conditional Sage annotations or module paths inside `cfg_attr` are rejected;
+place unconditional annotations on separate `cfg`-gated declarations instead.
 
-A review-only grouping without a corresponding Rust type uses
-`#[rust(none, """explanation""")]`. This prevents conceptual groupings such as
-`Signature` and `BodyCheck` from implying nonexistent Rust declarations.
-The AST distinguishes absent annotations from explicit unmapped concepts and
-retains the annotation's source range. Unknown annotation names, duplicate
-annotations, and empty unmapped explanations are parse errors.
+The top-level `sage` facade has no doctests and disables its rustdoc test
+harness: rustdoc injects `--extern sage`, which shadows the registered tool
+namespace. Its unit and integration tests remain enabled. Other workspace
+crates retain their doctests.
 
-Annotations are optional in standalone examples but required on every type,
-class, and context by the repository corpus test. They do not create dependency
-edges or resolve in the `.sage` type namespace. The checker does not verify
-Rust source existence, visibility, or generic arity. Individual fields, variants,
-methods, and crate/module headers do not carry separate origin annotations.
+## Observed contracts
+
+An immutable resolved contract model shares the name/dispatch rules of static
+validation. A session checks explicit operation entries against direct call
+permissions and all active ancestor prohibitions. Entry into the same operation
+again counts as recursion. Receiver-sensitive permissions require semantic
+receiver identity; missing identity remains an observation gap. Query-engine
+internal reexecution installs context without fabricating a source call.
+
+A Salsa adapter joins structured query source provenance to the Rust index,
+then feeds request and execution events into that session. Cached requests still
+need permission. Source snapshots supplied by the caller must match the indexed
+text before a compiled query can be treated as mapped. Missing, ambiguous,
+stale, and unsupported matches prevent a conformance success. No debug-name
+matching or automatic envelope broadening is permitted.
+
+Correspondence, observed calls, and unchecked effects are distinct results.
+Inert annotations do not instrument ordinary functions; input reads, context
+construction, task propagation, and unconstrained generated code need additional
+hooks. A passing run establishes only its explicitly observed scope. The
+[Sage Contracts and Walkthroughs RFD](../../rfds/sage-contracts/README.md) stages
+broader compiler coverage, browser replay, and agent tools.
 
 ## Interactive architecture explorer
 
@@ -156,12 +178,12 @@ The optional positional arguments select the model directory and output HTML:
 `cargo run -p sage-meta -- browse sage-src /tmp/sage-architecture.html`.
 
 The explorer provides crate/module navigation, search and kind filters,
-linked value types and variants, Rust correspondence annotations, base classes,
+linked value types and variants, Rust source correspondences, base classes,
 methods, and dependency envelopes. Method pages show conservative direct-call
 targets, reverse callers, overriding implementations, and inherited prohibitions.
 Hash routes support bookmarks and browser history. Press `/` to search. Click a Rust annotation or the **Rust source** header button to reveal a source
-pane with the definition highlighted. The pane follows navigation; methods show
-their owning type. It can be hidden without leaving the architecture view.
+pane with the definition highlighted. The pane follows navigation and links
+methods to their own annotated implementation or marker sites. It can be hidden without leaving the architecture view.
 
 Exported files are immutable snapshots: regenerating is required after model
 edits. The browser inspects declared architecture rather than running compiler
@@ -184,7 +206,8 @@ a formal semantics integration is prospective.
 and command-line validator/exporter. Diagnostics identify source byte ranges. Run:
 
 ```sh
-cargo run -p sage-meta -- sage-src
+cargo run -p sage-meta -- check --correspondence
+cargo run -p sage-meta -- check --correspondence --json
 cargo test -p sage-meta
 ```
 
@@ -196,14 +219,18 @@ subclasses model enum dispatch, and `BodyCheck` groups expression and pattern
 checking implementations. It is not an exhaustive extraction of Rust calls.
 
 `crates/sage-meta/tests/language.rs` exercises META-A1, AST parsing, source ranges,
-manifest/module checks, Rust-origin parsing and corpus coverage, and consistency
-of the repository corpus. Initial
+manifest/module checks and consistency of the repository corpus.
+`tests/correspondence.rs` checks missing/dangling/wrong-crate anchors, kind
+compatibility, cfg alternatives, multiple Cargo targets, explicit module paths,
+generator inputs, ambiguous/unmapped sites, nested functions, unsupported
+placements, and source snapshot mismatches. `tests/cli.rs` verifies separate
+model/correspondence reports and failure exit status. Initial
 syntax supports one module level, structs and enums, opaque generic types,
 nested type applications, and argument-free method references. Value-type tests
 cover prose preservation, recursive structures, generic scope and arity,
 cross-crate references, and structural override checking. Method parameters,
 method/class generics, context initialization and binding flow, computed
-expressions, and source-to-model conformance checking remain unimplemented. Context ownership is described, not escape-checked. Virtual
+expressions, and complete implementation conformance remain unimplemented. Context ownership is described, not escape-checked. Virtual
 calls deliberately overapproximate possible receiver implementations.
 
 See the [review-language roadmap slice](../../implementation/roadmap.md#architectural-review-language)
@@ -218,18 +245,45 @@ not substitute for visual layout testing in a browser engine.
 
 ### Embedded Rust source
 
-When the model lives under a Cargo workspace, the exporter uses offline Cargo
-metadata and parses workspace Rust modules with `syn`. It follows explicit
-imports and re-exports, including module aliases, and embeds only files reached
-by annotations. Generic arguments can have separate source definitions; a
-selector exposes these and multiple conditional definitions. Primitive and
-standard-library types have no embedded workspace source. Review abstractions
-show their annotation's explanation.
+The exporter embeds files reached by the same Rust correspondence index used
+by validation. The pane supports multiple implementation sites and labels
+source-only module markers and known generator inputs. Source navigation is
+available for crate/module headers, types, and individual methods. It does not
+resolve guessed Rust type names or require maintaining reverse annotations.
 
-This is best-effort navigation, separate from model validation. It does not
-evaluate cfg, expand macros, or resolve wildcard imports. Recognizable type
-declarations in macro inputs are shown with an explicit label. Source is a
-snapshot: regenerate the HTML after Rust edits. No source server is required.
+The snapshot does not evaluate cfg or expand arbitrary macros. Regenerate it
+after Rust edits; no source server is required. The CLI's correspondence report
+states both source-site and executable-declaration counts. An executable
+source declaration is not, by itself, proof of runtime instrumentation.
+
+### Contract infrastructure evidence
+
+`tests/runtime_contracts.rs` exercises the shared checking engine with explicit
+roots, recursion, interface dispatch, inherited prohibitions, receiver checks,
+unbalanced events, and visible unchecked effects. Violations retain both the
+undeclared edge and ancestor prohibition with their rule and complete path.
+
+`tests/contracts.rs` runs the isolated real Salsa fixture under
+`tests/fixtures/contracts/`. Its reviewed expectations name Sage operations and
+independent Rust sites for cold, reused, and internally validated runs. Negative
+cases include a forbidden request with the leaf cold or prewarmed, swapped and
+missing mappings, ambiguity, stale source, macro provenance gaps, panic cleanup,
+and accumulator requests. These test-only nodes are absent from the compiler
+model. They establish infrastructure behavior, not complete compiler coverage.
+
+`crates/sage-test-harness/tests/architecture_contracts.rs` supplies a separate
+production check over a checked-in caller/leaf program. The empty function's
+signature is mapped to `LocalFnSym::sig` and checked on cold and reused requests.
+The caller-body scenario retains missing receiver/ordinary-boundary gaps and
+therefore does not claim conformance; it independently verifies that no callee
+body was requested. Complete caller-body enforcement remains outstanding.
+
+The optional `sage-meta` `salsa` feature provides the shared callback adapter.
+Runtime sessions are immutable; automatic process-wide loading/cache discovery,
+async context propagation, general ordinary-function instrumentation, and
+receiver projection in the Salsa adapter remain unfinished. `reads` and
+`creates` are reported as unchecked. The first caller/callee body acceptance
+scenario and replay/ACP/MCP stages remain follow-on work.
 
 ### Serve the explorer locally
 

@@ -6,6 +6,7 @@ use crate::resolve::Resolver;
 use crate::span::RelativeSpan;
 use crate::ty::{CheckedParameterEnv, SolverEligibility, WherePredicate};
 
+#[sage::item(crate::checking::Check)]
 pub struct Check<'a, 'db> {
     pub db: &'db dyn crate::Db,
     pub resolver: Resolver<'db>,

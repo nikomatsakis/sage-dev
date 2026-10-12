@@ -80,6 +80,7 @@ fn open_owner<'db>(
 
 // ANCHOR: architecture_local_function_symbol
 #[salsa::tracked(debug)]
+#[sage::item(crate::symbols::LocalFnSym)]
 pub struct LocalFnSym<'db> {
     pub name: Name<'db>,
     pub scope: ScopeSymbol<'db>,
@@ -114,6 +115,7 @@ impl<'db> LocalFnSym<'db> {
     /// Computes the signature: generics, parameter types, return type.
     // ANCHOR: example_fn_sig
     #[salsa::tracked]
+    #[sage::item(crate::symbols::LocalFnSym::signature)]
     pub fn sig(self, db: &'db dyn crate::Db) -> Stashed<Binder<'db, FnSig<'db>>> {
         use crate::check::Check;
         use crate::cst::fns::ReceiverCst;
@@ -232,6 +234,7 @@ impl<'db> LocalFnSym<'db> {
     /// Resolves and type-checks the function body in a single walk.
     // ANCHOR: example_fn_body
     #[salsa::tracked(returns(ref))]
+    #[sage::item(crate::symbols::LocalFnSym::body)]
     pub fn body(self, db: &'db dyn crate::Db) -> CheckedBody<'db> {
         use crate::check::infer_ctx::{ErrorContext, InferCtx, Scope};
         use crate::local_syms::LocalModItemSym;

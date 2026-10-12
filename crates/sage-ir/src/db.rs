@@ -146,82 +146,99 @@ impl Database {
         std::sync::Arc<std::sync::Mutex<Vec<String>>>,
         std::sync::Arc<std::sync::Mutex<Vec<InspectionEvent>>>,
     ) {
+        Self::storage_and_logs_with_observer(None)
+    }
+
+    fn storage_and_logs_with_observer(
+        observer: Option<Box<dyn Fn(&salsa::Event) + Send + Sync>>,
+    ) -> (
+        salsa::Storage<Self>,
+        std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+        std::sync::Arc<std::sync::Mutex<Vec<InspectionEvent>>>,
+    ) {
         let query_log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let query_log_for_events = query_log.clone();
         let inspection_log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let inspection_log_for_events = inspection_log.clone();
-        let storage = salsa::Storage::new(Some(Box::new(move |event| match event.kind {
-            salsa::EventKind::WillRequest { database_key } => {
-                inspection_log_for_events
-                    .lock()
-                    .unwrap()
-                    .push(InspectionEvent::QueryEnter {
-                        key: format!("{database_key:?}"),
-                    });
+        let storage = salsa::Storage::new(Some(Box::new(move |event| {
+            // Contract observers need individual requests, including cache hits,
+            // before the presentation log coalesces repeated leaves.
+            if let Some(observer) = &observer {
+                observer(&event);
             }
-            salsa::EventKind::DidRequest {
-                database_key,
-                disposition,
-            } => {
-                let key = format!("{database_key:?}");
-                let mut events = inspection_log_for_events.lock().unwrap();
-                let len = events.len();
-                let current_is_leaf = matches!(
-                    events.last(),
-                    Some(InspectionEvent::QueryEnter { key: entered }) if entered == &key
-                );
-                if current_is_leaf && len >= 2 {
-                    let repeated_leaf = matches!(
-                        &events[len - 2],
-                        InspectionEvent::QueryLeaf {
-                            key: previous,
-                            disposition: previous_disposition,
-                            ..
-                        } if previous == &key && *previous_disposition == disposition
-                    );
-                    if repeated_leaf {
-                        events.pop();
-                        let Some(InspectionEvent::QueryLeaf { observations, .. }) =
-                            events.last_mut()
-                        else {
-                            unreachable!()
-                        };
-                        *observations += 1;
-                        return;
-                    }
-                }
-                if current_is_leaf && len >= 3 {
-                    let repeated_pair = matches!(
-                        (&events[len - 3], &events[len - 2]),
-                        (
-                            InspectionEvent::QueryEnter { key: previous_enter },
-                            InspectionEvent::QueryExit {
-                                key: previous_exit,
-                                disposition: previous_disposition,
-                            },
-                        ) if previous_enter == &key
-                            && previous_exit == &key
-                            && *previous_disposition == disposition
-                    );
-                    if repeated_pair {
-                        events.truncate(len - 3);
-                        events.push(InspectionEvent::QueryLeaf {
-                            key,
-                            disposition,
-                            observations: 2,
+            match event.kind {
+                salsa::EventKind::WillRequest { database_key } => {
+                    inspection_log_for_events
+                        .lock()
+                        .unwrap()
+                        .push(InspectionEvent::QueryEnter {
+                            key: format!("{database_key:?}"),
                         });
-                        return;
-                    }
                 }
-                events.push(InspectionEvent::QueryExit { key, disposition });
+                salsa::EventKind::DidRequest {
+                    database_key,
+                    disposition,
+                } => {
+                    let key = format!("{database_key:?}");
+                    let mut events = inspection_log_for_events.lock().unwrap();
+                    let len = events.len();
+                    let current_is_leaf = matches!(
+                        events.last(),
+                        Some(InspectionEvent::QueryEnter { key: entered }) if entered == &key
+                    );
+                    if current_is_leaf && len >= 2 {
+                        let repeated_leaf = matches!(
+                            &events[len - 2],
+                            InspectionEvent::QueryLeaf {
+                                key: previous,
+                                disposition: previous_disposition,
+                                ..
+                            } if previous == &key && *previous_disposition == disposition
+                        );
+                        if repeated_leaf {
+                            events.pop();
+                            let Some(InspectionEvent::QueryLeaf { observations, .. }) =
+                                events.last_mut()
+                            else {
+                                unreachable!()
+                            };
+                            *observations += 1;
+                            return;
+                        }
+                    }
+                    if current_is_leaf && len >= 3 {
+                        let repeated_pair = matches!(
+                            (&events[len - 3], &events[len - 2]),
+                            (
+                                InspectionEvent::QueryEnter { key: previous_enter },
+                                InspectionEvent::QueryExit {
+                                    key: previous_exit,
+                                    disposition: previous_disposition,
+                                },
+                            ) if previous_enter == &key
+                                && previous_exit == &key
+                                && *previous_disposition == disposition
+                        );
+                        if repeated_pair {
+                            events.truncate(len - 3);
+                            events.push(InspectionEvent::QueryLeaf {
+                                key,
+                                disposition,
+                                observations: 2,
+                            });
+                            return;
+                        }
+                    }
+                    events.push(InspectionEvent::QueryExit { key, disposition });
+                }
+                salsa::EventKind::WillExecute { database_key } => {
+                    query_log_for_events
+                        .lock()
+                        .unwrap()
+                        .push(format!("  salsa: {database_key:?}"));
+                }
+                _ => {}
             }
-            salsa::EventKind::WillExecute { database_key } => {
-                query_log_for_events
-                    .lock()
-                    .unwrap()
-                    .push(format!("  salsa: {database_key:?}"));
-            }
-            _ => {}
         })));
         (storage, query_log, inspection_log)
     }
@@ -229,6 +246,23 @@ impl Database {
     // ANCHOR: architecture_query_execution_log
     pub fn new(tcx: impl TcxDb + 'static) -> Self {
         let (storage, query_log, inspection_log) = Self::storage_and_logs();
+        Self {
+            storage,
+            tcx: std::sync::Arc::new(tcx),
+            query_log,
+            inspection_log,
+            files: HashMap::new(),
+        }
+    }
+
+    /// Observe raw Salsa lifecycle events before inspection-log coalescing.
+    /// Observers must retain errors as data rather than unwind inside callbacks.
+    pub fn with_event_observer(
+        tcx: impl TcxDb + 'static,
+        observer: impl Fn(&salsa::Event) + Send + Sync + 'static,
+    ) -> Self {
+        let (storage, query_log, inspection_log) =
+            Self::storage_and_logs_with_observer(Some(Box::new(observer)));
         Self {
             storage,
             tcx: std::sync::Arc::new(tcx),

@@ -67,6 +67,7 @@ impl<'db> sage_reflect::Reflect<'db> for ParseSource<'db> {
 /// Byte offset range within a source (file or macro expansion), together
 /// with the source identity. Stored on items.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update, sage_reflect::Reflect)]
+#[sage::item(crate::types::Span)]
 pub struct AbsoluteSpan<'db> {
     pub source: ParseSource<'db>,
     pub start: u32,

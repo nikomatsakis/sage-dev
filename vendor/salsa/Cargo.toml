@@ -577,6 +577,7 @@ version = "0.26.1"
 [dependencies.salsa-macros]
 version = "0.26.1"
 optional = true
+path = "../salsa-macros"
 
 [dependencies.serde]
 version = "1.0.219"
@@ -640,3 +641,4 @@ version = "1.0"
 
 [target."cfg(any())".dependencies.salsa-macros]
 version = "=0.26.1"
+path = "../salsa-macros"

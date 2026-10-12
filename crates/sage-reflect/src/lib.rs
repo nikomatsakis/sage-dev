@@ -1,3 +1,5 @@
+#![feature(register_tool)]
+#![register_tool(sage)]
 extern crate self as sage_reflect;
 
 use std::cell::{Cell, RefCell};
@@ -11,6 +13,7 @@ pub use sage_reflect_derive::Reflect;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
+#[sage::item(crate::reflection::ValueNode)]
 pub enum ValueNode {
     Record {
         type_name: String,
@@ -449,7 +452,9 @@ impl Default for ReflectionContext<'_> {
     }
 }
 
+#[sage::item(crate::reflection::Reflect)]
 pub trait Reflect<'db> {
+    #[sage::item(crate::reflection::Reflect::reflect)]
     fn reflect(&self, context: &mut ReflectionContext<'_>, stash: Option<&Stash>) -> ValueNode;
 
     fn reflected(&self) -> ValueNode {
@@ -884,4 +889,14 @@ mod tests {
             });
         assert!(matches!(reflected_again, ValueNode::Scalar { .. }));
     }
+}
+
+// Source anchors for architectural modules and distributed representations.
+mod sage_model {
+    /// Architectural crate anchor.
+    #[sage::item(crate)]
+    mod crate_model {}
+    /// Architectural module anchor.
+    #[sage::item(crate::reflection)]
+    mod reflection_model {}
 }

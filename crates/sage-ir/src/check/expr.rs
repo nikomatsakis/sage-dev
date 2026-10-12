@@ -16,6 +16,7 @@ type CheckResult<'db> = Result<Ptr<TyExpr<'db>>, CheckError<'db>>;
 
 impl<'db> ExprCst<'db> {
     /// Check an expression, catching fatal errors and substituting error nodes.
+    #[sage::item(crate::checking::BodyCheck::check)]
     pub(crate) async fn check_with(
         &self,
         cx: &InferCtx<'_, 'db>,
@@ -547,6 +548,7 @@ impl<'db> StmtCst<'db> {
 
 impl<'db> PatCst<'db> {
     /// Check a pattern, mutating the scope to add bindings.
+    #[sage::item(crate::checking::BodyCheck::check)]
     pub(crate) fn check_pat(
         &self,
         cx: &InferCtx<'_, 'db>,

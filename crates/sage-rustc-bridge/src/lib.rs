@@ -1,3 +1,5 @@
+#![feature(register_tool)]
+#![register_tool(sage)]
 #![feature(rustc_private)]
 #![feature(proc_macro_internals)]
 #![allow(internal_features)]
@@ -36,6 +38,7 @@ pub fn find_sysroot() -> String {
 /// Serve `TcxRequest`s from a channel using a live `TyCtxt`.
 ///
 /// Blocks until the sender is dropped (the sage side is done).
+#[sage::item(crate::provider::RustcTcxDb::request)]
 pub fn serve_tcx_requests(tcx: TyCtxt<'_>, req_rx: mpsc::Receiver<TcxRequest>) {
     let tcx_db = RustcTcxDb::new(tcx);
     for req in req_rx {
@@ -217,4 +220,14 @@ pub fn serve_tcx_requests(tcx: TyCtxt<'_>, req_rx: mpsc::Receiver<TcxRequest>) {
             }
         }
     }
+}
+
+// Source anchors for architectural modules and distributed representations.
+mod sage_model {
+    /// Architectural crate anchor.
+    #[sage::item(crate)]
+    mod crate_model {}
+    /// Architectural module anchor.
+    #[sage::item(crate::provider)]
+    mod provider_model {}
 }

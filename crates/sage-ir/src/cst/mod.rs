@@ -24,6 +24,7 @@ pub mod uses;
 pub mod where_clause;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update, sage_reflect::Reflect)]
+#[sage::item(crate::types::Mutability)]
 pub enum Mutability {
     Shared,
     Mut,

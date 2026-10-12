@@ -8,6 +8,7 @@ use crate::symbol::Symbol;
 use crate::ty::{Binder, EnumSig};
 
 #[salsa::tracked(debug)]
+#[sage::item(crate::symbols::LocalEnumSym)]
 pub struct LocalEnumSym<'db> {
     pub name: Name<'db>,
     pub scope: ScopeSymbol<'db>,
@@ -40,6 +41,7 @@ impl<'db> LocalEnumSym<'db> {
     /// Computes enum generics, variants, and the ADT well-formedness
     /// environment under one coherent binder.
     #[salsa::tracked]
+    #[sage::item(crate::symbols::LocalEnumSym::signature)]
     pub fn sig(self, db: &'db dyn crate::Db) -> Stashed<Binder<'db, EnumSig<'db>>> {
         use crate::check::Check;
         use crate::cst::generics::CheckGenerics;
@@ -90,6 +92,7 @@ impl<'db> LocalEnumSym<'db> {
 }
 
 #[salsa::tracked(debug)]
+#[sage::item(crate::symbols::LocalVariantSym)]
 pub struct LocalVariantSym<'db> {
     pub name: Name<'db>,
     pub parent_enum: LocalEnumSym<'db>,
@@ -112,6 +115,7 @@ impl<'db> LocalVariantSym<'db> {
 }
 
 #[salsa::tracked(debug)]
+#[sage::item(crate::symbols::LocalVariantCtorSym)]
 pub struct LocalVariantCtorSym<'db> {
     pub name: Name<'db>,
     pub variant: LocalVariantSym<'db>,
@@ -120,6 +124,7 @@ pub struct LocalVariantCtorSym<'db> {
 impl StashDirect for LocalVariantCtorSym<'_> {}
 
 #[salsa::tracked(returns(ref))]
+#[sage::item(crate::symbols::LocalEnumSym::items)]
 pub fn enum_variants<'db>(db: &'db dyn crate::Db, sym: LocalEnumSym<'db>) -> Vec<Symbol<'db>> {
     let (stash, data) = sym.cst(db).open_deref();
     let variants = &stash[data.variants];

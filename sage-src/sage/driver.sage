@@ -1,7 +1,6 @@
 module crate::driver;
 
 // Sources: src/driver.rs and src/inspector.rs.
-#[rust(crate::driver::SageHost)]
 context AnalysisHost {
     """Persistent Salsa database, sources, and external metadata provider."""
     fn inspect() -> $sage_ir::types::Body {
@@ -14,4 +13,3 @@ context AnalysisHost {
         }
     }
 }
-

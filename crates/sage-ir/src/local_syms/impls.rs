@@ -5,6 +5,7 @@ use crate::scope::ScopeSymbol;
 use crate::span::AbsoluteSpan;
 
 #[salsa::tracked(debug)]
+#[sage::item(crate::symbols::LocalImplSym)]
 pub struct LocalImplSym<'db> {
     pub scope: ScopeSymbol<'db>,
 
@@ -35,6 +36,7 @@ impl<'db> LocalImplSym<'db> {
 /// or the values of sibling associated items. GATs and attributed values are
 /// outside the current normalization slice and remain unavailable.
 #[salsa::tracked]
+#[sage::item(crate::symbols::LocalImplSym::associated_type_value)]
 pub fn local_impl_associated_type_value<'db>(
     db: &'db dyn crate::Db,
     impl_sym: LocalImplSym<'db>,
@@ -116,6 +118,7 @@ impl<'db> LocalImplSym<'db> {
     }
 
     #[salsa::tracked]
+    #[sage::item(crate::symbols::LocalImplSym::signature)]
     pub fn sig(self, db: &'db dyn crate::Db) -> sage_stash::Stashed<crate::ty::ImplSignature<'db>> {
         use crate::check::Check;
         use crate::cst::generics::CheckGenerics;
@@ -168,6 +171,7 @@ impl<'db> LocalImplSym<'db> {
     }
 
     #[salsa::tracked]
+    #[sage::item(crate::symbols::LocalImplSym::items)]
     pub fn items(self, db: &'db dyn crate::Db) -> sage_stash::Stashed<crate::ty::ImplItems<'db>> {
         use crate::ty::BinderExt;
 

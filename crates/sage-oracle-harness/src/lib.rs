@@ -1,3 +1,5 @@
+#![feature(register_tool)]
+#![register_tool(sage)]
 #![feature(rustc_private)]
 
 extern crate rustc_driver;
@@ -336,4 +338,11 @@ pub fn check_annotations(
     } else {
         Err(errors.join("\n"))
     }
+}
+
+// Source anchors for architectural modules and distributed representations.
+mod sage_model {
+    /// Architectural crate anchor.
+    #[sage::item(crate)]
+    mod crate_model {}
 }

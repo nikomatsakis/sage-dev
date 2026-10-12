@@ -1,3 +1,5 @@
+#![feature(register_tool)]
+#![register_tool(sage)]
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::ItemFn;
@@ -48,4 +50,11 @@ fn from_impls_derive(mut s: synstructure::Structure) -> proc_macro2::TokenStream
     }
 
     impls
+}
+
+// Source anchors for architectural modules and distributed representations.
+mod sage_model {
+    /// Architectural crate anchor.
+    #[sage::item(crate)]
+    mod crate_model {}
 }

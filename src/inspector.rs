@@ -279,6 +279,7 @@ impl InspectionProvider for LiveInspectionProvider<'_> {
         ))
     }
 
+    #[sage::item(crate::driver::AnalysisHost::inspect)]
     fn product(&mut self, symbol: &str, product: &str) -> Result<Provided<ProductPage>, ApiError> {
         self.start_recording();
         let symbol_owned = symbol.to_owned();

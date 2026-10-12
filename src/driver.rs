@@ -41,6 +41,7 @@ impl<'db> SageContext<'db> {}
 
 /// A persistent Sage workspace whose database can serve many coherent reads
 /// and source updates while the rustc metadata provider remains alive.
+#[sage::item(crate::driver::AnalysisHost)]
 pub struct SageHost {
     db: Option<Database>,
     root_file: SourceFile,

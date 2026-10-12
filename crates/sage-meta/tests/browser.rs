@@ -82,12 +82,11 @@ fn embedded_rust_source_is_script_safe_and_preserves_exact_text() {
     std::fs::create_dir_all(root.join("src")).unwrap();
     std::fs::write(root.join("Cargo.toml"),
         "[package]\nname = \"source_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[workspace]\n").unwrap();
-    let source = "// </script><script>alert(1)</script> & <!-- SOURCE_DATA -->\npub struct Item;\n";
+    let source = "// </script><script>alert(1)</script> & <!-- SOURCE_DATA -->\n#[sage::item(crate::Item)]\npub struct Item;\n";
     std::fs::write(root.join("src/lib.rs"), source).unwrap();
     let document = parse(
         "source_fixture/crate.sage",
         r#"crate source_fixture { """Fixture.""" }
-        #[rust(crate::Item)]
         type Item """Value.""";"#,
     )
     .unwrap();

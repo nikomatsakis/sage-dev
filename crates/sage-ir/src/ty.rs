@@ -16,6 +16,7 @@ use crate::symbol::{ConstSymbol, FnSymbol, Symbol, TraitSymbol, TypeAliasSymbol}
 // ---------------------------------------------------------------------------
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::Ty)]
 pub enum Ty<'db> {
     // --- primitives ---
     Bool,
@@ -53,6 +54,7 @@ pub enum Ty<'db> {
 /// A semantic type alias application. Alias identity is retained until a
 /// caller explicitly requests normalization.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::AliasTy)]
 pub enum AliasTy<'db> {
     Named(NamedAliasTy<'db>),
     Associated(ProjectionTy<'db>),
@@ -60,12 +62,14 @@ pub enum AliasTy<'db> {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::NamedAliasTy)]
 pub struct NamedAliasTy<'db> {
     pub def: TypeAliasSymbol<'db>,
     pub args: Slice<Ptr<Ty<'db>>>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::ProjectionTy)]
 pub struct ProjectionTy<'db> {
     pub associated_ty: TypeAliasSymbol<'db>,
     pub self_ty: Ptr<Ty<'db>>,
@@ -74,6 +78,7 @@ pub struct ProjectionTy<'db> {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::OpaqueAliasTy)]
 pub struct OpaqueAliasTy<'db> {
     pub def: TypeAliasSymbol<'db>,
     pub args: Slice<Ptr<Ty<'db>>>,
@@ -82,6 +87,7 @@ pub struct OpaqueAliasTy<'db> {
 /// Sequential counter for inference variables. Dense, monotonically increasing.
 /// Indexes into the per-version variable metadata table.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, sage_reflect::Reflect)]
+#[sage::item(crate::types::InferVarIndex)]
 pub struct InferVarIndex(pub u32);
 
 impl sage_stash::StashDirect for InferVarIndex {}
@@ -91,6 +97,7 @@ impl sage_stash::StashDirect for InferVarIndex {}
 // ---------------------------------------------------------------------------
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::IntTy)]
 pub enum IntTy {
     I8,
     I16,
@@ -101,6 +108,7 @@ pub enum IntTy {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::UintTy)]
 pub enum UintTy {
     U8,
     U16,
@@ -111,6 +119,7 @@ pub enum UintTy {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::FloatTy)]
 pub enum FloatTy {
     F32,
     F64,
@@ -121,6 +130,7 @@ pub enum FloatTy {
 // ---------------------------------------------------------------------------
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::Lifetime)]
 pub enum Lifetime {
     /// Lifetime semantics are intentionally deferred until Sage introduces
     /// unified type-and-lifetime inference and borrow checking.
@@ -132,6 +142,7 @@ pub enum Lifetime {
 // ---------------------------------------------------------------------------
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::Const)]
 pub enum Const<'db> {
     Literal(u64),
     /// A reference to a generic const parameter.
@@ -145,6 +156,7 @@ pub enum Const<'db> {
 // ---------------------------------------------------------------------------
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, sage_reflect::Reflect)]
+#[sage::item(crate::types::Binder)]
 pub struct Binder<'db, T> {
     pub value: T,
     pub generics: Slice<GenericParam<'db>>,
@@ -204,6 +216,7 @@ where
 // ---------------------------------------------------------------------------
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::FnSig)]
 pub struct FnSig<'db> {
     /// Number of leading entries in the enclosing binder which belong to the
     /// owning trait or impl; remaining entries are function-level generics.
@@ -220,6 +233,7 @@ pub struct FnSig<'db> {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::StructSig)]
 pub struct StructSig<'db> {
     pub parameter_env: CheckedParameterEnv<'db>,
 }
@@ -227,6 +241,7 @@ pub struct StructSig<'db> {
 /// The declaration data needed to form an external nominal type. Defaults are
 /// aligned with `Binder::generics`; only type parameters can contain a value.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::ExternalAdtSignatureData)]
 pub struct ExternalAdtSignatureData<'db> {
     pub defaults: Slice<GenericDefault<'db>>,
     pub parameter_env: CheckedParameterEnv<'db>,
@@ -237,6 +252,7 @@ pub struct ExternalAdtSignatureData<'db> {
 pub type ExternalAdtSignature<'db> = Binder<'db, ExternalAdtSignatureData<'db>>;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::GenericDefault)]
 pub enum GenericDefault<'db> {
     Absent,
     Type(Ptr<Ty<'db>>),
@@ -244,6 +260,7 @@ pub enum GenericDefault<'db> {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::StructFields)]
 pub struct StructFields<'db> {
     pub fields: Slice<FieldSig<'db>>,
     /// Well-formedness predicates introduced by the declared field types.
@@ -251,18 +268,21 @@ pub struct StructFields<'db> {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::FieldSig)]
 pub struct FieldSig<'db> {
     pub name: Name<'db>,
     pub ty: Ptr<Ty<'db>>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::EnumSig)]
 pub struct EnumSig<'db> {
     pub variants: Slice<VariantSig<'db>>,
     pub parameter_env: CheckedParameterEnv<'db>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::VariantSig)]
 pub struct VariantSig<'db> {
     pub name: Name<'db>,
     pub fields: Slice<FieldSig<'db>>,
@@ -274,6 +294,7 @@ pub struct VariantSig<'db> {
 
 /// `Trait<A, B>` in a bound or impl header. `Self` is kept separately.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::TraitRef)]
 pub struct TraitRef<'db> {
     pub trait_sym: TraitSymbol<'db>,
     pub args: Slice<Ptr<Ty<'db>>>,
@@ -281,6 +302,7 @@ pub struct TraitRef<'db> {
 
 /// A positive type predicate, `self_ty: trait_ref`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::WherePredicate)]
 pub struct WherePredicate<'db> {
     pub self_ty: Ptr<Ty<'db>>,
     pub trait_ref: TraitRef<'db>,
@@ -288,6 +310,7 @@ pub struct WherePredicate<'db> {
 
 /// Whether all applicability data can be consumed by the type-only MVP.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::SolverEligibility)]
 pub enum SolverEligibility {
     Eligible,
     Unsupported,
@@ -308,6 +331,7 @@ impl SolverEligibility {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::CheckedParameterEnv)]
 pub struct CheckedParameterEnv<'db> {
     pub where_clauses: Slice<WherePredicate<'db>>,
     pub solver_eligibility: SolverEligibility,
@@ -316,6 +340,7 @@ pub struct CheckedParameterEnv<'db> {
 pub type TraitSignature<'db> = Binder<'db, TraitSignatureData<'db>>;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::TraitSignatureData)]
 pub struct TraitSignatureData<'db> {
     pub self_param: GenericParam<'db>,
     pub where_clauses: Slice<WherePredicate<'db>>,
@@ -324,6 +349,7 @@ pub struct TraitSignatureData<'db> {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::TraitSemantics)]
 pub enum TraitSemantics {
     Ordinary,
     Sized,
@@ -333,6 +359,7 @@ pub enum TraitSemantics {
 pub type ImplSignature<'db> = Binder<'db, ImplSignatureData<'db>>;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::ImplSignatureData)]
 pub struct ImplSignatureData<'db> {
     pub trait_ref: Option<TraitRef<'db>>,
     pub self_ty: Ptr<Ty<'db>>,
@@ -341,6 +368,7 @@ pub struct ImplSignatureData<'db> {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::TraitItemDef)]
 pub enum TraitItemDef<'db> {
     Function(FnSymbol<'db>),
     Type(TypeAliasSymbol<'db>),
@@ -351,12 +379,14 @@ pub type TraitItems<'db> = Binder<'db, Slice<TraitItemDef<'db>>>;
 pub type ImplItems<'db> = Binder<'db, Slice<TraitItemDef<'db>>>;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::MethodReceiver)]
 pub enum MethodReceiver {
     Value { mutable_binding: bool },
     Ref { mutability: Mutability },
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::CheckedReceiver)]
 pub struct CheckedReceiver<'db> {
     pub owner_self_ty: Ptr<Ty<'db>>,
     pub form: MethodReceiver,

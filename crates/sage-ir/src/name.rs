@@ -1,5 +1,6 @@
 /// Interned identifier. Equality is O(1) integer comparison.
 #[salsa::interned(debug)]
+#[sage::item(crate::types::Name)]
 pub struct Name<'db> {
     #[returns(ref)]
     pub text: String,

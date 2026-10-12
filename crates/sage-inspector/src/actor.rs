@@ -314,6 +314,7 @@ impl InspectionClient {
     }
 }
 
+#[sage::item(crate::inspection::InspectionService::request)]
 pub fn serve_actor(mut provider: impl InspectionProvider, mut actor: ActorReceiver) {
     let provider_name = std::any::type_name_of_val(&provider);
     macro_rules! complete_request {

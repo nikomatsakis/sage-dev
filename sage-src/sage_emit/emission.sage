@@ -1,7 +1,6 @@
 module crate::emission;
 
 // Source: crates/sage-emit/src/lib.rs.
-#[rust(crate::Emitter)]
 context Emitter {
     """Thin Sage-to-rust-ref adapter."""
     fn emit_module() -> $rust_ref::Representation {
@@ -13,4 +12,3 @@ context Emitter {
         }
     }
 }
-

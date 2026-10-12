@@ -24,6 +24,7 @@ pub struct ResponseVarInfo<'db> {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[sage::item(crate::types::Answer)]
 pub struct QueryResult<'db> {
     pub bound_vars: Slice<ResponseVarInfo<'db>>,
     pub value: QueryResultData<'db>,

@@ -1,11 +1,8 @@
 module crate::language;
 
 // Sources: crates/sage-meta/src/{lib,parser,validate}.rs.
-#[rust(crate::Document)]
 type Document """Typed AST with source byte ranges.""";
-#[rust(std::vec::Vec<crate::Diagnostic>)]
 type Diagnostics """Name, inheritance, manifest, or dependency-envelope errors.""";
-#[rust(none, """Groups the parse and validate free functions, not a Rust type.""")]
 class Language {
     """Architecture-language tooling."""
     fn parse() -> crate::language::Document {
@@ -19,4 +16,3 @@ class Language {
         }
     }
 }
-

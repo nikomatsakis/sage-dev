@@ -13,6 +13,7 @@ struct Token {
 }
 
 /// Parse one crate manifest or module. Errors carry source byte ranges.
+#[sage::item(crate::language::Language::parse)]
 pub fn parse(file: &str, source: &str) -> Result<Document, Diagnostic> {
     let mut tokens = Vec::new();
     let mut offset = 0;
@@ -235,7 +236,7 @@ impl Parser<'_> {
         }
         Ok(fields)
     }
-    fn type_declaration(&mut self, rust: Option<RustAnnotation>) -> Result<TypeDecl, Diagnostic> {
+    fn type_declaration(&mut self) -> Result<TypeDecl, Diagnostic> {
         let span = self.span();
         let keyword = self.word()?;
         let name = self.word()?;
@@ -252,7 +253,6 @@ impl Parser<'_> {
             let description = Some(self.prose()?);
             self.expect(";")?;
             return Ok(TypeDecl {
-                rust,
                 name,
                 parameters,
                 description,
@@ -306,71 +306,12 @@ impl Parser<'_> {
             _ => return Err(self.error("expected type, struct, or enum")),
         };
         Ok(TypeDecl {
-            rust,
             name,
             parameters,
             description,
             shape,
             span,
         })
-    }
-    fn rust_annotation(&mut self) -> Result<Option<RustAnnotation>, Diagnostic> {
-        if !self.eat("#") {
-            return Ok(None);
-        }
-        let start = self.tokens[self.cursor - 1].span.start;
-        self.expect("[")?;
-        self.expect("rust")?;
-        self.expect("(")?;
-        let target = if self.eat("none") {
-            self.expect(",")?;
-            let reason = self.prose()?;
-            if reason.trim().is_empty() {
-                return Err(self.error("unmapped Rust correspondence requires a reason"));
-            }
-            RustTarget::None { reason }
-        } else {
-            let ty = self.type_expr()?;
-            Self::check_rust_type(&ty).map_err(|message| Diagnostic {
-                file: self.file.into(),
-                span: ty.span.clone(),
-                message: message.into(),
-            })?;
-            RustTarget::Type(ty)
-        };
-        self.expect(")")?;
-        self.expect("]")?;
-        if self.at("#") {
-            return Err(self.error("only one Rust annotation is allowed per declaration"));
-        }
-        Ok(Some(RustAnnotation {
-            target,
-            span: Span {
-                start,
-                end: self.tokens[self.cursor - 1].span.end,
-            },
-        }))
-    }
-    fn check_rust_type(ty: &TypeExpr) -> Result<(), &'static str> {
-        match &ty.kind {
-            TypeExprKind::Named { path, arguments } => {
-                if path.root.starts_with('$') || path.root == "self" || path.root == "none" {
-                    return Err("Rust annotations use Rust paths, not .sage $crate or self paths");
-                }
-                if matches!(path.root.as_str(), "crate" | "super") && path.segments.is_empty() {
-                    return Err("expected a Rust type after the crate or super prefix");
-                }
-                for argument in arguments {
-                    Self::check_rust_type(argument)?;
-                }
-            }
-            TypeExprKind::Tuple(items) => {
-                for item in items {
-                    Self::check_rust_type(item)?;
-                }
-            }
-        }
-        Ok(())
     }
     fn document(mut self) -> Result<Document, Diagnostic> {
         let header = if self.eat("crate") {
@@ -403,10 +344,9 @@ impl Parser<'_> {
         };
         let mut declarations = Vec::new();
         while self.cursor < self.tokens.len() {
-            let rust = self.rust_annotation()?;
             let span = self.span();
             if self.at("type") || self.at("struct") || self.at("enum") {
-                declarations.push(Declaration::Type(self.type_declaration(rust)?));
+                declarations.push(Declaration::Type(self.type_declaration()?));
                 continue;
             }
             let kind = if self.eat("abstract") {
@@ -455,7 +395,6 @@ impl Parser<'_> {
                 }
             }
             declarations.push(Declaration::Class(Class {
-                rust,
                 name,
                 kind,
                 base,

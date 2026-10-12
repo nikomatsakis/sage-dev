@@ -98,6 +98,7 @@ use crate::symbol::intrinsic::Intrinsic;
 use crate::symbol::{Symbol, SymbolData};
 
 impl<'db> TypeCst<'db> {
+    #[sage::item(crate::checking::Check::signature)]
     pub(crate) fn check(self, cx: &mut Check<'_, 'db>) -> Ty<'db> {
         let src = cx.source_stash;
         match self.kind {

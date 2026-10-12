@@ -11,6 +11,7 @@ use crate::symbol::MacroDefSymbol;
 
 /// An item-level macro invocation (e.g. `m!()` or `foo::bar::m!()`).
 #[salsa::tracked(debug)]
+#[sage::item(crate::symbols::LocalMacroInvocationSym)]
 pub struct LocalMacroInvocationSym<'db> {
     pub scope: ScopeSymbol<'db>,
 

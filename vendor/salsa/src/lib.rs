@@ -52,7 +52,7 @@ pub use self::cycle::Cycle;
 pub use self::database::Database;
 pub use self::database_impl::DatabaseImpl;
 pub use self::durability::Durability;
-pub use self::event::{Event, EventKind, QueryDisposition};
+pub use self::event::{Event, EventKind, QueryDisposition, QuerySource, RequestCause};
 pub use self::id::Id;
 pub use self::input::setter::Setter;
 pub use self::key::DatabaseKeyIndex;

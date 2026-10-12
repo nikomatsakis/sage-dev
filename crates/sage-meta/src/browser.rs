@@ -1,4 +1,4 @@
-use crate::{Declaration, Document, Header, RustTarget, TypeExpr, TypeExprKind};
+use crate::Document;
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -33,32 +33,11 @@ fn render(
     if documents.is_empty() {
         return Err("cannot browse an empty model".into());
     }
-    let roots: Vec<_> = documents
-        .iter()
-        .filter_map(|doc| match &doc.header {
-            Header::Crate { name, .. } => Some((
-                name,
-                std::path::Path::new(&doc.file)
-                    .parent()
-                    .unwrap_or(std::path::Path::new("")),
-            )),
-            Header::Module(_) => None,
-        })
-        .collect();
     let data = documents
         .iter()
         .map(|document| {
-            let namespace = match &document.header {
-                Header::Crate { name, .. } => name.clone(),
-                Header::Module(path) => {
-                    let (name, _) = roots
-                        .iter()
-                        .filter(|(_, root)| std::path::Path::new(&document.file).starts_with(root))
-                        .max_by_key(|(_, root)| root.components().count())
-                        .expect("validated module has a crate");
-                    format!("{name}::{}", path.segments.join("::"))
-                }
-            };
+            let namespace = crate::workspace::document_namespace(documents, document)
+                .expect("validated document has a namespace");
             BrowserDocument {
                 namespace,
                 document,
@@ -96,74 +75,33 @@ struct SourceData {
 #[derive(serde::Serialize)]
 struct SourceReference {
     path: String,
-    locations: Vec<crate::rust_source::RustLocation>,
-}
-
-fn named_references(ty: &TypeExpr, paths: &mut Vec<String>) {
-    match &ty.kind {
-        TypeExprKind::Named { path, arguments } => {
-            let name = std::iter::once(path.root.as_str())
-                .chain(path.segments.iter().map(String::as_str))
-                .collect::<Vec<_>>()
-                .join("::");
-            if !paths.contains(&name) {
-                paths.push(name);
-            }
-            for argument in arguments {
-                named_references(argument, paths);
-            }
-        }
-        TypeExprKind::Tuple(items) => {
-            for item in items {
-                named_references(item, paths);
-            }
-        }
-    }
+    locations: Vec<crate::correspondence::RustSite>,
 }
 
 fn source_data(
-    documents: &[BrowserDocument<'_>],
+    _documents: &[BrowserDocument<'_>],
     workspace: Option<&Path>,
 ) -> Result<SourceData, Box<dyn std::error::Error>> {
     let Some(workspace) = workspace else {
         return Ok(SourceData::default());
     };
-    let index = crate::rust_source::SourceIndex::load(workspace)?;
+    let index = crate::correspondence::CorrespondenceIndex::load(workspace)?;
     let mut data = SourceData {
-        warnings: index.warnings.clone(),
+        warnings: index.diagnostics.iter().map(ToString::to_string).collect(),
         ..SourceData::default()
     };
-    for entry in documents {
-        for declaration in &entry.document.declarations {
-            let (name, rust) = match declaration {
-                Declaration::Type(decl) => (&decl.name, &decl.rust),
-                Declaration::Class(class) => (&class.name, &class.rust),
-            };
-            let Some(annotation) = rust else {
-                continue;
-            };
-            let ty = match &annotation.target {
-                RustTarget::Type(ty) => ty,
-                RustTarget::None { .. } => continue,
-            };
-            let mut paths = Vec::new();
-            named_references(ty, &mut paths);
-            let mut references = Vec::new();
-            for path in paths {
-                let key = path.strip_prefix("crate::").map_or_else(
-                    || path.clone(),
-                    |rest| format!("{}::{rest}", entry.namespace.split("::").next().unwrap()),
-                );
-                let locations = index.resolve(&key);
-                for location in &locations {
-                    data.files
-                        .insert(location.file.clone(), index.files[&location.file].clone());
-                }
-                references.push(SourceReference { path, locations });
+    for (key, sites) in index.entries {
+        let mut references = Vec::new();
+        for site in sites {
+            if let Some(source) = index.files.get(&site.file) {
+                data.files.insert(site.file.clone(), source.clone());
             }
-            data.targets
-                .insert(format!("{}::{name}", entry.namespace), references);
+            references.push(SourceReference {
+                path: site.rust_path.clone(),
+                locations: vec![site],
+            });
         }
+        data.targets.insert(key, references);
     }
     Ok(data)
 }

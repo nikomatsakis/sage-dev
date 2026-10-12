@@ -5,5 +5,4 @@ crate rust_ref {
     """
 }
 
-#[rust(crate::Crate<crate::NormalizedDef>)]
 type Representation """Common serialized crate, definition, type, and body representation.""";

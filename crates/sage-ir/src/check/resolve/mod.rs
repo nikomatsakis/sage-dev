@@ -75,6 +75,7 @@ struct InFlightQuery<'db> {
 /// or per body resolved). All resolution calls within that scope share the
 /// same cycle-detection context.
 #[derive(Clone)]
+#[sage::item(crate::resolution::Resolver)]
 pub(crate) struct Resolver<'db> {
     db: &'db dyn Db,
     phase: ResolvePhase,
@@ -122,6 +123,7 @@ impl<'db> Resolver<'db> {
     }
 
     // ANCHOR: architecture_resolve_path
+    #[sage::item(crate::resolution::Resolver::resolve)]
     pub fn resolve_path(
         &mut self,
         stash: &Stash,
@@ -164,6 +166,7 @@ impl<'db> Resolver<'db> {
     }
     // ANCHOR_END: architecture_resolve_path
 
+    #[sage::item(crate::resolution::Resolver::resolve)]
     pub fn resolve_name_from_scope(
         &mut self,
         name: Name<'db>,

@@ -1,3 +1,5 @@
+#![feature(register_tool)]
+#![register_tool(sage)]
 use std::alloc::{Layout, alloc, dealloc, handle_alloc_error};
 use std::any::TypeId;
 use std::hash::{Hash, Hasher};
@@ -820,6 +822,7 @@ impl Drop for AlignedBuf {
 /// through the safe public API. This preserves the content-addressed meaning
 /// of every `Ptr` and `Slice` returned by the stash.
 #[derive(Clone)]
+#[sage::item(crate::storage::Stash)]
 pub struct Stash {
     buf: AlignedBuf,
     entries: Vec<Entry>,
@@ -858,6 +861,7 @@ impl Stash {
     }
 
     /// Hash-cons a single value. Equal content always produces equal `Ptr`s.
+    #[sage::item(crate::storage::Stash::alloc)]
     pub fn alloc<'db, T: AllocStashData<'db>>(&mut self, value: T) -> Ptr<T> {
         let type_id = TypeId::of::<T::StaticSelf>();
         let mut hasher = InternHasher::new();
@@ -1084,4 +1088,17 @@ unsafe impl<T: PartialEq> salsa::Update for Stashed<T> {
             true
         }
     }
+}
+
+// Source anchors for architectural modules and distributed representations.
+mod sage_model {
+    /// Architectural crate anchor.
+    #[sage::item(crate)]
+    mod crate_model {}
+    /// Architectural module anchor.
+    #[sage::item(crate::storage)]
+    mod storage_model {}
+    /// Groups Stashed, Ptr, and Slice values at storage boundaries.
+    #[sage::item(crate::storage::Stored)]
+    mod storage_stored_model {}
 }

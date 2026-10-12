@@ -6,13 +6,14 @@ const {buildModel,createRenderer,searchModel,sourceOwner,renderSourcePane} = req
 const artifact = resolve(__dirname, '../../../target/sage-browser.html');
 const html = readFileSync(artifact,'utf8');
 const files = JSON.parse(html.split('<script id="model-data" type="application/json">')[1].split('</script>')[0]);
-const model = buildModel(files), renderer = createRenderer(model);
+const sources=JSON.parse(html.split('<script id="source-data" type="application/json">')[1].split('</script>')[0]);
+const model = buildModel(files,sources), renderer = createRenderer(model);
 
 test('indexes actual crates, types, methods, and Rust annotations',()=>{
   assert.ok(model.items.size > 0);
   assert.ok(model.crates.has('sage_ir'));
   assert.equal(model.items.get('sage_ir::types::Ty').kind,'enum');
-  assert.equal(model.items.get('sage_ir::symbols::LocalFnSym').rust.target.Type.kind.Named.path.segments.at(-1),'LocalFnSym');
+  assert.ok(sources.targets['sage_ir::symbols::LocalFnSym'].some(site=>site.path.endsWith('::LocalFnSym')));
 });
 
 test('navigates function bodies to their signatures and possible callee interfaces',()=>{
@@ -40,15 +41,16 @@ test('renders all model routes and every generated internal link resolves',()=>{
 test('exposes variant prose, generic type links, and review-only Rust correspondences',()=>{
   assert.match(renderer.render('item:sage_ir::types::Ty'),/universal parameter/);
   assert.match(renderer.render('item:sage_ir::types::FnSig'),/item%3Asage_ir%3A%3Atypes%3A%3ATy/);
-  assert.match(renderer.render('item:sage_ir::types::Signature'),/review abstraction/);
+  assert.match(renderSourcePane(model.items.get('sage_ir::types::Signature'),sources),/Module correspondence anchor/);
 });
 
 test('escapes HTML in names, prose, and Rust paths',()=>{
   const hostile=structuredClone(files);
   const ty=hostile.find(f=>f.namespace==='sage_ir::types').document.declarations.find(d=>d.Type?.name==='Ty').Type;
   ty.description='<img src=x onerror=alert(1)>';
-  ty.rust.target.Type.kind.Named.path.root='<script>';
-  const rendered=createRenderer(buildModel(hostile)).render('item:sage_ir::types::Ty');
+  const hostileSources=structuredClone(sources);
+  hostileSources.targets['sage_ir::types::Ty'][0].path='<script>';
+  const rendered=createRenderer(buildModel(hostile,hostileSources)).render('item:sage_ir::types::Ty');
   assert.ok(!rendered.includes('<img'));
   assert.ok(!rendered.includes('<script>'));
   assert.match(rendered,/&lt;img/);
@@ -56,7 +58,7 @@ test('escapes HTML in names, prose, and Rust paths',()=>{
 
 
 test('searches names and Rust paths and filters by crate and operation kind',()=>{
-  const rust=searchModel(model,'crate::ty::FnSig');
+  const rust=searchModel(model,'sage_ir::ty::FnSig');
   assert.ok(rust.some(item=>item.key==='sage_ir::types::FnSig'));
   const queries=searchModel(model,'signature','sage_ir','query');
   assert.ok(queries.length>0);
@@ -64,17 +66,16 @@ test('searches names and Rust paths and filters by crate and operation kind',()=
   assert.equal(searchModel(model,'no_such_declaration').length,0);
 });
 
-const sources=JSON.parse(html.split('<script id="source-data" type="application/json">')[1].split('</script>')[0]);
 
-test('opens annotated Rust definitions and follows method owners',()=>{
+test('opens annotated Rust definitions and individual methods',()=>{
   const item=model.items.get('sage_ir::types::Ty');
   const refs=sources.targets[item.key];
   assert.ok(refs[0].locations.length);
   const location=refs[0].locations[0];
-  assert.match(sources.files[location.file].split('\n')[location.line-1], /enum Ty/);
+  assert.match(sources.files[location.file].split('\n').slice(location.line-1,location.end_line).join('\n'), /enum Ty/);
   assert.match(renderer.render('item:'+item.key),/data-source="sage_ir::types::Ty"/);
   assert.match(renderSourcePane(item,sources),/data-definition="true"/);
-  assert.equal(sourceOwner(model,'method:sage_ir::symbols::LocalFnSym::body').name,'LocalFnSym');
+  assert.equal(sourceOwner(model,'method:sage_ir::symbols::LocalFnSym::body').name,'body');
   assert.equal(sourceOwner(model,'home'),null);
 });
 
@@ -84,8 +85,8 @@ test('resolves workspace annotations, labels macro inputs, and explains abstract
     assert.ok(refs.some(ref=>ref.locations.length),key);
   }
   assert.match(renderSourcePane(model.items.get('sage_ir::symbols::Symbol'),sources),/Macro input/);
-  assert.match(renderSourcePane(model.items.get('sage_ir::types::Signature'),sources),/review abstraction/);
-  assert.match(renderSourcePane(model.items.get('sage_ir::types::Boolean'),sources),/No workspace source/);
+  assert.match(renderSourcePane(model.items.get('sage_ir::types::Signature'),sources),/Module correspondence anchor/);
+  assert.match(renderSourcePane(model.items.get('sage_ir::types::Boolean'),sources),/Module correspondence anchor/);
 });
 
 test('escapes Rust source and supports choosing among definitions',()=>{

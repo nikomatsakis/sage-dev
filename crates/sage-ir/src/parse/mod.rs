@@ -11,6 +11,7 @@ use crate::local_syms::LocalModItemSym;
 use crate::scope::ScopeSymbol;
 use crate::span::ParseSource;
 
+#[sage::item(crate::modules::Parser)]
 pub(crate) struct Parser<'a, 'db> {
     pub db: &'db dyn Db,
     pub source: ParseSource<'db>,
@@ -19,6 +20,7 @@ pub(crate) struct Parser<'a, 'db> {
 }
 
 // ANCHOR: architecture_parse_module_entry
+#[sage::item(crate::modules::Parser::parse)]
 pub fn parse_str_to_cst<'db>(
     db: &'db dyn Db,
     source: ParseSource<'db>,

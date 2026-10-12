@@ -5,13 +5,15 @@ use crate::function::sync::ClaimResult;
 use crate::function::{Configuration, IngredientImpl, Reentrancy};
 use crate::zalsa::{MemoIngredientIndex, Zalsa};
 use crate::zalsa_local::{QueryRevisions, ZalsaLocal};
-use crate::{DatabaseKeyIndex, Event, EventKind, Id, QueryDisposition};
+use crate::{DatabaseKeyIndex, Event, EventKind, Id, QueryDisposition, QuerySource, RequestCause};
 
 // ANCHOR: semantic_inspector_salsa_request_guard
 struct RequestGuard<'a> {
     zalsa: &'a Zalsa,
     database_key: DatabaseKeyIndex,
     disposition: QueryDisposition,
+    query_source: QuerySource,
+    cause: RequestCause,
 }
 
 impl RequestGuard<'_> {
@@ -25,10 +27,12 @@ impl Drop for RequestGuard<'_> {
         let database_key = self.database_key;
         let disposition = self.disposition;
         self.zalsa.event(&|| {
-            Event::new(EventKind::DidRequest {
+            let mut event = Event::new(EventKind::DidRequest {
                 database_key,
                 disposition,
-            })
+            });
+            event.query_source = Some(self.query_source);
+            event.with_request_cause(self.cause)
         });
     }
 }
@@ -46,7 +50,7 @@ where
         id: Id,
     ) -> &'db C::Output<'db> {
         let database_key_index = self.database_key_index(id);
-        let (memo, _) = self.refresh_memo_traced(db, zalsa, zalsa_local, id);
+        let (memo, _) = self.refresh_memo_traced(db, zalsa, zalsa_local, id, RequestCause::Fetch);
 
         // SAFETY: We just refreshed the memo so it is guaranteed to contain a value now.
         let memo_value = unsafe { memo.value.as_ref().unwrap_unchecked() };
@@ -78,6 +82,7 @@ where
         zalsa: &'db Zalsa,
         zalsa_local: &'db ZalsaLocal,
         id: Id,
+        cause: RequestCause,
     ) -> (&'db Memo<'db, C>, QueryDisposition) {
         let database_key_index = self.database_key_index(id);
         let _span =
@@ -86,11 +91,19 @@ where
             Event::new(EventKind::WillRequest {
                 database_key: database_key_index,
             })
+            .with_query::<C>()
+            .with_request_cause(cause)
         });
         let mut request = RequestGuard {
             zalsa,
             database_key: database_key_index,
             disposition: QueryDisposition::Cancelled,
+            query_source: QuerySource {
+                file: C::LOCATION.file,
+                line: C::LOCATION.line,
+                name: C::DEBUG_NAME,
+            },
+            cause,
         };
 
         zalsa.unwind_if_revision_cancelled(zalsa_local);

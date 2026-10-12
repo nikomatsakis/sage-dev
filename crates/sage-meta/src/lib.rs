@@ -1,7 +1,13 @@
+#![feature(register_tool)]
+#![register_tool(sage)]
 //! Parser and conservative dependency checker for Sage's architectural language.
 mod browser;
+pub mod contracts;
+pub mod correspondence;
 mod parser;
-mod rust_source;
+#[cfg(feature = "salsa")]
+pub mod salsa_contracts;
+pub mod workspace;
 pub use browser::{render_browser, render_browser_with_workspace};
 mod validate;
 
@@ -42,6 +48,7 @@ pub struct Path {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[sage::item(crate::language::Document)]
 pub struct Document {
     pub file: String,
     pub header: Header,
@@ -65,26 +72,9 @@ pub enum Declaration {
     Class(Class),
 }
 
-/// Source correspondence, not a name resolved in the `.sage` type namespace.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
-pub struct RustAnnotation {
-    pub target: RustTarget,
-    pub span: Span,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
-pub enum RustTarget {
-    Type(TypeExpr),
-    /// Review-only concepts must explain why no single Rust type corresponds.
-    None {
-        reason: String,
-    },
-}
-
 /// Semantic value declarations; recursive values have no storage-layout restrictions.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct TypeDecl {
-    pub rust: Option<RustAnnotation>,
     pub name: String,
     pub parameters: Vec<String>,
     pub description: Option<String>,
@@ -146,7 +136,6 @@ pub enum ClassKind {
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct Class {
-    pub rust: Option<RustAnnotation>,
     pub name: String,
     pub kind: ClassKind,
     pub base: Option<Path>,
@@ -195,4 +184,20 @@ pub enum Effect {
     ForbidTransitive(Path),
     Reads(Path),
     Creates { name: String, context: Path },
+}
+
+// Source anchors for architectural modules and distributed representations.
+mod sage_model {
+    /// Architectural crate anchor.
+    #[sage::item(crate)]
+    mod crate_model {}
+    /// Architectural module anchor.
+    #[sage::item(crate::language)]
+    mod language_model {}
+    /// Logical representation; implementation details are documented in the Sage declaration.
+    #[sage::item(crate::language::Diagnostics)]
+    mod language_diagnostics_model {}
+    /// Groups the parse and validate free functions, not a Rust type.
+    #[sage::item(crate::language::Language)]
+    mod language_language_model {}
 }

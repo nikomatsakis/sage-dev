@@ -3,6 +3,7 @@ use crate::local_syms::mods::LocalModSym;
 use sage_macros_from_impls::FromImpls;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[sage::item(crate::types::Edition)]
 pub enum Edition {
     Rust2015,
     Rust2018,
@@ -72,6 +73,7 @@ pub fn local_crate_with_edition<'db>(
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, FromImpls, salsa::Update)]
+#[sage::item(crate::types::Scope)]
 pub enum ScopeSymbol<'db> {
     Crate(LocalCrateSymbol<'db>),
     Module(LocalModSym<'db>),

@@ -1623,6 +1623,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "proc-macro2",
+ "salsa",
  "serde",
  "serde_json",
  "syn 2.0.117",
@@ -1709,6 +1710,7 @@ dependencies = [
  "expect-test",
  "rustc-hash",
  "sage-ir",
+ "sage-meta",
  "sage-stash",
  "salsa",
 ]
@@ -1745,8 +1747,6 @@ checksum = "ec256ece77895f4a8d624cecc133dd798c7961a861439740b1c7410a613ee7ba"
 [[package]]
 name = "salsa-macros"
 version = "0.26.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "978e5d5c9533ce19b6a58ad91024e1d136f6eec83c4ba98b5ce94c87986c41d8"
 dependencies = [
  "proc-macro2",
  "quote",

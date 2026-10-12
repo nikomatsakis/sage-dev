@@ -1,9 +1,7 @@
 module crate::reflection;
 
 // Source: crates/sage-reflect/src/lib.rs.
-#[rust(crate::ValueNode)]
 type ValueNode """Record, variant, sequence, scalar, symbol reference, cycle, or truncation.""";
-#[rust(crate::Reflect)]
 class Reflect {
     """Logical reflection interface, implemented by derives and handwritten adapters."""
     fn reflect() -> crate::reflection::ValueNode {
@@ -12,4 +10,3 @@ class Reflect {
         }
     }
 }
-

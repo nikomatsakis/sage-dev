@@ -1,3 +1,5 @@
+#![feature(register_tool)]
+#![register_tool(sage)]
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use xshell::{Shell, cmd};
@@ -160,4 +162,11 @@ fn check_book_build() -> Result<()> {
     cmd!(sh, "mdbook build").run()?;
     println!("ci: mdbook build succeeded");
     Ok(())
+}
+
+// Source anchors for architectural modules and distributed representations.
+mod sage_model {
+    /// Architectural crate anchor.
+    #[sage::item(crate)]
+    mod crate_model {}
 }

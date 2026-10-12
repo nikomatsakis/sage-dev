@@ -6,7 +6,11 @@ edition.workspace = true
 [dependencies]
 axum = { version = "=0.8.9", default-features = false, features = ["http1", "tokio"] }
 proc-macro2 = { version = "=1.0.106", features = ["span-locations"] }
+salsa = { version = "=0.26.1", optional = true, default-features = false }
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.150"
-syn = { version = "=2.0.117", features = ["full"] }
+syn = { version = "=2.0.117", features = ["full", "visit"] }
 tokio = { version = "=1.53.1", default-features = false, features = ["rt", "net", "signal"] }
+
+[features]
+salsa = ["dep:salsa"]

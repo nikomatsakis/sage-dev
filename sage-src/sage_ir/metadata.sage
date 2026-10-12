@@ -1,7 +1,6 @@
 module crate::metadata;
 
 // Sources: external_syms.rs and tcx/. External provider is injected through Db::tcx.
-#[rust(none, """Groups the keyed lowering functions in external_syms.rs.""")]
 class ExternalFacts {
     """Keyed lowering boundary over owned Tcx facts. The concrete rustc service lives in sage-rustc-bridge; sage-ir does not depend on that implementation."""
     input provider: crate::types::Metadata;
@@ -30,4 +29,3 @@ class ExternalFacts {
         }
     }
 }
-

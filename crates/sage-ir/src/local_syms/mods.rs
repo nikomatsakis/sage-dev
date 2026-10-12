@@ -13,6 +13,7 @@ use crate::symbol::{MacroDefSymbol, Symbol, SymbolData};
 
 /// A module written in (or synthesized for) the local workspace.
 #[salsa::tracked(debug)]
+#[sage::item(crate::modules::LocalModSym)]
 pub struct LocalModSym<'db> {
     pub name: Name<'db>,
 
@@ -65,6 +66,7 @@ impl<'db> LocalModSym<'db> {
 }
 
 #[salsa::tracked(specify, returns(ref))]
+#[sage::item(crate::modules::LocalModSym::unexpanded_items)]
 pub fn unexpanded_items<'db>(
     db: &'db dyn Db,
     module: LocalModSym<'db>,
@@ -89,6 +91,7 @@ pub fn unexpanded_items<'db>(
 /// in which case it relies on salsa's fixed point iteration.
 // ANCHOR: example_expanded_module_query
 #[salsa::tracked(returns(ref), cycle_initial = expanded_module_initial)]
+#[sage::item(crate::modules::LocalModSym::expanded_items)]
 pub fn local_expanded_module_items<'db>(
     db: &'db dyn Db,
     module: LocalModSym<'db>,
@@ -123,6 +126,7 @@ fn expand_unexpanded_items<'db>(
     expand_unexpanded_items_at_depth(db, module, unexpanded_items, entries, 0);
 }
 
+#[sage::item(crate::modules::Expansion::expand)]
 fn expand_unexpanded_items_at_depth<'db>(
     db: &'db dyn Db,
     module: LocalModSym<'db>,

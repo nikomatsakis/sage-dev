@@ -1,8 +1,10 @@
 # Sage correspondence, runtime contracts, and walkthroughs
 
-**Status: Draft.** Records the agreed direction and a proposed implementation
-sequence. None of the instrumentation or agent integration described here has
-landed. The existing `.sage` parser, validator, and browser remain operational.
+**Status: Accepted; implementation in progress.** Source correspondence and the
+browser have migrated to inert Rust attributes. A shared checking engine and
+isolated real Salsa fixture establish the first runtime infrastructure. Broad
+compiler enforcement, walkthrough replay, and agent integration remain staged
+work; see [Implementation plan and status](./implementation.md).
 
 ## Motivation
 
@@ -11,10 +13,11 @@ compiler behavior, and checking implementation conformance. Those activities
 should share operation identities and evidence. An observed call can explain
 a compilation step and establish whether that step respects its envelope.
 
-The present model checks its own consistency. Its `#[rust(...)]` annotations
-provide best-effort source navigation but do not establish implementation
-coverage. The compiler already records Salsa requests and semantic spans; those
-events are not yet checked against `.sage` contracts.
+The original model checked its own consistency and used `.sage` `#[rust(...)]`
+annotations for best-effort source navigation. This change replaces that mapping
+with Rust-declared correspondence and connects observed Salsa requests to the
+architectural contract. Complete implementation coverage remains distinct from
+source coverage and from successful observations of a limited fixture.
 
 ## Correspondence is declared in Rust
 

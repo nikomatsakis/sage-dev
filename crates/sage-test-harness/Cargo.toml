@@ -9,3 +9,6 @@ rustc-hash = "2.1.2"
 sage-ir = { version = "0.1.0", path = "../sage-ir" }
 sage-stash = { version = "0.1.0", path = "../sage-stash" }
 salsa = "0.26.1"
+
+[dev-dependencies]
+sage-meta = { path = "../sage-meta", features = ["salsa"] }

@@ -1,7 +1,6 @@
 module crate::provider;
 
 // Sources: crates/sage-rustc-bridge/src/.
-#[rust(crate::RustcTcxDb)]
 context RustcTcxDb {
     """Owned metadata adapter backed by a rustc service session."""
     fn request() -> $sage_ir::types::Metadata {
@@ -10,4 +9,3 @@ context RustcTcxDb {
         }
     }
 }
-

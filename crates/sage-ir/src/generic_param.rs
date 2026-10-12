@@ -92,6 +92,7 @@ impl<'db> sage_stash::AllocStashData<'db> for AlphaEquivParam<'db> {}
 // ---------------------------------------------------------------------------
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[sage::item(crate::types::GenericParam)]
 pub enum GenericParam<'db> {
     Ast(AstGenericParam<'db>),
     Ext(ExtGenericParam<'db>),

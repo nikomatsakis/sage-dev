@@ -1,7 +1,6 @@
 module crate::solver;
 
 // Sources: check/solve/{canonical,prove,clauses,boundary,result}.rs.
-#[rust(none, """Groups canonical solver functions in check::solve; no Solver type.""")]
 class Solver {
     """Logical namespace for canonical solver queries; detailed proof rules are a separate semantic specification."""
     query solve() -> crate::types::Answer {
@@ -25,4 +24,3 @@ class Solver {
         }
     }
 }
-

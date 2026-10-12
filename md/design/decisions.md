@@ -439,7 +439,15 @@ envelopes declare permitted calls and forbidden transitive dependencies.
 `sage-meta` parses and checks that model, including known subclass dispatch.
 This separates architectural dependency review from detailed Rust semantics.
 
-Consistency of the model is not proof that the Rust implementation conforms.
-Source links and existing query traces remain necessary evidence. The living
-contract and initial limitations are in
+Rust declares correspondence with inert `#[sage::item(...)]` tool attributes.
+Every modeled crate/module, named declaration, and declared method has a
+crate-correct source anchor; abstract concepts use explicit module markers.
+The browser and checker derive their mappings from that one source index.
+
+A runtime-loaded immutable model checks observed operation entries and query
+requests, including cached requests. The same structured evidence supports
+conformance diagnostics and planned walkthroughs. Source/build mismatches and
+unmapped boundaries remain explicit gaps. Source anchors, model consistency,
+and observed conformance are separate claims; none establishes exhaustive Rust
+semantics. The living contract and current limitations are in
 [Architectural Pseudocode](./validation/architecture-language.md).

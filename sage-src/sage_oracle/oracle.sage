@@ -1,7 +1,6 @@
 module crate::oracle;
 
 // Sources: crates/sage-oracle/src/lib.rs and emit/.
-#[rust(none, """Groups analyze_crate and the rustc callbacks; there is no Oracle type.""")]
 class Oracle {
     """Independent rustc adapter."""
     fn analyze_crate() -> $rust_ref::Representation {
@@ -10,4 +9,3 @@ class Oracle {
         }
     }
 }
-

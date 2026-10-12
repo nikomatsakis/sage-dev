@@ -17,7 +17,104 @@ struct Model<'a> {
 
 /// Validate the closed set of documents, including conservative virtual dispatch.
 /// This checks the declared model, not the compiler's Rust implementation.
+#[sage::item(crate::language::Language::validate)]
 pub fn validate(documents: &[Document]) -> Vec<Diagnostic> {
+    build_model(documents).check()
+}
+
+/// Resolve runtime contracts with exactly the same ownership, inheritance, and
+/// virtual target rules used by static model validation.
+pub(crate) fn resolve_contracts(
+    documents: &[Document],
+) -> Result<BTreeMap<String, crate::contracts::OperationContract>, Vec<Diagnostic>> {
+    use crate::contracts::{CallPermission, ContractRule, OperationContract, UncheckedEffect};
+
+    let mut model = build_model(documents);
+    let errors = model.check();
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+    let mut operations = BTreeMap::new();
+    for (class_key, entry) in &model.classes {
+        for method in &entry.class.methods {
+            let id = format!("{class_key}::{}", method.name);
+            let mut operation = OperationContract {
+                id: id.clone(),
+                kind: method.kind.clone(),
+                is_abstract: method.envelope.is_none(),
+                invokes: Vec::new(),
+                prohibits: Vec::new(),
+                dispatches: BTreeSet::new(),
+                unchecked_effects: BTreeSet::new(),
+            };
+            // Prohibitions belong to the interface contract as well as its
+            // implementation. An override retains rules from every base method.
+            for owner in model.ancestors(class_key) {
+                let base = &model.classes[&owner];
+                let Some(declaration) = base.class.methods.iter().find(|m| m.name == method.name)
+                else {
+                    continue;
+                };
+                let rule_operation = format!("{owner}::{}", method.name);
+                for effect in declaration.envelope.iter().flatten() {
+                    match effect {
+                        Effect::Invokes(path) | Effect::ForbidTransitive(path) => {
+                            let is_permission = matches!(effect, Effect::Invokes(_));
+                            if is_permission && owner != *class_key {
+                                continue;
+                            }
+                            let targets = model.targets(&owner, base, path).map_err(|message| {
+                                vec![Diagnostic {
+                                    file: base.document.file.clone(),
+                                    span: path.span.clone(),
+                                    message,
+                                }]
+                            })?;
+                            let rule = CallPermission {
+                                targets,
+                                same_receiver: path.root == "self",
+                                rule: ContractRule {
+                                    file: base.document.file.clone(),
+                                    span: path.span.clone(),
+                                    operation: rule_operation.clone(),
+                                },
+                            };
+                            if is_permission {
+                                operation.invokes.push(rule);
+                            } else {
+                                operation.prohibits.push(rule);
+                            }
+                        }
+                        Effect::Reads(_) => {
+                            if owner == *class_key {
+                                operation.unchecked_effects.insert(UncheckedEffect::Reads);
+                            }
+                        }
+                        Effect::Creates { .. } => {
+                            if owner == *class_key {
+                                operation.unchecked_effects.insert(UncheckedEffect::Creates);
+                            }
+                        }
+                    }
+                }
+            }
+            if operation.is_abstract {
+                for descendant in model.classes.keys() {
+                    if model.ancestors(descendant).contains(class_key)
+                        && let Some(target) = model.method(descendant, &method.name)
+                        && target != id
+                    {
+                        operation.dispatches.insert(target);
+                    }
+                }
+            }
+            operations.insert(id, operation);
+        }
+    }
+    Ok(operations)
+}
+
+fn build_model(documents: &[Document]) -> Model<'_> {
     let mut model = Model {
         classes: BTreeMap::new(),
         types: BTreeMap::new(),
@@ -160,7 +257,7 @@ pub fn validate(documents: &[Document]) -> Vec<Diagnostic> {
             message: format!("missing module {missing}"),
         });
     }
-    model.check()
+    model
 }
 
 impl Model<'_> {
@@ -253,7 +350,7 @@ impl Model<'_> {
         }
         Ok(targets)
     }
-    fn check(mut self) -> Vec<Diagnostic> {
+    fn check(&mut self) -> Vec<Diagnostic> {
         let mut errors = Vec::new();
         self.check_values(&mut errors);
         let mut graph = BTreeMap::<String, BTreeSet<String>>::new();
@@ -496,7 +593,7 @@ impl Model<'_> {
             }
         }
         self.errors.extend(errors);
-        self.errors
+        std::mem::take(&mut self.errors)
     }
 }
 

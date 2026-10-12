@@ -8,13 +8,13 @@
   const prose = text => text ? `<div class="prose">${escape(text.trim())}</div>` : '';
   const badge = text => `<span class="badge">${escape(text)}</span>`;
 
-  function buildModel(files) {
+  function buildModel(files, sources={targets:{},files:{},warnings:[]}) {
     const items = new Map(), methods = new Map(), crates = new Map(), modules = new Map();
     for (const file of files) {
       const {namespace, document: doc} = file;
       const crateName = namespace.split('::')[0];
-      if (doc.header.Crate) crates.set(crateName, {...doc.header.Crate, namespace, file: doc.file});
-      modules.set(namespace, {namespace, crateName, file: doc.file, declarations: []});
+      if (doc.header.Crate) crates.set(crateName, {...doc.header.Crate, key:crateName, namespace, file: doc.file});
+      modules.set(namespace, {key:namespace, name:namespace, namespace, crateName, file: doc.file, declarations: []});
       for (const declaration of doc.declarations) {
         const value = declaration.Type || declaration.Class;
         const kind = declaration.Type ? ({Opaque:'opaque',Struct:'struct',Enum:'enum'}[tag(value.shape)]) : (value.kind === 'Context' ? 'context' : 'class');
@@ -64,7 +64,7 @@
         incoming.get(key).push(method.key);
       }
     }
-    return {items, methods, crates, modules, pathKey, ancestors, methodKey, callTargets, calls, incoming};
+    return {sources, items, methods, crates, modules, pathKey, ancestors, methodKey, callTargets, calls, incoming};
   }
 
   function createRenderer(model) {
@@ -82,10 +82,9 @@
       return name + (args.length ? `&lt;${args.map(t=>typeHtml(t,item,parameters)).join(', ')}&gt;` : '');
     }
     function origin(item) {
-      if (!item.rust) return '';
-      if (item.rust.target.None) return `<div class="origin"><span>${badge('review abstraction')} ${escape(item.rust.target.None.reason)}</span></div>`;
-      const value = typeText(item.rust.target.Type);
-      return `<div class="origin"><small>RUST</small><button class="source-link" data-source="${escape(item.key)}" title="Reveal the corresponding Rust source"><code>${escape(value)}</code></button><button data-copy="${escape(value)}" aria-label="Copy Rust path">Copy</button></div>`;
+      const sites=model.sources.targets[item.key]||[];
+      if(!sites.length) return '<p class="section-note">No Rust correspondence in this snapshot.</p>';
+      return `<div class="origin"><button class="source-link" data-source="${escape(item.key)}"><code>${escape(sites[0].path)}</code></button><span class="muted">${sites.length} source ${sites.length===1?'site':'sites'}</span></div>`;
     }
     function fields(values,item) {
       if (!values.length) return '<p class="section-note">No fields.</p>';
@@ -124,11 +123,11 @@
       if (kind==='crate' && model.crates.has(key)) {
         const c=model.crates.get(key);
         const own=[...model.items.values()].filter(i=>i.namespace===key);
-        return `<div class="breadcrumb">${link('home','Architecture')} / ${escape(key)}</div><div class="eyebrow">Crate</div><h1>${escape(key)}</h1>${prose(c.purpose)}<h2>Workspace dependencies</h2><p>${c.dependencies.map(d=>link(`crate:${d}`,d)).join(' · ') || 'None declared.'}</p><h2>Logical modules</h2><div class="grid">${c.modules.map(name=>`<div class="card"><h3>${link(`module:${key}::${name}`,name)}</h3><span class="muted">${model.modules.get(`${key}::${name}`)?.declarations.length||0} declarations</span></div>`).join('') || '<p class="section-note">This crate is described at the crate level.</p>'}</div>${own.length?`<h2>Declarations</h2><div class="grid">${own.map(itemCard).join('')}</div>`:''}<p class="file">${escape(c.file)}</p>`;
+        return `<div class="breadcrumb">${link('home','Architecture')} / ${escape(key)}</div><div class="eyebrow">Crate</div><h1>${escape(key)}</h1>${prose(c.purpose)}${origin(c)}<h2>Workspace dependencies</h2><p>${c.dependencies.map(d=>link(`crate:${d}`,d)).join(' · ') || 'None declared.'}</p><h2>Logical modules</h2><div class="grid">${c.modules.map(name=>`<div class="card"><h3>${link(`module:${key}::${name}`,name)}</h3><span class="muted">${model.modules.get(`${key}::${name}`)?.declarations.length||0} declarations</span></div>`).join('') || '<p class="section-note">This crate is described at the crate level.</p>'}</div>${own.length?`<h2>Declarations</h2><div class="grid">${own.map(itemCard).join('')}</div>`:''}<p class="file">${escape(c.file)}</p>`;
       }
       if (kind==='module' && model.modules.has(key)) {
         const mod=model.modules.get(key);
-        return `${breadcrumbs(mod)}<div class="eyebrow">Module</div><h1>${escape(key)}</h1><div class="grid">${mod.declarations.map(itemCard).join('')}</div><p class="file">${escape(mod.file)}</p>`;
+        return `${breadcrumbs(mod)}<div class="eyebrow">Module</div><h1>${escape(key)}</h1>${origin(mod)}<div class="grid">${mod.declarations.map(itemCard).join('')}</div><p class="file">${escape(mod.file)}</p>`;
       }
       if (kind==='item' && model.items.has(key)) {
         const item=model.items.get(key);
@@ -155,7 +154,7 @@
         });
         const implementations=[...model.items.values()].filter(i=>i.isClass && model.ancestors(i.key).includes(method.owner)).map(i=>model.methodKey(`${i.key}::${method.name}`)).filter(k=>k&&k!==key);
         const list=keys=>keys.length?`<ul class="call-list">${[...new Set(keys)].map(k=>`<li>${methodLink(k)}</li>`).join('')}</ul>`:'<p class="section-note">None in the declared model.</p>';
-        return `${breadcrumbs(owner)}<div class="eyebrow">${escape(method.kind)}</div><h1>${escape(owner.name)}::${escape(method.name)}</h1><p>Defined on ${link(`item:${owner.key}`,owner.name)}</p>${origin(owner)}${methodCard(method,true)}${inheritedRules.length?`<h2>Inherited prohibitions</h2><ul class="effect-list">${inheritedRules.map(({inherited,effect})=>effectHtml(effect,inherited)).join('')}</ul>`:''}<div class="grid"><section><h2>Possible direct calls</h2><p class="section-note">Includes known subclass dispatch. Permissions do not imply execution.</p>${list(targets)}</section><section><h2>Called by</h2><p class="section-note">Methods whose declared calls can reach this implementation directly.</p>${list(incoming)}</section></div>${implementations.length?`<h2>Overriding implementations</h2>${list(implementations)}`:''}<p class="file">${escape(owner.file)} · byte ${method.span.start}</p>`;
+        return `${breadcrumbs(owner)}<div class="eyebrow">${escape(method.kind)}</div><h1>${escape(owner.name)}::${escape(method.name)}</h1><p>Defined on ${link(`item:${owner.key}`,owner.name)}</p>${origin(method)}${methodCard(method,true)}${inheritedRules.length?`<h2>Inherited prohibitions</h2><ul class="effect-list">${inheritedRules.map(({inherited,effect})=>effectHtml(effect,inherited)).join('')}</ul>`:''}<div class="grid"><section><h2>Possible direct calls</h2><p class="section-note">Includes known subclass dispatch. Permissions do not imply execution.</p>${list(targets)}</section><section><h2>Called by</h2><p class="section-note">Methods whose declared calls can reach this implementation directly.</p>${list(incoming)}</section></div>${implementations.length?`<h2>Overriding implementations</h2>${list(implementations)}`:''}<p class="file">${escape(owner.file)} · byte ${method.span.start}</p>`;
       }
       return `<h1>Not found</h1><p class="prose">This link does not name a declaration in this snapshot.</p>${link('home','Back to overview')}`;
     }
@@ -164,31 +163,32 @@
 
   function searchModel(model, query='', crate='', kind='') {
     const q=query.toLowerCase().trim();
-    const renderer=createRenderer(model);
-    return [...model.items.values(),...model.methods.values()].filter(i=>(!crate||i.crateName===crate)&&(!kind||i.kind===kind)&&(!q||`${i.key} ${i.description} ${i.rust?.target.Type?renderer.typeText(i.rust.target.Type):''}`.toLowerCase().includes(q)));
+    return [...model.items.values(),...model.methods.values()].filter(i=>(!crate||i.crateName===crate)&&(!kind||i.kind===kind)&&(!q||`${i.key} ${i.description} ${(model.sources.targets[i.key]||[]).map(s=>s.path).join(' ')}`.toLowerCase().includes(q)));
   }
   function sourceOwner(model, route) {
+    if(route.startsWith('crate:')) return model.crates.get(route.slice(6));
+    if(route.startsWith('module:')) return model.modules.get(route.slice(7));
     if(route.startsWith('item:')) return model.items.get(route.slice(5));
-    if(route.startsWith('method:')) return model.items.get(model.methods.get(route.slice(7))?.owner);
+    if(route.startsWith('method:')) return model.methods.get(route.slice(7));
     return null;
   }
   function renderSourcePane(item, sources, choice='') {
     if(!item) return '<div class="source-empty">Choose a declaration or method to explore its Rust source.</div>';
-    if(item.rust?.target.None) return `<div class="source-empty"><h3>${escape(item.name)}</h3>${badge('review abstraction')}${prose(item.rust.target.None.reason)}</div>`;
     const references=sources.targets[item.key]||[];
     const options=references.flatMap((reference,r)=>reference.locations.map((location,l)=>({reference,location,value:`${r}:${l}`})));
-    if(!options.length) return `<div class="source-empty"><h3>${escape(item.name)}</h3><p>No workspace source is embedded for this annotation.</p><p class="section-note">Primitives, standard-library types, and unresolved paths have no local definition in this snapshot. Regenerate from the Cargo workspace to include source.</p>${sources.warnings?.length?`<details><summary>Source indexing notes</summary>${prose(sources.warnings.join('\n'))}</details>`:''}</div>`;
+    if(!options.length) return `<div class="source-empty"><h3>${escape(item.name)}</h3><p>No workspace source is embedded for this annotation.</p><p class="section-note">Regenerate from the Cargo workspace to include annotated Rust definitions and marker modules.</p>${sources.warnings?.length?`<details><summary>Source indexing notes</summary>${prose(sources.warnings.join('\n'))}</details>`:''}</div>`;
     const selected=options.find(option=>option.value===choice)||options[0];
     const {reference,location}=selected;
     const text=sources.files[location.file];
     if(typeof text!=='string') return '<div class="source-empty">The source file is missing from this snapshot.</div>';
     const unavailable=references.filter(reference=>!reference.locations.length);
-    return `<div class="source-meta"><label for="source-location">${escape(item.name)} · definition</label><select id="source-location" aria-label="Select Rust source definition">${options.map(option=>`<option value="${option.value}" ${option.value===selected.value?'selected':''}>${escape(option.reference.path)} — ${escape(option.location.file)}:${option.location.line}</option>`).join('')}</select><div class="source-file"><code>${escape(location.file)}:${location.line}</code><button data-copy="${escape(location.file)}:${location.line}">Copy location</button></div>${location.macro_input?'<p class="section-note">Macro input declaring this type; expanded Rust is not included.</p>':''}${options.length>1?'<p class="section-note">Choose among annotated type arguments or source candidates above. Source indexing does not evaluate cfg.</p>':''}${unavailable.length?`<p class="section-note">No workspace definition: ${unavailable.map(r=>escape(r.path)).join(', ')}.</p>`:''}<span class="source-snapshot">Source snapshot captured when this HTML was generated.</span></div><div class="source-code" tabindex="0" aria-label="Rust source code">${text.split('\n').map((line,index)=>`<div class="source-line ${index+1>=location.line&&index+1<=location.end_line?'highlight':''}" ${index+1===location.line?'data-definition="true"':''}><span class="line-number" aria-hidden="true">${index+1}</span><code>${escape(line)||' '}</code></div>`).join('')}</div>`;
+    return `<div class="source-meta"><label for="source-location">${escape(item.name)} · definition</label><select id="source-location" aria-label="Select Rust source definition">${options.map(option=>`<option value="${option.value}" ${option.value===selected.value?'selected':''}>${escape(option.reference.path)} — ${escape(option.location.file)}:${option.location.line}</option>`).join('')}</select><div class="source-file"><code>${escape(location.file)}:${location.line}</code><button data-copy="${escape(location.file)}:${location.line}">Copy location</button></div>${location.kind==='Module'?'<p class="section-note">Module correspondence anchor; this does not establish executable coverage.</p>':''}${location.macro_input?'<p class="section-note">Macro input declaring this type; expanded Rust is not included.</p>':''}${options.length>1?'<p class="section-note">Choose among the Rust correspondence sites above. Source indexing does not evaluate cfg.</p>':''}${unavailable.length?`<p class="section-note">No workspace definition: ${unavailable.map(r=>escape(r.path)).join(', ')}.</p>`:''}<span class="source-snapshot">Source snapshot captured when this HTML was generated.</span></div><div class="source-code" tabindex="0" aria-label="Rust source code">${text.split('\n').map((line,index)=>`<div class="source-line ${index+1>=location.line&&index+1<=location.end_line?'highlight':''}" ${index+1===location.line?'data-definition="true"':''}><span class="line-number" aria-hidden="true">${index+1}</span><code>${escape(line)||' '}</code></div>`).join('')}</div>`;
   }
   const api={buildModel,createRenderer,searchModel,sourceOwner,renderSourcePane,escape};
   if(typeof module!=='undefined' && module.exports) module.exports=api;
   if(typeof document==='undefined') return;
-  const model=buildModel(JSON.parse(document.getElementById('model-data').textContent));
+  const sources=JSON.parse(document.getElementById('source-data').textContent);
+  const model=buildModel(JSON.parse(document.getElementById('model-data').textContent),sources);
   const renderer=createRenderer(model), search=document.getElementById('search'), crateFilter=document.getElementById('crate-filter'), kindFilter=document.getElementById('kind-filter');
   for(const name of model.crates.keys()){const option=document.createElement('option');option.value=name;option.textContent=name;crateFilter.append(option);}
   function route(){try{return decodeURIComponent(location.hash.slice(1))||'home';}catch{return 'invalid';}}
@@ -212,11 +212,10 @@
     }
     document.getElementById('navigation').innerHTML=html||'<div class="empty">No matches. Try a shorter name or clear the filters.</div>';
   }
-  const sources=JSON.parse(document.getElementById('source-data').textContent);
   let sourceOpen=false;
   let selectedSource=null;
   function refreshSource(choice='') {
-    const item=model.items.get(selectedSource)||sourceOwner(model,route());
+    const item=model.items.get(selectedSource)||model.methods.get(selectedSource)||model.crates.get(selectedSource)||model.modules.get(selectedSource)||sourceOwner(model,route());
     document.getElementById('source-content').innerHTML=renderSourcePane(item,sources,choice);
     requestAnimationFrame(()=>{
       const row=document.querySelector('[data-definition]');

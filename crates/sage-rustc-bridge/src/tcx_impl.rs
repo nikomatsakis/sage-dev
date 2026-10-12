@@ -22,6 +22,7 @@ use crate::proc_macro_srv::SageServer;
 /// `TcxDb` backed by rustc's `TyCtxt`.
 ///
 /// Lives on the original thread only — never crosses thread boundaries.
+#[sage::item(crate::provider::RustcTcxDb)]
 pub struct RustcTcxDb<'tcx> {
     tcx: TyCtxt<'tcx>,
 }

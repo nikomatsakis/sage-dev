@@ -15,6 +15,24 @@ use crate::zalsa_local::{ActiveQueryGuard, QueryEdge, QueryEdgeKind, QueryRevisi
 use crate::{Cancelled, Cycle, tracing};
 use crate::{DatabaseKeyIndex, Event, EventKind, Id};
 
+// Keep architectural execution scopes balanced even if a query unwinds.
+struct ExecutionGuard<'a, C: Configuration> {
+    zalsa: &'a Zalsa,
+    key: DatabaseKeyIndex,
+    configuration: std::marker::PhantomData<C>,
+}
+
+impl<C: Configuration> Drop for ExecutionGuard<'_, C> {
+    fn drop(&mut self) {
+        self.zalsa.event(&|| {
+            Event::new(EventKind::DidExecute {
+                database_key: self.key,
+            })
+            .with_query::<C>()
+        });
+    }
+}
+
 impl<C> IngredientImpl<C>
 where
     C: Configuration,
@@ -52,7 +70,13 @@ where
             Event::new(EventKind::WillExecute {
                 database_key: database_key_index,
             })
+            .with_query::<C>()
         });
+        let _execution = ExecutionGuard::<C> {
+            zalsa,
+            key: database_key_index,
+            configuration: std::marker::PhantomData,
+        };
 
         let (new_value, mut completed_query) = match C::CYCLE_STRATEGY {
             CycleRecoveryStrategy::Panic => {

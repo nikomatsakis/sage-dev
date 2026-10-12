@@ -6,12 +6,10 @@ module crate::symbols;
 // lifted to Some, while unavailable external facts remain None. Rust local sig/items
 // return the unwrapped result. Trait/impl membership retains its generic binder.
 
-#[rust(crate::symbol::Symbol)]
 abstract class Symbol {
     """Erased definition identity; specialized interfaces retain the definition kind."""
 }
 
-#[rust(crate::symbol::FnSymbol)]
 abstract class FnSymbol extends crate::symbols::Symbol {
     """Kind-specific local-or-external semantic interface."""
     query signature() -> Option<crate::types::Binder<crate::types::FnSig>> {
@@ -20,7 +18,6 @@ abstract class FnSymbol extends crate::symbols::Symbol {
     }
 }
 
-#[rust(crate::symbol::TraitSymbol)]
 abstract class TraitSymbol extends crate::symbols::Symbol {
     """Kind-specific local-or-external semantic interface."""
     query signature() -> Option<crate::types::Binder<crate::types::TraitSignatureData>> {
@@ -33,7 +30,6 @@ abstract class TraitSymbol extends crate::symbols::Symbol {
     }
 }
 
-#[rust(crate::symbol::ImplSymbol)]
 abstract class ImplSymbol extends crate::symbols::Symbol {
     """Kind-specific local-or-external semantic interface."""
     query signature() -> Option<crate::types::Binder<crate::types::ImplSignatureData>> {
@@ -46,7 +42,6 @@ abstract class ImplSymbol extends crate::symbols::Symbol {
     }
 }
 
-#[rust(crate::symbol::StructSymbol)]
 abstract class StructSymbol extends crate::symbols::Symbol {
     """Kind-specific local-or-external semantic interface."""
     query signature() -> crate::types::Signature {
@@ -59,7 +54,6 @@ abstract class StructSymbol extends crate::symbols::Symbol {
     }
 }
 
-#[rust(crate::symbol::EnumSymbol)]
 abstract class EnumSymbol extends crate::symbols::Symbol {
     """Kind-specific local-or-external semantic interface."""
     query signature() -> crate::types::Signature {
@@ -72,7 +66,6 @@ abstract class EnumSymbol extends crate::symbols::Symbol {
     }
 }
 
-#[rust(crate::local_syms::fns::LocalFnSym)]
 class LocalFnSym extends crate::symbols::FnSymbol {
     """Source-backed definition. Identity detail here is a review abstraction; inspect the linked Rust declaration for the exact per-kind fields."""
     identity name: crate::types::Name;
@@ -109,7 +102,6 @@ class LocalFnSym extends crate::symbols::FnSymbol {
     }
 }
 
-#[rust(crate::symbol::SymExt)]
 class ExternalFn extends crate::symbols::FnSymbol {
     """Logical external branch of the kind wrapper; Rust uses SymExt rather than a separate struct for each kind."""
     identity definition: crate::types::Identity;
@@ -122,7 +114,6 @@ class ExternalFn extends crate::symbols::FnSymbol {
     }
 }
 
-#[rust(crate::local_syms::traits::LocalTraitSym)]
 class LocalTraitSym extends crate::symbols::TraitSymbol {
     """Source-backed definition. Identity detail here is a review abstraction; inspect the linked Rust declaration for the exact per-kind fields."""
     identity name: crate::types::Name;
@@ -148,7 +139,6 @@ class LocalTraitSym extends crate::symbols::TraitSymbol {
     }
 }
 
-#[rust(crate::symbol::SymExt)]
 class ExternalTrait extends crate::symbols::TraitSymbol {
     """Logical external branch of the kind wrapper; Rust uses SymExt rather than a separate struct for each kind."""
     identity definition: crate::types::Identity;
@@ -167,7 +157,6 @@ class ExternalTrait extends crate::symbols::TraitSymbol {
     }
 }
 
-#[rust(crate::local_syms::impls::LocalImplSym)]
 class LocalImplSym extends crate::symbols::ImplSymbol {
     """Source-backed definition. Identity detail here is a review abstraction; inspect the linked Rust declaration for the exact per-kind fields."""
     identity scope: crate::types::Scope;
@@ -200,7 +189,6 @@ class LocalImplSym extends crate::symbols::ImplSymbol {
     }
 }
 
-#[rust(crate::symbol::SymExt)]
 class ExternalImpl extends crate::symbols::ImplSymbol {
     """Logical external branch of the kind wrapper; Rust uses SymExt rather than a separate struct for each kind."""
     identity definition: crate::types::Identity;
@@ -219,7 +207,6 @@ class ExternalImpl extends crate::symbols::ImplSymbol {
     }
 }
 
-#[rust(crate::local_syms::structs::LocalStructSym)]
 class LocalStructSym extends crate::symbols::StructSymbol {
     """Source-backed definition. Identity detail here is a review abstraction; inspect the linked Rust declaration for the exact per-kind fields."""
     identity name: crate::types::Name;
@@ -246,7 +233,6 @@ class LocalStructSym extends crate::symbols::StructSymbol {
     }
 }
 
-#[rust(crate::symbol::SymExt)]
 class ExternalStruct extends crate::symbols::StructSymbol {
     """Logical external branch of the kind wrapper; Rust uses SymExt rather than a separate struct for each kind."""
     identity definition: crate::types::Identity;
@@ -265,7 +251,6 @@ class ExternalStruct extends crate::symbols::StructSymbol {
     }
 }
 
-#[rust(crate::local_syms::enums::LocalEnumSym)]
 class LocalEnumSym extends crate::symbols::EnumSymbol {
     """Source-backed definition. Identity detail here is a review abstraction; inspect the linked Rust declaration for the exact per-kind fields."""
     identity name: crate::types::Name;
@@ -290,7 +275,6 @@ class LocalEnumSym extends crate::symbols::EnumSymbol {
     }
 }
 
-#[rust(crate::symbol::SymExt)]
 class ExternalEnum extends crate::symbols::EnumSymbol {
     """Logical external branch of the kind wrapper; Rust uses SymExt rather than a separate struct for each kind."""
     identity definition: crate::types::Identity;
@@ -309,7 +293,6 @@ class ExternalEnum extends crate::symbols::EnumSymbol {
     }
 }
 
-#[rust(crate::local_syms::type_aliases::LocalTypeAliasSym)]
 class LocalTypeAliasSym extends crate::symbols::Symbol {
     """Source-backed identity and syntax. Semantic operations not uniformly available as symbol methods; inspect local_syms for current per-kind support."""
     identity name: crate::types::Name;
@@ -319,7 +302,6 @@ class LocalTypeAliasSym extends crate::symbols::Symbol {
     input span: crate::types::Span;
 }
 
-#[rust(crate::local_syms::consts::LocalConstSym)]
 class LocalConstSym extends crate::symbols::Symbol {
     """Source-backed identity and syntax. Semantic operations not uniformly available as symbol methods; inspect local_syms for current per-kind support."""
     identity name: crate::types::Name;
@@ -329,7 +311,6 @@ class LocalConstSym extends crate::symbols::Symbol {
     input span: crate::types::Span;
 }
 
-#[rust(crate::local_syms::statics::LocalStaticSym)]
 class LocalStaticSym extends crate::symbols::Symbol {
     """Source-backed identity and syntax. Semantic operations not uniformly available as symbol methods; inspect local_syms for current per-kind support."""
     identity name: crate::types::Name;
@@ -338,7 +319,6 @@ class LocalStaticSym extends crate::symbols::Symbol {
     input span: crate::types::Span;
 }
 
-#[rust(crate::local_syms::uses::LocalUseSym)]
 class LocalUseSym extends crate::symbols::Symbol {
     """Source-backed identity and syntax. Semantic operations not uniformly available as symbol methods; inspect local_syms for current per-kind support."""
     identity scope: crate::types::Scope;
@@ -346,7 +326,6 @@ class LocalUseSym extends crate::symbols::Symbol {
     input span: crate::types::Span;
 }
 
-#[rust(crate::local_syms::macro_defs::LocalMacroDefSym)]
 class LocalMacroDefSym extends crate::symbols::Symbol {
     """Source-backed identity and syntax. Semantic operations not uniformly available as symbol methods; inspect local_syms for current per-kind support."""
     identity name: crate::types::Name;
@@ -355,7 +334,6 @@ class LocalMacroDefSym extends crate::symbols::Symbol {
     input span: crate::types::Span;
 }
 
-#[rust(crate::local_syms::macro_invocations::LocalMacroInvocationSym)]
 class LocalMacroInvocationSym extends crate::symbols::Symbol {
     """Source-backed identity and syntax. Semantic operations not uniformly available as symbol methods; inspect local_syms for current per-kind support."""
     identity scope: crate::types::Scope;
@@ -364,7 +342,6 @@ class LocalMacroInvocationSym extends crate::symbols::Symbol {
 }
 
 // Sources: local_syms/enums.rs::LocalVariantSym and LocalVariantCtorSym.
-#[rust(crate::local_syms::enums::LocalVariantSym)]
 class LocalVariantSym extends crate::symbols::Symbol {
     """Enum variant identity is its parent enum and name; syntax, span, and tuple shape are tracked detail."""
     identity name: crate::types::Name;
@@ -374,7 +351,6 @@ class LocalVariantSym extends crate::symbols::Symbol {
     input is_tuple: crate::types::Boolean;
 }
 
-#[rust(crate::local_syms::enums::LocalVariantCtorSym)]
 class LocalVariantCtorSym extends crate::symbols::Symbol {
     """Tuple variant constructor identity is distinct from the type-namespace variant."""
     identity name: crate::types::Name;

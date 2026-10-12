@@ -1,3 +1,5 @@
+#![feature(register_tool)]
+#![register_tool(sage)]
 use expect_test::Expect;
 pub use expect_test::expect;
 use sage_ir::Db;
@@ -5068,4 +5070,11 @@ mod trait_obligation_tests {
         )
         .check_ok();
     }
+}
+
+// Source anchors for architectural modules and distributed representations.
+mod sage_model {
+    /// Architectural crate anchor.
+    #[sage::item(crate)]
+    mod crate_model {}
 }

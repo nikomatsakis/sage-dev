@@ -1,7 +1,6 @@
 module crate::inference;
 
 // Sources: check/infer_ctx.rs, check/infer/, check/obligation*.
-#[rust(crate::check::infer_ctx::InferCtx)]
 context InferCtx {
     """One body owns variables, versioned equality/bound state, obligations, tasks, diagnostics, and its working stash."""
     state state: crate::types::InferenceState;
@@ -9,6 +8,8 @@ context InferCtx {
         """Require equality, subtyping, or coercion. Preserve numeric domain intersections and defer constraints whose information is not available. Alias relations may register normalization obligations."""
         envelope {
             reads self.state;
+            // Coercion and subtyping delegate recursively to narrower relations.
+            invokes self.relate();
             invokes self.obligation();
         }
     }
@@ -42,4 +43,3 @@ context InferCtx {
         }
     }
 }
-

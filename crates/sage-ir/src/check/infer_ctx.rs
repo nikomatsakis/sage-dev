@@ -263,6 +263,8 @@ impl<'db> RecordErr<'db> for Result<(), TypeError<'db>> {
 /// concurrent tasks. Protected by `RefCell` since the executor is
 /// single-threaded and cooperative.
 // ANCHOR: architecture_infer_context
+#[sage::item(crate::inference::InferCtx)]
+#[sage::item(crate::types::InferenceState)]
 pub struct InferCtx<'check, 'db> {
     pub db: &'db dyn crate::Db,
     pub(crate) source_stash: &'check Stash,
@@ -766,6 +768,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         }
     }
 
+    #[sage::item(crate::inference::InferCtx::relate)]
     pub fn require_eq(
         &self,
         a: Ptr<Ty<'db>>,
@@ -824,6 +827,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         }
     }
 
+    #[sage::item(crate::inference::InferCtx::relate)]
     pub fn require_sub(
         &self,
         a: Ptr<Ty<'db>>,
@@ -873,6 +877,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         }
     }
 
+    #[sage::item(crate::inference::InferCtx::relate)]
     pub fn require_coerce(
         &self,
         a: Ptr<Ty<'db>>,
@@ -1781,6 +1786,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         }
     }
 
+    #[sage::item(crate::inference::InferCtx::obligation)]
     fn attempt_obligation(&self, index: usize, terminal: bool) {
         let revision = self.recanonicalize_obligation(index);
         if let Some(error) = self.obligation_recovery_error(index) {
@@ -2195,6 +2201,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         }
     }
 
+    #[sage::item(crate::inference::InferCtx::finalize)]
     pub fn finalize(&self) {
         // First consume every proof that current inference already enables.
         self.process_ready_obligations();
@@ -2287,6 +2294,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     // Finish — consumes self, produces CheckedBody
     // ------------------------------------------------------------------
 
+    #[sage::item(crate::inference::InferCtx::finish)]
     pub fn finish(self, root: Ptr<TyExpr<'db>>, span: RelativeSpan) -> CheckedBody<'db> {
         assert!(
             !self.obligations.borrow().has_pending(),
@@ -2656,3 +2664,9 @@ mod tests {
         });
     }
 }
+
+/// Speculation spans branch creation, candidate checking, and commit/discard
+/// across method probing and inference. This anchor does not imply that one
+/// ordinary function instruments that complete lifetime.
+#[sage::item(crate::inference::InferCtx::speculate)]
+mod r#abstract {}

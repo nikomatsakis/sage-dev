@@ -76,9 +76,11 @@ pub struct ResolvedCallTarget<'db> {
 // Typed tree
 // ---------------------------------------------------------------------------
 
+#[sage::item(crate::types::TyBody)]
 pub type TyBody<'db> = Stashed<Ptr<TyBodyData<'db>>>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, sage_reflect::Reflect)]
+#[sage::item(crate::types::Body)]
 pub struct CheckedBody<'db> {
     pub body: TyBody<'db>,
     pub diagnostics: Vec<Diagnostic<'db>>,

@@ -21,6 +21,7 @@ use crate::ty::{
 
 // ANCHOR: architecture_external_trait_signature_query
 #[salsa::tracked]
+#[sage::item(crate::symbols::ExternalTrait::signature)]
 pub fn external_trait_signature<'db>(
     db: &'db dyn crate::Db,
     trait_sym: SymExt<'db>,
@@ -202,6 +203,7 @@ pub fn external_relevant_impls<'db>(
 }
 
 #[salsa::tracked]
+#[sage::item(crate::symbols::ExternalImpl::signature)]
 pub fn external_impl_signature<'db>(
     db: &'db dyn crate::Db,
     impl_sym: SymExt<'db>,
@@ -358,6 +360,7 @@ pub fn apply_external_adt_signature<'db>(
 
 // ANCHOR: example_external_trait_items
 #[salsa::tracked]
+#[sage::item(crate::symbols::ExternalTrait::items)]
 pub fn external_trait_items<'db>(
     db: &'db dyn crate::Db,
     trait_sym: SymExt<'db>,
@@ -391,6 +394,7 @@ pub fn external_trait_items<'db>(
 
 // ANCHOR: example_external_fn_signature
 #[salsa::tracked]
+#[sage::item(crate::symbols::ExternalFn::signature)]
 pub fn external_fn_signature<'db>(
     db: &'db dyn crate::Db,
     fn_sym: SymExt<'db>,
@@ -823,3 +827,17 @@ mod tests {
         });
     }
 }
+
+/// The nominal signature operation is shared by structs and enums in
+/// `external_adt_signature`; it has no unique per-kind executable boundary.
+#[sage::item(crate::symbols::ExternalStruct::signature)]
+#[sage::item(crate::symbols::ExternalEnum::signature)]
+mod nominal_signature_anchor {}
+
+/// These modeled external branches are conceptual locations only: dedicated
+/// external struct fields, enum variants, and impl-item producers are not
+/// available at these boundaries. Their absence remains runtime coverage debt.
+#[sage::item(crate::symbols::ExternalStruct::value)]
+#[sage::item(crate::symbols::ExternalEnum::items)]
+#[sage::item(crate::symbols::ExternalImpl::items)]
+mod r#abstract {}

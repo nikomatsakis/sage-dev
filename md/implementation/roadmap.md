@@ -582,14 +582,14 @@ implementation evidence.
 
 **Value-type review:** Structured structs/enums and prose-defined opaque generic
 types expose the key semantic types from `ty.rs`, with recursive type-expression
-validation. Storage wrappers remain outside the review representation. Every top-level
-declaration records its Rust counterpart with `#[rust(...)]`, or explicitly
-explains why it has no single corresponding Rust type.
+validation. Storage wrappers remain outside the review representation. Inert
+Rust `#[sage::item(...)]` attributes link model declarations and methods to
+implementation sites; explicit module anchors locate abstract concepts.
 
 **Interactive review:** `sage-meta browse` exports a standalone HTML explorer
 with searchable crate/module navigation, linked types, Rust annotations, and
-method dependency/caller views. A collapsible Rust source pane resolves annotated
-types to embedded workspace files and highlights their definitions. It reads a
+method dependency/caller views. A collapsible Rust source pane maps model units
+to annotated Rust declarations or module anchors and highlights their definitions. It reads a
 validated snapshot; `sage-meta serve <port>` serves it on loopback. Neither mode
 executes semantic queries or watches edits.
 
@@ -621,9 +621,17 @@ events, separate ordinary-function instrumentation, and async execution;
 enforce a caller/callee fixture and expand coverage; replay traces in the browser;
 then expose MCP tools and ACP-backed design/explanation workflows.
 
-**Progress: Draft planning only.** See [Sage Contracts and
-Walkthroughs](../rfds/sage-contracts/README.md) and its [staged implementation
-plan](../rfds/sage-contracts/implementation.md). Current `.sage` consistency and
-source browsing do not establish runtime conformance. Static implementation
-call analysis and dynamic checking of field reads/context creation are further
-work beyond the initial call-enforcement milestone.
+**Progress: Accepted, first infrastructure implemented.** The Rust correspondence
+index covers crate/module headers, declarations, and declared methods; the
+browser now derives links from that index and `.sage` Rust-origin annotations
+are removed. `check --correspondence --json` distinguishes model validity,
+source coverage, and executable-declaration coverage. An immutable resolved
+contract engine and isolated real Salsa fixture check expected traversals and
+forbidden requests, including cached requests and internal reexecution.
+
+See [Sage Contracts and Walkthroughs](../rfds/sage-contracts/README.md) and its
+[staged implementation plan](../rfds/sage-contracts/implementation.md). Full
+caller/callee body acceptance, ordinary-function and async instrumentation,
+source/build configuration identity, browser replay, and agent adapters remain.
+Static call analysis and dynamic field-read/context-creation checking are
+further work. Complete source coverage does not establish runtime conformance.

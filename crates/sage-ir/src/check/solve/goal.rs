@@ -155,6 +155,7 @@ pub struct InternedGoalQuery<'db> {
     pub data: Stashed<GoalQueryData<'db>>,
 }
 
+#[sage::item(crate::types::Goal)]
 pub type GoalQuery<'db> = InternedGoalQuery<'db>;
 
 pub(crate) fn validate_goal_query<'db>(
@@ -389,6 +390,7 @@ impl<'db> InternedGoalQuery<'db> {
     }
 
     #[salsa::tracked]
+    #[sage::item(crate::solver::Solver::solve)]
     pub fn solve(self, db: &'db dyn crate::Db) -> Stashed<super::QueryResult<'db>> {
         super::solve_query(db, self.data(db))
     }

@@ -9,7 +9,8 @@ as `$sage_ir::symbols::FnSymbol::signature` starts in another crate;
 Run from the repository root:
 
 ```sh
-cargo run -p sage-meta -- sage-src
+cargo run -p sage-meta -- check --correspondence
+cargo run -p sage-meta -- check --correspondence --json
 cargo test -p sage-meta
 ```
 
@@ -68,45 +69,38 @@ contracts and known implementation limitations.
 
 ## Rust correspondence
 
-Every top-level type, class, and context in this repository has a Rust origin
-annotation. `crate` means the Rust crate represented by the containing
-`sage-src/<crate>/` directory, not the `.sage` module:
+The Rust implementation names its architectural items with inert tool
+attributes. Crate roots register the namespace on the pinned nightly:
 
-```sage
-#[rust(crate::ty::Binder)]
-type Binder<T> {
-    """A value under the generic parameters binding its references."""
-}
+```rust,ignore
+#![feature(register_tool)]
+#![register_tool(sage)]
 
-#[rust(crate::ty::Ty)]
-enum Ty {
-    // See types.sage for the complete variant list.
-    Never,
-}
+#[sage::item(crate::types::Binder)]
+pub struct Binder<T> { /* implementation */ }
+
+#[sage::item(crate::checking::BodyCheck)]
+mod r#abstract {}
 ```
 
-Rust paths are separate from `.sage` names: use `std::vec::Vec<crate::symbol::Symbol>`,
-not `$std::...`. Generic constructors can be named without their arguments or
-Rust lifetimes, as for `Binder`; applied types, primitives, and tuples are also
-supported. Traits such as `crate::Reflect` can identify an interface.
+`crate` refers to the containing Cargo package's model, not its Rust module.
+The payload names a Sage item; Rust and Sage names need not match. Crate/module
+headers, named declarations, and explicitly declared methods each require one
+or more anchors. Fields and variants belong to their enclosing declaration.
+Non-executable sites can carry several annotations. Functions implementing
+operations have one identity each.
 
-Where no single Rust type corresponds, the annotation states that explicitly:
+Module anchors represent abstract concepts and distributed implementations.
+They provide source correspondence, not observed execution. The CLI reports
+source-only anchors separately from executable declarations; neither count
+implies runtime conformance. It rejects missing anchors, unknown targets,
+wrong-crate annotations, incompatible kinds, and unsupported placements.
+The source inventory includes cfg alternatives without evaluating them.
 
-```sage
-#[rust(none, """Review-only sum of separate signature results in ty.rs.""")]
-enum Signature {
-    Function(Binder<FnSig>),
-    Struct(Binder<StructSig>),
-}
-```
-
-The parser preserves targets and source ranges, rejects duplicate annotations,
-and requires a nonempty explanation for `none`. A repository test requires an
-annotation on every top-level declaration. Small standalone language examples
-may omit them. These are source correspondence records, not `.sage` dependency
-edges. Rust path existence, visibility, and generic arity are not checked against
-the Rust compiler. Crate/module headers, fields, variants, and methods do not
-have separate annotations in this version.
+There are no `#[rust]` annotations in `.sage`: browser links and validation use
+the Rust-side index as their common mapping authority. The known
+`define_kind_symbols!` grammar has an explicit parser adapter; arbitrary tokens
+inside other macros do not count as generated Rust declarations.
 
 ## Language boundary
 
@@ -200,7 +194,7 @@ envelope, possible direct calls (including known subclass dispatch), reverse
 callers, overrides, and inherited prohibitions. Hash links support browser
 Back/Forward and bookmarks. Click a Rust correspondence to reveal the Rust source pane, or use the header’s
 **Rust source** button. The pane follows the selected declaration; methods show
-their owning type. Definitions are highlighted with file names and line numbers.
+their own annotated implementation or marker sites. Definitions are highlighted with file names and line numbers.
 Use **Hide** to close the pane. Theme switching is available in the header.
 
 The explorer is a snapshot of the validated model. Regenerate it after edits;
@@ -223,17 +217,28 @@ not screenshot or browser-engine layout tests.
 ### Embedded Rust source
 
 When the model lives under a Cargo workspace, the exporter uses offline Cargo
-metadata and parses workspace Rust modules with `syn`. It follows explicit
-imports and re-exports, including module aliases, and embeds only files reached
-by annotations. Generic arguments can have separate source definitions; a
-selector exposes these and multiple conditional definitions. Primitive and
-standard-library types have no embedded workspace source. Review abstractions
-show their annotation's explanation.
+metadata and the Rust correspondence index. It embeds annotated files and
+provides a selector for multiple implementation sites. Module markers and known
+generator inputs are labeled. Crate/module headers and individual methods have
+source links as well as type/class declarations.
 
-This is best-effort navigation, separate from model validation. It does not
-evaluate cfg, expand macros, or resolve wildcard imports. Recognizable type
-declarations in macro inputs are shown with an explicit label. Source is a
-snapshot: regenerate the HTML after Rust edits. No source server is required.
+The source snapshot does not evaluate cfg or expand arbitrary macros. Regenerate
+the HTML after Rust edits. No source server is required. Deleting or misspelling
+an anchor fails `check --correspondence`; checking a model alone remains
+available with `check` or the legacy positional model-directory command.
+
+### Contract infrastructure tests
+
+`cargo test -p sage-meta` includes a small independent model and Rust/Salsa test
+crate under `tests/fixtures/contracts/`. Expected traversals name architectural
+operations and Rust sites independently of the source index. A valid test model
+is also exercised by deliberately nonconforming Rust, including a forbidden
+request already present in the query cache. The same checking engine records
+both the undeclared edge and the ancestor prohibition.
+
+This is infrastructure evidence. General compiler runtime enforcement,
+ordinary-function instrumentation, async context propagation, and browser trace
+replay remain work in progress. Inert annotations alone do not emit events.
 
 ### Serve the explorer locally
 

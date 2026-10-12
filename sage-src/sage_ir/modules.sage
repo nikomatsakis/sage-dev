@@ -1,7 +1,6 @@
 module crate::modules;
 
 // Sources: local_syms/mods.rs, parse/mod.rs, derive/, local_syms/macro_invocations.rs.
-#[rust(crate::local_syms::mods::LocalModSym)]
 class LocalModSym {
     """Module identity with lazily computed direct items."""
     identity name: crate::types::Name;
@@ -28,7 +27,6 @@ class LocalModSym {
     }
 }
 
-#[rust(crate::parse::Parser)]
 context Parser {
     """Logical boundary for parse_str_to_cst and ParseCx."""
     fn parse() -> crate::types::Items {
@@ -39,7 +37,6 @@ context Parser {
     }
 }
 
-#[rust(none, """Groups module expansion and derive functions; no Expansion type.""")]
 context Expansion {
     """Macro expansion orchestration."""
     fn expand() -> crate::types::Items {
@@ -51,4 +48,3 @@ context Expansion {
         }
     }
 }
-
