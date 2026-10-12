@@ -29,6 +29,7 @@
     - [Stash](./design/stash.md)
     - [Spans](./design/spans.md)
   - [Validation and Inspection](./design/validation/README.md)
+    - [Architectural Pseudocode](./design/validation/architecture-language.md)
     - [Semantic Inspector](./design/validation/semantic-inspector.md)
     - [Oracle Test Harness](./design/oracle-test-harness.md)
     - [Examples](./design/examples.md)

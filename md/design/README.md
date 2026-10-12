@@ -49,3 +49,7 @@ Driven Development**: identify the small, load-bearing claims from which the
 rest of a design follows, give them stable names, and connect them to
 inspectable evidence. Those ideas helped guide the restructuring of this book.
 Many thanks to Kari for articulating the approach.
+
+The [architectural pseudocode](./validation/architecture-language.md) provides
+a complementary method-oriented review surface in `sage-src/`, parsed and
+checked by `sage-meta`.

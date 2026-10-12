@@ -161,6 +161,11 @@ boundaries merely because they are important steps in the algorithm.
 
 ## Validation and inspection
 
+The [architectural pseudocode](./validation/architecture-language.md) in
+`sage-src/` offers a symbol-and-method view with checkable dependency envelopes.
+Its initial model summarizes the central demand graph; consistency of the model
+is distinct from conformance of the Rust implementation.
+
 The architecture is meant to be reviewable at increasing depth:
 
 1. A chapter states its destination contract.

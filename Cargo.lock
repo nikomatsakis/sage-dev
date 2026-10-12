@@ -1618,6 +1618,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sage-meta"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "proc-macro2",
+ "serde",
+ "serde_json",
+ "syn 2.0.117",
+ "tokio",
+]
+
+[[package]]
 name = "sage-oracle"
 version = "0.1.0"
 dependencies = [

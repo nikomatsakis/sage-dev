@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sage · Architecture explorer</title>
+<style>/* BROWSER_CSS */</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header><a class="brand" href="#home"><span class="mark">S</span> SAGE <span class="subbrand">/ architecture</span></a><span class="header-note">Symbols, types & computations</span><button id="source-toggle" aria-expanded="false" aria-controls="rust-source">Rust source</button><button id="theme" aria-label="Toggle dark theme">◐ Theme</button></header>
+<div class="layout">
+<aside aria-label="Model navigation">
+<label class="search-label" for="search">Find a declaration <kbd>/</kbd></label>
+<input id="search" type="search" placeholder="Name, method, or Rust path…" autocomplete="off">
+<div class="filters"><select id="crate-filter" aria-label="Filter by crate"><option value="">All crates</option></select><select id="kind-filter" aria-label="Filter by kind"><option value="">All kinds</option><option>class</option><option>context</option><option>struct</option><option>enum</option><option>opaque</option><option>query</option><option>fn</option></select></div>
+<p id="result-count" class="muted" aria-live="polite"></p>
+<nav id="navigation"></nav>
+<div class="sidebar-footer">A snapshot of the declared model.<br>Regenerate after editing <code>.sage</code> files.</div>
+</aside>
+<main id="content" tabindex="-1"></main>
+<section id="rust-source" hidden aria-label="Rust source pane">
+<div class="source-toolbar"><strong>Rust source</strong><button id="source-close" aria-label="Hide Rust source">Hide</button></div>
+<div id="source-content"></div>
+</section>
+</div>
+<script id="model-data" type="application/json"><!-- BROWSER_DATA --></script>
+<script id="source-data" type="application/json"><!-- SOURCE_DATA --></script>
+<script>/* BROWSER_JS */</script>
+</body>
+</html>

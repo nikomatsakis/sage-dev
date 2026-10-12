@@ -562,3 +562,38 @@ file when one of its detailed checkpoints lands.
 [Numeric Inference Domains and Binary Operator Typing RFD]: ../rfds/numeric-inference-variables/README.md
 [numeric-plan]: ../rfds/numeric-inference-variables/implementation.md
 [rustc binary-operator research]: ../design/research/rustc-binary-operator-typing.md
+
+## Architectural review language
+
+**Goal and acceptance target:** Review compiler computations through `.sage`
+methods with explicit dependency envelopes, with a parser and consistency
+checker that identifies a forbidden dependency path.
+
+**Scope and dependencies:** Builds on the auditable architecture guide. Covers
+crate manifests, symbol and context declarations, and the central compiler
+demand graph. Does not depend on changing Rust semantics or introducing an
+executable specification of inference and trait proof.
+
+**Progress:** Initial AST, parser, name/inheritance checker, conservative call
+graph validation, CLI, and compiler model are implemented. The repository corpus
+is tested as a closed set. See [Architectural Pseudocode](../design/validation/architecture-language.md)
+for the checked contract and the distinction between model consistency and
+implementation evidence.
+
+**Value-type review:** Structured structs/enums and prose-defined opaque generic
+types expose the key semantic types from `ty.rs`, with recursive type-expression
+validation. Storage wrappers remain outside the review representation. Every top-level
+declaration records its Rust counterpart with `#[rust(...)]`, or explicitly
+explains why it has no single corresponding Rust type.
+
+**Interactive review:** `sage-meta browse` exports a standalone HTML explorer
+with searchable crate/module navigation, linked types, Rust annotations, and
+method dependency/caller views. A collapsible Rust source pane resolves annotated
+types to embedded workspace files and highlights their definitions. It reads a
+validated snapshot; `sage-meta serve <port>` serves it on loopback. Neither mode
+executes semantic queries or watches edits.
+
+**Remaining coverage:** Refine per-kind identity and remaining grouped results; represent
+context initialization and method parameters; expand grouped operations into
+narrow source-backed methods; connect model edges to query-trace evidence.
+Derive and harness internals currently have crate-level descriptions only.

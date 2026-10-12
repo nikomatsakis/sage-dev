@@ -430,3 +430,16 @@ The body-checking consequence is
 [BODY-A5](./pipeline/body-checking.md#body-a5), the representation invariant is
 [TIR-A6](./typed-ir.md#tir-a6), and the accepted change is specified by
 [NIV-A4](../rfds/numeric-inference-variables/README.md#niv-a4).
+
+## D21: Architectural pseudocode has checkable dependency envelopes
+
+Compiler architecture is reviewable through `.sage` declarations organized by
+crate, symbol, context, and method. Method prose describes intent; structured
+envelopes declare permitted calls and forbidden transitive dependencies.
+`sage-meta` parses and checks that model, including known subclass dispatch.
+This separates architectural dependency review from detailed Rust semantics.
+
+Consistency of the model is not proof that the Rust implementation conforms.
+Source links and existing query traces remain necessary evidence. The living
+contract and initial limitations are in
+[Architectural Pseudocode](./validation/architecture-language.md).

@@ -68,3 +68,9 @@ browser launch to the caller. The
 [Semantic Inspector architecture chapter](./design/validation/semantic-inspector.md)
 describes its symbol navigation, structural products, query evidence, and
 revision model.
+
+Compiler architecture can also be reviewed in `sage-src/`. Run
+`cargo run -p sage-meta -- sage-src` to check its declared method dependencies;
+see [Architectural Pseudocode](./design/validation/architecture-language.md)
+for the language and its current coverage. Generate an interactive explorer with
+`cargo run -p sage-meta -- browse`, then open `target/sage-browser.html`.
