@@ -70,8 +70,9 @@ describes its symbol navigation, structural products, query evidence, and
 revision model.
 
 Compiler architecture can also be reviewed in `sage-src/`. Run
-`cargo run -p sage-meta -- check --correspondence` to check declared method
-dependencies and their Rust annotations. Add `--json` for a structured report;
+`cargo run -p sage-meta -- check` to check declared method dependencies, their
+Rust annotations, and named specification paragraphs' test coverage. The same
+library check runs during workspace tests and CI. Add `--json` for a structured report;
 see [Architectural Pseudocode](./design/validation/architecture-language.md)
 for the language and its current coverage. Generate an interactive explorer with
 `cargo run -p sage-meta -- browse`, then open `target/sage-browser.html`.

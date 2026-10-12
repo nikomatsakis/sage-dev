@@ -1,6 +1,11 @@
 //! Compile an isolated real Salsa database, keeping test-only architecture out
 //! of the production corpus and dependency graph.
+#![feature(register_tool)]
+#![register_tool(sage)]
+
 #[test]
+#[sage::test(meta.calls.declared)]
+#[sage::test(meta.calls.forbidden)]
 fn real_salsa_contract_fixture() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let fixture = root.join("tests/fixtures/contracts");

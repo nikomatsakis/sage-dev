@@ -1,3 +1,6 @@
+#![feature(register_tool)]
+#![register_tool(sage)]
+
 use sage_meta::{Declaration, Effect, Header, parse, validate};
 
 fn check(body: &str) -> Vec<sage_meta::Diagnostic> {
@@ -39,6 +42,8 @@ fn parses_prose_paths_and_contexts_into_ast() {
 }
 
 #[test]
+#[sage::test(meta.model.forbidden_paths)]
+#[sage::test(meta.model.virtual_dispatch)]
 fn detects_virtual_dispatch_path_to_forbidden_body() {
     let errors = check(
         r#"
@@ -66,6 +71,7 @@ fn detects_virtual_dispatch_path_to_forbidden_body() {
 }
 
 #[test]
+#[sage::test(meta.model.forbidden_paths)]
 fn permits_recursive_graph_without_forbidden_reachability() {
     assert!(
         check(
@@ -102,6 +108,7 @@ fn rejects_unknown_calls_and_missing_dependency() {
 }
 
 #[test]
+#[sage::test(meta.classes.abstract_complete)]
 fn rejects_cycles_and_incomplete_concrete_classes() {
     let errors = check(
         r#"
@@ -190,6 +197,7 @@ fn repository_model_is_consistent() {
 }
 
 #[test]
+#[sage::test(meta.model.inherited_prohibitions)]
 fn inherited_prohibitions_constrain_overrides() {
     let errors = check(
         r#"
@@ -295,6 +303,7 @@ fn checks_arity_scope_and_duplicate_members_in_value_types() {
 }
 
 #[test]
+#[sage::test(meta.classes.override_signature)]
 fn checks_nested_arguments_in_fields_results_and_overrides() {
     let errors = check(
         r#"
@@ -334,6 +343,19 @@ fn checks_nested_arguments_in_fields_results_and_overrides() {
         )
         .is_empty()
     );
+    let errors = check(
+        r#"
+        class Base { """Base.""" fn value() -> Value { """Get.""" envelope {} } }
+        class Child extends crate::Base { """Child."""
+            override query value() -> Value { """Get.""" envelope {} }
+        }
+    "#,
+    );
+    assert!(errors.iter().any(|error| {
+        error
+            .message
+            .contains("preserve method kind and result type")
+    }));
 }
 
 #[test]

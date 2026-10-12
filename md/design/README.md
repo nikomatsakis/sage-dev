@@ -27,11 +27,15 @@ cross-cutting implementation slices.
 
 ## Reading design anchors
 
-The chapters place stable design anchors such as `EXP-A1` or `TIR-A2` beside
-the key, non-obvious rules of the system. Each anchor has two parts:
-
-- a destination invariant which the implementation must preserve; and
-- **Required verification** describing the evidence needed to establish it.
+New specification paragraphs have meaningful names such as
+`meta.calls.declared`, introduced by the custom Markdown role
+<code>{anchor}&#96;meta.calls.declared&#96;</code>. Each paragraph states one testable rule.
+Rust tests link to those names with `#[sage::test(meta.calls.declared)]`, and
+`sage-meta check` requires a test for every named specification paragraph.
+The [architectural pseudocode chapter](./validation/architecture-language.md)
+is the first converted specification. Existing numbered anchors such as
+`EXP-A1` retain their destination rule and **Required verification** until
+their chapters are converted.
 
 An anchor does not by itself claim that Sage already satisfies the rule. The
 chapter's **Current Status** section links the evidence which exists today and

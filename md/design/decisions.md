@@ -436,8 +436,19 @@ The body-checking consequence is
 Compiler architecture is reviewable through `.sage` declarations organized by
 crate, symbol, context, and method. Method prose describes intent; structured
 envelopes declare permitted calls and forbidden transitive dependencies.
-`sage-meta` parses and checks that model, including known subclass dispatch.
-This separates architectural dependency review from detailed Rust semantics.
+`sage-meta` is the shared build and validation layer connecting Markdown
+specifications, `.sage` declarations, and Rust. Its public library validates
+model consistency, including known subclass dispatch, Rust correspondence, and
+named specification rules' test references. CLI, CI, and workspace Cargo tests
+invoke the same check. This separates architectural dependency review from
+detailed Rust semantics.
+
+Specification paragraphs use meaningful, stable names with
+<code>{anchor}&#96;meta.calls.declared&#96;</code> markers. Inert
+`#[sage::test(meta.calls.declared)]` attributes connect tests to those rules.
+Every declared rule has a test and every test reference resolves; source
+coverage does not establish execution or assertion quality. Fine-grained
+paragraphs replace numbered callouts as rules and their tests are migrated.
 
 Rust declares correspondence with inert `#[sage::item(...)]` tool attributes.
 Every modeled crate/module, named declaration, and declared method has a

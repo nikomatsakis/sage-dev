@@ -1,8 +1,10 @@
 # Implementation plan and status
 
 **Accepted; first infrastructure implemented.** Correspondence migration is
-complete for the current corpus. `check --correspondence --json` reports source
-coverage independently from executable declarations. The isolated Salsa fixture
+complete for the current corpus. Default `check --json` reports model,
+Rust-correspondence, and specification-test checks separately, with source
+coverage independent from executable declarations. A public library check is
+shared by CLI, CI, and a workspace Cargo test. The isolated Salsa fixture
 and explicit-event tests establish the initial runtime checker; broad compiler
 acceptance, automatic session initialization, async propagation, browser replay,
 and agent transports are still pending. Checked boxes describe completed work,
@@ -11,6 +13,29 @@ not blanket completion of their containing stage.
 Evidence lives in `crates/sage-meta/tests/correspondence.rs`, `cli.rs`,
 `runtime_contracts.rs`, and `contracts.rs` plus its isolated fixture and reviewed
 `expected/` files. Reproduce the core checks with `cargo test -p sage-meta`.
+
+## Shared build-time check and specification anchors
+
+- [x] Expose `sage_meta::check(workspace_root)` and a report whose
+      `ensure_valid()` rejects model, correspondence, or specification errors.
+      Keep full checking of a selected model directory through `check_model`;
+      retain model-only loading/validation and the legacy positional CLI.
+- [x] Make `cargo run -p sage-meta -- check` run all three checks by default,
+      invoke it in the CI runner, and call the library from a Cargo integration
+      test with a manifest-relative workspace path.
+- [x] Parse named specification paragraphs and inert `#[sage::test(...)]`
+      references. Reject malformed/duplicate anchors, uncovered rules, and
+      dangling or misplaced references; exclude Markdown code examples.
+- [x] Render named paragraphs in mdBook using the same parser. Migrate the
+      architectural-language chapter's class, model-path, and runtime-call
+      rules with focused language/runtime tests, preserving the `meta-a1` link.
+
+**Evidence boundary:** Eligible evidence consists of non-ignored `#[test]`
+functions in Cargo targets with tests and the standard harness enabled. These
+checks inventory declarations across cfg alternatives without evaluating cfg. A passing report establishes the reference graph, not that every
+annotated test executed or that its assertions are sufficient. Runtime
+conformance remains a separate checked session. Other numbered book anchors
+have not been automatically migrated.
 
 ## Stage 0: Prove source-index matching against Salsa
 
@@ -82,9 +107,10 @@ mapping is removed yet.
       and module anchors, and logical `mod r#abstract {}` anchors. Map abstract
       interfaces and external/primitive representations without inventing
       corresponding concrete Rust types.
-- [ ] Add model manifests for runtime/support crates and update affected
-      logical dependencies as those crates are introduced. Verify the tooling
-      can describe itself without introducing Cargo dependency cycles.
+- [ ] Expand the tooling's own model to describe correspondence, workspace
+      checks, and runtime contracts. These facilities live in `sage-meta`;
+      no separate runtime-crate manifest is needed. Avoid compiler dependency
+      cycles while refining that model.
 - [x] Treat multiple implementation sites as intentional. Review broad
       grouped operations against real code; refine the model where necessary.
       Keep recursion explicit in envelopes.
@@ -110,9 +136,9 @@ Annotation-only compiler builds remain behaviorally unchanged.
 
 ## Stage 3: Runtime contract sessions and checking engine
 
-- [ ] Expose resolved model/dispatch APIs in `sage-meta`; keep serving support
-      optional for runtime library consumers. Add a runtime crate depending on
-      this API, with no compiler dependency.
+- [x] Expose resolved model/dispatch APIs and the runtime contract engine in
+      the `sage-meta` library, with no compiler dependency.
+- [ ] Keep serving dependencies optional for runtime library consumers.
 - [ ] Implement immutable session loading, model discovery, caching, digest,
       and actionable initialization failures ([SC-A2](./README.md#sc-a2)).
       Load the Rust index alongside contracts, require source/build compatibility,
@@ -136,8 +162,9 @@ Annotation-only compiler builds remain behaviorally unchanged.
 inherited prohibitions, recursion, dispatch, and persistent violations/gaps.
 The explicit-event tests cover these rules and malformed boundaries. Source
 loading is reusable, but process-wide cache/discovery, digesting, automatic
-initialization, optional HTTP dependencies, and a separate runtime crate remain
-unimplemented. No automatic ordinary-function instrumentation is claimed.
+initialization, and optional HTTP dependencies remain unimplemented. Runtime
+support stays in `sage-meta`; a separate runtime crate is no longer planned.
+No automatic ordinary-function instrumentation is claimed.
 
 **Exit:** Focused event fixtures demonstrate both passing and forbidden paths.
 Coverage identifies uninstrumented categories; full compiler enforcement is

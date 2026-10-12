@@ -4,6 +4,10 @@ authors = ["Niko Matsakis"]
 language = "en"
 src = "md"
 
+[preprocessor.spec]
+command = "cargo run --quiet -p sage-meta -- preprocess"
+before = ["anchor"]
+
 [preprocessor.anchor]
 command = "mdbook-ezanchor"
 scan-dirs = ["src", "crates", "vendor"]
@@ -15,6 +19,7 @@ optional = true
 
 [output.html]
 additional-js = ["mermaid.min.js", "mermaid-init.js"]
+additional-css = ["spec-anchors.css"]
 
 [output.html.fold]
 enable = true

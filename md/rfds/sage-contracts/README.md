@@ -2,8 +2,10 @@
 
 **Status: Accepted; implementation in progress.** Source correspondence and the
 browser have migrated to inert Rust attributes. A shared checking engine and
-isolated real Salsa fixture establish the first runtime infrastructure. Broad
-compiler enforcement, walkthrough replay, and agent integration remain staged
+isolated real Salsa fixture establish the first runtime infrastructure. The
+shared workspace check also validates named Markdown specification rules and
+their test references, and runs in CI and Cargo tests. Broad compiler
+enforcement, walkthrough replay, and agent integration remain staged
 work; see [Implementation plan and status](./implementation.md).
 
 ## Motivation
@@ -92,20 +94,53 @@ and labels abstract markers. Remove `#[rust]` parsing, AST nodes, and old
 resolution heuristics after the repository corpus has migrated; temporary dual
 support exists only to make the migration reviewable.
 
+## Shared validation and specification tests
+
+`sage-meta` owns the build-time correspondence checks among Markdown
+specifications, `.sage` declarations, and Rust. A public
+`check(workspace_root)` returns a report containing model consistency, source
+correspondence, and specification-test coverage; `ensure_valid()` rejects
+errors. The default CLI `check` command, CI runner, and workspace Cargo
+integration test use this same library entry point. `check_model(model_root)`
+selects a model directory and performs the full check in its containing
+workspace. Model-only consumers retain the legacy positional CLI invocation
+and the library's `workspace::load_documents` and `validate` APIs.
+
+Use a custom MyST-style <code>{anchor}&#96;meta.calls.declared&#96;</code> marker at the start
+of a specification paragraph and an inert `#[sage::test(meta.calls.declared)]`
+attribute on each test covering it. Names describe independently testable rules
+and do not depend on paragraph order. Each anchor has at least one test; all
+test references resolve to a rule and occur on tests. Duplicate/malformed
+anchors, missing tests, and dangling/misplaced references fail the shared check.
+Tests may cover multiple rules across crate boundaries. Evidence must be a
+non-ignored module-level function with the built-in `#[test]` attribute in a
+Cargo target with tests and the standard harness enabled; `test = false` and `harness = false` targets cannot supply it.
+The inventory includes cfg alternatives without claiming those tests executed
+or their assertions are sufficient. A small mdBook preprocessor renders these markers with the same
+parser; full MyST support is unnecessary.
+
+The first migration covers the architectural-language chapter and its existing
+language/runtime tests. Existing numbered rules elsewhere in the book retain
+their links and evidence. This extends source correspondence without weakening
+the distinct runtime coverage requirement.
+
 ## Runtime model and crate boundaries
 
-Proposed dependency direction (runtime crate name is provisional):
+Runtime checking belongs to the `sage-meta` library alongside its model,
+source-index, and workspace-check APIs:
 
 ```mermaid
 flowchart TD
-    Compiler[Compiler crates and Salsa callbacks] --> Runtime[sage-contracts runtime]
-    Runtime --> Meta[sage-meta model and source-index API]
+    CI[CLI, CI, and workspace tests] --> Meta[sage-meta library]
+    Compiler[Compiler crates and Salsa callbacks] --> Meta
+    Meta --> Model[Markdown, .sage, and Rust source]
 ```
 
 Correspondence annotations add no Cargo dependency and can be used by
-`sage-meta` itself or a future proc-macro crate without bootstrap cycles. The
-runtime depends on `sage-meta`, never on `sage-ir`. HTTP/browser dependencies
-should be optional for model-library consumers.
+`sage-meta` itself or a future proc-macro crate without bootstrap cycles.
+`sage-meta` never depends on `sage-ir`; its Salsa adapter is optional.
+HTTP/browser dependencies should also be optional for model-library consumers.
+A separate runtime crate is no longer part of the plan.
 
 Inert annotations do not instrument ordinary functions. A separate opt-in
 mechanism must eventually supply their entry/exit events. Its implementation

@@ -1,3 +1,6 @@
+#![feature(register_tool)]
+#![register_tool(sage)]
+
 use std::sync::Arc;
 
 use sage_meta::contracts::{
@@ -34,6 +37,8 @@ class Leaf { """Final."""
 "#;
 
 #[test]
+#[sage::test(meta.calls.declared)]
+#[sage::test(meta.calls.forbidden)]
 fn reports_direct_and_ancestor_violation_with_complete_path_and_rule() {
     let mut session = session(model(FORBIDDEN), &["Root::run"]);
     let root = session.enter("demo::Root::run", Some("root:1"));
@@ -86,6 +91,7 @@ fn repeated_roots_are_independent_and_models_are_shared_immutably() {
 }
 
 #[test]
+#[sage::test(meta.calls.declared)]
 fn same_operation_entry_is_recursion_and_needs_permission() {
     let leaf = r#"class Tree { """Tree.""" fn walk() -> u32 { """Walk.""" envelope {} } }"#;
     let mut denied = session(model(leaf), &["Tree::walk"]);
@@ -279,6 +285,7 @@ fn internal_reexecution_establishes_context_without_fabricating_a_call() {
 }
 
 #[test]
+#[sage::test(meta.calls.forbidden)]
 fn internal_reexecution_cannot_bypass_an_active_ancestor_prohibition() {
     let mut session = session(model(FORBIDDEN), &["Root::run"]);
     let root = session.enter("demo::Root::run", None);

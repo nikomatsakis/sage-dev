@@ -1,14 +1,17 @@
 #![feature(register_tool)]
 #![register_tool(sage)]
-//! Parser and conservative dependency checker for Sage's architectural language.
+//! Build-time correspondence checks and runtime contracts for Sage's design.
 mod browser;
+pub mod check;
 pub mod contracts;
 pub mod correspondence;
 mod parser;
 #[cfg(feature = "salsa")]
 pub mod salsa_contracts;
+pub mod spec;
 pub mod workspace;
 pub use browser::{render_browser, render_browser_with_workspace};
+pub use check::{CheckReport, check};
 mod validate;
 
 pub use parser::parse;

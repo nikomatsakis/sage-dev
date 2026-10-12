@@ -9,10 +9,18 @@ as `$sage_ir::symbols::FnSymbol::signature` starts in another crate;
 Run from the repository root:
 
 ```sh
-cargo run -p sage-meta -- check --correspondence
-cargo run -p sage-meta -- check --correspondence --json
+cargo run -p sage-meta -- check
+cargo run -p sage-meta -- check --json
 cargo test -p sage-meta
+cargo test --all --workspace
 ```
+
+`check` validates model consistency, Rust source correspondence, and named
+Markdown specification rules and their `#[sage::test(...)]` references. CI runs
+this command; a workspace integration test invokes the same public
+`sage_meta::check(workspace_root)` library entry point and rejects errors with
+`ensure_valid()`. Runtime checking uses that crate's shared resolved model and
+contract engine, but this source check does not execute compiler queries.
 
 Methods begin with triple-quoted intent and have structured envelopes:
 
@@ -224,8 +232,12 @@ source links as well as type/class declarations.
 
 The source snapshot does not evaluate cfg or expand arbitrary macros. Regenerate
 the HTML after Rust edits. No source server is required. Deleting or misspelling
-an anchor fails `check --correspondence`; checking a model alone remains
-available with `check` or the legacy positional model-directory command.
+an anchor fails `check`; `check --correspondence` remains a compatible spelling.
+`check path/to/sage-src` and the library's `check::check_model(model_root)` select
+a model directory and still perform all checks in its containing workspace.
+Model-only checking remains available with the legacy positional command
+`sage-meta path/to/sage-src`, or `workspace::load_documents` followed by
+`validate` in the library.
 
 ### Contract infrastructure tests
 

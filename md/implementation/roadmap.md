@@ -605,7 +605,9 @@ operations, checks their declared permissions, and supplies a browser walkthroug
 from the same evidence. Every model correspondence unit has a crate-correct
 Rust `#[sage::item]` anchor; marker modules cover abstract concepts. Unexpected
 calls fail checked tests rather than becoming silent gaps or automatically
-permitted model changes.
+permitted model changes. Named Markdown specification paragraphs connect those
+rules to Rust tests; the shared `sage-meta` library checks these correspondences
+in CI and normal workspace test runs.
 
 **Scope and dependencies:** Builds on the review language above and the
 Semantic Inspector's production provider and Salsa events. A source-index
@@ -624,10 +626,15 @@ then expose MCP tools and ACP-backed design/explanation workflows.
 **Progress: Accepted, first infrastructure implemented.** The Rust correspondence
 index covers crate/module headers, declarations, and declared methods; the
 browser now derives links from that index and `.sage` Rust-origin annotations
-are removed. `check --correspondence --json` distinguishes model validity,
-source coverage, and executable-declaration coverage. An immutable resolved
-contract engine and isolated real Salsa fixture check expected traversals and
-forbidden requests, including cached requests and internal reexecution.
+are removed. Default `check --json` distinguishes model validity, Rust source
+coverage, executable-declaration coverage, and named specification/test
+coverage. The shared `sage_meta::check` entry point is called by the CLI and a
+workspace integration test; the CI runner executes
+`cargo run -p sage-meta -- check`. The architectural-language chapter introduces
+fine-grained named rules and inert `#[sage::test(...)]` links. Other numbered book anchors retain their
+existing evidence until deliberately migrated. An immutable resolved contract
+engine and isolated real Salsa fixture check expected traversals and forbidden
+requests, including cached requests and internal reexecution.
 
 See [Sage Contracts and Walkthroughs](../rfds/sage-contracts/README.md) and its
 [staged implementation plan](../rfds/sage-contracts/implementation.md). Full

@@ -2,8 +2,11 @@
 
 The `.sage` language exposes the compiler as symbols, contexts, and methods.
 Each method states its intent in triple-quoted prose and its allowed dependencies
-in a structured envelope. `sage-meta` parses that description into an AST and
-checks the declared architecture independently of executing Rust semantics.
+in a structured envelope. `sage-meta` is the shared build and validation layer
+for correspondence among Markdown specifications, `.sage` models, and Rust.
+Its library checks declared structure at build time and observed calls during
+runtime sessions; the CLI, Cargo tests, CI, and browser use those same rules.
+It does not execute Rust semantic specifications.
 
 This review layer follows [D21](../decisions.md#d21-architectural-pseudocode-has-checkable-dependency-envelopes).
 Rust semantic rules, potentially specified in a-mir-formality, are separate from
@@ -27,12 +30,20 @@ libraries are currently outside the modeled crate graph.
 ## Objects and operations
 
 Classes support a single base class. An abstract class can declare abstract
-methods; concrete subclasses must implement them. Overrides preserve the
-operation kind and result type. Contexts hold computation-local working state
-and may inherit only from contexts. Fields distinguish identity, changing input,
-and context state. Queries identify memoized semantic products; `fn` identifies
-ordinary computation. These annotations document boundaries; the model itself
-has no evaluator or cache.
+methods.
+
+{anchor}`meta.classes.abstract_complete`
+A concrete class must implement every inherited abstract method.
+
+{anchor}`meta.classes.override_signature`
+An overriding method must preserve the inherited method's operation kind and
+resolved result type.
+
+Contexts hold computation-local working state and may inherit only from
+contexts. Fields distinguish identity, changing input, and context state.
+Queries identify memoized semantic products; `fn` identifies ordinary
+computation. These annotations document boundaries; the model itself has no
+evaluator or cache.
 
 Each method starts with prose, followed by an envelope containing:
 
@@ -48,18 +59,24 @@ An empty envelope is a leaf in this model. Prose can describe internal work at
 that abstraction level, but modeled calls must be declared explicitly. Calls
 are permissions, not a list of required executions or an execution sequence.
 Direct permissions produce the call graph; indirect dependencies are derived.
-Prohibitions are inherited by overriding implementations.
 
 <a id="meta-a1"></a>
-> **META-A1 — Dependency envelopes are checked conservatively.** The checker
-> resolves every declared dependency and expands virtual dispatch to all known
-> implementations in the supplied model. No permitted nonempty path may reach
-> a transitively forbidden operation. Rejected paths include the offending
-> method sequence so a reviewer can inspect the contradiction.
->
-> **Required verification:** Tests cover direct, indirect, recursive, inherited,
-> cross-crate, and overriding method calls, unknown references, and a base
-> prohibition violated by an override.
+
+{anchor}`meta.model.forbidden_paths`
+No permitted nonempty call path may reach a transitively forbidden operation.
+A rejected path identifies the offending method sequence.
+
+{anchor}`meta.model.virtual_dispatch`
+The checker resolves declared calls conservatively, including every known
+overriding implementation in the supplied model.
+
+{anchor}`meta.model.inherited_prohibitions`
+An overriding implementation inherits the prohibitions of the base method.
+
+Prohibitions record design intent even when the permitted graph already
+excludes the target. Adding a permitted edge must still fail validation if it
+creates a forbidden path. The `meta-a1` link remains an alias for this group of
+rules, formerly presented as META-A1.
 
 ## Semantic value types
 
@@ -149,11 +166,24 @@ crates retain their doctests.
 ## Observed contracts
 
 An immutable resolved contract model shares the name/dispatch rules of static
-validation. A session checks explicit operation entries against direct call
-permissions and all active ancestor prohibitions. Entry into the same operation
-again counts as recursion. Receiver-sensitive permissions require semantic
-receiver identity; missing identity remains an observation gap. Query-engine
-internal reexecution installs context without fabricating a source call.
+validation. A session starts from explicitly allowed root operations.
+
+{anchor}`meta.calls.declared`
+Every observed architectural call must be permitted by its caller's resolved
+dependency envelope. An undeclared call is an error, including recursive entry
+into the same operation and requests satisfied from a query cache.
+
+{anchor}`meta.calls.forbidden`
+An observed operation must not violate a prohibition of any active ancestor,
+even when its immediate caller permits the call. A violation is an error and
+retains the prohibition and complete call path.
+
+Receiver-sensitive permissions require semantic receiver identity; missing
+identity remains an observation gap. Query-engine internal reexecution installs
+context without fabricating a source call, while retaining ancestor prohibitions.
+Violations remain in the session report; checked callers reject them at the
+report boundary with `assert_calls_conform()`. Salsa callbacks record violations
+without unwinding through query-engine lifecycle handling.
 
 A Salsa adapter joins structured query source provenance to the Rust index,
 then feeds request and execution events into that session. Cached requests still
@@ -192,24 +222,108 @@ is escaped for HTML script embedding and all model-derived text is escaped
 when rendered. Browser code lives in `crates/sage-meta/web/`; `src/browser.rs`
 is the export boundary, and `main.rs` provides the command.
 
+## Specification tests and workspace checks
+
+A specification paragraph can start with a named marker, using the custom
+MyST-style inline-role syntax:
+
+```text
+{anchor}`meta.calls.declared`
+Every observed architectural call must be permitted by its caller's resolved
+dependency envelope.
+```
+
+The marker and its prose form one paragraph: do not leave a blank line between
+them. Names are dot-separated ASCII identifiers, describe independently testable
+behavior, and stay stable when text moves. The book's `sage-meta` preprocessor
+renders a shield-style badge with a `spec` label and the rule's name. Each badge
+links directly to its paragraph; following a fragment link highlights the badge.
+The HTML and stylesheet are local, so badges work offline without an image
+service. The preprocessor does not implement the rest of MyST. Fenced examples, inline code,
+and the existing ezanchor excerpt blocks do not declare specification anchors.
+
+Tests identify their rules with inert attributes:
+
+```rust,ignore
+#[test]
+#[sage::test(meta.calls.declared)]
+#[sage::test(meta.calls.forbidden)]
+fn reports_direct_and_ancestor_violation_with_complete_path_and_rule() {
+    // Assert the observed edge and the violated ancestor's prohibition.
+}
+```
+
+{anchor}`meta.spec.unique_names`
+Every specification anchor must have a well-formed name that is unique across
+the Markdown corpus. Malformed markers and duplicate names are errors.
+
+{anchor}`meta.spec.test_coverage`
+Every specification anchor must have at least one annotated Rust test. An
+anchor without a test is an error.
+
+{anchor}`meta.spec.test_references`
+Every `#[sage::test(...)]` reference must resolve to an existing specification
+anchor and be attached to a Rust test. Dangling and misplaced references are
+errors.
+
+One test can cover several rules and a rule can have several tests. Unlike
+`sage::item`, a test may reference a rule across crate boundaries. Eligible
+evidence is a module-level function with the built-in `#[test]` attribute in a
+Cargo target with tests and the standard test harness enabled. Targets with `test = false` or `harness = false`
+and unconditionally or conditionally ignored tests cannot satisfy a rule. The source inventory records cfg
+conditions without evaluating them; an annotation proves neither that a test
+ran in this build nor that its assertions establish the rule. Running and
+reviewing those tests remain separate evidence.
+
+The library entry point `sage_meta::check(workspace_root)` loads `sage-src`,
+the Cargo-owned Rust source index, and the Markdown specifications under `md/`.
+Its `CheckReport` separates model consistency, Rust correspondence, and
+specification-test coverage. A missing `md/` corpus is an error, not an empty
+successful check. `ensure_valid()` rejects any validation errors.
+`sage_meta::check::check_model(model_root)` performs the same full check for a
+selected model directory, locating the containing Cargo workspace and its
+`md/` corpus. Neither entry point runs compiler queries or treats source
+coverage as runtime conformance. Model-only library consumers can call
+`workspace::load_documents` followed by `validate`.
+
+The CLI's default `cargo run -p sage-meta -- check` invokes this shared workspace
+check. The CI runner executes that command, and a Cargo integration test calls
+the library with a workspace path derived from its manifest directory, so
+`cargo test --all --workspace` performs the same checks regardless of its working
+directory. Runtime contract tests separately exercise observed enforcement.
+
 ## Verification authority
 
-Model consistency does not prove Rust conformance. In particular, an omitted
-edge can conceal a dependency that exists in Rust. Source review and the
-[query-boundary evidence](../infrastructure/incrementality.md) are needed to
-establish correspondence. Type and trait algorithms remain prose boundaries;
-a formal semantics integration is prospective.
+Model consistency, source correspondence, specification-test coverage, and
+observed runtime conformance answer different questions. An omitted `.sage`
+edge can leave the static model consistent; the runtime checker reports an
+error if that edge is observed. Full implementation conformance additionally
+requires every relevant boundary to be observed. A source annotation alone
+cannot establish that coverage. See the runtime evidence and limitations below
+and the [query-boundary evidence](../infrastructure/incrementality.md).
+Type and trait algorithms remain prose boundaries; a formal semantics
+integration is prospective.
 
 ## Current status
 
-`sage-meta` provides a lexer, parser, public AST, validation API,
-and command-line validator/exporter. Diagnostics identify source byte ranges. Run:
+`sage-meta` provides a lexer, parser, public AST, shared workspace check API,
+runtime contract engine, and command-line validator/exporter. Diagnostics
+identify source locations. Run:
 
 ```sh
-cargo run -p sage-meta -- check --correspondence
-cargo run -p sage-meta -- check --correspondence --json
+cargo run -p sage-meta -- check
+cargo run -p sage-meta -- check --json
 cargo test -p sage-meta
+cargo test --all --workspace
 ```
+
+The default check covers the repository model, Rust correspondences, and named
+specification paragraphs and their tests. CI and the workspace integration test
+use the same public library path. `check --correspondence` remains a compatible
+spelling of the full check. `check path/to/sage-src` selects a model directory
+but still requires its containing Cargo workspace and documentation. The legacy
+positional invocation `sage-meta path/to/sage-src` validates an isolated model
+without those requirements.
 
 The corpus describes the core compiler demand graph and manifests for all
 workspace crates. Supporting service operations are summarized, while derive
@@ -218,13 +332,19 @@ an architectural abstraction: for example `signature` maps to `sig`, external
 subclasses model enum dispatch, and `BodyCheck` groups expression and pattern
 checking implementations. It is not an exhaustive extraction of Rust calls.
 
-`crates/sage-meta/tests/language.rs` exercises META-A1, AST parsing, source ranges,
-manifest/module checks and consistency of the repository corpus.
+`crates/sage-meta/tests/language.rs` supplies annotated tests for abstract-method
+completeness, override compatibility, forbidden paths, virtual dispatch, and
+inherited prohibitions. It also exercises AST parsing, source ranges,
+manifest/module checks, and consistency of the repository corpus. The named
+paragraphs on this page are the initial checked specification; older numbered
+anchors elsewhere in the book have not been migrated automatically.
 `tests/correspondence.rs` checks missing/dangling/wrong-crate anchors, kind
 compatibility, cfg alternatives, multiple Cargo targets, explicit module paths,
 generator inputs, ambiguous/unmapped sites, nested functions, unsupported
-placements, and source snapshot mismatches. `tests/cli.rs` verifies separate
-model/correspondence reports and failure exit status. Initial
+placements, and source snapshot mismatches. CLI and workspace-check tests
+verify the shared report and failure exit status. Specification fixtures check
+invalid markers, duplicate or missing rules, invalid test references, and
+Markdown examples that must not count as declarations. Initial
 syntax supports one module level, structs and enums, opaque generic types,
 nested type applications, and argument-free method references. Value-type tests
 cover prose preservation, recursive structures, generic scope and arity,
@@ -258,9 +378,11 @@ source declaration is not, by itself, proof of runtime instrumentation.
 
 ### Contract infrastructure evidence
 
-`tests/runtime_contracts.rs` exercises the shared checking engine with explicit
-roots, recursion, interface dispatch, inherited prohibitions, receiver checks,
-unbalanced events, and visible unchecked effects. Violations retain both the
+`tests/runtime_contracts.rs` supplies annotated evidence for
+[`meta.calls.declared`](#meta.calls.declared) and
+[`meta.calls.forbidden`](#meta.calls.forbidden). It exercises the shared checking
+engine with explicit roots, recursion, interface dispatch, inherited
+prohibitions, receiver checks, unbalanced events, and visible unchecked effects. Violations retain both the
 undeclared edge and ancestor prohibition with their rule and complete path.
 
 `tests/contracts.rs` runs the isolated real Salsa fixture under

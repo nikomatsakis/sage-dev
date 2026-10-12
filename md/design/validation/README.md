@@ -10,6 +10,10 @@ every implementation detail.
   excerpts and semantic output.
 - Focused tests, readable snapshots, and query traces provide evidence for the
   claims in each architecture chapter's **Current Status** section.
+- [`sage-meta`](./architecture-language.md) checks correspondence among named
+  Markdown specification rules, `.sage` models, and Rust declarations/tests.
+  Its library supplies both build-time validation and runtime call checking;
+  CI and workspace tests use the shared validation entry point.
 - The [Semantic Inspector](./semantic-inspector.md) is the
   web-backed local and external symbol browser for concrete IR, signatures,
   Typed IR, and other semantic results. Source-driven tests exercise its live
@@ -94,8 +98,10 @@ observed frontier.
 
 - Review packets are established for selected expansion and body slices, not
   every positive capability claimed across the architecture guide.
-- No automated documentation audit yet proves VAL-A1 or the seven-element
-  completeness requirement in VAL-A3 across all chapters.
+- Named specification anchors in the architectural-language chapter have
+  checked test references. This inventories source coverage, not the adequacy
+  or execution of those tests. No automated audit yet proves VAL-A1 or the
+  seven-element completeness requirement in VAL-A3 across all chapters.
 
 ### Related roadmap slices
 

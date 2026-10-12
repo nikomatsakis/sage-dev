@@ -87,6 +87,7 @@ fn ci_test() -> Result<()> {
     let sh = Shell::new()?;
     let root = project_root();
     let _dir = sh.push_dir(&root);
+    cmd!(sh, "cargo run -p sage-meta -- check").run()?;
     cmd!(sh, "cargo test --all --workspace").run()?;
     println!("ci: all tests passed");
     Ok(())

@@ -52,6 +52,9 @@ pub struct RustSource {
 #[derive(Default, Debug, serde::Serialize)]
 pub struct CorrespondenceIndex {
     pub entries: BTreeMap<String, Vec<RustSite>>,
+    /// Test declarations linked to named specification paragraphs. This is a
+    /// source inventory, including cfg alternatives, not a record of test runs.
+    pub tests: BTreeMap<String, Vec<RustSite>>,
     pub files: BTreeMap<String, String>,
     pub diagnostics: Vec<Diagnostic>,
     #[serde(skip)]
@@ -132,10 +135,20 @@ struct Context {
     physical_parent: PathBuf,
     cfg: Vec<String>,
     macro_input: bool,
+    test_harness: bool,
+    inside_function: bool,
+    source_root: bool,
 }
 
 impl CorrespondenceIndex {
-    /// Inspect every library and binary target in a Cargo workspace, including cfg alternatives.
+    /// Cargo's actual workspace root; standalone in-memory fixtures have none.
+    pub fn workspace_root(&self) -> Option<&Path> {
+        self.workspace.as_deref()
+    }
+
+    /// Inspect library, binary, and integration-test targets, including cfg
+    /// alternatives. Cargo target settings determine whether annotated tests
+    /// belong to a test harness.
     pub fn load(workspace: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         #[derive(serde::Deserialize)]
         struct Metadata {
@@ -145,6 +158,7 @@ impl CorrespondenceIndex {
         #[derive(serde::Deserialize)]
         struct Package {
             name: String,
+            manifest_path: PathBuf,
             targets: Vec<Target>,
         }
         #[derive(serde::Deserialize)]
@@ -152,6 +166,7 @@ impl CorrespondenceIndex {
             name: String,
             kind: Vec<String>,
             src_path: PathBuf,
+            test: bool,
         }
         let output = std::process::Command::new("cargo")
             .args([
@@ -178,16 +193,32 @@ impl CorrespondenceIndex {
         };
         for package in metadata.packages {
             let crate_name = package.name.replace('-', "_");
+            let manifest: CargoTestSettings =
+                toml::from_str(&std::fs::read_to_string(&package.manifest_path)?)?;
             for target in package.targets {
                 if !target.kind.iter().any(|kind| {
                     matches!(
                         kind.as_str(),
-                        "lib" | "rlib" | "dylib" | "cdylib" | "staticlib" | "proc-macro" | "bin"
+                        "lib"
+                            | "rlib"
+                            | "dylib"
+                            | "cdylib"
+                            | "staticlib"
+                            | "proc-macro"
+                            | "bin"
+                            | "test"
                     )
                 }) {
                     continue;
                 }
                 let file = index.relative(&target.src_path)?;
+                let test_harness = target.test
+                    && manifest.uses_harness(
+                        &target.kind,
+                        &target.name,
+                        &target.src_path,
+                        &package.manifest_path,
+                    );
                 index.load_file(Context {
                     module: crate_name.clone(),
                     crate_name: crate_name.clone(),
@@ -197,6 +228,9 @@ impl CorrespondenceIndex {
                     physical_parent: PathBuf::new(),
                     cfg: Vec::new(),
                     macro_input: false,
+                    test_harness,
+                    inside_function: false,
+                    source_root: true,
                 })?;
             }
         }
@@ -224,6 +258,9 @@ impl CorrespondenceIndex {
                 physical_parent: PathBuf::new(),
                 cfg: Vec::new(),
                 macro_input: false,
+                test_harness: true,
+                inside_function: false,
+                source_root: true,
             };
             index.items(&syntax.items, &context)?;
             index.check_attributes(&syntax, &context);
@@ -453,10 +490,12 @@ impl CorrespondenceIndex {
         self.files.insert(context.file.clone(), source);
         let parent = path.parent().unwrap();
         context.physical_parent = parent.to_path_buf();
-        context.directory = match path.file_name().and_then(|name| name.to_str()) {
-            Some("lib.rs" | "main.rs" | "mod.rs") => parent.to_path_buf(),
-            _ => parent.join(path.file_stem().unwrap()),
-        };
+        context.directory =
+            if context.source_root || path.file_name().is_some_and(|name| name == "mod.rs") {
+                parent.to_path_buf()
+            } else {
+                parent.join(path.file_stem().unwrap())
+            };
         self.items(&syntax.items, &context)?;
         self.check_attributes(&syntax, &context);
         Ok(())
@@ -510,6 +549,7 @@ impl CorrespondenceIndex {
                             }
                         };
                         child.file = self.relative(&path)?;
+                        child.source_root = false;
                         self.load_file(child)?;
                     }
                 }
@@ -655,6 +695,25 @@ impl CorrespondenceIndex {
                 span: self.byte_span(context, span),
             });
         }
+        let mut cfg = context.cfg.clone();
+        cfg.extend(self.conditions(attrs, context));
+        let site = RustSite {
+            file: context.file.clone(),
+            line: span.start().line,
+            end_line: span.end().line,
+            column: span.start().column,
+            end_column: span.end().column,
+            rust_path: format!("{}::{}", context.module, ident(name)),
+            crate_name: context.crate_name.clone(),
+            target: context.target.clone(),
+            kind,
+            cfg,
+            macro_input: context.macro_input,
+            executable,
+            span: self.byte_span(context, span),
+            annotation_span: Span { start: 0, end: 0 },
+        };
+        self.record_tests(attrs, &site, context);
         let attributes: Vec<_> = attrs
             .iter()
             .filter(|attr| {
@@ -713,28 +772,69 @@ impl CorrespondenceIndex {
                 });
                 continue;
             }
-            let mut cfg = context.cfg.clone();
-            cfg.extend(self.conditions(attrs, context));
-            let source_span = self.byte_span(context, span);
             self.entries
                 .entry(parts.join("::"))
                 .or_default()
                 .push(RustSite {
-                    file: context.file.clone(),
-                    line: span.start().line,
-                    end_line: span.end().line,
-                    column: span.start().column,
-                    end_column: span.end().column,
-                    rust_path: format!("{}::{}", context.module, ident(name)),
-                    crate_name: context.crate_name.clone(),
-                    target: context.target.clone(),
-                    kind: kind.clone(),
-                    cfg,
-                    macro_input: context.macro_input,
-                    executable,
-                    span: source_span,
                     annotation_span,
+                    ..site.clone()
                 });
+        }
+    }
+    fn record_tests(&mut self, attrs: &[syn::Attribute], site: &RustSite, context: &Context) {
+        for attribute in attrs.iter().filter(|attribute| {
+            attribute.path().segments.len() == 2
+                && attribute.path().segments[0].ident == "sage"
+                && attribute.path().segments[1].ident == "test"
+        }) {
+            let annotation_span = self.byte_span(context, attribute.span());
+            self.recognized
+                .insert((context.file.clone(), annotation_span.start));
+            let result = (|| -> Result<String, String> {
+                let anchor = attribute
+                    .parse_args::<AnchorName>()
+                    .map_err(|_| {
+                        "#[sage::test] expects one dot-separated anchor name (for example, meta.calls.declared)"
+                            .to_owned()
+                    })?;
+                if site.kind != RustItemKind::Function
+                    || !attrs
+                        .iter()
+                        .any(|attribute| attribute.path().is_ident("test"))
+                    || context.inside_function
+                {
+                    return Err(
+                        "#[sage::test] must annotate a module-level #[test] function".into(),
+                    );
+                }
+                if !context.test_harness {
+                    return Err(
+                        "#[sage::test] cannot provide coverage in a target with test = false or harness = false"
+                            .into(),
+                    );
+                }
+                if attrs
+                    .iter()
+                    .any(|attribute| potentially_ignored(&attribute.meta))
+                {
+                    return Err(
+                        "#[sage::test] cannot provide coverage from an ignored or conditionally ignored test"
+                            .into(),
+                    );
+                }
+                Ok(anchor.0)
+            })();
+            match result {
+                Ok(anchor) => self.tests.entry(anchor).or_default().push(RustSite {
+                    annotation_span,
+                    ..site.clone()
+                }),
+                Err(message) => self.diagnostics.push(Diagnostic {
+                    file: context.file.clone(),
+                    span: annotation_span,
+                    message,
+                }),
+            }
         }
     }
     fn opaque_macro(&mut self, span: proc_macro2::Span, context: &Context) {
@@ -769,9 +869,11 @@ impl CorrespondenceIndex {
                 self.index.opaque_macro(mac.span(), self.context);
             }
         }
+        let mut context = context.clone();
+        context.inside_function = true;
         let mut nested = Nested {
             index: self,
-            context,
+            context: &context,
             error: None,
         };
         nested.visit_block(block);
@@ -809,7 +911,7 @@ impl CorrespondenceIndex {
             Ok(true) => self.diagnostics.push(Diagnostic {
                 file: context.file.clone(),
                 span: self.byte_span(context, attribute.span()),
-                message: "conditional Sage annotations and module paths in cfg_attr are unsupported; use unconditional #[sage::item] annotations on cfg-gated declarations".into(),
+                message: "conditional Sage annotations and module paths in cfg_attr are unsupported; use unconditional #[sage::item] or #[sage::test] annotations on cfg-gated declarations".into(),
             }),
             Err(error) => self.diagnostics.push(Diagnostic {
                 file: context.file.clone(),
@@ -830,7 +932,7 @@ impl CorrespondenceIndex {
                 .contains(&(context.file.clone(), span.start))
             {
                 self.diagnostics.push(Diagnostic { file: context.file.clone(), span,
-                    message: "unsupported Sage attribute or placement; use #[sage::item(...)] on a type, trait, module, function, or method".into() });
+                    message: "unsupported Sage attribute or placement; use #[sage::item(...)] on a type, trait, module, function, or method, or #[sage::test(...)] on a #[test] function".into() });
             }
         }
     }
@@ -888,6 +990,104 @@ fn ident(ident: &syn::Ident) -> String {
 }
 fn normalize(file: &str) -> String {
     file.replace('\\', "/").trim_start_matches("./").to_owned()
+}
+
+/// Cargo metadata exposes `test`, but not `harness`. Read that setting from
+/// the manifest so a source declaration in a custom runner cannot masquerade
+/// as a test executed by Rust's built-in harness.
+#[derive(Default, serde::Deserialize)]
+#[serde(default)]
+struct CargoTestSettings {
+    lib: Option<CargoTargetSettings>,
+    bin: Vec<CargoTargetSettings>,
+    test: Vec<CargoTargetSettings>,
+}
+
+#[derive(Default, serde::Deserialize)]
+#[serde(default)]
+struct CargoTargetSettings {
+    name: Option<String>,
+    path: Option<PathBuf>,
+    harness: Option<bool>,
+}
+
+impl CargoTestSettings {
+    fn uses_harness(&self, kind: &[String], name: &str, source: &Path, manifest: &Path) -> bool {
+        let settings = if kind.iter().any(|kind| kind == "test") {
+            &self.test
+        } else if kind.iter().any(|kind| kind == "bin") {
+            &self.bin
+        } else {
+            return self
+                .lib
+                .as_ref()
+                .and_then(|target| target.harness)
+                .unwrap_or(true);
+        };
+        settings
+            .iter()
+            .find(|target| {
+                target.name.as_deref().map_or_else(
+                    || {
+                        target.path.as_ref().is_some_and(|path| {
+                            manifest
+                                .parent()
+                                .unwrap()
+                                .join(path)
+                                .canonicalize()
+                                .ok()
+                                .as_deref()
+                                == Some(source)
+                        })
+                    },
+                    |target_name| target_name == name,
+                )
+            })
+            .and_then(|target| target.harness)
+            .unwrap_or(true)
+    }
+}
+
+struct AnchorName(String);
+
+impl Parse for AnchorName {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        use syn::ext::IdentExt;
+        let mut parts = Vec::new();
+        loop {
+            let component = input.call(syn::Ident::parse_any)?;
+            let name = component.to_string();
+            if !crate::spec::valid_anchor_name(&name) {
+                return Err(syn::Error::new(
+                    component.span(),
+                    "expected an ASCII identifier",
+                ));
+            }
+            parts.push(name);
+            if input.is_empty() {
+                return Ok(Self(parts.join(".")));
+            }
+            input.parse::<syn::Token![.]>()?;
+        }
+    }
+}
+
+fn potentially_ignored(meta: &syn::Meta) -> bool {
+    if meta.path().is_ident("ignore") {
+        return true;
+    }
+    let syn::Meta::List(list) = meta else {
+        return false;
+    };
+    if !list.path.is_ident("cfg_attr") {
+        return false;
+    }
+    let Ok(arguments) = list.parse_args_with(
+        syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+    ) else {
+        return true;
+    };
+    arguments.iter().skip(1).any(potentially_ignored)
 }
 
 /// Adapter for the exact `define_kind_symbols!` input grammar in sage-ir.

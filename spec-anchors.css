@@ -1,0 +1,65 @@
+/* Local shield-style permalinks for named specification paragraphs. */
+.content a.spec-anchor {
+    display: inline-flex;
+    max-inline-size: 100%;
+    margin-inline-end: 0.45em;
+    border-radius: 4px;
+    box-shadow: 0 1px 2px #0002;
+    color: #fff;
+    font: 12px/1.6 var(--mono-font, monospace);
+    text-decoration: none;
+    vertical-align: 0.1em;
+    scroll-margin-block-start: calc(var(--menu-bar-height, 50px) + 1.5rem);
+}
+
+.content a.spec-anchor:visited,
+.content a.spec-anchor:hover,
+.content a.spec-anchor:active {
+    color: #fff;
+    text-decoration: none;
+}
+
+.spec-anchor-label,
+.spec-anchor-name {
+    padding: 2px 8px;
+    background-image: linear-gradient(#ffffff14, #00000014);
+    text-shadow: 0 1px 1px #0003;
+}
+
+.spec-anchor-label {
+    flex: 0 0 auto;
+    border-radius: 4px 0 0 4px;
+    background-color: #48515c;
+    font-family: var(--font-family, sans-serif);
+}
+
+.spec-anchor-name {
+    min-inline-size: 0;
+    border-radius: 0 4px 4px 0;
+    background-color: #28688c;
+    overflow-wrap: anywhere;
+}
+
+.spec-anchor:hover .spec-anchor-name {
+    background-color: #205675;
+}
+
+.content a.spec-anchor:focus-visible,
+.content a.spec-anchor:target {
+    outline: 2px solid var(--links, #28688c);
+    outline-offset: 3px;
+}
+
+@media print {
+    .content a.spec-anchor {
+        border: 1px solid #888;
+        box-shadow: none;
+    }
+
+    .spec-anchor-label,
+    .spec-anchor-name {
+        background: none;
+        color: #222;
+        text-shadow: none;
+    }
+}

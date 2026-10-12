@@ -163,8 +163,12 @@ boundaries merely because they are important steps in the algorithm.
 
 The [architectural pseudocode](./validation/architecture-language.md) in
 `sage-src/` offers a symbol-and-method view with checkable dependency envelopes.
-Its initial model summarizes the central demand graph; consistency of the model
-is distinct from conformance of the Rust implementation.
+Its initial model summarizes the central demand graph. `sage-meta` is the
+shared build and validation layer for Markdown specifications, `.sage` models,
+and Rust: it checks source correspondences and named rules' test references and
+provides the runtime contract engine. Its public check runs in CI and workspace
+Cargo tests. Model consistency, source coverage, and observed runtime
+conformance remain separate claims.
 
 The architecture is meant to be reviewable at increasing depth:
 

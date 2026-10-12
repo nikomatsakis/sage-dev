@@ -79,12 +79,31 @@ When a change touches more than one row, update all of them in the same change.
   describe unimplemented destination design. Put statements about what exists
   today, current limitations, and related slices in a final **Current Status**
   section.
-- **Give load-bearing chapter rules stable design anchors.** Place an anchor
-  immediately after the explanation which makes it intelligible. Use a
-  chapter-specific code such as `EXP-A1` or `TIR-A2`, state one crisp
-  destination invariant, and follow it with **Required verification**. Anchor
-  only non-obvious rules whose violation would materially change the design;
-  do not label summaries, routine descriptions, or every paragraph.
+- **Write specification rules as independently testable paragraphs.** Prefer
+  fine-grained rules with meaningful, stable names over numbered callouts.
+  Prefix a rule with a custom MyST-style marker such as
+  <code>{anchor}&#96;meta.calls.declared&#96;</code>, followed by its prose in the same
+  paragraph. Put no blank line between the marker and prose. Split rules that
+  can fail independently; keep closely related clauses together when one test
+  can explain their guarantee. Ordinary headings and explanatory paragraphs
+  need no specification marker.
+- **Connect each specification anchor to a test.** Annotate Rust tests with
+  `#[sage::test(meta.calls.declared)]`, using the anchor's exact name. Every
+  named specification rule requires at least one test; every annotation must
+  name an existing rule and appear on a module-level function with the built-in
+  `#[test]` attribute in a Cargo target with tests and the standard harness
+  enabled. `test = false`, `harness = false`, and ignored or conditionally
+  ignored tests cannot supply evidence. Several tests
+  can cover a rule, and a test can cover several rules. `sage-meta check` rejects malformed or
+  duplicate markers and broken or absent test references. It inventories source
+  across cfg alternatives, so a mapping does not establish that the test ran
+  or that its assertions are adequate. Review the assertions and run the tests.
+  Fenced and inline examples are not declarations.
+- **Migrate existing anchors deliberately.** Older anchors such as `EXP-A1`
+  remain valid links and retain their Current Status evidence until their
+  paragraphs and tests are migrated together. Keep an old HTML anchor as an
+  alias when replacing a public link. The named-rule syntax is rendered by
+  `sage-meta`'s mdBook preprocessor; it does not require full MyST support.
 - **Keep an anchor's requirement separate from its present evidence.** The
   anchor says what must be verified even when the destination is not yet
   implemented. The chapter's **Current Status** section says whether it is
@@ -107,7 +126,9 @@ When a change touches more than one row, update all of them in the same change.
   lands, move its destination rules and required verification into the
   relevant architecture chapters, retaining stable anchor codes when they
   remain meaningful. The completed RFD records history; the architecture
-  chapter becomes authoritative for the living design and evidence.
+  chapter becomes authoritative for the living design and evidence. When
+  adopting named specification paragraphs, preserve historical links and
+  update the test annotations with the rule.
 - **Ground built claims in the code.** For anything described as existing, tie statements to
   actual modules/files and keep references accurate. Planned design is grounded in the
   design discussion instead, and is labelled as planned.
@@ -136,7 +157,9 @@ When a change touches more than one row, update all of them in the same change.
 
 When a change affects an architecture claim or worked example:
 
-- update any affected design anchor and its required verification;
+- update each affected specification paragraph and its annotated tests;
+- run `cargo run -p sage-meta -- check` to validate model, Rust, and
+  documentation/test correspondence;
 - add a new `D<n>` only for a genuinely cross-cutting decision, and link its
   chapter-level consequences;
 - update the chapter's Current Status claim, limitation, and roadmap link;
@@ -158,10 +181,13 @@ Build the book locally — this is the same check CI runs on the PR, so it catch
 before you push:
 
 ```bash
+cargo run -p sage-meta -- check
 mdbook build   # or `mdbook serve` to preview and rebuild on save
 ```
 
-The build surfaces the two things easiest to get wrong:
+The shared check also runs through the library in the workspace Cargo tests.
+The book build renders specification markers using the same parser and surfaces
+the two other things easiest to get wrong:
 
 - **Orphaned pages** — a `.md` under `md/` that isn't listed in [`SUMMARY.md`](../SUMMARY.md)
   warns ("not linked to in SUMMARY.md") and won't render. Add every new page to `SUMMARY.md`

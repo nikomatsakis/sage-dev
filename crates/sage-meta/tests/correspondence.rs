@@ -415,3 +415,181 @@ fn known_generator_accepts_unconditional_mapping_and_unrelated_cfg_attr() {
         ["#[cfg(feature = \"functions\")]"]
     );
 }
+
+#[test]
+fn test_annotations_preserve_multiple_rules_source_spans_and_cfg() {
+    let source = r#"#[cfg(feature = "contracts")]
+        mod checks {
+            #[test]
+            #[sage::test(meta.calls.declared)]
+            #[sage::test(meta.calls.forbidden)]
+            fn checks_both_rules() {}
+        }
+    "#;
+    let index = index(source);
+    assert!(index.diagnostics.is_empty(), "{:?}", index.diagnostics);
+    assert!(index.entries.is_empty());
+    assert_eq!(index.tests.len(), 2);
+    for anchor in ["meta.calls.declared", "meta.calls.forbidden"] {
+        let site = &index.tests[anchor][0];
+        assert_eq!(site.rust_path, "demo::checks::checks_both_rules");
+        assert_eq!(site.target, "lib:demo");
+        assert_eq!(site.kind, RustItemKind::Function);
+        assert!(site.cfg[0].contains("feature = \"contracts\""));
+        assert_eq!(
+            &source[site.annotation_span.start..site.annotation_span.end],
+            format!("#[sage::test({anchor})]")
+        );
+    }
+}
+
+#[test]
+fn test_annotations_reject_malformed_names_and_unsupported_placements() {
+    for argument in [
+        "",
+        "meta::calls",
+        "meta.calls.",
+        "meta..calls",
+        "meta.calls, other.rule",
+        "\"meta.calls\"",
+        "meta.r#type",
+        "méta.calls",
+        "meta.2calls",
+    ] {
+        let index = index(&format!(
+            "#[test] #[sage::test({argument})] fn check() {{}}"
+        ));
+        assert!(index.tests.is_empty(), "{argument}");
+        assert_eq!(
+            index.diagnostics.len(),
+            1,
+            "{argument}: {:?}",
+            index.diagnostics
+        );
+        assert!(
+            index.diagnostics[0]
+                .message
+                .contains("dot-separated anchor name")
+        );
+    }
+    for source in [
+        "#[sage::test(meta.rule)] fn helper() {}",
+        "#[sage::test(meta.rule)] struct Type;",
+        "#[sage::test(meta.rule)] mod module {}",
+        "impl Type { #[test] #[sage::test(meta.rule)] fn method() {} }",
+        "fn outer() { #[test] #[sage::test(meta.rule)] fn nested() {} }",
+        "fn outer() { mod inner { #[test] #[sage::test(meta.rule)] fn nested() {} } }",
+        "#[tokio::test] #[sage::test(meta.rule)] async fn unsupported_adapter() {}",
+    ] {
+        let index = index(source);
+        assert!(index.tests.is_empty(), "{source}");
+        assert_eq!(
+            index.diagnostics.len(),
+            1,
+            "{source}: {:?}",
+            index.diagnostics
+        );
+        assert!(
+            index.diagnostics[0]
+                .message
+                .contains("module-level #[test]")
+        );
+    }
+}
+
+#[test]
+fn ignored_tests_cannot_supply_specification_coverage() {
+    for ignore in [
+        "#[ignore]",
+        "#[ignore = \"too slow\"]",
+        "#[cfg_attr(feature = \"slow\", ignore)]",
+        "#[cfg_attr(test, cfg_attr(feature = \"slow\", ignore))]",
+    ] {
+        let index = index(&format!(
+            "#[test] {ignore} #[sage::test(meta.rule)] fn check() {{}}"
+        ));
+        assert!(index.tests.is_empty());
+        assert_eq!(
+            index.diagnostics.len(),
+            1,
+            "{ignore}: {:?}",
+            index.diagnostics
+        );
+        assert!(index.diagnostics[0].message.contains("ignored"));
+    }
+}
+
+#[test]
+fn cargo_discovers_unit_and_integration_tests_and_excludes_disabled_harnesses() {
+    let fixture =
+        std::env::temp_dir().join(format!("sage-correspondence-tests-{}", std::process::id()));
+    std::fs::create_dir_all(fixture.join("src")).unwrap();
+    std::fs::create_dir_all(fixture.join("tests/support")).unwrap();
+    std::fs::write(
+        fixture.join("Cargo.toml"),
+        r#"[package]
+name = "test-fixture"
+version = "0.0.0"
+edition = "2024"
+[workspace]
+[[bin]]
+name = "disabled"
+path = "src/disabled.rs"
+test = false
+[[test]]
+name = "custom"
+path = "tests/custom.rs"
+harness = false
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        fixture.join("src/lib.rs"),
+        r#"
+        #[cfg(test)] mod unit {
+            #[test] #[sage::test(meta.unit)] fn check() {}
+        }
+    "#,
+    )
+    .unwrap();
+    std::fs::write(
+        fixture.join("tests/integration.rs"),
+        r#"
+        mod support;
+        #[test] #[sage::test(meta.integration)] fn check() {}
+    "#,
+    )
+    .unwrap();
+    std::fs::write(
+        fixture.join("tests/support/mod.rs"),
+        r#"
+        #[test] #[sage::test(meta.support)] fn check() {}
+    "#,
+    )
+    .unwrap();
+    for (file, anchor) in [
+        ("src/disabled.rs", "meta.disabled"),
+        ("tests/custom.rs", "meta.custom"),
+    ] {
+        std::fs::write(
+            fixture.join(file),
+            format!("fn main() {{}} #[test] #[sage::test({anchor})] fn check() {{}}"),
+        )
+        .unwrap();
+    }
+    let index = CorrespondenceIndex::load(&fixture).unwrap();
+    assert_eq!(index.tests.len(), 3);
+    assert_eq!(index.tests["meta.unit"][0].target, "lib:test_fixture");
+    assert_eq!(
+        index.tests["meta.integration"][0].target,
+        "test:integration"
+    );
+    assert_eq!(index.tests["meta.support"][0].file, "tests/support/mod.rs");
+    assert_eq!(index.diagnostics.len(), 2, "{:?}", index.diagnostics);
+    assert!(index.diagnostics.iter().all(|diagnostic| {
+        diagnostic
+            .message
+            .contains("test = false or harness = false")
+    }));
+    std::fs::remove_dir_all(fixture).unwrap();
+}
