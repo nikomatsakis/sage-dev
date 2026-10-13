@@ -11,7 +11,7 @@ struct BrowserDocument<'a> {
 /// Build a self-contained HTML explorer from a valid model. No network requests
 /// or source-code execution are needed when the resulting file is opened.
 pub fn render_browser(documents: &[Document]) -> Result<String, Box<dyn std::error::Error>> {
-    render(documents, None)
+    render(documents, None, None)
 }
 
 /// Include source snapshots from the supplied Cargo workspace.
@@ -19,12 +19,25 @@ pub fn render_browser_with_workspace(
     documents: &[Document],
     workspace: &Path,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    render(documents, Some(workspace))
+    render(documents, Some(workspace), None)
+}
+
+/// Render the shared book asset with links back to the owning source chapters.
+/// Paths in `chapters` and `home` are relative to the asset at the book root.
+pub fn render_book_browser(
+    documents: &[Document],
+    workspace: &Path,
+    home: &str,
+    chapters: &BTreeMap<String, String>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let book = serde_json::json!({"home": home, "chapters": chapters});
+    render(documents, Some(workspace), Some(&book))
 }
 
 fn render(
     documents: &[Document],
     workspace: Option<&Path>,
+    book: Option<&serde_json::Value>,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let errors = crate::validate(documents);
     if !errors.is_empty() {
@@ -53,6 +66,9 @@ fn render(
         .replace('<', "\\u003c")
         .replace('&', "\\u0026");
     let template = include_str!("../web/index.html");
+    let book_json = serde_json::to_string(&book)?
+        .replace('<', "\\u003c")
+        .replace('&', "\\u0026");
     let html = template
         .replace("/* BROWSER_CSS */", include_str!("../web/style.css"))
         .replace("/* BROWSER_JS */", include_str!("../web/browser.js"));
@@ -63,7 +79,11 @@ fn render(
     let (middle, suffix) = rest
         .split_once("<!-- SOURCE_DATA -->")
         .expect("source placeholder");
-    Ok(format!("{prefix}{json}{middle}{source_json}{suffix}"))
+    // The navigation configuration precedes the browser script, which reads it
+    // during initialization. Never substitute template tokens inside user data.
+    Ok(format!(
+        "{prefix}{json}{middle}{source_json}</script><script id=\"book-data\" type=\"application/json\">{book_json}{suffix}"
+    ))
 }
 
 #[derive(Default, serde::Serialize)]

@@ -11,7 +11,7 @@ pub mod review;
 pub mod salsa_contracts;
 pub mod spec;
 pub mod workspace;
-pub use browser::{render_browser, render_browser_with_workspace};
+pub use browser::{render_book_browser, render_browser, render_browser_with_workspace};
 pub use check::{CheckReport, check};
 mod validate;
 

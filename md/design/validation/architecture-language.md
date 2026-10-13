@@ -15,7 +15,7 @@ or invokes a solver query.
 
 ## Files and names
 
-`sage-src/<crate>/crate.sage` describes the crate's purpose, logical modules, and
+`md/design/crates/<crate>/crate.sage` describes the crate's purpose, logical modules, and
 workspace dependencies. Crate names use underscores as in Rust paths. A module
 `module symbols;` resides in `symbols.sage`, whose header is
 `module crate::symbols;`. `$sage_ir::symbols::FnSymbol::signature` is an absolute
@@ -330,8 +330,12 @@ and delivery. The following commands describe the current implementation.
 `cargo run -p sage-meta -- browse` validates the model and exports a standalone
 `target/sage-browser.html`. The exporter embeds serialized AST documents and the
 browser assets; no server or frontend dependency installation is required.
-The optional positional arguments select the model directory and output HTML:
-`cargo run -p sage-meta -- browse sage-src /tmp/sage-architecture.html`.
+The [Crates](../crates.md) section embeds the same explorer in the built book,
+with crate overviews and a subchapter for each `.sage` module. Its sources live
+in `md/design/crates/`; the default model loader follows `[book].src` in
+`book.toml`. The optional positional arguments select the model directory and
+output HTML:
+`cargo run -p sage-meta -- browse md/design/crates /tmp/sage-architecture.html`.
 
 The explorer provides crate/module navigation, search and kind filters,
 linked value types and variants, Rust source correspondences, base classes,
@@ -610,9 +614,9 @@ The default check covers the repository model, Rust correspondences, named
 specification paragraphs and their tests, and saved review decisions.
 CI and the workspace integration test
 use the same public library path. `check --correspondence` remains a compatible
-spelling of the full check. `check path/to/sage-src` selects a model directory
+spelling of the full check. `check path/to/model` selects a model directory
 but still requires its containing Cargo workspace and documentation. The legacy
-positional invocation `sage-meta path/to/sage-src` validates an isolated model
+positional invocation `sage-meta path/to/model` validates an isolated model
 without those requirements.
 
 ### Specification anchor status
@@ -621,8 +625,8 @@ The canonical anchor system above and the [specification book](../meta/book.md)
 are plans under review. Today the checker
 indexes Markdown definitions and `#[sage::test(...)]` references, checks
 Markdown-name uniqueness and test coverage, and rejects invalid test placements.
-It loads `.sage` from `sage-src/` and scans all Markdown under `md/`; it does
-not yet restrict definitions to the Design inventory or derive their names
+It loads `.sage` from `md/design/crates/` and scans all Markdown under `md/`; it
+does not yet restrict definitions to the Design inventory or derive their names
 from chapters. Full names in markers remain a migration spelling until local
 names and the planned `design/meta/spec.md` chapter are supported.
 It does not yet index `.sage` definitions/references or Rust implementation
@@ -630,8 +634,10 @@ comments, enforce implementation coverage, extract point/region previews, or
 interpret implementation placeholder status. The review checklist classifies
 annotated tests in `todo` / `not_applicable` modules and reports reviewed
 placeholders separately from approved behavioral tests. Badges currently link directly to
-their paragraphs; anchor pages, the embedded book explorer, and synchronized
-selection URLs are not implemented.
+their paragraphs; anchor pages and anchor-page navigation are not implemented.
+The Crates chapters now embed the shared explorer, with source chapters
+selecting their modeled crate or module and the enclosing URL tracking entity
+selection. Direct entity links and browser Back/Forward restore that selection.
 
 `crates/sage-meta/tests/spec.rs` contains behavioral tests for the existing
 Markdown and test-reference rules. In particular, its evidence for
@@ -742,6 +748,6 @@ cargo run -p sage-meta -- serve 3001
 Open <http://127.0.0.1:3001/>. The command validates and generates the snapshot
 in memory, then serves it on loopback until Ctrl-C. Restart after model or Rust
 source edits. For a remote workspace, forward port 3001 to your machine.
-An optional model directory follows the port: `serve 3001 path/to/sage-src`.
+An optional model directory follows the port: `serve 3001 path/to/model`.
 The port must be between 1 and 65535. Both `/` and `/sage-browser.html`
 serve the explorer; other paths return 404.

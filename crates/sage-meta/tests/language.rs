@@ -180,7 +180,8 @@ fn repository_model_is_consistent() {
             }
         }
     }
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sage-src");
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = sage_meta::workspace::default_model_root(&workspace).unwrap();
     let mut documents = Vec::new();
     collect(&root, &mut documents);
     assert!(!documents.is_empty());

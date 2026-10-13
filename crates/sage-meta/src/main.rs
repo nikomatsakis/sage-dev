@@ -12,7 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .is_some_and(|arg| arg == "--help" || arg == "-h")
     {
         println!(
-            "sage-meta [sage-src directory]\nsage-meta check [--json] [sage-src directory]\nsage-meta review prepare\nsage-meta review record <file>\nsage-meta browse [sage-src directory] [output.html]\nsage-meta serve <port> [sage-src directory]\n\nCheck the model, Rust correspondence, specification tests, and review snapshots, or export an interactive explorer."
+            "sage-meta [model directory]\nsage-meta check [--json] [model directory]\nsage-meta review prepare\nsage-meta review record <file>\nsage-meta browse [model directory] [output.html]\nsage-meta serve <port> [model directory]\n\nCheck the model, Rust correspondence, specification tests, and review snapshots, or export an interactive explorer."
         );
         return Ok(());
     }
@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let port: u16 = args
             .first()
             .and_then(|arg| arg.to_str())
-            .ok_or("usage: sage-meta serve <port> [sage-src directory]")?
+            .ok_or("usage: sage-meta serve <port> [model directory]")?
             .parse()
             .map_err(|_| "port must be an integer between 1 and 65535")?;
         if port == 0 {
@@ -47,12 +47,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
     if args.len() > if browse || serve { 2 } else { 1 } {
-        return Err("usage: sage-meta [sage-src directory] | sage-meta browse [sage-src directory] [output.html] | sage-meta serve <port> [sage-src directory]".into());
+        return Err("usage: sage-meta [model directory] | sage-meta browse [model directory] [output.html] | sage-meta serve <port> [model directory]".into());
     }
-    let root = args
-        .get(usize::from(serve))
-        .map_or(Path::new("sage-src"), Path::new);
-    let documents = sage_meta::workspace::load_documents(root)?;
+    let root = match args.get(usize::from(serve)) {
+        Some(root) => Path::new(root).to_path_buf(),
+        None => sage_meta::workspace::default_model_root(Path::new("."))?,
+    };
+    let documents = sage_meta::workspace::load_documents(&root)?;
     let errors = sage_meta::validate(&documents);
     if !errors.is_empty() {
         for error in &errors {
@@ -124,7 +125,7 @@ fn check(args: &[std::ffi::OsString]) -> Result<(), Box<dyn std::error::Error>> 
         } else if argument == "--json" {
             json = true;
         } else if argument.to_str().is_some_and(|arg| arg.starts_with('-')) || root.is_some() {
-            return Err("usage: sage-meta check [--json] [sage-src directory]".into());
+            return Err("usage: sage-meta check [--json] [model directory]".into());
         } else {
             root = Some(Path::new(argument));
         }

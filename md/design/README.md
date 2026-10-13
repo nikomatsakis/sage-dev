@@ -60,9 +60,9 @@ inspectable evidence. Those ideas helped guide the restructuring of this book.
 Many thanks to Kari for articulating the approach.
 
 The [architectural pseudocode](./validation/architecture-language.md) provides
-a method-oriented specification, currently stored in `sage-src/` and parsed
-and checked by `sage-meta`. The planned book structure embeds those `.sage`
-files as Design chapters under their owning crates. The
+a method-oriented specification stored in `md/design/crates/` and parsed
+and checked by `sage-meta`. The [Crates](./crates.md) section renders those
+`.sage` files as Design chapters under their owning crates. The
 [display specification](./meta/book.md#displaying-sage-files) defines their
 searchable declaration views, dependency links, Rust source pane, and delivery
 modes. Chapter-derived names,

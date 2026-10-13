@@ -141,16 +141,25 @@ When a change touches more than one row, update all of them in the same change.
   The destination derives an anchor's namespace from the complete chapter
   source path relative to `design/`, removing the extension and joining path
   components with dots. Headings and chapter titles do not participate. It
-  embeds `.sage` chapters under their owning crate in that tree. Until that migration lands, write the full anchor name in Markdown,
-  keep `.sage` files in `sage-src/`, and account for the checker's current scan
-  of Markdown throughout `md/`. A chapter-relative marker is not yet supported.
-- **Plan Crates content around the shared explorer.** The planned Crates
+  embeds `.sage` chapters under their owning crate in that tree. Write the full
+  anchor name in Markdown until namespace derivation lands, and account for the
+  checker's current scan of Markdown throughout `md/`. A chapter-relative marker
+  is not yet supported. Keep `.sage` files in `md/design/crates/<crate>/`;
+  book generation and the default model loader use that shared source tree.
+- **Author Crates content for the shared explorer.** The Crates
   section uses `design/crates/<crate>/*.sage` sources, with `crate.sage`
   establishing each modeled crate. Follow the book's self-contained
   [display specification](../design/meta/book.md#displaying-sage-files):
   organized declarations, search, dependency navigation, a revealable Rust
   source pane, direct entity links, and defined delivery modes.
-  Keep the current source layout until the migration stage lands.
+  The book preprocessor generates the crate and module subchapters; do not
+  maintain Markdown copies or add each `.sage` file to `SUMMARY.md`.
+  `mdbook build` and `mdbook serve` generate the ignored `md/sage-explorer.html`
+  snapshot, which mdBook copies into its output. It is shared by every Crates
+  chapter and is only rewritten when its contents change. Rebuild the book to
+  refresh embedded Rust source after Rust edits.
+  Chapter paths cannot contain `#`, `?`, or `%`: mdBook uses them directly in
+  sidebar links, so preprocessing rejects those names with a diagnostic.
 - **Link model entities independently of specification rules.** Every modeled
   entity needs a direct link that other book or model content can reference,
   including types, classes, contexts, explicit methods, and crate/module

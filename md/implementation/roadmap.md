@@ -663,12 +663,14 @@ records explicit reasoning. Reviewed TODO/N/A tests remain visible placeholders.
 
 The expanded book and anchor contract is documented for review in
 [The Design Book](../design/meta/book.md) and the architectural-language chapter.
-Design-scoped inventory, chapter-derived names, generated Crates content under
-`md/` with comprehensive entity links, Rust point/region references and their
-placeholder classification, generated
-index and pages, and integrated explorer navigation remain planned. The current
-checker still uses explicit anchor names and the model remains under
-`sage-src/`; specification placeholders do not establish the planned behaviors.
+The model now lives under `md/design/crates/`; book generation renders Crates
+and its nested crate/module chapters with the shared searchable explorer and
+Rust source pane. The default CLI/library loader uses the book's configured
+source directory. Design-scoped rule inventory, chapter-derived names,
+comprehensive entity links, Rust point/region references and their placeholder
+classification, and generated rule index/pages remain planned. The current
+checker still uses explicit anchor names; specification placeholders do not
+establish those pending behaviors.
 
 See [Sage Contracts and Walkthroughs](../rfds/sage-contracts/README.md) and its
 [staged implementation plan](../rfds/sage-contracts/implementation.md). Full

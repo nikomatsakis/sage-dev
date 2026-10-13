@@ -1,11 +1,38 @@
 //! Shared loading for command-line, browser, and runtime contract consumers.
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::{Document, correspondence::CorrespondenceIndex};
 
+/// Locate the repository model in the configured mdBook source directory.
+/// Standalone fixture workspaces can retain the legacy `sage-src` layout.
+/// Explicit model paths should be passed directly to [`load_documents`].
+pub fn default_model_root(workspace: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    #[derive(Default, serde::Deserialize)]
+    struct BookConfig {
+        #[serde(default)]
+        book: Book,
+    }
+    #[derive(Default, serde::Deserialize)]
+    struct Book {
+        src: Option<PathBuf>,
+    }
+
+    let config_file = workspace.join("book.toml");
+    if config_file.exists() {
+        let config: BookConfig = toml::from_str(&std::fs::read_to_string(config_file)?)?;
+        let model = workspace
+            .join(config.book.src.unwrap_or_else(|| PathBuf::from("src")))
+            .join("design/crates");
+        if model.is_dir() {
+            return Ok(model);
+        }
+    }
+    Ok(workspace.join("sage-src"))
+}
+
 /// Stable namespace shared by source correspondence and browser navigation.
 /// The model validator separately diagnoses invalid headers and file placement.
-pub(crate) fn document_namespace(documents: &[Document], document: &Document) -> Option<String> {
+pub fn document_namespace(documents: &[Document], document: &Document) -> Option<String> {
     match &document.header {
         crate::Header::Crate { name, .. } => Some(name.clone()),
         crate::Header::Module(path) => {
@@ -79,5 +106,43 @@ impl Workspace {
             documents,
             correspondences,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::default_model_root;
+
+    #[test]
+    fn configured_book_model_takes_precedence_over_legacy_fixture_layout() {
+        let workspace = std::env::temp_dir().join(format!(
+            "sage-model-roots-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(workspace.join("sage-src")).unwrap();
+        assert_eq!(
+            default_model_root(&workspace).unwrap(),
+            workspace.join("sage-src")
+        );
+
+        std::fs::write(workspace.join("book.toml"), "[book]\nsrc = 'manual'\n").unwrap();
+        let book_model = workspace.join("manual/design/crates");
+        std::fs::create_dir_all(&book_model).unwrap();
+        assert_eq!(default_model_root(&workspace).unwrap(), book_model);
+
+        std::fs::write(workspace.join("book.toml"), "[book]\n").unwrap();
+        let default_book_model = workspace.join("src/design/crates");
+        std::fs::create_dir_all(&default_book_model).unwrap();
+        assert_eq!(default_model_root(&workspace).unwrap(), default_book_model);
+
+        // Broken configuration must not silently select the legacy model.
+        std::fs::write(workspace.join("book.toml"), "[book\n").unwrap();
+        assert!(default_model_root(&workspace).is_err());
+        assert!(crate::check(&workspace).model.load_error.is_some());
+        std::fs::remove_dir_all(workspace).unwrap();
     }
 }

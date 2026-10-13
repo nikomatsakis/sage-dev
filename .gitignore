@@ -1,5 +1,6 @@
 /target
 /book
+/md/sage-explorer.html
 /crates/sage-inspector/web/node_modules/
 /crates/sage-inspector/web/*.tsbuildinfo
 /crates/sage-inspector/web/vite.config.js

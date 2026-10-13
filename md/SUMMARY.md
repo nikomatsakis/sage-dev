@@ -13,6 +13,7 @@
     - [Architectural Contracts](./design/meta/contracts.md)
     - [Reviewing Specification Tests](./design/meta/reviews.md)
   - [Tenets](./design/tenets.md)
+  - [Crates](./design/crates.md)
   - [Architecture](./design/architecture.md)
   - [Rust Compilation Pipeline](./design/pipeline/README.md)
     - [Parsing and Stable Symbol Creation](./design/pipeline/parsing.md)

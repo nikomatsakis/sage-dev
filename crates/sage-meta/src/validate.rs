@@ -254,7 +254,10 @@ fn build_model(documents: &[Document]) -> Model<'_> {
     }
     for missing in expected_modules.difference(&seen_modules) {
         model.errors.push(Diagnostic {
-            file: "sage-src".into(),
+            file: roots[missing.split("::").next().expect("qualified module")]
+                .join("crate.sage")
+                .to_string_lossy()
+                .into_owned(),
             span: Span { start: 0, end: 0 },
             message: format!("missing module {missing}"),
         });

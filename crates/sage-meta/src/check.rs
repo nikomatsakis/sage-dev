@@ -193,16 +193,32 @@ impl fmt::Display for CheckReport {
     }
 }
 
-/// Validate `sage-src/`, Cargo-owned Rust sources/tests, and `md/` in a repository.
+/// Validate the default model, Cargo-owned Rust sources/tests, and `md/` in a repository.
 ///
 /// The explicit root makes this independent of the process's working directory.
 /// The function invokes Cargo metadata, but never builds or runs tests recursively.
 pub fn check(workspace_root: &Path) -> CheckReport {
-    check_roots(&workspace_root.join("sage-src"), Some(workspace_root))
+    match crate::workspace::default_model_root(workspace_root) {
+        Ok(model_root) => check_roots(&model_root, Some(workspace_root)),
+        Err(error) => CheckReport {
+            model: ModelCheck {
+                valid: false,
+                documents: 0,
+                diagnostics: Vec::new(),
+                load_error: Some(error.to_string()),
+            },
+            correspondence: None,
+            specification: None,
+            review: None,
+            rendered_errors: vec![format!(
+                "error: could not locate the .sage model\n  = {error}"
+            )],
+        },
+    }
 }
 
 /// Validate a selected model directory using its containing Cargo workspace and `md/`.
-/// This is the CLI's compatibility entry point for `check path/to/sage-src`.
+/// This is the CLI's explicit-path entry point for `check path/to/model`.
 pub fn check_model(model_root: &Path) -> CheckReport {
     let absolute_root = model_root.canonicalize().ok();
     let rust_root = absolute_root.as_deref().and_then(|root| {

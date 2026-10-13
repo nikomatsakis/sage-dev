@@ -21,7 +21,8 @@ fn observer(roots: &[&str]) -> SalsaObserver {
     static CONTRACTS: OnceLock<(Arc<ContractModel>, Arc<CorrespondenceIndex>)> = OnceLock::new();
     let (model, index) = CONTRACTS.get_or_init(|| {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let documents = sage_meta::workspace::load_documents(&workspace.join("sage-src")).unwrap();
+        let model_root = sage_meta::workspace::default_model_root(&workspace).unwrap();
+        let documents = sage_meta::workspace::load_documents(&model_root).unwrap();
         let index = CorrespondenceIndex::load(&workspace).unwrap();
         assert!(index.validate(&documents).is_empty());
         (

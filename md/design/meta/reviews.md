@@ -104,8 +104,9 @@ gate. `crates/sage-meta/tests/review.rs` exercises these behaviors through the
 library and CLI, including mixed placeholder decisions and rejected
 submissions that preserve the prior file. The
 [rollout](../../rfds/sage-contracts/implementation.md#review-checklist)
-records completion of the initial review: `review-checklist.json` contains
-50 approved claims and 35 reviewed TODO entries. The shared check accepts all
+records completion of the initial review. After the Crates integration,
+`review-checklist.json` contains 51 approved claims and 34 reviewed TODO entries.
+The shared check accepts all
 85 current snapshots while keeping those statuses distinct. `.sage` rule
 extraction remains part of the [book migration](./book.md); this checklist does
 not introduce a second `.sage` anchor syntax.

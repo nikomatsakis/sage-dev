@@ -28,7 +28,7 @@
     paragraphs here or wait until implementation completion to write them.
 
     Consult the authoring contract for current loader limitations: full anchor
-    names and the external sage-src directory are still used during migration.
+    names are still used during migration; `.sage` sources live under `md/design/crates/`.
 -->
 
 ## Detailed plans

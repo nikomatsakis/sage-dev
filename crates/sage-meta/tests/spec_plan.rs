@@ -195,15 +195,6 @@ mod todo {
     }
     // >>
 
-    // {anchor}`meta.book.crate_ownership`<<
-    #[test]
-    #[sage::test(meta.book.crate_ownership)]
-    fn sage_chapters_retain_crate_identity() {
-        // TODO: Require crate-owned source placement and preserve modeled compiler
-        // identities when relocating the owning book directory.
-    }
-    // >>
-
     // {anchor}`meta.book.chapter_names`<<
     #[test]
     #[sage::test(meta.book.chapter_names)]

@@ -162,7 +162,7 @@ boundaries merely because they are important steps in the algorithm.
 ## Validation and inspection
 
 The [architectural pseudocode](./validation/architecture-language.md) in
-`sage-src/` offers a symbol-and-method view with checkable dependency envelopes.
+`md/design/crates/` offers a symbol-and-method view with checkable dependency envelopes.
 Its initial model summarizes the central demand graph. `sage-meta` is the
 shared build and validation layer for Markdown specifications, `.sage` models,
 and Rust: it checks source correspondences and named rules' test references and

@@ -69,7 +69,8 @@ browser launch to the caller. The
 describes its symbol navigation, structural products, query evidence, and
 revision model.
 
-Compiler architecture can also be reviewed in `sage-src/`. Run
+Compiler architecture can also be reviewed in the searchable [Crates](./design/crates.md)
+chapters, rendered from `md/design/crates/`. Run
 `cargo run -p sage-meta -- check` to check declared method dependencies, their
 Rust annotations, named specification paragraphs' test coverage, and saved
 reviews of those claim/test relationships in `review-checklist.json`. The same

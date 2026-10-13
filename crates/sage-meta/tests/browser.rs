@@ -57,7 +57,8 @@ fn export_rejects_invalid_and_empty_models() {
 fn browse_command_writes_an_explorer_for_the_repository() {
     let output =
         std::env::temp_dir().join(format!("sage-browser-test-{}.html", std::process::id()));
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sage-src");
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = sage_meta::workspace::default_model_root(&workspace).unwrap();
     let result = std::process::Command::new(env!("CARGO_BIN_EXE_sage-meta"))
         .arg("browse")
         .arg(root)

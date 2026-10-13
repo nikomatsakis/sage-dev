@@ -87,23 +87,32 @@ rules. Completion does not require promoting specification text out of the RFD.
       `todo` or `not_applicable` entries. Apply the same rules to the anchor
       system itself, with no privileged exemptions. Keep current limitations
       separate from the destination.
-- [ ] **Build the shared book inventory and pilot one `.sage` chapter.** Use
+- [x] **Render Crates chapters from the relocated model.** Move the 32 model
+      sources into `md/design/crates/<crate>/`, preserving their model
+      identities. Generate crate overviews and nested `.sage` module chapters
+      using the shared searchable explorer, including embedded Rust source.
+      The default CLI/library loader follows the book's configured source
+      directory, and standalone fixtures retain their explicit/legacy roots.
+      Build and serve the book without requiring a separate Sage server.
+      Eight preprocessor integration tests cover generated chapters, custom
+      source roots, crate ownership, relocation, safe embedding, regeneration,
+      and path diagnostics. Browser tests cover member routes and parent URL
+      synchronization. A Chromium check of the built book verified search,
+      direct links, Rust source show/hide, cross-chapter navigation,
+      Back/Forward, and reload without page-script errors.
+- [ ] **Complete the shared specification inventory.** Use
       the Design chapter tree as the normative inventory, with Markdown and
       `.sage` sources under the book source directory. Specify path and local
       name normalization, then derive namespaces from the complete chapter
-      source path relative to Design, excluding headings. Pilot searchable,
-      interlinked Crates content from `design/crates/<crate>/*.sage` under the
-      [browser structure contract](../../design/meta/book.md#meta.book.browser_structure),
-      reusing the resolved model and renderer. Resolve `.sage`
-      definition/reference syntax and crate-directory/`crate.sage` ownership
-      before bulk migration. Test duplicate names, reference resolution,
-      precise context, and matching model information in served and generated
-      explorer views. Inventory direct links for every modeled entity under
+      source path relative to Design, excluding headings. Resolve `.sage`
+      definition/reference syntax and enforce crate-directory/`crate.sage`
+      ownership against the Rust workspace. Test duplicate rule names,
+      reference resolution, precise context, and matching model information in
+      served and generated explorer views. Inventory direct links for every modeled entity under
       the [entity-link contract](../../design/meta/book.md#meta.book.entity_links),
       independently of named specification rules.
-- [ ] **Relocate model sources and enforce correspondence coverage.** Move
-      `.sage` chapters into `md/design/crates/<crate>/` while preserving
-      compiler model item identities. Migrate existing
+- [ ] **Enforce rule correspondence coverage and migrate anchor names.**
+      With `.sage` chapters now in `md/design/crates/<crate>/`, migrate existing
       anchors to chapter-derived names, update references, and redirect old
       URLs. Index point and balanced region markers in real Rust comments;
       record excerpts, enclosing modules, and ordinary, `todo`, or
@@ -120,8 +129,8 @@ rules. Completion does not require promoting specification text out of the RFD.
       **See more…**; regions preserve explicit boundaries. Link specification
       badges to the pages. Define evidence ingestion before claiming that a
       listed test ran or that a trace established a rule.
-- [ ] **Integrate book and explorer navigation.** Generate the standalone
-      explorer snapshot during the book build. Verify the specified
+- [ ] **Complete book and explorer navigation.** Extend the integrated
+      explorer to verify the full specified
       [structure](../../design/meta/book.md#meta.book.browser_structure),
       [search](../../design/meta/book.md#meta.book.browser_search),
       [dependency navigation](../../design/meta/book.md#meta.book.browser_dependencies),
@@ -138,13 +147,14 @@ rules. Completion does not require promoting specification text out of the RFD.
       entity or rule in its book context.
       Verify the generated book works without a running `sage-meta serve`.
 
-**Current boundary:** The present checker inventories Markdown definitions and
-Rust test references using explicit full names; it does not enforce the Design
-chapter scope, derive chapter namespaces, or relocate the current `sage-src/`
-model. The shared book inventory, generated Crates content and comprehensive
-entity links, implementation references, implementation placeholder
-classification, index, pages, and integrated navigation are planned. The
-review checklist classifies test placeholders and distinguishes reviewed
+**Current boundary:** The model has moved into the book's Design source tree.
+The book generates Crates content from that tree and embeds the same explorer
+used by standalone export and serving. The present checker inventories Markdown
+definitions and Rust test references using explicit full names; it does not
+enforce the Design chapter scope or derive chapter namespaces. The complete
+shared specification inventory, comprehensive entity links, implementation
+references, implementation placeholder classification, rule index, and anchor
+pages remain planned. The review checklist classifies test placeholders and distinguishes reviewed
 TODO/N/A decisions from behavioral approval. Cross-reference syntax has not
 yet been selected. Placeholder tests introduced during
 specification review account for pending work; they do not establish the unimplemented behavior.

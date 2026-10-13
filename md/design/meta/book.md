@@ -248,16 +248,21 @@ is not implemented. The existing `meta.spec.*` rules remain in
 `design/validation/architecture-language.md` until the planned chapter split;
 their intended home is `design/meta/spec.md`.
 
+The compiler model now lives in `md/design/crates/<crate>/`. The book
+preprocessor renders its crate overviews and `.sage` module chapters beneath
+Crates using the shared architecture explorer. The default CLI and library
+model loader reads the same tree using the source directory configured in
+`book.toml`; isolated fixture workspaces can retain `sage-src/`.
+
 Today `sage-meta check` scans Markdown throughout `md/`, including files outside
-Design, and loads the compiler model from the separate `sage-src/` tree. It
-checks test associations but does not yet enforce the Design inventory,
-chapter-derived names or implementation entries. The
+Design. It checks test associations but does not yet enforce the complete Design
+chapter inventory, chapter-derived names or implementation entries. The
 [review checklist](./reviews.md) classifies test placeholders and requires
 current reviewed claim/test snapshots; implementation placeholder indexing
 and the combined browser status display remain planned.
-Integrated `.sage` chapters, universal entity links and validated cross-source
-references, the grouped status index, and individual anchor pages are planned.
-The existing standalone explorer already links modeled declarations and methods;
+Universal entity links and validated cross-source references, the grouped
+status index, and individual anchor pages remain planned.
+The explorer already links modeled declarations, methods, fields, and variants;
 that does not establish the full book-wide entity-link contract. The linked
 HTML sketch is a review prototype. Existing badges still link to their defining
 paragraphs.
@@ -271,24 +276,27 @@ through the normal workspace test, with no special case for this file.
 
 ### Browser implementation and evidence
 
-The current standalone exporter and loopback server implement the core
+The book, standalone exporter, and loopback server share the core
 crate/module/declaration views, inherited methods, envelope navigation, search
-over declarations and methods, and a revealable Rust source pane. Search has
+over declarations, methods, and named members, and a revealable Rust source pane. Search has
 crate/kind filters and indexes prose and mapped Rust paths. Exported snapshots
-contain the model, Rust source, and browser assets. The server renders once
-before binding; it has no live reload.
+contain the model, Rust source, and browser assets. The book preprocessor
+regenerates the explorer snapshot during a book build; its generated chapters
+open the relevant crate or module. The book works without a separate Sage
+server. Entity selection follows the enclosing chapter URL, including direct
+links and Back/Forward navigation. The Rust pane displays unevaluated cfg
+conditions. The loopback server renders once before binding; it has no live reload.
 
 `crates/sage-meta/tests/browser.rs` checks invalid models and serve arguments,
 standalone export, and exact script-safe model/source embedding.
 `crates/sage-meta/web/browser.test.cjs` checks rendered routes, search, filters,
-dependency targets, multiple Rust sites, and source/prose escaping. These checks
-are evidence for the existing standalone behavior; they do not verify the
-entire integrated-book destination or browser-engine layout and interaction.
+dependency targets, multiple Rust sites, source/prose escaping, and parent-chapter
+navigation. `tests/book.rs` checks generated chapter trees, custom book roots,
+model ownership, source relocation, script-safe snapshot data, and regeneration.
 
-Search and direct routes for named fields/variants, explicit display of cfg
-conditions, validated Markdown/`.sage` entity references, and the shared book
-integration remain pending. `spec_plan.rs` contains explicit TODO entries for
-the complete browser rules until focused Rust test associations and browser
+Validated Markdown/`.sage` entity-reference syntax remains pending.
+`spec_plan.rs` contains explicit TODO entries for the complete browser rules
+until focused Rust test associations and browser
 interaction evidence account for their full scope. Placeholder success does
 not establish those guarantees. The
 [contract rules](./contracts.md) specify source correspondence and observed
