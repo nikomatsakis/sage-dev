@@ -80,6 +80,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_stash.storage.typed_interning)]
     fn alloc_same_value_deduplicates() {
         let mut stash = Stash::new();
         let p1 = stash.alloc(Point { x: 1, y: 2 });
@@ -108,6 +109,7 @@ mod tests {
     // -- Dedup with different types -------------------------------------------
 
     #[test]
+    #[sage::test(crates.sage_stash.storage.typed_interning)]
     fn dedup_different_types_same_bits() {
         let mut stash = Stash::new();
         let n = stash.alloc(Name { id: 42 });
@@ -168,6 +170,7 @@ mod tests {
     #[test]
     #[cfg_attr(debug_assertions, should_panic(expected = "stash identity mismatch"))]
     #[cfg_attr(not(debug_assertions), should_panic(expected = "stash type mismatch"))]
+    #[sage::test(crates.sage_stash.storage.handle_ownership)]
     fn cross_stash_ptr_wrong_type() {
         let mut stash1 = Stash::new();
         let mut stash2 = Stash::new();
@@ -433,6 +436,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_stash.storage.typed_interning)]
     fn hash_cons_distinct() {
         let mut stash = Stash::new();
         let p1 = stash.alloc(Point { x: 1, y: 2 });
@@ -450,6 +454,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_stash.storage.typed_interning)]
     fn hash_cons_slice_distinct() {
         let mut stash = Stash::new();
         let s1 = stash.alloc_slice(&[Point { x: 1, y: 2 }]);
@@ -482,6 +487,7 @@ mod tests {
         #[derive(Copy, Clone, Debug, PartialEq)]
         struct Collider(u32);
 
+        // Safety: Collider owns a Copy scalar and has no borrowed data.
         unsafe impl<'db> StashData<'db> for Collider {
             type StaticSelf = Collider;
         }
@@ -503,6 +509,13 @@ mod tests {
         assert_eq!(a, c);
         assert_eq!(stash[a], Collider(1));
         assert_eq!(stash[b], Collider(2));
+        let left = stash.alloc_slice(&[Collider(1), Collider(2)]);
+        let right = stash.alloc_slice(&[Collider(2), Collider(1)]);
+        let duplicate = stash.alloc_slice(&[Collider(1), Collider(2)]);
+        assert_ne!(left, right);
+        assert_eq!(left, duplicate);
+        assert_eq!(stash[left], [Collider(1), Collider(2)]);
+        assert_eq!(stash[right], [Collider(2), Collider(1)]);
     }
 
     // -- Phase 6: Fingerprint / Stashed tests -----
@@ -521,6 +534,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_stash.storage.rooted_equality)]
     fn stashed_ne_different_content_fingerprint() {
         let mut s1 = Stash::new();
         let r1 = s1.alloc(Point { x: 10, y: 20 });

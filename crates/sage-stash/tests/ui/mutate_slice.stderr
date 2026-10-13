@@ -1,0 +1,7 @@
+error[E0594]: cannot assign to data in an index of `Stash`
+ --> tests/ui/mutate_slice.rs:6:5
+  |
+6 |     stash[values][0] = 99;
+  |     ^^^^^^^^^^^^^^^^^^^^^ cannot assign
+  |
+  = help: trait `IndexMut` is required to modify indexed content, but it is not implemented for `Stash`

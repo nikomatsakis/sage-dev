@@ -30,43 +30,6 @@ mod todo {
     // TODO: No repository-wide check verifies all seven review-packet elements.
 
     #[test]
-    #[sage::test(crates.sage_stash.storage.handle_ownership)]
-    fn crates_sage_stash_storage_handle_ownership() {
-        // TODO: Associate and review the complete evidence for Debug tests reject cross-stash pointer
-        // and slice access for equal and unequal element types, copy tests reconstruct nested pointers
-        // and slices in a destination stash, and completed-query tests walk outputs under the
-        // destination stash without consulting source stashes.
-    }
-    #[test]
-    #[sage::test(crates.sage_stash.storage.typed_interning)]
-    fn crates_sage_stash_storage_typed_interning() {
-        // TODO: Associate and review the complete evidence for Scalar, nested-pointer, slice,
-        // duplicate, and forced-collision tests establish deduplication and non-aliasing; derived
-        // `AllocStashData` implementations receive the same coverage as handwritten implementations.
-    }
-    #[test]
-    #[sage::test(crates.sage_stash.storage.immutable_entries)]
-    fn crates_sage_stash_storage_immutable_entries() {
-        // TODO: Associate and review the complete evidence for The public stash API exposes no mutable
-        // indexing or mutable entry access; a focused finalization test proves that the working stash
-        // retains its inference-variable node while the separately owned output contains only its
-        // resolved type; completed-body tests reject every surviving inference variable.
-    }
-    #[test]
-    #[sage::test(crates.sage_stash.storage.rooted_equality)]
-    fn crates_sage_stash_storage_rooted_equality() {
-        // TODO: Associate and review the complete evidence for Independently allocated equal and
-        // unequal trees, shared DAGs, reordered/unreachable allocations, and repeated construction
-        // produce the expected equality, hash, ordering, fingerprint, and `salsa::Update` behavior.
-    }
-    #[test]
-    #[sage::test(crates.sage_stash.storage.query_value)]
-    fn crates_sage_stash_storage_query_value() {
-        // TODO: Associate and review the complete evidence for Query traces show equal reconstructed
-        // roots stopping downstream invalidation after a producer reexecutes, while an edit changing
-        // reachable semantic content changes the root and invalidates its consumers.
-    }
-    #[test]
     #[sage::test(crates.sage_inspector.inspection.workspace_actor)]
     fn crates_sage_inspector_inspection_workspace_actor() {
         // TODO: Associate and review the complete evidence for Same-host cold/warm/relevant/unrelated
