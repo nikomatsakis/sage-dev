@@ -13439,7 +13439,7 @@
               "    let root = std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\"));",
               "    let fixture = root.join(\"tests/fixtures/contracts\");",
               "    let output = std::process::Command::new(env!(\"CARGO\"))",
-              "        .args([\"test\", \"--offline\", \"--locked\", \"--manifest-path\"])",
+              "        .args([\"test\", \"--locked\", \"--manifest-path\"])",
               "        .arg(fixture.join(\"Cargo.toml\"))",
               "        .args([\"--\", \"--nocapture\", \"--test-threads=1\"])",
               "        .env(",
@@ -13604,8 +13604,8 @@
         ]
       },
       "decision": "todo",
-      "reason": "real_salsa_contract_fixture visibly checks three requests and the Root/Helper/Leaf violation path in cold and prewarmed scenarios, and requires a reused forbidden leaf to be checked without execution. same_operation_entry_is_recursion_and_needs_permission rejects an undeclared recursive entry, accepts explicit self permission, and asserts its parent and request count. internal_reexecution_establishes_context_without_fabricating_a_call checks a validation frame and conformance under the dependency operation. These assertions would catch skipped warm requests, permitted undeclared recursion, or charging the leaf call to the suspended root. ordinary_rust_call_boundaries_are_instrumented is an explicit TODO with no assertions, so ordinary source-call instrumentation remains unverified. The newly included verification paragraph also lacks visible end-to-end assertions for validated/invalidated, cancelled and panicking runs, generated query APIs, unannotated nested queries, declaration-site provenance, and accumulator traversal. This decision accepts incomplete evidence and does not establish that full matrix; add explicit assertions for those scenarios before approval.",
-      "reviewer": "Codex independent contracts/validation review (content_parser agent)"
+      "reason": "Retain TODO: ordinary_rust_call_boundaries_are_instrumented explicitly records the missing observation of real ordinary function entries, including distinct functions mapped to one operation. The ordinary tests provide substantive partial coverage. real_salsa_contract_fixture asserts exactly three checked requests and both undeclared/direct and forbidden/transitive violations for cold and prewarmed scenarios; the warm scenario additionally requires a Reused return and no Leaf execution. Skipping a cached forbidden request or double-counting request plus execution would fail these assertions. same_operation_entry_is_recursion_and_needs_permission rejects undeclared recursion, then permits an explicitly declared recursive edge while checking two requests and parentage. internal_reexecution_establishes_context_without_fabricating_a_call checks an explicit Validation frame and successful dependency-to-leaf execution under a root with no call permissions; attributing dependency work to the suspended root would fail. These visible bodies do not establish the entire cancellation, panic, generated-API, accumulator and unannotated-query matrix. Complete ordinary boundary instrumentation and expose the remaining lifecycle scenarios in annotated test bodies before promotion. Removing --offline while retaining --locked changes fixture dependency acquisition, not these assertions.",
+      "reviewer": "/root/anchor_extent_spec_review"
     },
     {
       "anchor": "meta.contracts.correspondence",
@@ -14094,7 +14094,7 @@
               "    let root = std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\"));",
               "    let fixture = root.join(\"tests/fixtures/contracts\");",
               "    let output = std::process::Command::new(env!(\"CARGO\"))",
-              "        .args([\"test\", \"--offline\", \"--locked\", \"--manifest-path\"])",
+              "        .args([\"test\", \"--locked\", \"--manifest-path\"])",
               "        .arg(fixture.join(\"Cargo.toml\"))",
               "        .args([\"--\", \"--nocapture\", \"--test-threads=1\"])",
               "        .env(",
@@ -14315,8 +14315,8 @@
         ]
       },
       "decision": "todo",
-      "reason": "observation_gaps_and_effect_coverage_are_explicit asserts unchecked Reads and Creates in an otherwise conforming call report and rejects a recorded unmapped-query gap. self_permission_rejects_different_and_unknown_receivers checks both ReceiverMismatch and a missing-identity gap. unknown_boundaries_roots_and_unbalanced_exits_cannot_pass requires UnknownOperation, UnexpectedRoot, UnbalancedExit and unclosed/configured-root gaps. real_salsa_contract_fixture checks failure, the relevant prohibition rule and full observed path for cold and cached forbidden requests. These would detect silent acceptance of the represented gaps or loss of the reported path. declared_effects_and_async_boundaries_have_complete_scope_accounting is a TODO without assertions, explicitly reserving effect hooks, async/task propagation, missing scope observation and checking context. Full strict-scope acceptance, ordinary uninstrumented helpers and injected cached/async gap scenarios remain unverified; a successful call-only report here is expressly not evidence for them.",
-      "reviewer": "Codex independent contracts/validation review (content_parser agent)"
+      "reason": "Retain TODO: declared_effects_and_async_boundaries_have_complete_scope_accounting explicitly leaves effect hooks, async/task propagation, missing observation and scenario context unfinished. observation_gaps_and_effect_coverage_are_explicit checks that a call-only passing report still lists Reads and Creates as unchecked, and an injected unmapped-query gap prevents calls_conform. self_permission_rejects_different_and_unknown_receivers rejects both a mismatched receiver and an absent receiver, distinguishing a ReceiverMismatch violation from an explicit identity gap. unknown_boundaries_roots_and_unbalanced_exits_cannot_pass asserts UnknownOperation, UnexpectedRoot and UnbalancedExit plus unclosed/configured-root gaps. Silently accepting unknown receivers or mappings, dropping stack errors, or claiming observed reads would fail these assertions. real_salsa_contract_fixture checks cold and cached reports, the originating prohibition and the complete Root/Helper/Leaf path, providing concrete diagnostic evidence beyond child-process success. The complete declared-scope gate, ordinary uninstrumented helpers, unsupported async boundaries and their scenario diagnostics still require dedicated visible tests; the TODO is justified rather than a claim of full conformance. The retained locked fixture command preserves the same evidence assertions.",
+      "reviewer": "/root/anchor_extent_spec_review"
     },
     {
       "anchor": "meta.contracts.validated_session",
@@ -14351,7 +14351,7 @@
               "    let root = std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\"));",
               "    let fixture = root.join(\"tests/fixtures/contracts\");",
               "    let output = std::process::Command::new(env!(\"CARGO\"))",
-              "        .args([\"test\", \"--offline\", \"--locked\", \"--manifest-path\"])",
+              "        .args([\"test\", \"--locked\", \"--manifest-path\"])",
               "        .arg(fixture.join(\"Cargo.toml\"))",
               "        .args([\"--\", \"--nocapture\", \"--test-threads=1\"])",
               "        .env(",
@@ -14527,8 +14527,8 @@
         ]
       },
       "decision": "todo",
-      "reason": "invalid_static_model_never_becomes_a_runtime_contract requires rejection of a model with a forbidden transitive call. source_snapshot_mismatch_is_rejected checks matching source acceptance plus edited and unknown source rejection. repeated_roots_are_independent_and_models_are_shared_immutably constructs two sessions from one shared model and checks that prewarming or the first session does not grant permission in the second. real_salsa_contract_fixture checks the actual loaded model prohibition and violation reports in cold/warm fixture runs. These ordinary tests cover invalid models, indexed-source mismatch and session permission isolation, but do not establish automatic cached loading, parallel first use or pairing the indexed source with the running binary. automatic_runtime_loading_is_cached_and_rejects_unavailable_models is an explicit TODO for missing files, explicit roots, parallel first use and edits becoming visible in a new session. The additional verification paragraph therefore remains partial; add observable load counts, model-change isolation, independently configured models and build/source pairing checks before promoting this claim.",
-      "reviewer": "Codex independent contracts/validation review (content_parser agent)"
+      "reason": "Retain TODO: automatic_runtime_loading_is_cached_and_rejects_unavailable_models explicitly records missing-file handling, explicit roots, parallel first use and model edits becoming visible only in a new session. source_snapshot_mismatch_is_rejected accepts identical indexed text but rejects changed text and an unknown path with SourceMismatch; accepting stale source would fail. invalid_static_model_never_becomes_a_runtime_contract constructs a recursive permission contradicting its transitive prohibition and requires ContractModel construction to fail with the relevant diagnostic. repeated_roots_are_independent_and_models_are_shared_immutably shares a model across separately configured sessions, permits a prewarmed root in the first and requires two violations for an unauthorized call in the second; leaking session root permissions into the shared model would fail. real_salsa_contract_fixture checks the model prohibition alongside cold and prewarmed violation reports, but its process-success assertion does not by itself establish automatic loading or binary/source pairing. Add observable cache-load, concurrent-first-use, missing/invalid-file, binary-pairing and edited-model/new-session scenarios before promotion. Allowing Cargo to acquire dependencies under the existing --locked fixture manifest does not alter these partial checks.",
+      "reviewer": "/root/anchor_extent_spec_review"
     },
     {
       "anchor": "meta.language.calls.declared",
@@ -14556,7 +14556,7 @@
               "    let root = std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\"));",
               "    let fixture = root.join(\"tests/fixtures/contracts\");",
               "    let output = std::process::Command::new(env!(\"CARGO\"))",
-              "        .args([\"test\", \"--offline\", \"--locked\", \"--manifest-path\"])",
+              "        .args([\"test\", \"--locked\", \"--manifest-path\"])",
               "        .arg(fixture.join(\"Cargo.toml\"))",
               "        .args([\"--\", \"--nocapture\", \"--test-threads=1\"])",
               "        .env(",
@@ -14710,8 +14710,8 @@
         ]
       },
       "decision": "approved",
-      "reason": "The three bodies exercise an undeclared Root→Helper→Leaf call, same-operation recursion with and without an explicit self permission, and both cold and prewarmed real Salsa requests. They assert UndeclaredCall, conforming permitted recursion, checked request counts, complete paths, and a reused Leaf query that still produces the undeclared-call violation. Dropping either recursion or cached requests from enforcement would fail those assertions.",
-      "reviewer": "/root/anchor_book_plan"
+      "reason": "All three associated tests are ordinary and visibly check the declared-call rule. reports_direct_and_ancestor_violation_with_complete_path_and_rule enters Root -> Helper -> Leaf, asserts nonconformance, three checked requests and an UndeclaredCall alongside the independent ancestor violation. same_operation_entry_is_recursion_and_needs_permission supplies an empty envelope, checks that same-operation/same-receiver recursion is undeclared, then adds invokes self.walk() and requires conformance, two checked entries and the correct parent link. real_salsa_contract_fixture directly checks the emitted model has an empty Helper invokes set, both cold and prewarmed reports are nonconforming with UndeclaredCall and three checked requests, and prewarming produces a reused Leaf return without executing Leaf. Thus granting undeclared helper calls, exempting recursive entry, ignoring cached requests, or rejecting explicitly permitted recursion would fail visible assertions. Model/session helpers only construct the scenarios; the outcomes are asserted in these reviewed bodies. The child command retains --locked and all these assertions after removal of forced --offline. This is source review, not a claim that tests were executed by this reviewer.",
+      "reviewer": "Codex /root/content_parser (independent source review)"
     },
     {
       "anchor": "meta.language.calls.forbidden",
@@ -14739,7 +14739,7 @@
               "    let root = std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\"));",
               "    let fixture = root.join(\"tests/fixtures/contracts\");",
               "    let output = std::process::Command::new(env!(\"CARGO\"))",
-              "        .args([\"test\", \"--offline\", \"--locked\", \"--manifest-path\"])",
+              "        .args([\"test\", \"--locked\", \"--manifest-path\"])",
               "        .arg(fixture.join(\"Cargo.toml\"))",
               "        .args([\"--\", \"--nocapture\", \"--test-threads=1\"])",
               "        .env(",
@@ -14952,8 +14952,8 @@
         ]
       },
       "decision": "approved",
-      "reason": "The tests assert ancestor ForbiddenTransitive violations and the full Root→Helper→Leaf path even when the immediate Helper envelope permits Leaf. internal_reexecution_cannot_bypass_an_active_ancestor_prohibition also checks a validation/execution frame, while the real Salsa fixture checks cold and reused requests. Consulting only the immediate caller or only cache misses would fail these checks.",
-      "reviewer": "/root/anchor_book_plan"
+      "reason": "All four associated tests are ordinary and collectively check ancestor prohibition enforcement and retained evidence. immediate_permission_does_not_override_an_active_ancestor_prohibition defines Root forbidding Leaf and Helper permitting Leaf in the body, enters Helper beneath the active Root, and requires exactly one ForbiddenTransitive error attributed to Root with the complete Root -> Helper -> Leaf path. reports_direct_and_ancestor_violation_with_complete_path_and_rule checks the ancestor violation remains alongside an undeclared immediate call, retains Root as the rule owner, the full three-frame path and the Leaf receiver, and makes calls_conform false. internal_reexecution_cannot_bypass_an_active_ancestor_prohibition requires a forbidden internal validation entry to remain an error with Root attribution and a Validation path frame, without inventing a checked source call or a coverage gap. real_salsa_contract_fixture directly verifies Root prohibits Leaf, checks the same ancestor error and complete path for cold and prewarmed Leaf requests, and proves the latter is reused rather than executed. Checking only the immediate caller, allowing its permission to override Root, skipping cached or validation entries, dropping the prohibition owner, or truncating the intermediate frame would therefore fail these assertions. The child command retains --locked and the reviewed semantic assertions after removal of forced --offline. This decision records source-level evidence adequacy; execution is separate.",
+      "reviewer": "Codex /root/content_parser (independent source review)"
     },
     {
       "anchor": "meta.language.classes.abstract_complete",

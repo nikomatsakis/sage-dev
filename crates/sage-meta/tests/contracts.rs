@@ -13,7 +13,7 @@ fn real_salsa_contract_fixture() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let fixture = root.join("tests/fixtures/contracts");
     let output = std::process::Command::new(env!("CARGO"))
-        .args(["test", "--offline", "--locked", "--manifest-path"])
+        .args(["test", "--locked", "--manifest-path"])
         .arg(fixture.join("Cargo.toml"))
         .args(["--", "--nocapture", "--test-threads=1"])
         .env(

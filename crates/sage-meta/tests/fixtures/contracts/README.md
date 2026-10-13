@@ -5,6 +5,13 @@ Rust queries. `cargo test -p sage-meta --test contracts` compiles and runs it;
 it can also be run with `cargo test --manifest-path
 crates/sage-meta/tests/fixtures/contracts/Cargo.toml`.
 
+The integration test builds with `--locked` against the fixture's own lockfile.
+Cargo may fetch dependencies absent from its cache; building the outer workspace
+does not necessarily fetch every version selected by this isolated workspace.
+To run offline, first fetch the fixture's dependencies with `cargo fetch --locked
+--manifest-path crates/sage-meta/tests/fixtures/contracts/Cargo.toml`, then set
+`CARGO_NET_OFFLINE=true` when running the test.
+
 The `.sage` files are loaded from `md/design/crates/` at session creation,
 using the source directory configured by this fixture's `book.toml`. The Rust index is
 also loaded from disk and compared with `include_str!("queries.rs")` embedded
