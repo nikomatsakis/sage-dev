@@ -43,6 +43,11 @@ the explicit structural-copy APIs: a handle never acquires database-global
 meaning and must not be interpreted by another stash merely because its
 numeric index matches.
 
+Intern lookup partitions candidates by type, element count, and content hash
+before comparing values. Count is a memory-safety boundary: a scalar hash can
+collide with an empty slice hash, but lookup must never read that empty entry
+as a scalar.
+
 A stash grows by allocating new hash-consed entries, but an allocated entry is
 immutable. Transient algorithms such as inference keep mutation in separate
 state. When their result is ready to cross a semantic query boundary, they

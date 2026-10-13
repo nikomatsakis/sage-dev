@@ -103327,22 +103327,94 @@
         ],
         "tests": [
           {
-            "crate_name": "sage_meta",
-            "target": "test:service_spec",
-            "rust_path": "sage_meta::todo::crates_sage_stash_storage_handle_ownership",
-            "file": "crates/sage-meta/tests/service_spec.rs",
-            "cfg": [],
+            "crate_name": "sage_ir",
+            "target": "lib:sage_ir",
+            "rust_path": "sage_ir::check::finalize::tests::finalized_nested_body_owns_resolved_and_imported_types_after_sources_drop",
+            "file": "crates/sage-ir/src/check/finalize.rs",
+            "cfg": [
+              "#[cfg(test)]"
+            ],
             "source": [
               "#[test]",
               "    #[sage::test(crates.sage_stash.storage.handle_ownership)]",
-              "    fn crates_sage_stash_storage_handle_ownership() {",
-              "        // TODO: Associate and review the complete evidence for Debug tests reject cross-stash pointer",
-              "        // and slice access for equal and unequal element types, copy tests reconstruct nested pointers",
-              "        // and slices in a destination stash, and completed-query tests walk outputs under the",
-              "        // destination stash without consulting source stashes.",
+              "    #[sage::test(crates.sage_stash.storage.immutable_entries)]",
+              "    fn finalized_nested_body_owns_resolved_and_imported_types_after_sources_drop() {",
+              "        use crate::cst::expr::Literal;",
+              "",
+              "        let mut imported_stash = Stash::new();",
+              "        let imported_bool = imported_stash.alloc(Ty::Bool);",
+              "        let imported = Stashed::new(imported_stash, imported_bool);",
+              "        let mut source = Stash::new();",
+              "        source.alloc(123_u64);",
+              "        let boolean = imported.copy_into(&mut source);",
+              "        let mut egraph = VersionedEGraph::new();",
+              "        let variable = egraph.alloc_var(Version::ROOT, Universe::ROOT);",
+              "        let inference = source.alloc(Ty::InferVar(variable));",
+              "        try_unify(&mut egraph, &mut source, Version::ROOT, inference, boolean).unwrap();",
+              "        let span = RelativeSpan { start: 0, end: 4 };",
+              "        let child = source.alloc(TyExpr {",
+              "            data: TyExprData::Literal(Literal::Bool(true)),",
+              "            ty: inference,",
+              "            span,",
+              "        });",
+              "        let elements = source.alloc_slice(&[child, child]);",
+              "        let types = source.alloc_slice(&[inference, boolean]);",
+              "        let tuple = source.alloc(Ty::Tuple(types));",
+              "        let root = source.alloc(TyExpr {",
+              "            data: TyExprData::Tuple(elements),",
+              "            ty: tuple,",
+              "            span,",
+              "        });",
+              "        let completed = finalize_typed_body(&source, &egraph, root, &[], &[], span);",
+              "        assert_eq!(source[inference], Ty::InferVar(variable));",
+              "        assert_eq!(source[types], [inference, boolean]);",
+              "        assert_eq!(source[elements], [child, child]);",
+              "        assert_eq!(imported.root_deref(), Ty::Bool);",
+              "        drop(egraph);",
+              "        drop(source);",
+              "        drop(imported);",
+              "",
+              "        let (",
+              "            target,",
+              "            TyBodyData {",
+              "                root,",
+              "                locals,",
+              "                span: completed_span,",
+              "            },",
+              "        ) = completed.open_deref();",
+              "        assert_eq!(completed_span, span);",
+              "        assert!(target[locals].is_empty());",
+              "        let TyExpr {",
+              "            data,",
+              "            ty,",
+              "            span: root_span,",
+              "        } = target[root];",
+              "        assert_eq!(root_span, span);",
+              "        let Ty::Tuple(types) = target[ty] else {",
+              "            panic!(\"expected tuple type\")",
+              "        };",
+              "        assert_eq!(target[types].len(), 2);",
+              "        for ty in &target[types] {",
+              "            assert_eq!(target[*ty], Ty::Bool);",
+              "        }",
+              "        let TyExprData::Tuple(elements) = data else {",
+              "            panic!(\"expected tuple expression\")",
+              "        };",
+              "        assert_eq!(target[elements].len(), 2);",
+              "        assert_eq!(target[elements][0], target[elements][1]);",
+              "        for child in &target[elements] {",
+              "            let TyExpr {",
+              "                data,",
+              "                ty,",
+              "                span: child_span,",
+              "            } = target[*child];",
+              "            assert_eq!(data, TyExprData::Literal(Literal::Bool(true)));",
+              "            assert_eq!(target[ty], Ty::Bool);",
+              "            assert_eq!(child_span, span);",
+              "        }",
               "    }"
             ],
-            "status": "todo"
+            "status": "ordinary"
           },
           {
             "crate_name": "sage_stash",
@@ -103426,6 +103498,31 @@
           {
             "crate_name": "sage_stash",
             "target": "test:arena_tests",
+            "rust_path": "sage_stash::tests::cross_stash_ptr_wrong_type",
+            "file": "crates/sage-stash/tests/arena_tests.rs",
+            "cfg": [
+              "#[cfg(test)]",
+              "#[cfg_attr(debug_assertions, should_panic(expected = \"stash identity mismatch\"))]",
+              "#[cfg_attr(not(debug_assertions), should_panic(expected = \"stash type mismatch\"))]"
+            ],
+            "source": [
+              "#[test]",
+              "    #[cfg_attr(debug_assertions, should_panic(expected = \"stash identity mismatch\"))]",
+              "    #[cfg_attr(not(debug_assertions), should_panic(expected = \"stash type mismatch\"))]",
+              "    #[sage::test(crates.sage_stash.storage.handle_ownership)]",
+              "    fn cross_stash_ptr_wrong_type() {",
+              "        let mut stash1 = Stash::new();",
+              "        let mut stash2 = Stash::new();",
+              "        let p1 = stash1.alloc(Point { x: 1, y: 2 });",
+              "        let _c2 = stash2.alloc(Color { r: 0, g: 0, b: 0 });",
+              "        let _ = stash2[p1];",
+              "    }"
+            ],
+            "status": "ordinary"
+          },
+          {
+            "crate_name": "sage_stash",
+            "target": "test:arena_tests",
             "rust_path": "sage_stash::tests::cross_stash_slice_panics_in_debug",
             "file": "crates/sage-stash/tests/arena_tests.rs",
             "cfg": [
@@ -103443,6 +103540,69 @@
               "        let _s2 = stash2.alloc_slice(&[Point { x: 99, y: 100 }]);",
               "        let _ = &stash2[s1];",
               "    }"
+            ],
+            "status": "ordinary"
+          },
+          {
+            "crate_name": "sage_stash",
+            "target": "test:storage_contracts",
+            "rust_path": "sage_stash::copied_nested_handles_survive_source_drop_and_destination_growth",
+            "file": "crates/sage-stash/tests/storage_contracts.rs",
+            "cfg": [],
+            "source": [
+              "#[test]",
+              "#[sage::test(crates.sage_stash.storage.handle_ownership)]",
+              "fn copied_nested_handles_survive_source_drop_and_destination_growth() {",
+              "    let mut source = Stash::new();",
+              "    let value = source.alloc(42_u32);",
+              "    let other = source.alloc(99_u32);",
+              "    let children = source.alloc_slice(&[value, other, value]);",
+              "    let root = source.alloc(Branch { value, children });",
+              "    let tree = Stashed::new(source, root);",
+              "    let mut destination = Stash::new();",
+              "    // Different entry layout detects a shallow copy even in release builds.",
+              "    destination.alloc(7_u64);",
+              "    destination.alloc_slice(&[1_u8, 2, 3]);",
+              "    let copied = tree.copy_into(&mut destination);",
+              "    drop(tree);",
+              "    for n in 0..4096_u64 {",
+              "        destination.alloc(n);",
+              "    }",
+              "    let Branch { value, children } = destination[copied];",
+              "    assert_eq!(destination[value], 42);",
+              "    let children = &destination[children];",
+              "    assert_eq!(children.len(), 3);",
+              "    assert_eq!(children[0], children[2]);",
+              "    assert_eq!(children[0], value);",
+              "    assert_eq!(",
+              "        children.iter().map(|p| destination[*p]).collect::<Vec<_>>(),",
+              "        [42, 99, 42]",
+              "    );",
+              "}"
+            ],
+            "status": "ordinary"
+          },
+          {
+            "crate_name": "sage_stash",
+            "target": "test:storage_contracts",
+            "rust_path": "sage_stash::cross_stash_slice_with_different_element_type_is_rejected",
+            "file": "crates/sage-stash/tests/storage_contracts.rs",
+            "cfg": [
+              "#[cfg_attr(debug_assertions, should_panic(expected = \"stash identity mismatch\"))]",
+              "#[cfg_attr(not(debug_assertions), should_panic(expected = \"stash type mismatch\"))]"
+            ],
+            "source": [
+              "#[test]",
+              "#[cfg_attr(debug_assertions, should_panic(expected = \"stash identity mismatch\"))]",
+              "#[cfg_attr(not(debug_assertions), should_panic(expected = \"stash type mismatch\"))]",
+              "#[sage::test(crates.sage_stash.storage.handle_ownership)]",
+              "fn cross_stash_slice_with_different_element_type_is_rejected() {",
+              "    let mut source = Stash::new();",
+              "    let handle = source.alloc_slice(&[42_u32]);",
+              "    let mut destination = Stash::new();",
+              "    destination.alloc_slice(&[42_u64]);",
+              "    let _ = &destination[handle];",
+              "}"
             ],
             "status": "ordinary"
           }
@@ -104585,9 +104745,9 @@
           ]
         }
       },
-      "decision": "todo",
-      "reason": "sage-stash/lib.rs validates handle stash IDs in debug indexing and supports structural copy_into. copy_into_compound/copy_into_with_slice inspect destination values; cross_stash_ptr_same_type_panics_in_debug and cross_stash_slice_panics_in_debug expect mismatch panics in debug. The TODO still covers unequal element types and complete checked-query output traversal; no release-time ownership check is inferred. Associated test set: sage_meta::todo::crates_sage_stash_storage_handle_ownership, sage_stash::tests::copy_into_compound, sage_stash::tests::copy_into_with_slice, sage_stash::tests::cross_stash_ptr_same_type_panics_in_debug, sage_stash::tests::cross_stash_slice_panics_in_debug. Source review only; test execution is reported separately by the coordinator.",
-      "reviewer": "Codex review_placeholders (implementation/test policy v2)"
+      "decision": "approved",
+      "reason": "The complete ordinary test set visibly checks ownership diagnostics and structural boundary copying. cross_stash_ptr_same_type_panics_in_debug and cross_stash_slice_panics_in_debug require identity mismatch in debug mode; cross_stash_ptr_wrong_type and cross_stash_slice_with_different_element_type_is_rejected require identity mismatch in debug or type mismatch in release. These are misuse diagnostics, not a claim of release identity enforcement. copy_into_compound and copy_into_with_slice check copied values. copied_nested_handles_survive_source_drop_and_destination_growth shifts the destination layout, drops the source, grows the destination, and asserts all nested scalar/slice values and repeated-child identity; a shallow copy retaining source indices would fail those checks even in release. finalized_nested_body_owns_resolved_and_imported_types_after_sources_drop exercises an imported Bool and resolved inference variable, drops all source owners, and directly traverses the completed tuple, types, repeated children, spans, and locals. A checked result retaining handles into the source or imported result would fail traversal or expected values. Assertions and scenarios are visible in the supplied bodies; root reports relevant tests passing independently.",
+      "reviewer": "Codex review_ownership"
     },
     {
       "anchor": "crates.sage_stash.storage.immutable_entries",
@@ -104601,22 +104761,158 @@
         ],
         "tests": [
           {
-            "crate_name": "sage_meta",
-            "target": "test:service_spec",
-            "rust_path": "sage_meta::todo::crates_sage_stash_storage_immutable_entries",
-            "file": "crates/sage-meta/tests/service_spec.rs",
+            "crate_name": "sage_ir",
+            "target": "lib:sage_ir",
+            "rust_path": "sage_ir::check::finalize::tests::finalized_nested_body_owns_resolved_and_imported_types_after_sources_drop",
+            "file": "crates/sage-ir/src/check/finalize.rs",
+            "cfg": [
+              "#[cfg(test)]"
+            ],
+            "source": [
+              "#[test]",
+              "    #[sage::test(crates.sage_stash.storage.handle_ownership)]",
+              "    #[sage::test(crates.sage_stash.storage.immutable_entries)]",
+              "    fn finalized_nested_body_owns_resolved_and_imported_types_after_sources_drop() {",
+              "        use crate::cst::expr::Literal;",
+              "",
+              "        let mut imported_stash = Stash::new();",
+              "        let imported_bool = imported_stash.alloc(Ty::Bool);",
+              "        let imported = Stashed::new(imported_stash, imported_bool);",
+              "        let mut source = Stash::new();",
+              "        source.alloc(123_u64);",
+              "        let boolean = imported.copy_into(&mut source);",
+              "        let mut egraph = VersionedEGraph::new();",
+              "        let variable = egraph.alloc_var(Version::ROOT, Universe::ROOT);",
+              "        let inference = source.alloc(Ty::InferVar(variable));",
+              "        try_unify(&mut egraph, &mut source, Version::ROOT, inference, boolean).unwrap();",
+              "        let span = RelativeSpan { start: 0, end: 4 };",
+              "        let child = source.alloc(TyExpr {",
+              "            data: TyExprData::Literal(Literal::Bool(true)),",
+              "            ty: inference,",
+              "            span,",
+              "        });",
+              "        let elements = source.alloc_slice(&[child, child]);",
+              "        let types = source.alloc_slice(&[inference, boolean]);",
+              "        let tuple = source.alloc(Ty::Tuple(types));",
+              "        let root = source.alloc(TyExpr {",
+              "            data: TyExprData::Tuple(elements),",
+              "            ty: tuple,",
+              "            span,",
+              "        });",
+              "        let completed = finalize_typed_body(&source, &egraph, root, &[], &[], span);",
+              "        assert_eq!(source[inference], Ty::InferVar(variable));",
+              "        assert_eq!(source[types], [inference, boolean]);",
+              "        assert_eq!(source[elements], [child, child]);",
+              "        assert_eq!(imported.root_deref(), Ty::Bool);",
+              "        drop(egraph);",
+              "        drop(source);",
+              "        drop(imported);",
+              "",
+              "        let (",
+              "            target,",
+              "            TyBodyData {",
+              "                root,",
+              "                locals,",
+              "                span: completed_span,",
+              "            },",
+              "        ) = completed.open_deref();",
+              "        assert_eq!(completed_span, span);",
+              "        assert!(target[locals].is_empty());",
+              "        let TyExpr {",
+              "            data,",
+              "            ty,",
+              "            span: root_span,",
+              "        } = target[root];",
+              "        assert_eq!(root_span, span);",
+              "        let Ty::Tuple(types) = target[ty] else {",
+              "            panic!(\"expected tuple type\")",
+              "        };",
+              "        assert_eq!(target[types].len(), 2);",
+              "        for ty in &target[types] {",
+              "            assert_eq!(target[*ty], Ty::Bool);",
+              "        }",
+              "        let TyExprData::Tuple(elements) = data else {",
+              "            panic!(\"expected tuple expression\")",
+              "        };",
+              "        assert_eq!(target[elements].len(), 2);",
+              "        assert_eq!(target[elements][0], target[elements][1]);",
+              "        for child in &target[elements] {",
+              "            let TyExpr {",
+              "                data,",
+              "                ty,",
+              "                span: child_span,",
+              "            } = target[*child];",
+              "            assert_eq!(data, TyExprData::Literal(Literal::Bool(true)));",
+              "            assert_eq!(target[ty], Ty::Bool);",
+              "            assert_eq!(child_span, span);",
+              "        }",
+              "    }"
+            ],
+            "status": "ordinary"
+          },
+          {
+            "crate_name": "sage_stash",
+            "target": "test:storage_contracts",
+            "rust_path": "sage_stash::appending_and_deduplicating_preserves_existing_entries",
+            "file": "crates/sage-stash/tests/storage_contracts.rs",
             "cfg": [],
             "source": [
               "#[test]",
-              "    #[sage::test(crates.sage_stash.storage.immutable_entries)]",
-              "    fn crates_sage_stash_storage_immutable_entries() {",
-              "        // TODO: Associate and review the complete evidence for The public stash API exposes no mutable",
-              "        // indexing or mutable entry access; a focused finalization test proves that the working stash",
-              "        // retains its inference-variable node while the separately owned output contains only its",
-              "        // resolved type; completed-body tests reject every surviving inference variable.",
-              "    }"
+              "#[sage::test(crates.sage_stash.storage.immutable_entries)]",
+              "fn appending_and_deduplicating_preserves_existing_entries() {",
+              "    let mut stash = Stash::new();",
+              "    let value = stash.alloc(42_u32);",
+              "    let slice = stash.alloc_slice(&[1_u32, 2, 3]);",
+              "    for n in 0..4096_u64 {",
+              "        stash.alloc(n);",
+              "    }",
+              "    assert_eq!(stash[value], 42);",
+              "    assert_eq!(stash[slice], [1, 2, 3]);",
+              "    assert_eq!(value, stash.alloc(42_u32));",
+              "    assert_eq!(slice, stash.alloc_slice(&[1_u32, 2, 3]));",
+              "}"
             ],
-            "status": "todo"
+            "status": "ordinary"
+          },
+          {
+            "crate_name": "sage_stash",
+            "target": "test:storage_contracts",
+            "rust_path": "sage_stash::safe_api_rejects_mutating_interned_scalars_and_slices",
+            "file": "crates/sage-stash/tests/storage_contracts.rs",
+            "cfg": [],
+            "source": [
+              "#[test]",
+              "#[sage::test(crates.sage_stash.storage.immutable_entries)]",
+              "fn safe_api_rejects_mutating_interned_scalars_and_slices() {",
+              "    // Keep the rejected operations in the reviewed snapshot as well as the fixtures.",
+              "    assert_eq!(",
+              "        include_str!(\"ui/mutate_scalar.rs\"),",
+              "        r#\"use sage_stash::Stash;",
+              "",
+              "fn main() {",
+              "    let mut stash = Stash::new();",
+              "    let value = stash.alloc(42_u32);",
+              "    stash[value] = 99;",
+              "}",
+              "\"#",
+              "    );",
+              "    assert_eq!(",
+              "        include_str!(\"ui/mutate_slice.rs\"),",
+              "        r#\"use sage_stash::Stash;",
+              "",
+              "fn main() {",
+              "    let mut stash = Stash::new();",
+              "    let values = stash.alloc_slice(&[1_u32, 2]);",
+              "    stash[values][0] = 99;",
+              "}",
+              "\"#",
+              "    );",
+              "    let tests = trybuild::TestCases::new();",
+              "    tests.compile_fail(\"tests/ui/mutate_scalar.rs\");",
+              "    tests.compile_fail(\"tests/ui/mutate_slice.rs\");",
+              "}"
+            ],
+            "status": "ordinary"
           }
         ],
         "implementations": [
@@ -105755,9 +106051,9 @@
           ]
         }
       },
-      "decision": "todo",
-      "reason": "Stash::alloc/alloc_slice append or reuse interned entries and public Index access is immutable. The TODO still requires the finalization/source-retention and no-surviving-inference proof; finalizer implementation lies outside sage-stash and needs association before approval. Associated test set: sage_meta::todo::crates_sage_stash_storage_immutable_entries. Source review only; test execution is reported separately by the coordinator.",
-      "reviewer": "Codex review_placeholders (implementation/test policy v2)"
+      "decision": "approved",
+      "reason": "All associated tests are ordinary and their bodies collectively check immutable interned scalar/slice entries and fresh finalization. appending_and_deduplicating_preserves_existing_entries asserts unchanged scalar and slice values after 4096 allocations, then confirms both deduplicate to their original handles. safe_api_rejects_mutating_interned_scalars_and_slices now embeds the exact scalar and slice indexed assignments in the snapshotted body, asserts each fixture equals that source, and requires both fixtures to fail compilation; adding IndexMut would make these cases compile and fail the test, while fixture drift fails the equality assertions. The inspected compiler diagnostics specifically identify absent IndexMut. finalized_nested_body_owns_resolved_and_imported_types_after_sources_drop asserts the original inference variable and source slices remain unchanged, drops the source/imported owners and inference graph, then directly traverses the completed tuple and children and asserts resolved Bool types, literal values, sharing, spans, and empty locals. In-place resolution or retaining source handles would fail these assertions. The former fixture-visibility gap is resolved. This is a source adequacy review; root independently reported focused test execution.",
+      "reviewer": "Codex review_ownership"
     },
     {
       "anchor": "crates.sage_stash.storage.query_value",
@@ -105770,21 +106066,58 @@
         ],
         "tests": [
           {
-            "crate_name": "sage_meta",
-            "target": "test:service_spec",
-            "rust_path": "sage_meta::todo::crates_sage_stash_storage_query_value",
-            "file": "crates/sage-meta/tests/service_spec.rs",
+            "crate_name": "sage_stash",
+            "target": "test:incremental",
+            "rust_path": "sage_stash::equal_reconstructed_roots_backdate_but_changed_content_reexecutes_consumers",
+            "file": "crates/sage-stash/tests/incremental.rs",
             "cfg": [],
             "source": [
               "#[test]",
-              "    #[sage::test(crates.sage_stash.storage.query_value)]",
-              "    fn crates_sage_stash_storage_query_value() {",
-              "        // TODO: Associate and review the complete evidence for Query traces show equal reconstructed",
-              "        // roots stopping downstream invalidation after a producer reexecutes, while an edit changing",
-              "        // reachable semantic content changes the root and invalidates its consumers.",
-              "    }"
+              "#[sage::test(crates.sage_stash.storage.query_value)]",
+              "fn equal_reconstructed_roots_backdate_but_changed_content_reexecutes_consumers() {",
+              "    let mut db = Database::default();",
+              "    let input = Input::new(&db, 10, false, 0);",
+              "    assert_eq!(consume(&db, input), 21);",
+              "    assert_eq!(*db.executions.lock().unwrap(), [\"consume\", \"produce\"]);",
+              "    db.executions.lock().unwrap().clear();",
+              "",
+              "    assert_eq!(consume(&db, input), 21);",
+              "    assert!(",
+              "        db.executions.lock().unwrap().is_empty(),",
+              "        \"warm demand reuses both queries\"",
+              "    );",
+              "",
+              "    input.set_layout(&mut db).to(true);",
+              "    assert!(",
+              "        db.executions.lock().unwrap().is_empty(),",
+              "        \"edits alone do not execute queries\"",
+              "    );",
+              "    assert_eq!(consume(&db, input), 21);",
+              "    assert_eq!(",
+              "        *db.executions.lock().unwrap(),",
+              "        [\"produce\"],",
+              "        \"equal root stops downstream execution despite new handles and allocation order\"",
+              "    );",
+              "    db.executions.lock().unwrap().clear();",
+              "",
+              "    input.set_value(&mut db).to(20);",
+              "    assert_eq!(consume(&db, input), 41);",
+              "    assert_eq!(",
+              "        *db.executions.lock().unwrap(),",
+              "        [\"produce\", \"consume\"],",
+              "        \"reachable changes propagate through the root value\"",
+              "    );",
+              "    db.executions.lock().unwrap().clear();",
+              "",
+              "    input.set_unrelated(&mut db).to(1);",
+              "    assert_eq!(consume(&db, input), 41);",
+              "    assert!(",
+              "        db.executions.lock().unwrap().is_empty(),",
+              "        \"unread inputs do not invalidate the tree\"",
+              "    );",
+              "}"
             ],
-            "status": "todo"
+            "status": "ordinary"
           }
         ],
         "implementations": [
@@ -106923,9 +107256,9 @@
           ]
         }
       },
-      "decision": "todo",
-      "reason": "Stashed::new computes one rooted fingerprint and Stashed update/equality operate on the root value rather than tracked nodes. The TODO leaves producer reexecution/backdating and changed-content consumer invalidation trace evidence unestablished; no query behavior is inferred from an empty body. Associated test set: sage_meta::todo::crates_sage_stash_storage_query_value. Source review only; test execution is reported separately by the coordinator.",
-      "reviewer": "Codex review_placeholders (implementation/test policy v2)"
+      "decision": "approved",
+      "reason": "equal_reconstructed_roots_backdate_but_changed_content_reexecutes_consumers asserts returned sums and the exact producer/consumer execution log across cold and warm demand, layout-only reconstruction, a reachable-content edit, and an unrelated input edit. In particular, layout reconstruction runs only produce while a changed value runs produce and consume and changes the sum. These observations detect address/handle-based invalidation, missing backdating, stale changed roots, and accidental dependencies; the inspected setup exposes the complete Stashed root as the query value and consumes its internal nodes through that root, with no tracked node identities. All associated tests are ordinary. This is a source-evidence review; test execution was reported separately by the coordinator.",
+      "reviewer": "codex-review-values"
     },
     {
       "anchor": "crates.sage_stash.storage.rooted_equality",
@@ -106937,23 +107270,6 @@
           "addresses, allocation order, padding, or unreachable allocations."
         ],
         "tests": [
-          {
-            "crate_name": "sage_meta",
-            "target": "test:service_spec",
-            "rust_path": "sage_meta::todo::crates_sage_stash_storage_rooted_equality",
-            "file": "crates/sage-meta/tests/service_spec.rs",
-            "cfg": [],
-            "source": [
-              "#[test]",
-              "    #[sage::test(crates.sage_stash.storage.rooted_equality)]",
-              "    fn crates_sage_stash_storage_rooted_equality() {",
-              "        // TODO: Associate and review the complete evidence for Independently allocated equal and",
-              "        // unequal trees, shared DAGs, reordered/unreachable allocations, and repeated construction",
-              "        // produce the expected equality, hash, ordering, fingerprint, and `salsa::Update` behavior.",
-              "    }"
-            ],
-            "status": "todo"
-          },
           {
             "crate_name": "sage_stash",
             "target": "test:arena_tests",
@@ -107067,6 +107383,31 @@
           {
             "crate_name": "sage_stash",
             "target": "test:arena_tests",
+            "rust_path": "sage_stash::tests::stashed_ne_different_content_fingerprint",
+            "file": "crates/sage-stash/tests/arena_tests.rs",
+            "cfg": [
+              "#[cfg(test)]"
+            ],
+            "source": [
+              "#[test]",
+              "    #[sage::test(crates.sage_stash.storage.rooted_equality)]",
+              "    fn stashed_ne_different_content_fingerprint() {",
+              "        let mut s1 = Stash::new();",
+              "        let r1 = s1.alloc(Point { x: 10, y: 20 });",
+              "        let stashed1 = Stashed::new(s1, r1);",
+              "",
+              "        let mut s2 = Stash::new();",
+              "        let r2 = s2.alloc(Point { x: 99, y: 99 });",
+              "        let stashed2 = Stashed::new(s2, r2);",
+              "",
+              "        assert_ne!(stashed1, stashed2);",
+              "    }"
+            ],
+            "status": "ordinary"
+          },
+          {
+            "crate_name": "sage_stash",
+            "target": "test:arena_tests",
             "rust_path": "sage_stash::tests::stashed_ord_consistent_with_eq",
             "file": "crates/sage-stash/tests/arena_tests.rs",
             "cfg": [
@@ -107088,6 +107429,91 @@
               "",
               "        assert_eq!(stashed1.cmp(&stashed2), Ordering::Equal);",
               "    }"
+            ],
+            "status": "ordinary"
+          },
+          {
+            "crate_name": "sage_stash",
+            "target": "test:storage_contracts",
+            "rust_path": "sage_stash::padded_values_fingerprint_only_semantic_fields",
+            "file": "crates/sage-stash/tests/storage_contracts.rs",
+            "cfg": [],
+            "source": [
+              "#[test]",
+              "#[sage::test(crates.sage_stash.storage.rooted_equality)]",
+              "fn padded_values_fingerprint_only_semantic_fields() {",
+              "    use sage_stash::FingerprintHasher;",
+              "    let value = Padded { tag: 7, value: 42 };",
+              "    assert!(std::mem::size_of::<Padded>() > std::mem::size_of::<u8>() + std::mem::size_of::<u64>());",
+              "    let stash = Stash::new();",
+              "    let mut actual = FingerprintHasher::new();",
+              "    value.stash_hash(&stash, &mut actual);",
+              "    let mut fields = FingerprintHasher::new();",
+              "    7_u8.stash_hash(&stash, &mut fields);",
+              "    42_u64.stash_hash(&stash, &mut fields);",
+              "    assert_eq!(actual.finalize(), fields.finalize());",
+              "}"
+            ],
+            "status": "ordinary"
+          },
+          {
+            "crate_name": "sage_stash",
+            "target": "test:storage_contracts",
+            "rust_path": "sage_stash::reachable_content_controls_equality_hash_and_order",
+            "file": "crates/sage-stash/tests/storage_contracts.rs",
+            "cfg": [],
+            "source": [
+              "#[test]",
+              "#[sage::test(crates.sage_stash.storage.rooted_equality)]",
+              "fn reachable_content_controls_equality_hash_and_order() {",
+              "    let baseline = tree(false, false, 20);",
+              "    for reverse in [false, true] {",
+              "        for garbage in [false, true] {",
+              "            let equal = tree(reverse, garbage, 20);",
+              "            assert_eq!(baseline, equal);",
+              "            assert_eq!(hash(&baseline), hash(&equal));",
+              "            assert_eq!(baseline.cmp(&equal), std::cmp::Ordering::Equal);",
+              "            let changed = tree(reverse, garbage, 21);",
+              "            assert_ne!(baseline, changed);",
+              "            assert_ne!(baseline.cmp(&changed), std::cmp::Ordering::Equal);",
+              "            assert_eq!(baseline.cmp(&changed), changed.cmp(&baseline).reverse());",
+              "            assert_eq!(",
+              "                baseline.cmp(&changed),",
+              "                baseline.cmp(&tree(false, false, 21))",
+              "            );",
+              "        }",
+              "    }",
+              "}"
+            ],
+            "status": "ordinary"
+          },
+          {
+            "crate_name": "sage_stash",
+            "target": "test:storage_contracts",
+            "rust_path": "sage_stash::salsa_update_keeps_equal_root_and_replaces_changed_root",
+            "file": "crates/sage-stash/tests/storage_contracts.rs",
+            "cfg": [
+              "#[cfg(feature = \"salsa\")]"
+            ],
+            "source": [
+              "#[test]",
+              "#[cfg(feature = \"salsa\")]",
+              "#[sage::test(crates.sage_stash.storage.rooted_equality)]",
+              "fn salsa_update_keeps_equal_root_and_replaces_changed_root() {",
+              "    let mut old = tree(false, false, 20);",
+              "    let original_root = old.root();",
+              "    let equal = tree(true, true, 20);",
+              "    // Safety: old_pointer is an exclusive live pointer to the same concrete type.",
+              "    assert!(!unsafe { salsa::Update::maybe_update(&mut old, equal) });",
+              "    assert_eq!(old.root(), original_root);",
+              "    let changed = tree(true, true, 21);",
+              "    let expected = changed.clone();",
+              "    // Safety: old_pointer is an exclusive live pointer to the same concrete type.",
+              "    assert!(unsafe { salsa::Update::maybe_update(&mut old, changed) });",
+              "    assert_eq!(old, expected);",
+              "    let (stash, root) = old.open();",
+              "    assert_eq!(stash[stash[root][1]].value, 21);",
+              "}"
             ],
             "status": "ordinary"
           }
@@ -108228,9 +108654,9 @@
           ]
         }
       },
-      "decision": "todo",
-      "reason": "Stashed equality/order/hash/update use the stored structural fingerprint. fingerprint_deterministic and stashed_eq_compound_dag compare separately allocated equal content; stashed_hash_consistent_with_eq and stashed_ord_consistent_with_eq assert matching hash/order. Unreachable/reordered allocations, unequal trees and Salsa update cases remain explicitly TODO. Associated test set: sage_meta::todo::crates_sage_stash_storage_rooted_equality, sage_stash::tests::fingerprint_deterministic, sage_stash::tests::stashed_eq_compound_dag, sage_stash::tests::stashed_hash_consistent_with_eq, sage_stash::tests::stashed_ord_consistent_with_eq. Source review only; test execution is reported separately by the coordinator.",
-      "reviewer": "Codex review_placeholders (implementation/test policy v2)"
+      "decision": "approved",
+      "reason": "fingerprint_deterministic, stashed_eq_compound_dag, stashed_hash_consistent_with_eq, stashed_ne_different_content_fingerprint, and stashed_ord_consistent_with_eq visibly check separately allocated equal and unequal roots. reachable_content_controls_equality_hash_and_order extends this with reversed allocations and unreachable garbage and checks equality, hash equality, ordering equivalence and antisymmetry, and layout-independent unequal ordering. salsa_update_keeps_equal_root_and_replaces_changed_root asserts the update flag, equal-root retention, and changed reachable contents. padded_values_fingerprint_only_semantic_fields establishes that the fixture really has padding and compares its derived fingerprint against explicit hashing of only its two semantic fields, detecting a raw-memory hashing regression without depending on incidental padding bytes. These assertions collectively detect address-dependent comparison, irrelevant-allocation sensitivity, stale changed roots, and padding-dependent hashing. All associated tests are ordinary. This is a source-evidence review; execution is a separate coordinator obligation.",
+      "reviewer": "codex-review-values"
     },
     {
       "anchor": "crates.sage_stash.storage.typed_interning",
@@ -108243,21 +108669,45 @@
         ],
         "tests": [
           {
-            "crate_name": "sage_meta",
-            "target": "test:service_spec",
-            "rust_path": "sage_meta::todo::crates_sage_stash_storage_typed_interning",
-            "file": "crates/sage-meta/tests/service_spec.rs",
-            "cfg": [],
+            "crate_name": "sage_stash",
+            "target": "test:arena_tests",
+            "rust_path": "sage_stash::tests::alloc_same_value_deduplicates",
+            "file": "crates/sage-stash/tests/arena_tests.rs",
+            "cfg": [
+              "#[cfg(test)]"
+            ],
             "source": [
               "#[test]",
               "    #[sage::test(crates.sage_stash.storage.typed_interning)]",
-              "    fn crates_sage_stash_storage_typed_interning() {",
-              "        // TODO: Associate and review the complete evidence for Scalar, nested-pointer, slice,",
-              "        // duplicate, and forced-collision tests establish deduplication and non-aliasing; derived",
-              "        // `AllocStashData` implementations receive the same coverage as handwritten implementations.",
+              "    fn alloc_same_value_deduplicates() {",
+              "        let mut stash = Stash::new();",
+              "        let p1 = stash.alloc(Point { x: 1, y: 2 });",
+              "        let p2 = stash.alloc(Point { x: 1, y: 2 });",
+              "        assert_eq!(p1, p2);",
               "    }"
             ],
-            "status": "todo"
+            "status": "ordinary"
+          },
+          {
+            "crate_name": "sage_stash",
+            "target": "test:arena_tests",
+            "rust_path": "sage_stash::tests::dedup_different_types_same_bits",
+            "file": "crates/sage-stash/tests/arena_tests.rs",
+            "cfg": [
+              "#[cfg(test)]"
+            ],
+            "source": [
+              "#[test]",
+              "    #[sage::test(crates.sage_stash.storage.typed_interning)]",
+              "    fn dedup_different_types_same_bits() {",
+              "        let mut stash = Stash::new();",
+              "        let n = stash.alloc(Name { id: 42 });",
+              "        let t = stash.alloc(Tag { val: 42 });",
+              "        assert_eq!(stash[n], Name { id: 42 });",
+              "        assert_eq!(stash[t], Tag { val: 42 });",
+              "    }"
+            ],
+            "status": "ordinary"
           },
           {
             "crate_name": "sage_stash",
@@ -108274,6 +108724,7 @@
               "        #[derive(Copy, Clone, Debug, PartialEq)]",
               "        struct Collider(u32);",
               "",
+              "        // Safety: Collider owns a Copy scalar and has no borrowed data.",
               "        unsafe impl<'db> StashData<'db> for Collider {",
               "            type StaticSelf = Collider;",
               "        }",
@@ -108295,6 +108746,13 @@
               "        assert_eq!(a, c);",
               "        assert_eq!(stash[a], Collider(1));",
               "        assert_eq!(stash[b], Collider(2));",
+              "        let left = stash.alloc_slice(&[Collider(1), Collider(2)]);",
+              "        let right = stash.alloc_slice(&[Collider(2), Collider(1)]);",
+              "        let duplicate = stash.alloc_slice(&[Collider(1), Collider(2)]);",
+              "        assert_ne!(left, right);",
+              "        assert_eq!(left, duplicate);",
+              "        assert_eq!(stash[left], [Collider(1), Collider(2)]);",
+              "        assert_eq!(stash[right], [Collider(2), Collider(1)]);",
               "    }"
             ],
             "status": "ordinary"
@@ -108330,6 +108788,26 @@
           {
             "crate_name": "sage_stash",
             "target": "test:arena_tests",
+            "rust_path": "sage_stash::tests::hash_cons_distinct",
+            "file": "crates/sage-stash/tests/arena_tests.rs",
+            "cfg": [
+              "#[cfg(test)]"
+            ],
+            "source": [
+              "#[test]",
+              "    #[sage::test(crates.sage_stash.storage.typed_interning)]",
+              "    fn hash_cons_distinct() {",
+              "        let mut stash = Stash::new();",
+              "        let p1 = stash.alloc(Point { x: 1, y: 2 });",
+              "        let p2 = stash.alloc(Point { x: 3, y: 4 });",
+              "        assert_ne!(p1, p2);",
+              "    }"
+            ],
+            "status": "ordinary"
+          },
+          {
+            "crate_name": "sage_stash",
+            "target": "test:arena_tests",
             "rust_path": "sage_stash::tests::hash_cons_slice_dedup",
             "file": "crates/sage-stash/tests/arena_tests.rs",
             "cfg": [
@@ -108344,6 +108822,115 @@
               "        let s2 = stash.alloc_slice(&[Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]);",
               "        assert_eq!(s1, s2);",
               "    }"
+            ],
+            "status": "ordinary"
+          },
+          {
+            "crate_name": "sage_stash",
+            "target": "test:arena_tests",
+            "rust_path": "sage_stash::tests::hash_cons_slice_distinct",
+            "file": "crates/sage-stash/tests/arena_tests.rs",
+            "cfg": [
+              "#[cfg(test)]"
+            ],
+            "source": [
+              "#[test]",
+              "    #[sage::test(crates.sage_stash.storage.typed_interning)]",
+              "    fn hash_cons_slice_distinct() {",
+              "        let mut stash = Stash::new();",
+              "        let s1 = stash.alloc_slice(&[Point { x: 1, y: 2 }]);",
+              "        let s2 = stash.alloc_slice(&[Point { x: 3, y: 4 }]);",
+              "        assert_ne!(s1, s2);",
+              "    }"
+            ],
+            "status": "ordinary"
+          },
+          {
+            "crate_name": "sage_stash",
+            "target": "test:storage_contracts",
+            "rust_path": "sage_stash::derived_values_and_slices_resolve_forced_hash_collisions_by_content",
+            "file": "crates/sage-stash/tests/storage_contracts.rs",
+            "cfg": [],
+            "source": [
+              "#[test]",
+              "#[sage::test(crates.sage_stash.storage.typed_interning)]",
+              "fn derived_values_and_slices_resolve_forced_hash_collisions_by_content() {",
+              "    let mut stash = Stash::new();",
+              "    let one = DerivedCollision {",
+              "        value: EmptySliceCollision(1),",
+              "    };",
+              "    let two = DerivedCollision {",
+              "        value: EmptySliceCollision(2),",
+              "    };",
+              "    let a = stash.alloc(one);",
+              "    let b = stash.alloc(two);",
+              "    assert_ne!(a, b);",
+              "    assert_eq!(a, stash.alloc(one));",
+              "    assert_eq!(stash[a], one);",
+              "    assert_eq!(stash[b], two);",
+              "    let ab = stash.alloc_slice(&[one, two]);",
+              "    let ba = stash.alloc_slice(&[two, one]);",
+              "    assert_ne!(ab, ba);",
+              "    assert_eq!(ab, stash.alloc_slice(&[one, two]));",
+              "    assert_eq!(stash[ab], [one, two]);",
+              "    assert_eq!(stash[ba], [two, one]);",
+              "}"
+            ],
+            "status": "ordinary"
+          },
+          {
+            "crate_name": "sage_stash",
+            "target": "test:storage_contracts",
+            "rust_path": "sage_stash::scalar_collision_with_empty_slice_never_reads_a_slice_as_a_scalar",
+            "file": "crates/sage-stash/tests/storage_contracts.rs",
+            "cfg": [],
+            "source": [
+              "#[test]",
+              "#[sage::test(crates.sage_stash.storage.typed_interning)]",
+              "fn scalar_collision_with_empty_slice_never_reads_a_slice_as_a_scalar() {",
+              "    for slice_first in [true, false] {",
+              "        let mut stash = Stash::new();",
+              "        if slice_first {",
+              "            stash.alloc_slice::<EmptySliceCollision>(&[]);",
+              "        }",
+              "        let scalar = stash.alloc(EmptySliceCollision(42));",
+              "        let empty = stash.alloc_slice::<EmptySliceCollision>(&[]);",
+              "        assert_eq!(stash[scalar], EmptySliceCollision(42));",
+              "        assert!(stash[empty].is_empty());",
+              "        assert_eq!(scalar, stash.alloc(EmptySliceCollision(42)));",
+              "        assert_eq!(empty, stash.alloc_slice::<EmptySliceCollision>(&[]));",
+              "    }",
+              "}"
+            ],
+            "status": "ordinary"
+          },
+          {
+            "crate_name": "sage_stash",
+            "target": "test:storage_contracts",
+            "rust_path": "sage_stash::typed_scalars_slices_and_derived_nested_values_deduplicate",
+            "file": "crates/sage-stash/tests/storage_contracts.rs",
+            "cfg": [],
+            "source": [
+              "#[test]",
+              "#[sage::test(crates.sage_stash.storage.typed_interning)]",
+              "fn typed_scalars_slices_and_derived_nested_values_deduplicate() {",
+              "    let mut stash = Stash::new();",
+              "    let value = stash.alloc(42_u32);",
+              "    assert_eq!(value, stash.alloc(42_u32));",
+              "    let signed = stash.alloc(42_i32);",
+              "    assert_eq!(stash[signed], 42_i32);",
+              "    assert_eq!(stash[value], 42_u32);",
+              "    let children = stash.alloc_slice(&[value, value]);",
+              "    assert_eq!(children, stash.alloc_slice_from_iter([value, value]));",
+              "    let branch = Branch { value, children };",
+              "    let root = stash.alloc(branch);",
+              "    assert_eq!(root, stash.alloc(branch));",
+              "    let roots = stash.alloc_slice(&[branch, branch]);",
+              "    assert_eq!(roots, stash.alloc_slice(&[branch, branch]));",
+              "    let empty = stash.alloc_slice::<u32>(&[]);",
+              "    assert_eq!(empty, stash.alloc_slice_from_iter([]));",
+              "    assert!(stash[empty].is_empty());",
+              "}"
             ],
             "status": "ordinary"
           }
@@ -109484,9 +110071,9 @@
           ]
         }
       },
-      "decision": "todo",
-      "reason": "Stash::alloc/alloc_slice key interning by type and structural content hash, probing collisions with actual equality. hash_cons_collision_stores_both checks nonaliasing plus repeated equal reuse; hash_cons_compound_type and hash_cons_slice_dedup check nested and slice deduplication. The TODO still requests the full scalar/derived/handwritten matrix. Associated test set: sage_meta::todo::crates_sage_stash_storage_typed_interning, sage_stash::tests::hash_cons_collision_stores_both, sage_stash::tests::hash_cons_compound_type, sage_stash::tests::hash_cons_slice_dedup. Source review only; test execution is reported separately by the coordinator.",
-      "reviewer": "Codex review_placeholders (implementation/test policy v2)"
+      "decision": "approved",
+      "reason": "alloc_same_value_deduplicates, hash_cons_compound_type, hash_cons_slice_dedup, and typed_scalars_slices_and_derived_nested_values_deduplicate assert equal scalar, compound, nested slice, iterator-built slice, and empty allocations return equal handles. hash_cons_distinct and hash_cons_slice_distinct assert unequal handles for distinct content. hash_cons_collision_stores_both deliberately forces scalar and equal-length slice hash collisions, asserts unequal handles for unequal contents and reuse for duplicates, and reads back both values/orders. dedup_different_types_same_bits and typed scalar reads exercise type-separated allocations. scalar_collision_with_empty_slice_never_reads_a_slice_as_a_scalar checks both insertion orders, scalar content, empty slice length, and repeated handle reuse for a forced scalar/empty-slice collision. Together these assertions detect missing interning, collision-only sharing, wrong slice ordering, and malformed cross-shape reuse. All associated tests are ordinary. This is a source-evidence review; debug/release execution and regression reproduction were reported separately by the coordinator. derived_values_and_slices_resolve_forced_hash_collisions_by_content additionally exercises a derived wrapper around a constant-hash field and asserts scalar and reordered-slice separation, duplicate handle reuse, and exact readback, detecting derive-path failures to distinguish colliding structural contents.",
+      "reviewer": "codex-review-values"
     },
     {
       "anchor": "meta.anchors.anchor_pages",
