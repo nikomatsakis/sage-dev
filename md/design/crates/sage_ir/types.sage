@@ -5,7 +5,46 @@ type Name """Interned spelling, not definition identity.""";
 type Scope """Enclosing local module or crate scope.""";
 type Owner """Optional trait or impl owner of an associated definition.""";
 type Syntax """Self-contained item CST, including source-relative spans.""";
-type Span """Absolute source or expansion provenance.""";
+struct Span {
+    """
+    AbsoluteSpan: a byte range in one parseable source.
+
+    {anchor}`spans.relative_composition`
+    A source-root item owns an absolute span in one ParseSource. A nested definition is placed relative to its immediate represented owner, and its signature CST, body CST, and typed-body nodes use offsets relative to that definition's own start. Resolving a nested node composes every intervening relative range with the source-root absolute range.
+    """
+    source: ParseSource,
+    start: u32,
+    end: u32,
+}
+struct RelativeSpan {
+    """
+    A byte range measured from the immediate represented owner.
+
+    {anchor}`spans.item_origin`
+    The parser measures each item from the earliest of its first attribute and item-node start, so attribute offsets are nonnegative. Entering an associated item establishes a new item-relative base rather than retaining the enclosing trait or impl base.
+
+    {anchor}`spans.offset_reuse`
+    An edit outside an item which only moves its absolute range may update diagnostics and position lookup, but leaves relative CST and typed content equal and must not propagate into semantic consumers which did not read the absolute coordinate.
+    """
+    start: u32,
+    end: u32,
+}
+enum ParseSource {
+    """Real source and generated text have distinct provenance. Generated coordinates address generated text, not origin text."""
+    SourceFile(SourceFile),
+    BangMacro(MacroDefSymbol, crate::symbols::LocalMacroInvocationSym),
+    Derive(DeriveExpansion),
+}
+type SourceFile { """A source-file input with path and text; storage and database lifetimes are omitted.""" }
+type MacroDefSymbol { """Kind-specific local or external macro-definition identity.""" }
+type DeriveExpansion {
+    """
+    One derive occurrence on a stable source item. Its current origin span and generated text are separately available facts.
+
+    {anchor}`spans.generated_identity`
+    Each generated parse source is identified by stable source input, generating operation, and occurrence, while generated text and current origin coordinates are mutable facts. Moving the origin must not collapse distinct occurrences or mint a replacement source identity.
+    """
+}
 enum Signature {
     """Review-only sum for grouped checking and metadata operations. Rust exposes
     these results separately; this enum is not a Rust runtime representation."""
@@ -37,9 +76,14 @@ type OptionalScope """Optional parent scope; absent for the root module.""";
 
 // Source: crates/sage-ir/src/ty.rs::Binder. Representation is deliberately opaque.
 type Binder<T> {
-    """A value of T together with the generic parameters binding its references.
+    """
+    A value of T together with the generic parameters binding its references.
     Parameters have stable identities; opening an owner's binder reuses those
-    identities before introducing an associated item's own parameters."""
+    identities before introducing an associated item's own parameters.
+
+    {anchor}`binder.owner_parameters`
+    Opening an associated signature reuses the owning trait or impl's Self and generic parameter identities before introducing the associated item's own parameters. A Binder pairs its value with the parameters binding references in that value; copying or opening it does not mint replacements for those identities.
+    """
 }
 
 // Source: crates/sage-ir/src/ty.rs::Ty. Keep the current type-only argument model.
@@ -88,7 +132,15 @@ enum FloatTy { F32, F64 }
 // Source: crates/sage-ir/src/cst/mod.rs::Mutability.
 enum Mutability { Shared, Mut }
 enum Lifetime {
-    """Meaningful lifetime reasoning is not implemented in the current compiler."""
+    """
+    Meaningful lifetime reasoning is not implemented in the current compiler.
+
+    {anchor}`lifetimes.dummy`
+    Every explicit, elided, universal, existential, imported, and synthesized lifetime lowers to Dummy. Dummy is neither static, a lifetime inference variable, nor post-analysis region erasure, and this deliberate omission does not create ambiguity.
+
+    {anchor}`lifetimes.unchecked_borrows`
+    Outlives(Dummy, Dummy) holds. Reference and dereference operations remain explicit because they affect ordinary types, while Sage does not check borrow liveness, uniqueness, overlap, or validity.
+    """
     Dummy """Placeholder used for every represented lifetime.""",
 }
 enum Const {
@@ -98,7 +150,15 @@ enum Const {
 }
 
 enum AliasTy {
-    """Alias identity is retained until normalization is explicitly requested."""
+    """
+    Alias identity is retained until normalization is explicitly requested.
+
+    {anchor}`aliases.identity`
+    Named, associated, and opaque aliases retain their definition identity and generic arguments as one semantic type family across copy, fold, display, inference, canonical queries/responses, and oracle emission. A debug-formatted string is not a semantic rigid or alias type.
+
+    {anchor}`aliases.revelation`
+    Normalization is explicit. Completed IR need not erase every alias: named aliases reveal their substituted right-hand sides, associated projections normalize through trait solving, and opaque aliases reveal only inside their definition boundary or a future code-generation phase. An unrevealed alias retains provable declared bounds and can be related structurally by identity and arguments.
+    """
     Named(NamedAliasTy),
     Associated(ProjectionTy),
     Opaque(OpaqueAliasTy),
@@ -121,8 +181,13 @@ struct OpaqueAliasTy {
 type TypeAliasSymbol { """Kind-specific local or external type-alias identity; Rust symbol::TypeAliasSymbol.""" }
 type ConstSymbol { """Kind-specific local or external constant identity; Rust symbol::ConstSymbol.""" }
 type GenericParam {
-    """Stable parameter identity: source-backed Ast, external Ext, or an AlphaEquiv
-    placeholder. Its kind is Type, Lifetime, or Const. See generic_param.rs."""
+    """
+    Stable parameter identity: source-backed Ast, external Ext, or an AlphaEquiv
+    placeholder. Its kind is Type, Lifetime, or Const. See generic_param.rs.
+
+    {anchor}`scoped_identities`
+    Generic parameters use their own source-backed, external, or alpha-equivalent identity family. A field is identified by its owner plus field index, and a local by its body-local ID; these are not global Symbol variants. Semantic values retain these scoped identities.
+    """
 }
 type InferVarIndex { """Dense index identifying an inference variable inside its owning inference context.""" }
 type ErrorReported { """Evidence that a diagnostic has already been recorded for an error-recovery value.""" }
@@ -205,5 +270,96 @@ struct Body {
     body: TyBody,
     diagnostics: Vec<Diagnostic>,
 }
-type TyBody { """The completed elaborated expression tree described by tytree::TyBodyData. Successful output has no unresolved inference work.""" }
+struct TyBody {
+    """
+    The completed elaborated tree, with storage ownership erased.
+
+    {anchor}`body.typed_provenance`
+    Every expression and pattern in a successful completed body has a type and source provenance, including nodes synthesized from a source expression.
+
+    {anchor}`body.resolved_references`
+    Every path, field, variant, function, and associated-item reference in a successful completed body records its resolved definition identity.
+
+    {anchor}`body.no_inference`
+    No live inference variable or unresolved semantic choice survives in a successful completed body. Completion resolves type edges and produces the final tree independently of temporary inference state.
+
+    {anchor}`body.elaborated`
+    Completed bodies consume method syntax and temporary adjustment recipes. Implicit borrows, dereferences, and coercions are explicit typed nodes; successful output contains no source-shaped placeholder for an unresolved operation. Structured control flow remains a tree, without basic blocks, a drop schedule, generator lowering, or borrow-check results.
+
+    {anchor}`body.diagnosed_recovery`
+    A recovery body represents failure using explicit error nodes backed by diagnostics, never an unresolved choice presented as an ordinary successful node.
+    """
+    root: TyExpr,
+    locals: Vec<LocalVar>,
+    span: RelativeSpan,
+}
+struct TyExpr {
+    data: TyExprData,
+    ty: Ty,
+    span: RelativeSpan,
+}
+struct LocalVar { name: Name, span: RelativeSpan }
+type LocalId { """A body-local variable identity, distinct from global item symbols.""" }
+enum PathResolution {
+    Def(crate::symbols::Symbol),
+    Local(LocalId),
+    Error(ErrorReported),
+}
+struct ResolvedCallTarget {
+    """
+    {anchor}`calls.selected_semantics`
+    A completed call records the selected function, dispatch family, owner substitutions, and method substitutions. Trait-method calls retain Self and the selected trait reference; the proof justifying a call need not return a concrete impl identity.
+    """
+    function: crate::symbols::FnSymbol,
+    dispatch: CallDispatch,
+    owner_type_args: Vec<Ty>,
+    method_type_args: Vec<Ty>,
+}
+enum CallDispatch {
+    """
+    The current Rust representation supports direct and static-trait dispatch.
+
+    {anchor}`calls.dispatch_families`
+    Completed calls distinguish direct function definitions, statically dispatched trait methods, dynamic trait-object methods, function pointers, and callable-trait dispatch through Fn, FnMut, or FnOnce. Receiver/coercion operations are already explicit tree nodes, not a replayable adjustment list.
+    """
+    Direct,
+    StaticTrait { self_ty: Ty, trait_ref: TraitRef },
+}
+type TyExprData {
+    """
+    {anchor}`body.closures`
+    A completed closure has a typed nested body with explicit parameters and captures.
+
+    {anchor}`body.coroutines`
+    An async block or async function has a typed nested coroutine body. Typed IR does not lower it into a generator state machine.
+
+    {anchor}`body.indexing`
+    Index syntax lowers to a resolved Index or IndexMut call with typed operands.
+
+    {anchor}`body.conditional_patterns`
+    If-let, while-let, and let chains lower into structured match and control-flow forms.
+
+    {anchor}`body.for_iteration`
+    A for expression lowers into an IntoIterator call followed by a structured loop and match.
+
+    {anchor}`body.try_residual`
+    The question-mark operator lowers into a Try::branch call, a ControlFlow match, and a FromResidual call.
+
+    {anchor}`body.await`
+    Await remains a high-level operation over an explicitly resolved IntoFuture conversion and Future::Output type; it does not contain polling, suspension-point, or state-machine lowering.
+
+    {anchor}`body.macro_expansion`
+    A checked expression represents its macro expansion output; a macro invocation is not itself a successful checked expression node.
+
+    <!-- end anchor -->
+
+    Expression forms from tytree::TyExprData. Blocks, conditionals, matches, loops, calls, paths, references, dereferences, NeverToAny coercions, and diagnosed error nodes retain typed children. Current Rust also carries transitional source-shaped forms; their presence in the representation does not establish successful elaboration.
+
+    {anchor}`operators.trait_calls`
+    Every proven overloadable operator in completed Typed IR is a resolved trait-method call, whether its operands are primitive, generic, or user-defined. The call retains method identity, substitutions, explicit adjustments, and result type; no overloadable case completes as Binary. Primitive recognition belongs to later codegen with concrete substitutions.
+
+    {anchor}`operators.lazy_control_flow`
+    Non-overloadable && and || remain explicit lazy logical operations whose right-hand side is conditionally evaluated; they do not become eager trait-method calls.
+    """
+}
 type Diagnostic { """A source-located diagnostic with severity, labels, and explanatory notes.""" }

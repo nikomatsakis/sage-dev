@@ -3,10 +3,10 @@
 **Status:** Proposed
 
 **Depends on:**
-- [Type Inference](./type-inference.md) — diagnostic collection during type checking
+- [Type Inference](../type-inference/README.md) — diagnostic collection during type checking
 
 **Related:**
-- [Error Sentinel Type](./error-sentinel-type.md) — `ErrorReported` witness that a diagnostic was emitted
+- [Error Sentinel Type](../error-sentinel-type/README.md) — `ErrorReported` witness that a diagnostic was emitted
 
 ## Problem
 
@@ -144,7 +144,7 @@ The `notes` field holds sub-diagnostics — these are originals that were "wrapp
 
 ### `ErrorReported` — the return value of reporting
 
-Reporting a diagnostic returns an `ErrorReported` sentinel (see [error-sentinel-type RFD](./error-sentinel-type.md)). This is the *only* way to construct `Ty::Error`, `Res::Error`, and similar error variants — making it a compile error to introduce an error type without first emitting a user-visible message.
+Reporting a diagnostic returns an `ErrorReported` sentinel (see [error-sentinel-type RFD](../error-sentinel-type/README.md)). This is the *only* way to construct `Ty::Error`, `Res::Error`, and similar error variants — making it a compile error to introduce an error type without first emitting a user-visible message.
 
 ```rust
 /// Witness that at least one diagnostic has been emitted.

@@ -360,6 +360,7 @@ fn assert_external_adt_default_coverage(
     Ok(())
 }
 
+// {anchor}`crates.sage_oracle_harness.crate.independent_coverage`
 fn run_fixture(fixture: &Fixture, out_dir: &Path) -> Result<(), Failed> {
     let source = fixture.source_text();
     let parsed = sage_oracle_harness::annotations::parse_annotations(&source);

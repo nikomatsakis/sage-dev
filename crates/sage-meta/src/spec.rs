@@ -1,10 +1,10 @@
-//! Named, paragraph-sized specification rules and their Rust test evidence.
+//! Named specification claims and their Rust test evidence.
 //!
 //! The custom Markdown role `{anchor}` followed immediately by a single-backtick
-//! name starts a specification paragraph. Markdown parsing keeps examples in code
+//! name starts a specification claim. Markdown parsing keeps examples in code
 //! and HTML from accidentally becoming requirements.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
@@ -26,7 +26,27 @@ pub struct SpecAnchor {
     /// The byte range of the role marker, including the quoted name.
     pub span: Span,
     /// Markdown for the rule following its marker, without surrounding whitespace.
-    pub paragraph: String,
+    pub content: String,
+    pub content_span: Span,
+    /// Book-relative URL returning to the definition, separate from its generated rule page.
+    pub context_url: String,
+    /// Model identity, independent of the chapter-derived specification name.
+    pub entity: Option<String>,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct SpecReference {
+    pub name: String,
+    pub file: String,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct SpecChapter {
+    pub file: String,
+    pub namespace: String,
+    pub url: String,
+    pub normative: bool,
 }
 
 #[derive(Default, Debug, serde::Serialize)]
@@ -34,8 +54,10 @@ pub struct SpecIndex {
     pub anchors: BTreeMap<String, SpecAnchor>,
     pub diagnostics: Vec<Diagnostic>,
     pub documents: usize,
+    pub chapters: BTreeMap<String, SpecChapter>,
+    pub references: Vec<SpecReference>,
     #[serde(skip)]
-    pub(crate) sources: BTreeMap<String, String>,
+    pub sources: BTreeMap<String, String>,
 }
 
 impl SpecIndex {
@@ -70,7 +92,7 @@ impl SpecIndex {
             index
                 .sources
                 .insert(source.file.clone(), source.source.clone());
-            let (anchors, diagnostics) = parse_anchors(source);
+            let (anchors, diagnostics, _) = parse_anchors(source);
             index.diagnostics.extend(diagnostics);
             for anchor in anchors {
                 if let Some(previous) = index.anchors.get(&anchor.name) {
@@ -90,7 +112,7 @@ impl SpecIndex {
         index
     }
 
-    /// Check both directions of the paragraph-to-test correspondence.
+    /// Check both directions of the claim-to-test correspondence.
     /// This checks declared evidence, not whether the test passes or proves its rule.
     pub fn validate(&self, tests: &BTreeMap<String, Vec<RustSite>>) -> Vec<Diagnostic> {
         let mut diagnostics = self.validate_anchors(tests);
@@ -98,8 +120,51 @@ impl SpecIndex {
         diagnostics
     }
 
+    // {anchor}`meta.anchors.implementation_coverage`
+    pub fn validate_implementations(
+        &self,
+        rust: &crate::correspondence::CorrespondenceIndex,
+    ) -> Vec<Diagnostic> {
+        self.anchors
+            .values()
+            .filter(|anchor| {
+                rust.implementations
+                    .get(&anchor.name)
+                    .is_none_or(Vec::is_empty)
+            })
+            .map(|anchor| Diagnostic {
+                file: anchor.file.clone(),
+                span: anchor.span.clone(),
+                message: format!(
+                    "specification anchor `{}` has no associated Rust implementation",
+                    anchor.name
+                ),
+            })
+            .collect()
+    }
+
+    pub fn validate_implementation_references(
+        &self,
+        rust: &crate::correspondence::CorrespondenceIndex,
+    ) -> Vec<Diagnostic> {
+        rust.implementations
+            .iter()
+            .filter(|(name, _)| !self.anchors.contains_key(*name))
+            .flat_map(|(name, sites)| {
+                sites.iter().map(move |site| Diagnostic {
+                    file: site.file.clone(),
+                    span: site.annotation_span.clone(),
+                    message: format!(
+                        "Rust implementation references unknown specification anchor `{name}`"
+                    ),
+                })
+            })
+            .collect()
+    }
+
     /// Keep Markdown and Rust diagnostics separate until their source excerpts
     /// are rendered: the two inventories use different relative-path roots.
+    // {anchor}`meta.anchors.test_coverage`
     pub(crate) fn validate_anchors(
         &self,
         tests: &BTreeMap<String, Vec<RustSite>>,
@@ -120,6 +185,7 @@ impl SpecIndex {
         diagnostics
     }
 
+    // {anchor}`meta.anchors.test_references`
     pub(crate) fn validate_test_references(
         &self,
         tests: &BTreeMap<String, Vec<RustSite>>,
@@ -143,28 +209,37 @@ impl SpecIndex {
 }
 
 /// Replace specification role markers with named, shield-style HTML permalinks.
-/// Everything else, including Markdown code examples, is preserved byte-for-byte.
+/// Explicit end markers are removed; other text, including Markdown code
+/// examples, is preserved byte-for-byte.
 /// Invalid or duplicate markers are errors; test coverage belongs to `validate`.
 pub fn render_anchors(source: &str) -> Result<String, Vec<Diagnostic>> {
-    let index = SpecIndex::from_sources(&[SpecSource {
+    let input = SpecSource {
         file: "<markdown>".into(),
         source: source.into(),
-    }]);
+    };
+    let (_, _, ends) = parse_anchors(&input);
+    let index = SpecIndex::from_sources(&[input]);
     if !index.diagnostics.is_empty() {
         return Err(index.diagnostics);
     }
-    let mut anchors = index.anchors.values().collect::<Vec<_>>();
-    anchors.sort_by_key(|anchor| anchor.span.start);
-    let mut output = String::with_capacity(source.len());
-    let mut cursor = 0;
-    for anchor in anchors {
-        output.push_str(&source[cursor..anchor.span.start]);
+    let mut replacements = ends
+        .into_iter()
+        .map(|span| (span, String::new()))
+        .collect::<Vec<_>>();
+    for anchor in index.anchors.values() {
         // Names are ASCII identifiers separated by dots, so no HTML escaping is needed.
-        output.push_str(&format!(
+        replacements.push((anchor.span.clone(), format!(
             "<a class=\"spec-anchor\" id=\"{0}\" href=\"#{0}\" aria-label=\"Specification {0}\" title=\"Permalink to {0}\"><span class=\"spec-anchor-label\" aria-hidden=\"true\">spec</span><span class=\"spec-anchor-name\">{0}</span></a>",
             anchor.name
-        ));
-        cursor = anchor.span.end;
+        )));
+    }
+    replacements.sort_by_key(|(span, _)| span.start);
+    let mut output = String::with_capacity(source.len());
+    let mut cursor = 0;
+    for (span, replacement) in replacements {
+        output.push_str(&source[cursor..span.start]);
+        output.push_str(&replacement);
+        cursor = span.end;
     }
     output.push_str(&source[cursor..]);
     Ok(output)
@@ -194,7 +269,7 @@ fn markdown_files(directory: &Path, paths: &mut Vec<PathBuf>) -> std::io::Result
     Ok(())
 }
 
-fn parse_anchors(source: &SpecSource) -> (Vec<SpecAnchor>, Vec<Diagnostic>) {
+fn parse_anchors(source: &SpecSource) -> (Vec<SpecAnchor>, Vec<Diagnostic>, Vec<Span>) {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
         | Options::ENABLE_STRIKETHROUGH
@@ -203,9 +278,12 @@ fn parse_anchors(source: &SpecSource) -> (Vec<SpecAnchor>, Vec<Diagnostic>) {
         .into_offset_iter()
         .collect::<Vec<_>>();
     let mut anchors = Vec::new();
+    let mut active = None;
+    let mut ends = Vec::new();
     let mut diagnostics = Vec::new();
     let mut paragraph: Option<Range<usize>> = None;
     let mut in_code_block = false;
+    let mut in_html_block = false;
     let mut html_tags = Vec::new();
     for (event_index, (event, range)) in events.iter().enumerate() {
         match event {
@@ -213,8 +291,35 @@ fn parse_anchors(source: &SpecSource) -> (Vec<SpecAnchor>, Vec<Diagnostic>) {
             Event::End(TagEnd::Paragraph) => paragraph = None,
             Event::Start(Tag::CodeBlock(_)) => in_code_block = true,
             Event::End(TagEnd::CodeBlock) => in_code_block = false,
-            Event::InlineHtml(html) => update_html_tags(html, &mut html_tags),
-            Event::Text(_) if !in_code_block && html_tags.is_empty() => {
+            // {anchor}`meta.anchors.content.heading`
+            Event::Start(Tag::Heading { .. }) if html_tags.is_empty() => {
+                finish_anchor(&source.source, range.start, &mut active, &mut anchors);
+            }
+            Event::Start(Tag::HtmlBlock) => {
+                in_html_block = true;
+                // Inspect the complete block, not individual Html events: a line
+                // inside a multiline comment must not become an end marker.
+                let html = &source.source[range.clone()];
+                if html_tags.is_empty()
+                    && let Some(span) = explicit_anchor_end(&source.source, range)
+                {
+                    // {anchor}`meta.anchors.content.unmatched_end`
+                    if active.is_none() {
+                        diagnostics.push(Diagnostic {
+                            file: source.file.clone(),
+                            span: span.clone(),
+                            message: "an explicit anchor end marker has no active anchor".into(),
+                        });
+                    }
+                    finish_anchor(&source.source, span.start, &mut active, &mut anchors);
+                    ends.push(span);
+                }
+                update_anchor_html_tags(html, &mut html_tags);
+            }
+            Event::End(TagEnd::HtmlBlock) => in_html_block = false,
+            Event::InlineHtml(html) => update_anchor_html_tags(html, &mut html_tags),
+            // {anchor}`meta.anchors.content.literal_syntax`
+            Event::Text(_) if !in_code_block && !in_html_block && html_tags.is_empty() => {
                 let text = &source.source[range.clone()];
                 for (relative, _) in text.match_indices("{anchor}") {
                     let start = range.start + relative;
@@ -272,21 +377,143 @@ fn parse_anchors(source: &SpecSource) -> (Vec<SpecAnchor>, Vec<Diagnostic>) {
                         diagnostics.push(error("a specification anchor must have a nonempty rule in the same paragraph"));
                         continue;
                     }
-                    anchors.push(SpecAnchor {
+                    // {anchor}`meta.anchors.content.next_anchor`
+                    finish_anchor(&source.source, start, &mut active, &mut anchors);
+                    active = Some(SpecAnchor {
                         name: name.to_string(),
                         file: source.file.clone(),
                         span: Span {
                             start,
                             end: code_range.end,
                         },
-                        paragraph: rule.trim().into(),
+                        content: String::new(),
+                        content_span: Span {
+                            start: code_range.end,
+                            end: code_range.end,
+                        },
+                        context_url: format!("{}#{name}", chapter_url(&source.file)),
+                        entity: None,
                     });
                 }
             }
             _ => {}
         }
     }
-    (anchors, diagnostics)
+    // {anchor}`meta.anchors.content.source_end`
+    // Each Sage prose block is parsed independently by add_chapter_text, so the
+    // end of this input cannot include another prose block or language syntax.
+    finish_anchor(
+        &source.source,
+        source.source.len(),
+        &mut active,
+        &mut anchors,
+    );
+    (anchors, diagnostics, ends)
+}
+
+// {anchor}`meta.anchors.content.blocks`
+fn finish_anchor(
+    source: &str,
+    end: usize,
+    active: &mut Option<SpecAnchor>,
+    anchors: &mut Vec<SpecAnchor>,
+) {
+    if let Some(mut anchor) = active.take() {
+        let content = &source[anchor.span.end..end];
+        anchor.content = content.trim().into();
+        anchor.content_span = Span {
+            start: anchor.span.end + content.len() - content.trim_start().len(),
+            end: end - (content.len() - content.trim_end().len()),
+        };
+        anchors.push(anchor);
+    }
+}
+
+// {anchor}`meta.anchors.content.explicit_end`
+fn explicit_anchor_end(source: &str, block: &Range<usize>) -> Option<Span> {
+    const MARKER: &str = "<!-- end anchor -->";
+    let line_start = source[..block.start].rfind('\n').map_or(0, |pos| pos + 1);
+    let line = source[line_start..block.end]
+        .strip_suffix('\n')
+        .unwrap_or(&source[line_start..block.end]);
+    let line = line.strip_suffix('\r').unwrap_or(line);
+    (line.trim_matches([' ', '\t']) == MARKER).then(|| Span {
+        start: line_start,
+        end: line_start + line.len(),
+    })
+}
+
+// CommonMark HTML blocks can finish at a blank line before their enclosing
+// element closes. Keep those elements active across Markdown events. Scan whole
+// HTML blocks so multiline tags, comments, and quoted attributes stay intact.
+fn update_anchor_html_tags(mut html: &str, tags: &mut Vec<String>) {
+    while let Some(start) = html.find('<') {
+        html = &html[start..];
+        if let Some(name) = tags
+            .last()
+            .filter(|name| matches!(name.as_str(), "script" | "style" | "textarea" | "pre"))
+        {
+            // Raw text may contain unmatched quotes, '<', or comment openers.
+            // Only its actual closing element can change the enclosing tags.
+            let name_end = 2 + name.len();
+            if html.starts_with("</")
+                && html
+                    .get(2..name_end)
+                    .is_some_and(|closing| closing.eq_ignore_ascii_case(name))
+                && let Some(tail) = html.get(name_end..)
+                && tail
+                    .trim_start_matches(char::is_whitespace)
+                    .starts_with('>')
+            {
+                let end =
+                    name_end + tail.len() - tail.trim_start_matches(char::is_whitespace).len() + 1;
+                update_html_tags(&html[..end], tags);
+                html = &html[end..];
+            } else {
+                html = &html[1..];
+            }
+            continue;
+        }
+        let terminator = if html.starts_with("<!--") {
+            Some("-->")
+        } else if html.starts_with("<![CDATA[") {
+            Some("]]>")
+        } else if html.starts_with("<?") {
+            Some("?>")
+        } else {
+            None
+        };
+        if let Some(terminator) = terminator {
+            let Some(end) = html.find(terminator) else {
+                break;
+            };
+            html = &html[end + terminator.len()..];
+            continue;
+        }
+        let name = html[1..].strip_prefix('/').unwrap_or(&html[1..]);
+        if !name.starts_with(|ch: char| ch.is_ascii_alphabetic() || ch == '!') {
+            html = &html[1..];
+            continue;
+        }
+        let mut quote = None;
+        let end = html.char_indices().skip(1).find_map(|(offset, ch)| {
+            if let Some(delimiter) = quote {
+                if ch == delimiter {
+                    quote = None;
+                }
+            } else if ch == '\'' || ch == '"' {
+                quote = Some(ch);
+            } else if ch == '>' {
+                return Some(offset + 1);
+            }
+            None
+        });
+        let Some(end) = end else {
+            break;
+        };
+        update_html_tags(&html[..end], tags);
+        html = &html[end..];
+    }
 }
 
 fn is_escaped(source: &str, offset: usize) -> bool {
@@ -340,4 +567,594 @@ fn update_html_tags(html: &str, tags: &mut Vec<String>) {
     {
         tags.push(name);
     }
+}
+
+/// Canonical generated page for a rule or namespace prefix.
+pub fn anchor_url(name: &str) -> String {
+    format!("design/anchor/{}.html", name.replace('.', "/"))
+}
+
+/// mdBook renders directory landing pages as index.html.
+pub fn chapter_url(file: &str) -> String {
+    let mut path = PathBuf::from(file);
+    if path.file_name().is_some_and(|name| name == "README.md") {
+        path.set_file_name("index.html");
+    } else {
+        path.set_extension("html");
+    }
+    path.to_string_lossy().replace('\\', "/")
+}
+
+// {anchor}`meta.book.chapter_names`
+pub fn chapter_namespace(file: &str) -> Result<String, String> {
+    let path = file
+        .strip_prefix("design/")
+        .ok_or("specification chapters must be below design/")?;
+    let mut parts = path.split('/').map(str::to_owned).collect::<Vec<_>>();
+    let last = parts.pop().ok_or("missing chapter filename")?;
+    let stem = last
+        .strip_suffix(".md")
+        .or_else(|| last.strip_suffix(".sage"))
+        .ok_or("specification chapters must be Markdown or Sage")?;
+    if stem != "README" {
+        parts.push(stem.into());
+    }
+    for part in &mut parts {
+        *part = part.replace('-', "_");
+        if part.contains('.') || !valid_anchor_name(part) {
+            return Err(format!(
+                "chapter path component `{part}` cannot form an anchor namespace"
+            ));
+        }
+    }
+    Ok(parts.join("."))
+}
+
+fn qualified(namespace: &str, local: &str) -> String {
+    if namespace.is_empty() {
+        local.into()
+    } else {
+        format!("{namespace}.{local}")
+    }
+}
+
+fn normative(file: &str) -> bool {
+    file.starts_with("design/")
+        && file != "design/tenets.md"
+        && !file.starts_with("design/tenets/")
+        && !file.starts_with("design/rfds/")
+        && !file.starts_with("design/research/")
+        && !file.starts_with("design/anchor/")
+}
+
+impl SpecIndex {
+    /// Load the canonical source inventory used by checks, reviews, and book generation.
+    /// Isolated Cargo fixtures without book.toml retain explicit-name Markdown inputs.
+    // {anchor}`meta.book.shared_model`
+    pub fn load_workspace(workspace: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+        if !workspace.join("book.toml").is_file() {
+            return Self::load(&workspace.join("md"));
+        }
+        let root = crate::workspace::book_source_root(workspace)?;
+        let summary = std::fs::read_to_string(root.join("SUMMARY.md"))?;
+        let mut files = BTreeSet::new();
+        for event in Parser::new(&summary) {
+            if let Event::Start(Tag::Link { dest_url, .. }) = event {
+                let file = dest_url.strip_prefix("./").unwrap_or(&dest_url);
+                let file = file.split('#').next().unwrap_or(file);
+                if file.ends_with(".md") || file.ends_with(".sage") {
+                    files.insert(file.to_owned());
+                }
+            }
+        }
+        let has_crates =
+            files.contains("design/crates/README.md") || files.contains("design/crates.md");
+        let documents = if root.join("design/crates").is_dir() {
+            crate::workspace::load_documents(&root.join("design/crates"))?
+        } else {
+            Vec::new()
+        };
+        if has_crates {
+            for document in &documents {
+                files.insert(
+                    Path::new(&document.file)
+                        .strip_prefix(&root)?
+                        .to_string_lossy()
+                        .replace('\\', "/"),
+                );
+            }
+            let mut markdown = Vec::new();
+            markdown_files(&root.join("design/crates"), &mut markdown)?;
+            for path in markdown {
+                files.insert(
+                    path.strip_prefix(&root)?
+                        .to_string_lossy()
+                        .replace('\\', "/"),
+                );
+            }
+        }
+        let mut index = Self::default();
+        let mut namespaces = BTreeMap::<String, String>::new();
+        let mut urls = BTreeMap::<String, String>::new();
+        for file in files {
+            let is_normative = normative(&file);
+            let namespace = if is_normative {
+                chapter_namespace(&file)?
+            } else {
+                String::new()
+            };
+            if is_normative
+                && let Some(previous) = namespaces.insert(namespace.clone(), file.clone())
+            {
+                index.diagnostics.push(Diagnostic {
+                    file: file.clone(),
+                    span: Span { start: 0, end: 0 },
+                    message: format!("chapter namespace `{namespace}` collides with `{previous}`"),
+                });
+            }
+            let url = chapter_url(&file);
+            if let Some(previous) = urls.insert(url.clone(), file.clone()) {
+                index.diagnostics.push(Diagnostic {
+                    file: file.clone(),
+                    span: Span { start: 0, end: 0 },
+                    message: format!("chapter output URL `{url}` collides with `{previous}`"),
+                });
+            }
+            let source = std::fs::read_to_string(root.join(&file))?;
+            index.chapters.insert(
+                file.clone(),
+                SpecChapter {
+                    file: file.clone(),
+                    namespace: namespace.clone(),
+                    url,
+                    normative: is_normative,
+                },
+            );
+            index.documents += usize::from(is_normative);
+            index.sources.insert(file.clone(), source.clone());
+            if !is_normative {
+                let (references, errors) = parse_references(&SpecSource {
+                    file: file.clone(),
+                    source,
+                });
+                index.references.extend(references);
+                index.diagnostics.extend(errors);
+            } else if file.ends_with(".sage") {
+                let document = crate::parse(&file, &source)?;
+                // Crate ownership is supplied by the validated model, not inferred from the rule name.
+                let absolute = root.join(&file).to_string_lossy().into_owned();
+                let model = documents.iter().find(|doc| doc.file == absolute);
+                let model_namespace =
+                    model.and_then(|doc| crate::workspace::document_namespace(&documents, doc));
+                if model_namespace.is_none() {
+                    return Err(format!("Sage chapter `{file}` has no modeled crate owner").into());
+                }
+                for block in document.prose {
+                    let (text, offsets) = dedent(&block.text);
+                    let entity = model_namespace.as_ref().map(|namespace| {
+                        std::iter::once(namespace.as_str())
+                            .chain(block.owner.iter().map(String::as_str))
+                            .collect::<Vec<_>>()
+                            .join("::")
+                    });
+                    index.add_chapter_text(
+                        &file,
+                        &namespace,
+                        &text,
+                        Some((&offsets, block.span.start)),
+                        entity,
+                    );
+                }
+            } else {
+                index.add_chapter_text(&file, &namespace, &source, None, None);
+            }
+        }
+        // {anchor}`meta.book.authority`
+        // An unpublished source containing a rule must not disappear from checking.
+        let mut disk = Vec::new();
+        markdown_files(&root.join("design"), &mut disk)?;
+        for path in disk {
+            let file = path
+                .strip_prefix(&root)?
+                .to_string_lossy()
+                .replace('\\', "/");
+            if normative(&file) && !index.chapters.contains_key(&file) {
+                let source = std::fs::read_to_string(&path)?;
+                index.sources.insert(file.clone(), source);
+                index.diagnostics.push(Diagnostic {
+                    file,
+                    span: Span { start: 0, end: 0 },
+                    message: "specification source is omitted from the Design chapter inventory"
+                        .into(),
+                });
+            }
+        }
+        for document in &documents {
+            let file = Path::new(&document.file)
+                .strip_prefix(&root)?
+                .to_string_lossy()
+                .replace('\\', "/");
+            if !index.chapters.contains_key(&file) {
+                index
+                    .sources
+                    .insert(file.clone(), std::fs::read_to_string(&document.file)?);
+                index.diagnostics.push(Diagnostic {
+                    file,
+                    span: Span { start: 0, end: 0 },
+                    message: "Sage source is omitted from the Design chapter inventory".into(),
+                });
+            }
+        }
+        for reference in &index.references {
+            if !index.anchors.contains_key(&reference.name) {
+                index.diagnostics.push(Diagnostic {
+                    file: reference.file.clone(),
+                    span: reference.span.clone(),
+                    message: format!("unknown specification reference `{}`", reference.name),
+                });
+            }
+        }
+        Ok(index)
+    }
+
+    // {anchor}`meta.anchors.canonical_sources`
+    fn add_chapter_text(
+        &mut self,
+        file: &str,
+        namespace: &str,
+        text: &str,
+        map: Option<(&[usize], usize)>,
+        entity: Option<String>,
+    ) {
+        let source = SpecSource {
+            file: file.into(),
+            source: text.into(),
+        };
+        let (mut anchors, mut errors, _) = parse_anchors(&source);
+        let (mut references, reference_errors) = parse_references(&source);
+        errors.extend(reference_errors);
+        let remap = |span: &mut Span| {
+            if let Some((offsets, start)) = map {
+                span.start = start + offsets[span.start];
+                span.end = start + offsets[span.end];
+            }
+        };
+        for error in &mut errors {
+            remap(&mut error.span);
+        }
+        self.diagnostics.extend(errors);
+        for anchor in &mut anchors {
+            anchor.name = qualified(namespace, &anchor.name);
+            anchor.context_url = format!(
+                "{}#{}",
+                chapter_url(file),
+                if entity.is_some() {
+                    format!("anchor:{}", anchor.name)
+                } else {
+                    anchor.name.clone()
+                }
+            );
+            anchor.entity = entity.clone();
+            remap(&mut anchor.span);
+            remap(&mut anchor.content_span);
+        }
+        for reference in &mut references {
+            remap(&mut reference.span);
+        }
+        self.references.extend(references);
+        // {anchor}`meta.anchors.unique_names`
+        for anchor in anchors {
+            if let Some(previous) = self.anchors.get(&anchor.name) {
+                self.diagnostics.push(Diagnostic {
+                    file: anchor.file.clone(),
+                    span: anchor.span.clone(),
+                    message: format!(
+                        "duplicate specification anchor `{}`; first defined in {}",
+                        anchor.name, previous.file
+                    ),
+                });
+            } else {
+                self.anchors.insert(anchor.name.clone(), anchor);
+            }
+        }
+    }
+
+    /// Render source badges and explicit references after other Markdown preprocessors.
+    /// Reparse the supplied text because excerpt expansion can shift its source offsets.
+    // {anchor}`meta.anchors.context_navigation`
+    fn chapter_replacements(
+        &self,
+        file: &str,
+        source: &str,
+    ) -> Result<Vec<(Span, String)>, Vec<Diagnostic>> {
+        let Some(chapter) = self.chapters.get(file) else {
+            return Ok(Vec::new());
+        };
+        let input = SpecSource {
+            file: file.into(),
+            source: source.into(),
+        };
+        let (anchors, mut errors, ends) = if chapter.normative {
+            parse_anchors(&input)
+        } else {
+            (Vec::new(), Vec::new(), Vec::new())
+        };
+        let (references, ref_errors) = parse_references(&input);
+        errors.extend(ref_errors);
+        let mut replacements = ends
+            .into_iter()
+            .map(|span| (span, String::new()))
+            .collect::<Vec<_>>();
+        for (dest_url, range) in source_link_destinations(source) {
+            let (destination, fragment) = dest_url
+                .split_once('#')
+                .map_or((dest_url.as_str(), ""), |(path, fragment)| (path, fragment));
+            if (destination.ends_with(".sage") || destination.ends_with(".md"))
+                && !destination.contains("://")
+                && !destination.starts_with('/')
+            {
+                let target = resolve_source_link(file, destination);
+                if destination.ends_with(".sage") && !self.chapters.contains_key(&target) {
+                    errors.push(Diagnostic {
+                        file: file.into(),
+                        span: Span {
+                            start: range.start,
+                            end: range.end,
+                        },
+                        message: format!(
+                            "Sage link target `{destination}` is not a published chapter"
+                        ),
+                    });
+                } else {
+                    let target_url = self
+                        .chapters
+                        .get(&target)
+                        .map_or_else(|| chapter_url(&target), |target| target.url.clone());
+                    let mut url = relative_url(&chapter.url, &target_url);
+                    if !fragment.is_empty() {
+                        url.push('#');
+                        url.push_str(fragment);
+                    }
+                    replacements.push((
+                        Span {
+                            start: range.start,
+                            end: range.end,
+                        },
+                        url,
+                    ));
+                }
+            }
+        }
+        for anchor in anchors {
+            let name = qualified(&chapter.namespace, &anchor.name);
+            if !self.anchors.contains_key(&name) {
+                errors.push(Diagnostic {
+                    file: file.into(),
+                    span: anchor.span.clone(),
+                    message: format!(
+                        "rendered anchor `{name}` is absent from the source inventory"
+                    ),
+                });
+                continue;
+            }
+            let href = relative_url(&chapter.url, &anchor_url(&name));
+            replacements.push((anchor.span, format!("<a class=\"spec-anchor\" id=\"{name}\" href=\"{href}\" aria-label=\"Specification {name}\"><span class=\"spec-anchor-label\" aria-hidden=\"true\">spec</span><span class=\"spec-anchor-name\">{name}</span></a>")));
+        }
+        for reference in references {
+            if !self.anchors.contains_key(&reference.name) {
+                errors.push(Diagnostic {
+                    file: file.into(),
+                    span: reference.span,
+                    message: format!("unknown specification reference `{}`", reference.name),
+                });
+                continue;
+            }
+            let href = relative_url(&chapter.url, &anchor_url(&reference.name));
+            replacements.push((
+                reference.span,
+                format!(
+                    "<a class=\"spec-reference\" href=\"{href}\">{}</a>",
+                    reference.name
+                ),
+            ));
+        }
+        if !errors.is_empty() {
+            return Err(errors);
+        }
+        replacements.sort_by_key(|(span, _)| span.start);
+        Ok(replacements)
+    }
+
+    /// Parsed role and end-marker ranges for safe Markdown renderers; examples
+    /// and escapes are excluded. End markers have an empty replacement.
+    pub fn role_replacements(
+        &self,
+        file: &str,
+        source: &str,
+    ) -> Result<Vec<(Span, String)>, Vec<Diagnostic>> {
+        Ok(self
+            .chapter_replacements(file, source)?
+            .into_iter()
+            .filter(|(span, replacement)| {
+                replacement.is_empty()
+                    || source[span.start..span.end].starts_with("{anchor}")
+                    || source[span.start..span.end].starts_with("{spec}")
+            })
+            .collect())
+    }
+
+    pub fn render_chapter(&self, file: &str, source: &str) -> Result<String, Vec<Diagnostic>> {
+        let replacements = self.chapter_replacements(file, source)?;
+        let mut output = String::new();
+        let mut cursor = 0;
+        for (span, html) in replacements {
+            output.push_str(&source[cursor..span.start]);
+            output.push_str(&html);
+            cursor = span.end;
+        }
+        output.push_str(&source[cursor..]);
+        Ok(output)
+    }
+}
+
+fn parse_references(source: &SpecSource) -> (Vec<SpecReference>, Vec<Diagnostic>) {
+    let events = Parser::new(&source.source)
+        .into_offset_iter()
+        .collect::<Vec<_>>();
+    let mut references = Vec::new();
+    let mut errors = Vec::new();
+    let mut code = false;
+    let mut html = Vec::new();
+    for (i, (event, range)) in events.iter().enumerate() {
+        match event {
+            Event::Start(Tag::CodeBlock(_)) => code = true,
+            Event::End(TagEnd::CodeBlock) => code = false,
+            Event::InlineHtml(text) => update_html_tags(text, &mut html),
+            Event::Text(_) if !code && html.is_empty() => {
+                for (offset, _) in source.source[range.clone()].match_indices("{spec}") {
+                    let start = range.start + offset;
+                    if is_escaped(&source.source, start) {
+                        continue;
+                    }
+                    if let Some((Event::Code(name), next)) = events.get(i + 1)
+                        && next.start == start + "{spec}".len()
+                        && &source.source[next.clone()] == format!("`{name}`")
+                        && valid_anchor_name(name)
+                    {
+                        references.push(SpecReference {
+                            name: name.to_string(),
+                            file: source.file.clone(),
+                            span: Span {
+                                start,
+                                end: next.end,
+                            },
+                        });
+                    } else {
+                        errors.push(Diagnostic {
+                            file: source.file.clone(),
+                            span: Span {
+                                start,
+                                end: start + "{spec}".len(),
+                            },
+                            message: "expected {spec}`full.rule.name`".into(),
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    (references, errors)
+}
+
+/// Remove shared indentation without losing the source byte offset of any output boundary.
+pub fn prose_markdown(source: &str) -> String {
+    dedent(source).0
+}
+
+fn dedent(source: &str) -> (String, Vec<usize>) {
+    let indentation = source
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            line.bytes()
+                .take_while(|byte| *byte == b' ' || *byte == b'\t')
+                .count()
+        })
+        .min()
+        .unwrap_or(0);
+    let mut text = String::new();
+    let mut offsets = Vec::new();
+    let mut position = 0;
+    for line in source.split_inclusive('\n') {
+        let skip = indentation.min(
+            line.bytes()
+                .take_while(|byte| *byte == b' ' || *byte == b'\t')
+                .count(),
+        );
+        for offset in skip..line.len() {
+            offsets.push(position + offset);
+        }
+        text.push_str(&line[skip..]);
+        position += line.len();
+    }
+    offsets.push(source.len());
+    (text, offsets)
+}
+
+pub fn relative_url(from: &str, to: &str) -> String {
+    let from = from.split('/').collect::<Vec<_>>();
+    let to = to.split('/').collect::<Vec<_>>();
+    let shared = from[..from.len().saturating_sub(1)]
+        .iter()
+        .zip(&to)
+        .take_while(|(a, b)| a == b)
+        .count();
+    std::iter::repeat_n("..", from.len().saturating_sub(1) - shared)
+        .chain(to[shared..].iter().copied())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// Locate destination tokens, excluding labels and titles that may repeat the URL.
+fn source_link_destinations(source: &str) -> Vec<(String, std::ops::Range<usize>)> {
+    let parser = Parser::new(source);
+    let mut links = Vec::new();
+    let mut record = |destination: &str, start: usize| {
+        let tail = &source[start..];
+        let trimmed = tail.trim_start();
+        let start = start + tail.len() - trimmed.len() + usize::from(trimmed.starts_with('<'));
+        if source[start..].starts_with(destination) {
+            links.push((destination.to_owned(), start..start + destination.len()));
+        }
+    };
+    for (_, definition) in parser.reference_definitions().iter() {
+        let mut characters = source[definition.span.clone()].char_indices();
+        while let Some((offset, ch)) = characters.next() {
+            if ch == '\\' {
+                characters.next();
+            } else if ch == ']' && source[definition.span.start + offset..].starts_with("]:") {
+                record(&definition.dest, definition.span.start + offset + 2);
+                break;
+            }
+        }
+    }
+    let mut inline: Option<(String, usize)> = None;
+    for (event, range) in parser.into_offset_iter() {
+        match event {
+            Event::Start(Tag::Link {
+                link_type: pulldown_cmark::LinkType::Inline,
+                dest_url,
+                ..
+            }) => inline = Some((dest_url.to_string(), range.start + 1)),
+            Event::End(pulldown_cmark::TagEnd::Link) => {
+                if let Some((destination, label_end)) = inline.take()
+                    && let Some(offset) = source[label_end..range.end].find("](")
+                {
+                    record(&destination, label_end + offset + 2);
+                }
+            }
+            _ => {
+                if let Some((_, label_end)) = &mut inline {
+                    *label_end = (*label_end).max(range.end);
+                }
+            }
+        }
+    }
+    links
+}
+
+fn resolve_source_link(file: &str, destination: &str) -> String {
+    let mut components = file.split('/').collect::<Vec<_>>();
+    components.pop();
+    for part in destination.split('/') {
+        match part {
+            "." | "" => {}
+            ".." => {
+                components.pop();
+            }
+            part => components.push(part),
+        }
+    }
+    components.join("/")
 }

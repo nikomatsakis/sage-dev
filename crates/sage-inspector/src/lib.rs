@@ -23,3 +23,11 @@ mod sage_model {
     #[sage::item(crate::inspection::InspectionService)]
     mod inspection_inspection_service_model {}
 }
+
+mod not_applicable {
+    // {anchor}`crates.sage_inspector.inspection.generic_browser`
+    // Implemented in web/src's TypeScript protocol renderer, not Rust code.
+
+    // {anchor}`crates.sage_inspector.inspection.durable_navigation`
+    // Implemented by the TypeScript browser's URL/navigation state.
+}

@@ -263,6 +263,9 @@ pub enum RawGenericDefault {
 /// interning into salsa types (`Name`, `Symbol`). This keeps the trait
 /// free of salsa lifetimes, enabling channel-based implementations.
 // ANCHOR: architecture_external_metadata_interface
+// {anchor}`crates.sage_ir.metadata.provider_authority`
+// {anchor}`crates.sage_ir.metadata.explicit_incompleteness`
+// {anchor}`crates.sage_ir.metadata.product_boundaries`
 pub trait TcxDb: Send + Sync {
     fn extern_crate(&self, name: &str) -> Option<CrateNum>;
 

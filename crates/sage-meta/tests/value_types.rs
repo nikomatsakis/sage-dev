@@ -15,9 +15,9 @@ fn check(body: &str) -> Vec<Diagnostic> {
 }
 
 #[test]
-#[sage::test(meta.types.struct_fields)]
-#[sage::test(meta.types.enum_variants)]
-#[sage::test(meta.types.declaration_prose)]
+#[sage::test(meta.language.types.struct_fields)]
+#[sage::test(meta.language.types.enum_variants)]
+#[sage::test(meta.language.types.declaration_prose)]
 fn empty_structs_and_variant_payloads_preserve_their_shapes() {
     let document = parse_body("struct Empty {} enum Shapes { Unit, Tuple(), Named {} }").unwrap();
     assert!(sage_meta::validate(std::slice::from_ref(&document)).is_empty());
@@ -39,7 +39,7 @@ fn empty_structs_and_variant_payloads_preserve_their_shapes() {
 }
 
 #[test]
-#[sage::test(meta.types.generic_parameters)]
+#[sage::test(meta.language.types.generic_parameters)]
 fn parameters_are_local_to_struct_enum_and_opaque_declarations() {
     for declaration in [
         "struct Pair<T, U> { first: T, second: U }",
@@ -64,7 +64,7 @@ fn parameters_are_local_to_struct_enum_and_opaque_declarations() {
 }
 
 #[test]
-#[sage::test(meta.types.opaque_representation)]
+#[sage::test(meta.language.types.opaque_representation)]
 fn opaque_types_require_prose_and_have_no_payload() {
     for declaration in [
         r#"type Hidden<T> """Hidden representation.""";"#,
@@ -91,7 +91,7 @@ fn opaque_types_require_prose_and_have_no_payload() {
 }
 
 #[test]
-#[sage::test(meta.types.field_prose)]
+#[sage::test(meta.language.types.field_prose)]
 fn named_variant_fields_keep_their_own_prose() {
     let document = parse_body(
         r#"enum Value {
@@ -115,7 +115,7 @@ fn named_variant_fields_keep_their_own_prose() {
 }
 
 #[test]
-#[sage::test(meta.types.member_commas)]
+#[sage::test(meta.language.types.member_commas)]
 fn member_lists_require_separators_and_allow_trailing_commas() {
     for trailing in ["", ","] {
         let source = format!(
@@ -136,7 +136,7 @@ fn member_lists_require_separators_and_allow_trailing_commas() {
 }
 
 #[test]
-#[sage::test(meta.types.type_expressions)]
+#[sage::test(meta.language.types.type_expressions)]
 fn nested_type_expressions_retain_named_arguments_and_tuple_elements() {
     let document = parse_body("struct Value { data: Vec<(bool, Option<u32>)> }").unwrap();
     assert!(sage_meta::validate(std::slice::from_ref(&document)).is_empty());
@@ -171,7 +171,7 @@ fn nested_type_expressions_retain_named_arguments_and_tuple_elements() {
 }
 
 #[test]
-#[sage::test(meta.types.name_resolution)]
+#[sage::test(meta.language.types.name_resolution)]
 fn parameters_shadow_local_types_and_local_declarations_shadow_the_prelude() {
     let errors = check(
         r#"type T<U> """A generic local type.""";
@@ -191,7 +191,7 @@ fn parameters_shadow_local_types_and_local_declarations_shadow_the_prelude() {
 }
 
 #[test]
-#[sage::test(meta.types.prelude)]
+#[sage::test(meta.language.types.prelude)]
 fn builtin_value_types_need_no_declarations() {
     let errors =
         check("struct Prelude { values: Vec<Option<bool>>, count: u32, size: u64, text: String }");
@@ -199,7 +199,7 @@ fn builtin_value_types_need_no_declarations() {
 }
 
 #[test]
-#[sage::test(meta.types.qualified_names)]
+#[sage::test(meta.language.types.qualified_names)]
 fn module_lookup_requires_qualification_for_root_and_sibling_types() {
     let root = sage_meta::parse(
         "demo/crate.sage",
@@ -236,7 +236,7 @@ fn module_lookup_requires_qualification_for_root_and_sibling_types() {
 }
 
 #[test]
-#[sage::test(meta.types.tuples)]
+#[sage::test(meta.language.types.tuples)]
 fn parentheses_always_denote_tuples() {
     let document =
         parse_body("struct Tuples { zero: (), one: (bool), comma: (bool,), two: (bool, u32) }")
@@ -265,7 +265,7 @@ fn parentheses_always_denote_tuples() {
 }
 
 #[test]
-#[sage::test(meta.types.argument_arity)]
+#[sage::test(meta.language.types.argument_arity)]
 fn arity_checks_reach_nested_named_types() {
     for ty in [
         "Vec",
@@ -284,7 +284,7 @@ fn arity_checks_reach_nested_named_types() {
 }
 
 #[test]
-#[sage::test(meta.types.unknown_names)]
+#[sage::test(meta.language.types.unknown_names)]
 fn unknown_nested_names_are_rejected_at_each_type_use_site() {
     for declaration in [
         "struct Bad { value: Option<(bool, Missing)> }",
@@ -304,7 +304,7 @@ fn unknown_nested_names_are_rejected_at_each_type_use_site() {
 }
 
 #[test]
-#[sage::test(meta.types.unique_fields)]
+#[sage::test(meta.language.types.unique_fields)]
 fn field_names_are_unique_only_within_their_own_payload() {
     for declaration in [
         "struct Bad { value: bool, value: u32 }",
@@ -324,7 +324,7 @@ fn field_names_are_unique_only_within_their_own_payload() {
 }
 
 #[test]
-#[sage::test(meta.types.unique_variants)]
+#[sage::test(meta.language.types.unique_variants)]
 fn variant_names_are_unique_only_within_their_own_enum() {
     let errors = check("enum Bad { Duplicate, Duplicate(bool) }");
     assert_eq!(errors.len(), 1, "{errors:?}");
@@ -333,7 +333,7 @@ fn variant_names_are_unique_only_within_their_own_enum() {
 }
 
 #[test]
-#[sage::test(meta.types.recursive_values)]
+#[sage::test(meta.language.types.recursive_values)]
 fn direct_and_mutual_value_recursion_needs_no_storage_indirection() {
     let errors = check(
         "struct Loop { again: Loop }

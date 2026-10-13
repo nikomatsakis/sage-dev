@@ -52,7 +52,10 @@ pub struct RustSource {
 #[derive(Default, Debug, serde::Serialize)]
 pub struct CorrespondenceIndex {
     pub entries: BTreeMap<String, Vec<RustSite>>,
-    /// Test declarations linked to named specification paragraphs. This is a
+    /// Explicit Rust comment references to specification rules. These are
+    /// independent of model correspondences and test annotations.
+    pub implementations: BTreeMap<String, Vec<crate::evidence::ImplementationSite>>,
+    /// Test declarations linked to named specification claims. This is a
     /// source inventory, including cfg alternatives, not a record of test runs.
     pub tests: BTreeMap<String, Vec<RustSite>>,
     pub files: BTreeMap<String, String>,
@@ -264,6 +267,7 @@ impl CorrespondenceIndex {
             };
             index.items(&syntax.items, &context)?;
             index.check_attributes(&syntax, &context);
+            index.implementation_entries(&syntax, &context);
         }
         Ok(index)
     }
@@ -499,7 +503,23 @@ impl CorrespondenceIndex {
             };
         self.items(&syntax.items, &context)?;
         self.check_attributes(&syntax, &context);
+        self.implementation_entries(&syntax, &context);
         Ok(())
+    }
+    fn implementation_entries(&mut self, syntax: &syn::File, context: &Context) {
+        crate::evidence::index_source(
+            &self.files[&context.file],
+            syntax,
+            crate::evidence::SourceContext {
+                file: &context.file,
+                crate_name: &context.crate_name,
+                target: &context.target,
+                module: &context.module,
+                cfg: &context.cfg,
+            },
+            &mut self.implementations,
+            &mut self.diagnostics,
+        );
     }
     fn items(
         &mut self,
@@ -795,7 +815,7 @@ impl CorrespondenceIndex {
                 let anchor = attribute
                     .parse_args::<AnchorName>()
                     .map_err(|_| {
-                        "#[sage::test] expects one dot-separated anchor name (for example, meta.calls.declared)"
+                        "#[sage::test] expects one dot-separated anchor name (for example, meta.language.calls.declared)"
                             .to_owned()
                     })?;
                 if site.kind != RustItemKind::Function

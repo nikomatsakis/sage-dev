@@ -10,17 +10,23 @@ impl Fixture {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        std::fs::create_dir_all(root.join("sage-src/demo")).unwrap();
+        std::fs::create_dir_all(root.join("md/design/crates/demo")).unwrap();
         std::fs::create_dir_all(root.join("src")).unwrap();
-        std::fs::create_dir_all(root.join("md")).unwrap();
-        std::fs::write(root.join("md/README.md"), "# Fixture\n").unwrap();
+        std::fs::write(root.join("md/design/README.md"), "# Fixture\n").unwrap();
+        std::fs::write(root.join("book.toml"), "[book]\nsrc = 'md'\n").unwrap();
+        std::fs::write(
+            root.join("md/SUMMARY.md"),
+            "- [Design](design/README.md)\n  - [Crates](design/crates/README.md)\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("md/design/crates/README.md"), "# Crates\n").unwrap();
         std::fs::write(
             root.join("Cargo.toml"),
             "[package]\nname = \"demo\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n",
         )
         .unwrap();
         std::fs::write(
-            root.join("sage-src/demo/crate.sage"),
+            root.join("md/design/crates/demo/crate.sage"),
             "crate demo { \"\"\"Fixture.\"\"\" } type Value { \"\"\"A value.\"\"\" }",
         )
         .unwrap();
@@ -70,7 +76,7 @@ fn correspondence_command_reports_source_and_executable_coverage_separately() {
 fn invalid_correspondence_returns_machine_readable_diagnostics_and_fails() {
     let fixture = Fixture::new();
     std::fs::write(fixture.0.join("src/lib.rs"), "#[sage::item(crate)] mod r#abstract {} #[sage::item(crate::Missing)] struct Implementation;").unwrap();
-    let output = fixture.run(&["check", "--correspondence", "sage-src", "--json"]);
+    let output = fixture.run(&["check", "--correspondence", "md/design/crates", "--json"]);
     assert!(!output.status.success());
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["model"]["valid"], true);
@@ -86,10 +92,13 @@ fn invalid_correspondence_returns_machine_readable_diagnostics_and_fails() {
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("src/lib.rs:1:"), "{stderr}");
-    assert!(stderr.contains("sage-src/demo/crate.sage:1:"), "{stderr}");
     assert!(
-        fixture.run(&["sage-src"]).status.success(),
-        "legacy command remains supported"
+        stderr.contains("md/design/crates/demo/crate.sage:1:"),
+        "{stderr}"
+    );
+    assert!(
+        fixture.run(&["md/design/crates"]).status.success(),
+        "the model-only command remains supported"
     );
 }
 
@@ -97,7 +106,7 @@ fn invalid_correspondence_returns_machine_readable_diagnostics_and_fails() {
 fn specification_failures_fail_the_cli_and_library() {
     let fixture = Fixture::new();
     std::fs::write(
-        fixture.0.join("md/README.md"),
+        fixture.0.join("md/design/README.md"),
         "{anchor}`demo.documented`\nA specification paragraph requires a test.\n",
     )
     .unwrap();
@@ -115,7 +124,7 @@ fn specification_failures_fail_the_cli_and_library() {
     let source = fixture.0.join("src/lib.rs");
     let mut rust = std::fs::read_to_string(&source).unwrap();
     rust.push_str(
-        "\n#[test] #[sage::test(demo.documented)] fn verifies_documented_behavior() {}\n",
+        "\n// {anchor}`demo.documented`\n#[test] #[sage::test(demo.documented)] fn verifies_documented_behavior() {}\n",
     );
     std::fs::write(&source, rust).unwrap();
     let mut reviewed = sage_meta::review::prepare(&fixture.0).unwrap();
@@ -126,7 +135,7 @@ fn specification_failures_fail_the_cli_and_library() {
     sage_meta::check(&fixture.0).ensure_valid().unwrap();
     assert!(fixture.run(&["check"]).status.success());
 
-    std::fs::write(fixture.0.join("md/README.md"), "# No anchor\n").unwrap();
+    std::fs::write(fixture.0.join("md/design/README.md"), "# No anchor\n").unwrap();
     let report = sage_meta::check(&fixture.0);
     assert!(
         report.ensure_valid().is_err(),
@@ -139,7 +148,7 @@ fn specification_failures_fail_the_cli_and_library() {
 fn check_failures_show_source_excerpts_in_tests_and_cli() {
     let fixture = Fixture::new();
     std::fs::write(
-        fixture.0.join("md/README.md"),
+        fixture.0.join("md/design/README.md"),
         "# Règles\n\n{anchor}`demo.documentedx`\nThis paragraph requires a test.\n",
     )
     .unwrap();
@@ -153,8 +162,8 @@ fn check_failures_show_source_excerpts_in_tests_and_cli() {
     let rendered = error.to_string();
     // libtest and main's Result handler both use Debug, not Display.
     assert_eq!(format!("{error:?}"), rendered);
-    assert!(rendered.starts_with("sage-meta check failed (2 errors)\n"));
-    assert!(rendered.contains("md/README.md:3:1"), "{rendered}");
+    assert!(rendered.starts_with("sage-meta check failed (3 errors)\n"));
+    assert!(rendered.contains("md/design/README.md:3:1"), "{rendered}");
     assert!(rendered.contains("src/lib.rs:3:1"), "{rendered}");
     assert!(rendered.contains("3 | {anchor}`demo.documentedx`"));
     assert!(rendered.contains("3 | #[sage::test(demo.documented)]"));
@@ -173,21 +182,21 @@ fn check_failures_show_source_excerpts_in_tests_and_cli() {
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert!(json.get("rendered_errors").is_none());
     let diagnostics = json["specification"]["diagnostics"].as_array().unwrap();
-    assert_eq!(diagnostics.len(), 2);
-    assert_eq!(diagnostics[0]["file"], "README.md");
+    assert_eq!(diagnostics.len(), 3);
+    assert_eq!(diagnostics[0]["file"], "design/README.md");
     assert_eq!(diagnostics[0]["span"]["start"], "# Règles\n\n".len());
-    assert_eq!(diagnostics[1]["file"], "src/lib.rs");
+    assert_eq!(diagnostics[2]["file"], "src/lib.rs");
 
     // Reports retain the source used for validation, even after a file changes.
     std::fs::write(source, "").unwrap();
-    std::fs::write(fixture.0.join("md/README.md"), "").unwrap();
+    std::fs::write(fixture.0.join("md/design/README.md"), "").unwrap();
     assert_eq!(report.ensure_valid().unwrap_err().to_string(), rendered);
 }
 
 #[test]
-fn missing_documentation_cannot_silently_skip_specification_checks() {
+fn missing_chapter_inventory_cannot_silently_skip_specification_checks() {
     let fixture = Fixture::new();
-    std::fs::remove_dir_all(fixture.0.join("md")).unwrap();
+    std::fs::remove_file(fixture.0.join("md/SUMMARY.md")).unwrap();
     let report = sage_meta::check(&fixture.0);
     assert!(report.ensure_valid().is_err());
     assert!(report.specification.unwrap().load_error.is_some());
@@ -199,7 +208,12 @@ fn selected_model_in_a_member_uses_cargos_workspace_documentation() {
     let member = fixture.0.join("member");
     std::fs::create_dir(&member).unwrap();
     std::fs::rename(fixture.0.join("src"), member.join("src")).unwrap();
-    std::fs::rename(fixture.0.join("sage-src"), member.join("sage-src")).unwrap();
+    std::fs::create_dir_all(member.join("model/demo")).unwrap();
+    std::fs::copy(
+        fixture.0.join("md/design/crates/demo/crate.sage"),
+        member.join("model/demo/crate.sage"),
+    )
+    .unwrap();
     std::fs::write(
         member.join("Cargo.toml"),
         "[package]\nname = \"demo\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
@@ -210,10 +224,10 @@ fn selected_model_in_a_member_uses_cargos_workspace_documentation() {
         "[workspace]\nmembers = [\"member\"]\nresolver = \"3\"\n",
     )
     .unwrap();
-    sage_meta::check::check_model(&member.join("sage-src"))
+    sage_meta::check::check_model(&member.join("model"))
         .ensure_valid()
         .unwrap();
-    let output = fixture.run(&["check", "member/sage-src"]);
+    let output = fixture.run(&["check", "member/model"]);
     assert!(
         output.status.success(),
         "{}",
@@ -225,15 +239,29 @@ fn selected_model_in_a_member_uses_cargos_workspace_documentation() {
 fn mdbook_preprocessor_renders_nested_chapters_without_changing_examples() {
     use std::io::Write;
     use std::process::{Command, Stdio};
+    let fixture = Fixture::new();
+    std::fs::write(fixture.0.join("book.toml"), "[book]\nsrc = 'md'\n").unwrap();
+    std::fs::create_dir_all(fixture.0.join("md/design")).unwrap();
+    std::fs::write(
+        fixture.0.join("md/SUMMARY.md"),
+        "- [Design](design/README.md)\n  - [Child](design/demo.md)\n  - [Crates](design/crates/README.md)\n",
+    )
+    .unwrap();
+    std::fs::write(fixture.0.join("md/design/README.md"), "# Parent\n").unwrap();
+    std::fs::write(
+        fixture.0.join("md/design/demo.md"),
+        "{anchor}`rule`\nA rule.\n\n```markdown\n{anchor}`example.only`\n```\n",
+    )
+    .unwrap();
     for items_key in ["sections", "items"] {
         let input = serde_json::json!([
-            {},
+            {"root": fixture.0, "config": {"book": {"src": "md"}}},
             {(items_key): [{"Chapter": {
                 "content": "# Parent\n",
-                "source_path": "parent.md",
+                "source_path": "design/README.md",
                 "sub_items": [{"Chapter": {
-                    "content": "{anchor}`demo.rule`\nA rule.\n\n```markdown\n{anchor}`example.only`\n```\n",
-                    "source_path": "child.md", "sub_items": []
+                    "content": "{anchor}`rule`\nA rule.\n\n```markdown\n{anchor}`example.only`\n```\n",
+                    "source_path": "design/demo.md", "sub_items": []
                 }}]
             }}]}
         ]);
@@ -276,7 +304,7 @@ fn invalid_model_and_parse_failures_produce_json_without_running_correspondence(
         ),
         ("this is not a model", "load_error"),
     ] {
-        std::fs::write(fixture.0.join("sage-src/demo/crate.sage"), source).unwrap();
+        std::fs::write(fixture.0.join("md/design/crates/demo/crate.sage"), source).unwrap();
         let output = fixture.run(&["check", "--correspondence", "--json"]);
         assert!(!output.status.success());
         let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -286,7 +314,10 @@ fn invalid_model_and_parse_failures_produce_json_without_running_correspondence(
         let output = fixture.run(&["check"]);
         assert!(!output.status.success());
         let stderr = String::from_utf8(output.stderr).unwrap();
-        assert!(stderr.contains("sage-src/demo/crate.sage:1:"), "{stderr}");
+        assert!(
+            stderr.contains("md/design/crates/demo/crate.sage:1:"),
+            "{stderr}"
+        );
         assert!(stderr.contains(&format!("1 | {source}")), "{stderr}");
     }
 }

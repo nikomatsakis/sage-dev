@@ -101,6 +101,7 @@ pub fn extract_query_result<'db>(
 /// Extract a successful value-producing operation into a canonical response.
 /// The operation/output pairing is checked before response-local variables are
 /// bound, so malformed cached answers cannot cross the solver boundary.
+// {anchor}`crates.sage_ir.solver.canonical_outputs`
 pub fn extract_query_result_with_output<'db>(
     db: &'db dyn crate::Db,
     state: &QueryProofState<'db>,
@@ -296,6 +297,7 @@ pub enum AppliedCertainty<'db> {
 
 /// Instantiate and transactionally apply a response to its original caller.
 #[allow(clippy::too_many_arguments)]
+// {anchor}`crates.sage_ir.inference.canonical_boundary`
 pub fn apply_query_response<'db>(
     db: &'db dyn crate::Db,
     caller_stash: &mut Stash,

@@ -539,6 +539,8 @@ impl InspectionProvider for LiveInspectionProvider<'_> {
     }
 }
 
+// {anchor}`crates.sage_inspector.inspection.balanced_traces`
+// {anchor}`crates.sage_inspector.inspection.unknown_work`
 fn build_dynamic_trace(
     events: Vec<sage_ir::db::InspectionEvent>,
     default_phase: TracePhase,
@@ -721,6 +723,7 @@ fn normalize_unordered_children(node: &mut TraceNode) {
     node.children.sort_by_cached_key(trace_sort_key);
 }
 
+// {anchor}`crates.sage_inspector.inspection.deterministic_trace`
 fn trace_sort_key(node: &TraceNode) -> String {
     serde_json::to_string(node).expect("trace nodes always serialize")
 }
@@ -1190,6 +1193,7 @@ struct CanonicalChild<'db> {
     segment: String,
 }
 
+// {anchor}`crates.sage_inspector.inspection.canonical_ownership`
 fn canonical_children<'db>(db: &'db dyn Db, symbols: &[Symbol<'db>]) -> Vec<CanonicalChild<'db>> {
     let mut occurrences = HashMap::<String, u32>::new();
     symbols
@@ -1345,6 +1349,7 @@ fn local_symbol_presentation(db: &dyn Db, symbol: Symbol<'_>, kind: &str) -> Sym
     presentation(&format!("Local {kind}"), badges)
 }
 
+// {anchor}`crates.sage_inspector.inspection.product_availability`
 fn product_catalog(db: &dyn Db, path: &str, symbol: Symbol<'_>) -> Vec<ProductDescriptor> {
     let mut products = vec![product_descriptor(path, "identity", "Identity")];
     if symbol_span(db, symbol).is_some() {
@@ -1470,6 +1475,7 @@ where
     assemble_reflected_page(context.db, id, title, value, continuations)
 }
 
+// {anchor}`crates.sage_inspector.inspection.semantic_phase_boundary`
 fn reflect_with_references<'db, T>(
     context: &'db SageContext<'db>,
     value: T,
@@ -2019,6 +2025,7 @@ fn external_segment(kind: SymExtKind, name: &str, disambiguator: u32) -> String 
     format!("{kind}-{}-{disambiguator}", safe_segment(name))
 }
 
+// {anchor}`crates.sage_inspector.inspection.detail_free_index`
 fn indexed_symbols<'db>(context: &'db SageContext<'db>) -> Vec<IndexedSymbol<'db>> {
     let crate_name = safe_segment(&context.target.name);
     let root_path = format!("local/{crate_name}");

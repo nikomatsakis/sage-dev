@@ -3,8 +3,8 @@
 **Status:** Completed
 
 **Depends on:**
-- [Per-Kind Symbol Data](./per-kind-symbol-data.md) — per-kind `SymbolData` enum
-- [Type Signatures](./type-signatures.md) — per-kind symbol wrappers
+- [Per-Kind Symbol Data](../per-kind-symbol-data/README.md) — per-kind `SymbolData` enum
+- [Type Signatures](../type-signatures/README.md) — per-kind symbol wrappers
 
 ## Goal
 
@@ -326,7 +326,7 @@ Once the resolver can enter enums, it should report an "unresolved name" error f
 
 2. **Single `expanded_module_items` for both modules and enums.** The plan showed a separate `expanded_enum_items`; in practice rustc's `module_children` works identically on both, so we removed the `assert_eq!(kind, Mod)` and reuse one tracked function.
 
-3. **A1 test deferred.** `option_some_call.rs` requires external crate metadata but the test harness uses `NoopTcxDb`. The resolver infrastructure for external enum children is in place; testing it is blocked on the [Test Harness External Crates](./test-harness-external-crates.md) RFD.
+3. **A1 test deferred.** `option_some_call.rs` requires external crate metadata but the test harness uses `NoopTcxDb`. The resolver infrastructure for external enum children is in place; testing it is blocked on the [Test Harness External Crates](../test-harness-external-crates/README.md) RFD.
 
 4. **Enum-children resolution uses `resolve_in_children` (not `resolve_name_from_module`).** Modules need use-resolution and cycle detection; enum children are a flat list. The resolver has two paths rather than one generalized function.
 

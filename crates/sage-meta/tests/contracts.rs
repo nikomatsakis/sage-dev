@@ -4,8 +4,8 @@
 #![register_tool(sage)]
 
 #[test]
-#[sage::test(meta.calls.declared)]
-#[sage::test(meta.calls.forbidden)]
+#[sage::test(meta.language.calls.declared)]
+#[sage::test(meta.language.calls.forbidden)]
 #[sage::test(meta.contracts.validated_session)]
 #[sage::test(meta.contracts.cache_invocations)]
 #[sage::test(meta.contracts.observation_coverage)]

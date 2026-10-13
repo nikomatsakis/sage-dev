@@ -65,4 +65,4 @@
     independently. Keep this section as a one-line pointer.
 -->
 
-See [Implementation plan and status](./implementation.md).
+See [Implementation plan and status](implementation.md).

@@ -18,6 +18,7 @@ use super::infer_ctx::{InferCtx, Scope};
 /// Lazy boolean operators remain control-flow nodes. Every overloadable
 /// operator is represented by a provisional resolved call whose expression
 /// slot is replaced with an error node if its retained proof later fails.
+// {anchor}`crates.sage_ir.types.operators.trait_calls`
 pub(crate) fn check_binary_operator<'db>(
     cx: &InferCtx<'_, 'db>,
     scope: &Scope<'db>,
@@ -156,6 +157,7 @@ pub(crate) fn check_binary_operator<'db>(
     (TyExprData::Unresolved(slot), result_ty)
 }
 
+// {anchor}`crates.sage_ir.types.operators.lazy_control_flow`
 fn check_lazy_boolean<'db>(
     cx: &InferCtx<'_, 'db>,
     operation: BinaryOp,

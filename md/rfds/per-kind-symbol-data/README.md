@@ -3,9 +3,9 @@
 **Status:** Implemented
 
 **Depends on:**
-- [Type signatures](./type-signatures.md) — per-kind symbol wrappers (`FnSymbol`, `StructSymbol`, …)
-- [Module sym tree](./module-sym-tree.md) — `Symbol`, `SymbolData`, `SymExt`, `ModSymbol`
-- [Tuple struct constructors](./tuple-struct-ctors.md) — `TupleStructCtor` variant
+- [Type signatures](../type-signatures/README.md) — per-kind symbol wrappers (`FnSymbol`, `StructSymbol`, …)
+- [Module sym tree](../module-sym-tree/README.md) — `Symbol`, `SymbolData`, `SymExt`, `ModSymbol`
+- [Tuple struct constructors](../tuple-struct-ctors/README.md) — `TupleStructCtor` variant
 
 ## Goal
 
@@ -295,7 +295,7 @@ After all callers use per-kind constructors, the `Symbol::ast(item)` constructor
 - **Unmodeled external kinds** (`ExternCrate`, `GlobalAsm`, `OpaqueTy`, `Closure`, etc.) map to `SymbolData::Unknown(SymExt)`, preserving the handle for debugging.
 - **External tuple struct ctors** arrive as rustc `DefKind::Ctor(CtorOf::Struct, _)` and map to `SymExtKind::TupleStructCtor` → `SymbolData::TupleStructCtor(StructSymbol::ext(...))`.
 - **`ModExt` is removed** — `ModSymbol` stores `SymExt` like all other per-kind wrappers.
-- **Enum variant symbols** are out of scope — tracked in a [separate RFD](./enum-variant-symbols.md).
+- **Enum variant symbols** are out of scope — tracked in a [separate RFD](../enum-variant-symbols/README.md).
 
 ## Resolved decisions (continued)
 

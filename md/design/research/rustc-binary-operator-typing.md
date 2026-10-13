@@ -225,5 +225,5 @@ versions are recorded in the linked Sage RFD:
 | primitive arithmetic impls | `library/core/src/ops/arith.rs`: `add_impl` and sibling macros |
 | primitive shift impl matrix | `library/core/src/ops/bit.rs`: `shl_impl`, `shl_impl_all`, and `shr` counterparts |
 
-[body-checking]: ../pipeline/body-checking.md
+[body-checking]: ../crates/sage_ir/bodies-guide.md
 [numeric-rfd]: ../../rfds/numeric-inference-variables/README.md

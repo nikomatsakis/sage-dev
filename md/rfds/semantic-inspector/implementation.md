@@ -2,16 +2,16 @@
 
 The operational Semantic Inspector and all five delivery slices have landed,
 but this RFD remains accepted while source-driven browser evidence for
-[SI-A3](./README.md#si-a3), [SI-A4](./README.md#si-a4),
-[SI-A5](./README.md#si-a5), and [SI-A7](./README.md#si-a7), plus
-[SI-A8](./README.md#si-a8), remain partial. Its
-[destination design](./README.md#destination-design) defines the Semantic
+[SI-A3](README.md#si-a3), [SI-A4](README.md#si-a4),
+[SI-A5](README.md#si-a5), and [SI-A7](README.md#si-a7), plus
+[SI-A8](README.md#si-a8), remain partial. Its
+[destination design](README.md#destination-design) defines the Semantic
 Inspector without regard to implementation order. This page inventories the
 delivered work and groups it into the reviewer-visible vertical slices used
 during implementation.
 
-The [Web Application Walkthrough](./web-application.md) refines the browser,
-[JSON Protocol](./protocol.md) pins the bytes at its central boundary. These
+The [Web Application Walkthrough](web-application.md) refines the browser,
+[JSON Protocol](protocol.md) pins the bytes at its central boundary. These
 documents do not add independent slices; their work lands through the five
 parent slices on this page.
 
@@ -25,27 +25,27 @@ not merely a planning edit.
 
 - [x] Define canonical symbol paths, opaque product IDs, positive product
   lists, one process-wide revision ID, common responses, and structured errors
-  ([SI-A4](./README.md#si-a4)).
+  ([SI-A4](README.md#si-a4)).
 - [x] Define the exact `/api/v1` route, request, response, error, product,
   generic rendering-tree, reflected-value, run, and revision DTOs below Axum
-  ([SI-A2](./README.md#si-a2), [SI-A3](./README.md#si-a3)).
+  ([SI-A2](README.md#si-a2), [SI-A3](README.md#si-a3)).
 - [x] Define an owned generic rendering tree for page composition and an
   embedded structural value tree for records, variants, sequences, leaves,
   options, transparent stash handles, cycle markers, and explicit truncation.
 - [x] Make derived structural reflection preserve every struct field and enum
   payload while allowing only the documented semantic treatment of
   `Stashed<T>`, raw allocation identity, names, symbols, spans, and explicit
-  truncation ([SI-A6](./README.md#si-a6), [SI-A16](./README.md#si-a16)).
+  truncation ([SI-A6](README.md#si-a6), [SI-A16](README.md#si-a16)).
 - [x] Implement the custom `Reflect` derive for ordinary structs and enums and
   explicit implementations for symbols, spans, stashed values, transparent
   arena projection, cycle guards, and limits. Product code must not
   hand-serialize Sage structures
-  ([SI-A16](./README.md#si-a16)).
+  ([SI-A16](README.md#si-a16)).
 - [x] Represent semantic references with canonical symbol paths, separate
   display labels, and generic presentation data.
 - [x] Record structural reflection as a distinct server phase, bound it by
   depth and node count, then freeze the observation before serialization or
-  client-side expansion ([SI-A7](./README.md#si-a7)).
+  client-side expansion ([SI-A7](README.md#si-a7)).
 - [x] Keep service and observation types independent of Axum, JavaScript,
   terminal state, Clap, JSON-RPC, LSP positions, and the oracle schema.
 - [x] Test derived structure, semantic leaf overrides, canonical cross-links,
@@ -81,7 +81,7 @@ not merely a planning edit.
   boundary instead of claiming fine-grained reuse.
 - [x] Tag every success and error with its process-wide revision ID. Make the
   browser discard all response-derived state, bootstrap a fresh directory, and
-  replay its current URL on mismatch ([SI-A5](./README.md#si-a5)).
+  replay its current URL on mismatch ([SI-A5](README.md#si-a5)).
 - [x] Test multiple inspections, input edits, and reloads against the same host.
 
 ### Selection, symbol browsing, and navigation
@@ -99,7 +99,7 @@ not merely a planning edit.
 - [ ] Generate and resolve canonical ownership paths which remain stable across
   unrelated edits, sibling reordering, and host reconstruction; distinguish
   namespaces, unnamed impls, generated symbols, and duplicate external crates;
-  never reparse display labels ([SI-A8](./README.md#si-a8)). Ordinary local and
+  never reparse display labels ([SI-A8](README.md#si-a8)). Ordinary local and
   named external paths are operational; direct replay through an anonymous
   external impl and reorder-stable recovery paths for duplicate local
   definitions remain open.
@@ -135,7 +135,7 @@ not merely a planning edit.
 - [x] Fork Salsa temporarily so every tracked-query invocation creates a
   balanced span before memo lookup, including already-current memo fetches;
   require no annotations on individual Sage queries and keep the change
-  upstreamable ([SI-A17](./README.md#si-a17)).
+  upstreamable ([SI-A17](README.md#si-a17)).
 - [x] Retain a stable unmapped event category so checked tracing cannot
   silently omit work, with the raw debug payload available in diagnostics and
   failure artifacts.
@@ -145,14 +145,14 @@ not merely a planning edit.
   `unmapped` fallback.
 - [x] Separate workspace bootstrap, selection, requested analysis, structural
   reflection, pure render-tree assembly, and post-trace serialization/browser phases
-  ([SI-A7](./README.md#si-a7)).
+  ([SI-A7](README.md#si-a7)).
 - [x] Present one request as a collapsible dynamic tree with filtering,
   execution/reuse state, a draggable width, and full-screen growth.
 - [x] Support exact sets or multisets for closed dependency contracts and
   required/forbidden patterns for extensible contracts; never make sibling
   scheduling order a semantic assertion. Define the checked deterministic
   projection and retain raw order/debug keys only as failure artifacts
-  ([SI-A12](./README.md#si-a12)).
+  ([SI-A12](README.md#si-a12)).
 - [x] Carry producer-authored child ordering through balanced semantic spans;
   keep ordinary Salsa requests sequential, mark solver requests sequential and
   trait and normalization candidate groups unordered, scope async spans to
@@ -193,8 +193,8 @@ not merely a planning edit.
   continuations, traces, revision notifications, and comparison.
 - [x] Emit a complete selected-symbol product list without requesting any
   advertised product; make the browser create tabs only from its opaque IDs,
-  labels, and URLs ([SI-A4](./README.md#si-a4),
-  [SI-A15](./README.md#si-a15)).
+  labels, and URLs ([SI-A4](README.md#si-a4),
+  [SI-A15](README.md#si-a15)).
 - [x] Publish completed update batches over a reconnectable server-sent event
   stream. A new revision ID reloads the current semantic URL, which fetches the
   complete local index and current product without eagerly fetching hidden
@@ -228,7 +228,7 @@ not merely a planning edit.
   contractual headers, assets, and actor demand.
 - [x] Create one checked-in Cargo sample project and make live provider,
   command, Axum, value, and demand snapshots originate from its Rust source
-  ([SI-A3](./README.md#si-a3)).
+  ([SI-A3](README.md#si-a3)).
 - [x] Remove the scripted semantic provider, `--fixture` command mode, route
   manifest, static JSON responses, and dummy API server.
 - [ ] Drive the embedded application with a headless browser against the live
@@ -270,22 +270,22 @@ links describe what changes at each anchor's first yellow or green cell.
 
 | Anchor | Baseline | [S1 Live shell](#slice-1-live-shell-and-workspace-symbols) | [S2 Products](#slice-2-real-selected-symbol-products) | [S3 Navigation](#slice-3-navigation-and-metadata) | [S4 Tracing](#slice-4-salsa-event-chain-and-execution-tree) | [S5 Revisions](#slice-5-live-updates-and-revision-history) |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
-| [SI-A1](./README.md#si-a1) database actor | 🛑 | [🟡](#si-a1-status) | 🟡 | 🟡 | 🟡 | [✅](#si-a1-status) |
-| [SI-A2](./README.md#si-a2) typed service below Axum | 🛑 | [✅](#si-a2-status) | ✅ | ✅ | ✅ | ✅ |
-| [SI-A3](./README.md#si-a3) source-driven integration | 🛑 | [🟡](#si-a3-status) | 🟡 | 🟡 | 🟡 | 🟡 |
-| [SI-A4](./README.md#si-a4) generic frontend | 🛑 | [🟡](#si-a4-status) | 🟡 | 🟡 | 🟡 | 🟡 |
-| [SI-A5](./README.md#si-a5) URL intent and reset | 🛑 | [🟡](#si-a5-status) | 🟡 | 🟡 | 🟡 | 🟡 |
-| [SI-A6](./README.md#si-a6) faithful bounded reflection | 🛑 | [🟡](#si-a6-status) | [✅](#si-a6-status) | ✅ | ✅ | ✅ |
-| [SI-A7](./README.md#si-a7) semantic work before rendering | 🛑 | 🛑 | [🟡](#si-a7-status) | 🟡 | 🟡 | 🟡 |
-| [SI-A8](./README.md#si-a8) canonical symbol paths | 🛑 | [🟡](#si-a8-status) | 🟡 | 🟡 | 🟡 | 🟡 |
-| [SI-A9](./README.md#si-a9) eager detail-free index | 🛑 | [✅](#si-a9-status) | ✅ | ✅ | ✅ | ✅ |
-| [SI-A11](./README.md#si-a11) complete demand observation | 🛑 | 🛑 | 🛑 | 🛑 | [✅](#si-a11-status) | ✅ |
-| [SI-A12](./README.md#si-a12) stable evidence projection | 🛑 | [🟡](#si-a12-status) | 🟡 | 🟡 | [✅](#si-a12-status) | ✅ |
-| [SI-A13](./README.md#si-a13) revisions versus runs | 🛑 | 🛑 | 🛑 | 🛑 | 🛑 | [✅](#si-a13-status) |
-| [SI-A14](./README.md#si-a14) oracle independence | [✅](#si-a14-status) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| [SI-A15](./README.md#si-a15) positive non-eager products | 🛑 | [🟡](#si-a15-status) | 🟡 | [✅](#si-a15-status) | ✅ | ✅ |
-| [SI-A16](./README.md#si-a16) derive-driven reflection | 🛑 | [🟡](#si-a16-status) | [✅](#si-a16-status) | ✅ | ✅ | ✅ |
-| [SI-A17](./README.md#si-a17) Salsa invocation spans | 🛑 | 🛑 | 🛑 | 🛑 | [✅](#si-a17-status) | ✅ |
+| [SI-A1](README.md#si-a1) database actor | 🛑 | [🟡](#si-a1-status) | 🟡 | 🟡 | 🟡 | [✅](#si-a1-status) |
+| [SI-A2](README.md#si-a2) typed service below Axum | 🛑 | [✅](#si-a2-status) | ✅ | ✅ | ✅ | ✅ |
+| [SI-A3](README.md#si-a3) source-driven integration | 🛑 | [🟡](#si-a3-status) | 🟡 | 🟡 | 🟡 | 🟡 |
+| [SI-A4](README.md#si-a4) generic frontend | 🛑 | [🟡](#si-a4-status) | 🟡 | 🟡 | 🟡 | 🟡 |
+| [SI-A5](README.md#si-a5) URL intent and reset | 🛑 | [🟡](#si-a5-status) | 🟡 | 🟡 | 🟡 | 🟡 |
+| [SI-A6](README.md#si-a6) faithful bounded reflection | 🛑 | [🟡](#si-a6-status) | [✅](#si-a6-status) | ✅ | ✅ | ✅ |
+| [SI-A7](README.md#si-a7) semantic work before rendering | 🛑 | 🛑 | [🟡](#si-a7-status) | 🟡 | 🟡 | 🟡 |
+| [SI-A8](README.md#si-a8) canonical symbol paths | 🛑 | [🟡](#si-a8-status) | 🟡 | 🟡 | 🟡 | 🟡 |
+| [SI-A9](README.md#si-a9) eager detail-free index | 🛑 | [✅](#si-a9-status) | ✅ | ✅ | ✅ | ✅ |
+| [SI-A11](README.md#si-a11) complete demand observation | 🛑 | 🛑 | 🛑 | 🛑 | [✅](#si-a11-status) | ✅ |
+| [SI-A12](README.md#si-a12) stable evidence projection | 🛑 | [🟡](#si-a12-status) | 🟡 | 🟡 | [✅](#si-a12-status) | ✅ |
+| [SI-A13](README.md#si-a13) revisions versus runs | 🛑 | 🛑 | 🛑 | 🛑 | 🛑 | [✅](#si-a13-status) |
+| [SI-A14](README.md#si-a14) oracle independence | [✅](#si-a14-status) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| [SI-A15](README.md#si-a15) positive non-eager products | 🛑 | [🟡](#si-a15-status) | 🟡 | [✅](#si-a15-status) | ✅ | ✅ |
+| [SI-A16](README.md#si-a16) derive-driven reflection | 🛑 | [🟡](#si-a16-status) | [✅](#si-a16-status) | ✅ | ✅ | ✅ |
+| [SI-A17](README.md#si-a17) Salsa invocation spans | 🛑 | 🛑 | 🛑 | 🛑 | [✅](#si-a17-status) | ✅ |
 
 ## Current anchor dispositions
 

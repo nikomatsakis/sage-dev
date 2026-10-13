@@ -65,13 +65,7 @@ pub struct ReviewTest {
     pub status: TestStatus,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TestStatus {
-    Ordinary,
-    Todo,
-    NotApplicable,
-}
+pub use crate::evidence::EvidenceStatus as TestStatus;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -89,11 +83,13 @@ pub struct ReviewIssue {
     pub message: String,
 }
 
+// {anchor}`meta.reviews.source_representation`
 fn source_lines(text: &str) -> Vec<String> {
     text.split('\n').map(str::to_owned).collect()
 }
 
 /// Extract exact, deterministic review inputs without recording any decision.
+// {anchor}`meta.reviews.review_scope`
 pub fn inventory(
     spec: &SpecIndex,
     rust: &CorrespondenceIndex,
@@ -117,26 +113,7 @@ pub fn inventory(
                 .rust_path
                 .rsplit_once("::")
                 .map_or("", |(owner, _)| owner);
-            let todo = owner
-                .split("::")
-                .skip(1)
-                .any(|component| component == "todo");
-            let not_applicable = owner
-                .split("::")
-                .skip(1)
-                .any(|component| component == "not_applicable");
-            let status = match (todo, not_applicable) {
-                (true, true) => {
-                    return Err(format!(
-                        "test {} is nested under both todo and not_applicable",
-                        site.rust_path
-                    )
-                    .into());
-                }
-                (true, false) => TestStatus::Todo,
-                (false, true) => TestStatus::NotApplicable,
-                (false, false) => TestStatus::Ordinary,
-            };
+            let status = crate::evidence::placeholder_status(owner)?;
             tests.push(ReviewTest {
                 crate_name: site.crate_name.clone(),
                 target: site.target.clone(),
@@ -155,7 +132,7 @@ pub fn inventory(
             name.clone(),
             ReviewInput {
                 // {anchor}`meta.reviews.claim_text`
-                claim: source_lines(&anchor.paragraph),
+                claim: source_lines(&anchor.content),
                 tests,
             },
         );
@@ -284,9 +261,11 @@ fn load_current(
 ) -> Result<(PathBuf, BTreeMap<String, ReviewInput>), Box<dyn Error>> {
     let rust = CorrespondenceIndex::load(workspace)?;
     let workspace = rust.workspace_root().unwrap_or(workspace);
-    let spec = SpecIndex::load(&workspace.join("md"))?;
+    let spec = SpecIndex::load_workspace(workspace)?;
     let mut errors = rust.diagnostics.clone();
     errors.extend(spec.validate(&rust.tests));
+    errors.extend(spec.validate_implementations(&rust));
+    errors.extend(spec.validate_implementation_references(&rust));
     if !errors.is_empty() {
         return Err(format!(
             "cannot prepare reviews from invalid source inventory:\n{}",

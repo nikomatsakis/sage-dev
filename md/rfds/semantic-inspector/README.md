@@ -4,23 +4,23 @@
 
 **Depends on:**
 
-- [Architecture](../../design/architecture.md) — the Salsa database, Cargo
+- [Architecture](../../design/crates/sage_ir/architecture-guide.md) — the Salsa database, Cargo
   target selection, and rustc metadata boundary
-- [Typed IR](../../design/typed-ir.md) — the semantic body the inspector
+- [Typed IR](../../design/crates/sage_ir/typed-ir-guide.md) — the semantic body the inspector
   presents
 
 **Related:**
 
-- [Oracle Test Harness](../../design/oracle-test-harness.md) — independent
+- [Oracle Test Harness](../../design/crates/sage_oracle_harness/oracle-guide.md) — independent
   exact conformance testing
 - [Trait Impl Candidate Discovery](../trait-impl-candidate-discovery/README.md)
   — a motivating consumer of edit-and-query dependency tests
 
 **Detailed sub-RFDs:**
 
-- [JSON Protocol](./protocol.md) — the normative `/api/v1` routes, DTOs,
+- [JSON Protocol](protocol.md) — the normative `/api/v1` routes, DTOs,
   serialization rules, trace projection, and source-driven snapshot contract
-- [Web Application Walkthrough](./web-application.md) — follows each visible
+- [Web Application Walkthrough](web-application.md) — follows each visible
   part of the mockup through its JavaScript assembly, JSON request, inspection
   service operation, and Sage/Salsa query
 
@@ -104,7 +104,7 @@ the start of [Destination design](#system-at-a-glance).
 
 ### Interaction mockup
 
-An [interactive browser mockup](./mockup.html) uses representative
+An [interactive browser mockup](mockup.html) uses representative
 `DbDropGuard::db` data to show the destination interaction: searching the local
 symbol tree, inspecting concrete and typed results, following semantic links
 to dependency metadata, and viewing the dynamic execution tree. The mockup is
@@ -118,13 +118,13 @@ are not yet drawn.
   style="width: 100%; height: 900px; border: 1px solid #dbe1dc; border-radius: 8px; background: white;"
 ></iframe>
 
-Use the [full-page mockup](./mockup.html) when the embedded viewport is too
+Use the [full-page mockup](mockup.html) when the embedded viewport is too
 narrow.
 
 ## Destination design
 
 This section describes the complete inspector, independent of the order in
-which it is implemented. [Implementation](./implementation.md) inventories all
+which it is implemented. [Implementation](implementation.md) inventories all
 work required for this destination and then groups it into reviewable slices.
 
 The `SI-A<n>` callouts embedded below are stable **design anchors**. Each
@@ -306,7 +306,7 @@ type-check local Sage bodies or solve Sage trait goals.
 The complete browser-to-server update and history path, including the
 distinction between a filesystem edit batch and the Salsa revisions produced
 by its input setters, is defined by the [Web Application
-Walkthrough](./web-application.md#8-what-happens-when-source-changes).
+Walkthrough](web-application.md#8-what-happens-when-source-changes).
 
 ### Axum backend and on-demand API
 
@@ -361,7 +361,7 @@ ephemeral implementation details rather than security capabilities.
 
 The concrete resources, common responses, update coordinator, and retained
 revision/run records are specified in the [Web Application
-Walkthrough](./web-application.md).
+Walkthrough](web-application.md).
 
 <a id="si-a3"></a>
 > **SI-A3 — Inspector integration evidence starts from Rust source.** A
@@ -369,7 +369,7 @@ Walkthrough](./web-application.md).
 > live provider, actor, Axum server, and—when the claim concerns interaction—the
 > browser. Snapshots and traces are reviewed outputs, never semantic inputs.
 > This is the Inspector-local consequence of
-> [D19](../../design/decisions.md#d19-semantic-evidence-starts-from-source).
+> [Semantic evidence starts from source](../architectural-foundations/README.md#semantic-evidence-starts-from-source).
 >
 > **Required verification:** Source-driven tests start the real command, drive
 > the production API and browser, and snapshot values, visible UI, and
@@ -446,7 +446,7 @@ launches the same command, drives a representative API flow, and snapshots its
 reviewer-visible result together with actor-owned demand. Component tests do
 not establish semantic or end-to-end anchors.
 
-The [Web Application Walkthrough](./web-application.md) maps every mockup view
+The [Web Application Walkthrough](web-application.md) maps every mockup view
 through its JavaScript and API request to the semantic query which supplies it,
 then applies the same model to revision-triggered reload and comparison.
 
@@ -681,7 +681,7 @@ identifiers such as `source`, `signature`, or `body` are backend data, not
 protocol variants known to the client. A Diagnostics page may reuse the same
 checked-body result as a body page, but that relationship remains entirely on
 the server. The concrete route and DTO contract is specified in the [JSON
-Protocol](./protocol.md).
+Protocol](protocol.md).
 
 `body` returns completed typed IR, not checking temporaries. Method syntax is
 therefore shown as its resolved call, adjustments are explicit operations,
@@ -853,7 +853,7 @@ parentage, multiplicity, stable operation families and keys, and disposition.
 Each producer marks its child group sequential or unordered. Sequential edges
 preserve capture order. Unordered child subtrees are recursively serialized
 and byte-sorted with duplicates retained, as specified by the [JSON
-protocol](./protocol.md#run-observations-and-traces). Unmapped events use a
+protocol](protocol.md#run-observations-and-traces). Unmapped events use a
 stable code-generated ingredient name when available. Raw arrival order,
 timing, and implementation-specific Salsa debug keys remain failure artifacts,
 not golden output. A trace containing an unknown fallback ingredient cannot
@@ -936,7 +936,7 @@ first-class test cases.
 
 The browser/backend integration seam is the live server over a checked-in Cargo
 sample project, as defined by the
-[JSON protocol](./protocol.md#source-driven-contract-snapshots). A small
+[JSON protocol](protocol.md#source-driven-contract-snapshots). A small
 real-process suite starts `cargo sage inspect` with port `0`, waits for its
 machine-readable application URL, requests the embedded routed application,
 and drives representative semantic API flows. A headless-browser suite uses
@@ -1080,7 +1080,7 @@ than landing one architectural layer at a time:
    updates from workspace reloads.
 
 The complete work inventory, dependencies between workstreams, and per-slice
-acceptance checks live in [Implementation](./implementation.md). Slices may be
+acceptance checks live in [Implementation](implementation.md). Slices may be
 reordered when implementation evidence warrants it; reordering does not alter
 the destination contract or remove work from the inventory.
 
@@ -1172,4 +1172,4 @@ separation are architectural constraints.
 
 ## Implementation
 
-See [Implementation plan and status](./implementation.md).
+See [Implementation plan and status](implementation.md).

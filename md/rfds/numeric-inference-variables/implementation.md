@@ -203,9 +203,9 @@ This establishes a reviewable ground-operation slice of [NIV-A3] and
   Typed IR at the future codegen boundary.
 - [ ] The affected roadmap slice and RFD status indexes are updated.
 
-[NIV-A1]: ./README.md#niv-a1
-[NIV-A2]: ./README.md#niv-a2
-[NIV-A3]: ./README.md#niv-a3
-[NIV-A4]: ./README.md#niv-a4
-[NIV-A5]: ./README.md#niv-a5
-[D20]: ../../design/decisions.md#d20-overloadable-operators-remain-trait-calls-through-typed-ir
+[NIV-A1]: README.md#niv-a1
+[NIV-A2]: README.md#niv-a2
+[NIV-A3]: README.md#niv-a3
+[NIV-A4]: README.md#niv-a4
+[NIV-A5]: README.md#niv-a5
+[D20]: ../architectural-foundations/README.md#overloadable-operators-remain-trait-calls-through-typed-ir

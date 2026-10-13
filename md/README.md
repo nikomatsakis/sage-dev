@@ -65,18 +65,20 @@ It opens an Axum-served browser application on `127.0.0.1:2442`. Use
 workspace; an ambiguous bare invocation fails instead of silently choosing a
 crate. Use `--port <port>` to override the listener or `--no-open` to leave
 browser launch to the caller. The
-[Semantic Inspector architecture chapter](./design/validation/semantic-inspector.md)
+[Semantic Inspector architecture chapter](design/crates/sage_inspector/inspector-guide.md)
 describes its symbol navigation, structural products, query evidence, and
 revision model.
 
-Compiler architecture can also be reviewed in the searchable [Crates](./design/crates.md)
+Compiler architecture can also be reviewed in the searchable [Crates](design/crates/README.md)
 chapters, rendered from `md/design/crates/`. Run
 `cargo run -p sage-meta -- check` to check declared method dependencies, their
-Rust annotations, named specification paragraphs' test coverage, and saved
+Rust correspondences, named rules' implementation and test coverage, and saved
 reviews of those claim/test relationships in `review-checklist.json`. The same
-library check runs during workspace tests and CI. Add `--json` for a structured report;
-see [Reviewing Specification Tests](./design/meta/reviews.md) for preparing and
+library check runs during workspace tests and CI. The generated
+[Anchors](design/anchor/README.md) chapter links each claim to its source, code,
+tests, and review status. Add `--json` for a structured report;
+see [Reviewing Specification Tests](design/meta/reviews.md) for preparing and
 recording reviews with the repository skill, and
-[Architectural Pseudocode](./design/validation/architecture-language.md)
+[Architectural Pseudocode](design/meta/language.md)
 for the language and its current coverage. Generate an interactive explorer with
 `cargo run -p sage-meta -- browse`, then open `target/sage-browser.html`.

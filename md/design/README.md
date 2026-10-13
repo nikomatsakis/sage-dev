@@ -1,71 +1,42 @@
-# Design
+# Overview
 
-This section is the canonical specification of Sage, including the book and
-anchor system used to describe it. Markdown and `.sage` chapters express its
-rules; generated indexes and anchor pages connect them to implementation and
-tests. The [book specification](./meta/book.md) defines this structure and its
-current implementation status. Introductory material outside Design explains how to
-use Sage, while RFDs record goals, rationale, and plans.
+Sage is a demand-driven Rust semantic frontend. Symbols give definitions stable
+identities. Parsing and expansion create those symbols; resolution discovers
+them; signature and body queries compute semantic products when requested.
+Checking a body brings together name resolution, type inference, trait solving,
+and elaboration into a completed typed tree.
 
-Start with the
-[tenets](./tenets.md), then use the [architecture overview](./architecture.md)
-to see the whole compilation pipeline and the concepts shared across it.
+```mermaid
+flowchart LR
+    Source[Source] --> Symbols[Parse and expand symbols]
+    Symbols --> Resolve[Resolve names]
+    Resolve --> Signature[Check signatures]
+    Signature --> Body[Check and elaborate a body]
+    Metadata[Dependency metadata] --> Resolve
+    Metadata --> Signature
+    Infer[Inference and trait solving] --> Body
+    Body --> Typed[Typed IR]
+```
 
-The detailed chapters are organized in four groups:
+This is a map of demand boundaries, not a mandatory batch sequence. Start with
+[Crates](crates/README.md) to follow the modeled entities and operations.
 
-- [Rust Compilation Pipeline](./pipeline/README.md) — the phases that transform
-  Rust source into checked signatures and elaborated typed bodies. Phase
-  chapters lead with their input, output, guarantees, granularity, and entry
-  queries.
-- [Semantic Subsystems](./subsystems/README.md) — services such as name
-  resolution, type inference, trait solving, and external metadata that are
-  used from more than one phase.
-- [Representations and Infrastructure](./infrastructure/README.md) — the
-  symbols, Typed IR, spans, Stash storage, and incremental identities that
-  connect the phases.
-- [Validation and Inspection](./validation/README.md) — oracle conformance,
-  worked examples, snapshots, query traces, and interactive inspection.
+- [Meta](meta/README.md) specifies how this book, its architecture language,
+  source correspondence, and review system work.
+- [Tenets](tenets.md) explains the principles behind the design.
+- [Anchors](anchor/README.md) lists the specification's named claims with
+  generated implementation and test status. Every rule has a page connecting
+  its source definition, implementation excerpts, tests, and review.
+- [Crates](crates/README.md) is a guided entry into the compiler model. Its
+  subchapters render `.sage` declarations and their Rust implementations.
+- [RFDs](../rfds/README.md) record changes, alternatives, rationale, and plans.
+  Their normative changes are expressed directly in this specification.
 
-Architecture chapters describe the destination in their main text. Their
-**Current Status** sections state what is implemented now, the current
-limitations, and inspectable evidence. The [Build-Out
-Roadmap](../implementation/roadmap.md) instead organizes future work into
-cross-cutting implementation slices.
+Markdown and `.sage` are equally authoritative specification formats. Each
+anchor states one independently testable claim. A source badge opens the
+anchor's generated page; its context link returns to the definition.
+**TODO** and **N/A** describe explicit implementation or test entries, not
+successful verification. Evidence and status are generated from code, tests,
+and saved reviews rather than maintained as a second specification.
 
-## Reading design anchors
-
-Specification paragraphs have meaningful names such as
-`meta.calls.declared`, introduced by the custom Markdown role
-<code>{anchor}&#96;meta.calls.declared&#96;</code>. Each paragraph states one testable rule.
-Rust tests link to those names with `#[sage::test(meta.calls.declared)]`, and
-`sage-meta check` requires a test for every named specification paragraph.
-The [anchor mechanics](./validation/architecture-language.md#specification-tests-and-workspace-checks)
-and [contract rules](./meta/contracts.md) specify the checks and their evidence.
-
-An anchor does not by itself claim that Sage already satisfies the rule. The
-chapter's **Current Status** section links the evidence which exists today and
-names the remaining gap. Cross-cutting choices and rationale use `D<n>` entries
-in [Architecture Decisions](./decisions.md); chapter anchors express the local,
-auditable consequences of those choices.
-
-An RFD branch changes these chapters alongside its rationale and plan. The
-Design diff states the proposed rules, and implementation updates their
-evidence and status. The normative rules are reviewed with the proposal; they
-do not wait for RFD completion to appear here.
-
-This organization was shaped in part by Kari Wilhelm's ideas for **Anchor
-Driven Development**: identify the small, load-bearing claims from which the
-rest of a design follows, give them stable names, and connect them to
-inspectable evidence. Those ideas helped guide the restructuring of this book.
-Many thanks to Kari for articulating the approach.
-
-The [architectural pseudocode](./validation/architecture-language.md) provides
-a method-oriented specification stored in `md/design/crates/` and parsed
-and checked by `sage-meta`. The [Crates](./crates.md) section renders those
-`.sage` files as Design chapters under their owning crates. The
-[display specification](./meta/book.md#displaying-sage-files) defines their
-searchable declaration views, dependency links, Rust source pane, and delivery
-modes. Chapter-derived names,
-generated anchor pages, and the grouped index are destination behavior; the
-current checker still uses explicit full names and scans Markdown throughout
-`md/`.
+For tool usage, start with the [User's Guide](../guide/README.md).

@@ -4,12 +4,12 @@
 
 > **Current architecture:** This RFD records the original implementation and
 > its historical deviations. Its structural-comparison and paired-normalization
-> details are superseded by [D4](../../design/decisions.md#d4-oracle-test-harness)
-> and the [Oracle Test Harness](../../design/oracle-test-harness.md). The
+> details are superseded by [Oracle test harness](../architectural-foundations/README.md#oracle-test-harness)
+> and the [Oracle Test Harness](../../design/crates/sage_oracle_harness/oracle-guide.md). The
 > destination is deterministic serialized output compared by exact textual
 > identity; paired normalization is technical debt to remove. Its primitive
 > operator representation is also superseded by
-> [D20](../../design/decisions.md#d20-overloadable-operators-remain-trait-calls-through-typed-ir):
+> [Overloadable operators remain trait calls through Typed IR](../architectural-foundations/README.md#overloadable-operators-remain-trait-calls-through-typed-ir):
 > the shared Typed IR represents every overloadable operator as a resolved
 > trait-method call.
 

@@ -17,6 +17,11 @@ type CheckResult<'db> = Result<Ptr<TyExpr<'db>>, CheckError<'db>>;
 impl<'db> ExprCst<'db> {
     /// Check an expression, catching fatal errors and substituting error nodes.
     #[sage::item(crate::checking::BodyCheck::check)]
+    // {anchor}`crates.sage_ir.checking.body.elaboration`
+    // {anchor}`crates.sage_ir.checking.body.interface_dependencies`
+    // {anchor}`crates.sage_ir.checking.body.isolated_completion`
+    // {anchor}`crates.sage_ir.checking.body.expected_types`
+    // {anchor}`crates.sage_ir.checking.body.operator_calls`
     pub(crate) async fn check_with(
         &self,
         cx: &InferCtx<'_, 'db>,

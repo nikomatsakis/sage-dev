@@ -4,9 +4,13 @@ use std::path::{Path, PathBuf};
 use crate::{Document, correspondence::CorrespondenceIndex};
 
 /// Locate the repository model in the configured mdBook source directory.
-/// Standalone fixture workspaces can retain the legacy `sage-src` layout.
 /// Explicit model paths should be passed directly to [`load_documents`].
 pub fn default_model_root(workspace: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    Ok(book_source_root(workspace)?.join("design/crates"))
+}
+
+/// Configured mdBook source root shared by specification and model loading.
+pub fn book_source_root(workspace: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
     #[derive(Default, serde::Deserialize)]
     struct BookConfig {
         #[serde(default)]
@@ -16,18 +20,9 @@ pub fn default_model_root(workspace: &Path) -> Result<PathBuf, Box<dyn std::erro
     struct Book {
         src: Option<PathBuf>,
     }
-
-    let config_file = workspace.join("book.toml");
-    if config_file.exists() {
-        let config: BookConfig = toml::from_str(&std::fs::read_to_string(config_file)?)?;
-        let model = workspace
-            .join(config.book.src.unwrap_or_else(|| PathBuf::from("src")))
-            .join("design/crates");
-        if model.is_dir() {
-            return Ok(model);
-        }
-    }
-    Ok(workspace.join("sage-src"))
+    let config: BookConfig =
+        toml::from_str(&std::fs::read_to_string(workspace.join("book.toml"))?)?;
+    Ok(workspace.join(config.book.src.unwrap_or_else(|| PathBuf::from("src"))))
 }
 
 /// Stable namespace shared by source correspondence and browser navigation.
@@ -111,10 +106,10 @@ impl Workspace {
 
 #[cfg(test)]
 mod tests {
-    use super::default_model_root;
+    use super::{default_model_root, load_documents};
 
     #[test]
-    fn configured_book_model_takes_precedence_over_legacy_fixture_layout() {
+    fn default_model_requires_the_configured_book_source() {
         let workspace = std::env::temp_dir().join(format!(
             "sage-model-roots-{}-{}",
             std::process::id(),
@@ -123,23 +118,48 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
+        // An old-layout model must not substitute for missing book configuration
+        // or for an absent configured model.
         std::fs::create_dir_all(workspace.join("sage-src")).unwrap();
-        assert_eq!(
-            default_model_root(&workspace).unwrap(),
-            workspace.join("sage-src")
-        );
+        std::fs::write(
+            workspace.join("sage-src/crate.sage"),
+            "crate old { \"\"\"Old layout.\"\"\" }",
+        )
+        .unwrap();
+        assert!(default_model_root(&workspace).is_err());
+        assert!(crate::check(&workspace).model.load_error.is_some());
 
         std::fs::write(workspace.join("book.toml"), "[book]\nsrc = 'manual'\n").unwrap();
         let book_model = workspace.join("manual/design/crates");
-        std::fs::create_dir_all(&book_model).unwrap();
         assert_eq!(default_model_root(&workspace).unwrap(), book_model);
+        assert!(load_documents(&book_model).is_err());
+        assert!(crate::check(&workspace).model.load_error.is_some());
+        std::fs::create_dir_all(&book_model).unwrap();
+        assert_eq!(
+            load_documents(&book_model).unwrap_err().to_string(),
+            "no .sage documents found"
+        );
+        std::fs::write(
+            book_model.join("crate.sage"),
+            "crate configured { \"\"\"Configured book model.\"\"\" }",
+        )
+        .unwrap();
+        assert_eq!(load_documents(&book_model).unwrap().len(), 1);
 
         std::fs::write(workspace.join("book.toml"), "[book]\n").unwrap();
         let default_book_model = workspace.join("src/design/crates");
-        std::fs::create_dir_all(&default_book_model).unwrap();
         assert_eq!(default_model_root(&workspace).unwrap(), default_book_model);
+        assert!(load_documents(&default_book_model).is_err());
+        assert!(crate::check(&workspace).model.load_error.is_some());
+        std::fs::create_dir_all(&default_book_model).unwrap();
+        std::fs::write(
+            default_book_model.join("crate.sage"),
+            "crate default { \"\"\"Default book model.\"\"\" }",
+        )
+        .unwrap();
+        assert_eq!(load_documents(&default_book_model).unwrap().len(), 1);
 
-        // Broken configuration must not silently select the legacy model.
+        // Broken configuration must not silently select a different model.
         std::fs::write(workspace.join("book.toml"), "[book\n").unwrap();
         assert!(default_model_root(&workspace).is_err());
         assert!(crate::check(&workspace).model.load_error.is_some());

@@ -42,8 +42,8 @@ fn parses_prose_paths_and_contexts_into_ast() {
 }
 
 #[test]
-#[sage::test(meta.model.forbidden_paths)]
-#[sage::test(meta.model.virtual_dispatch)]
+#[sage::test(meta.language.model.forbidden_paths)]
+#[sage::test(meta.language.model.virtual_dispatch)]
 fn detects_virtual_dispatch_path_to_forbidden_body() {
     let errors = check(
         r#"
@@ -54,24 +54,33 @@ fn detects_virtual_dispatch_path_to_forbidden_body() {
             override query signature() -> crate::Value { """Bad dependency.""" envelope { invokes self.body(); } }
             query body() -> crate::Value { """Body.""" envelope {} }
         }
+        class Other extends crate::Function { """Another implementation."""
+            override query signature() -> crate::Value { """Also forbidden.""" envelope { invokes self.body(); } }
+            query body() -> crate::Value { """Other body.""" envelope {} }
+        }
         class Caller { """Consumer."""
             query run() -> crate::Value { """Read interfaces.""" envelope {
                 invokes crate::Function::signature();
                 forbid transitive crate::Local::body;
+                forbid transitive crate::Other::body;
             } }
         }
     "#,
     );
-    assert_eq!(errors.len(), 1, "{errors:?}");
-    assert!(
-        errors[0]
-            .message
-            .contains("demo::Caller::run -> demo::Local::signature -> demo::Local::body")
-    );
+    assert_eq!(errors.len(), 2, "{errors:?}");
+    for implementation in ["Local", "Other"] {
+        let path = format!(
+            "demo::Caller::run -> demo::{implementation}::signature -> demo::{implementation}::body"
+        );
+        assert!(
+            errors.iter().any(|error| error.message.contains(&path)),
+            "{errors:?}"
+        );
+    }
 }
 
 #[test]
-#[sage::test(meta.model.forbidden_paths)]
+#[sage::test(meta.language.model.forbidden_paths)]
 fn permits_recursive_graph_without_forbidden_reachability() {
     assert!(
         check(
@@ -108,7 +117,7 @@ fn rejects_unknown_calls_and_missing_dependency() {
 }
 
 #[test]
-#[sage::test(meta.classes.abstract_complete)]
+#[sage::test(meta.language.classes.abstract_complete)]
 fn rejects_cycles_and_incomplete_concrete_classes() {
     let errors = check(
         r#"
@@ -198,7 +207,7 @@ fn repository_model_is_consistent() {
 }
 
 #[test]
-#[sage::test(meta.model.inherited_prohibitions)]
+#[sage::test(meta.language.model.inherited_prohibitions)]
 fn inherited_prohibitions_constrain_overrides() {
     let errors = check(
         r#"
@@ -219,12 +228,12 @@ fn inherited_prohibitions_constrain_overrides() {
 }
 
 #[test]
-#[sage::test(meta.types.struct_fields)]
-#[sage::test(meta.types.enum_variants)]
-#[sage::test(meta.types.opaque_representation)]
-#[sage::test(meta.types.declaration_prose)]
-#[sage::test(meta.types.field_prose)]
-#[sage::test(meta.types.variant_prose)]
+#[sage::test(meta.language.types.struct_fields)]
+#[sage::test(meta.language.types.enum_variants)]
+#[sage::test(meta.language.types.opaque_representation)]
+#[sage::test(meta.language.types.declaration_prose)]
+#[sage::test(meta.language.types.field_prose)]
+#[sage::test(meta.language.types.variant_prose)]
 fn parses_structs_enums_and_opaque_generics() {
     use sage_meta::{TypeExprKind, TypeShape, VariantFields};
     let source = r#"crate demo { """Types.""" }
@@ -339,8 +348,8 @@ fn parses_structs_enums_and_opaque_generics() {
 }
 
 #[test]
-#[sage::test(meta.types.argument_arity)]
-#[sage::test(meta.types.unique_parameters)]
+#[sage::test(meta.language.types.argument_arity)]
+#[sage::test(meta.language.types.unique_parameters)]
 fn checks_arity_scope_and_duplicate_members_in_value_types() {
     let errors = check(
         r#"
@@ -368,7 +377,7 @@ fn checks_arity_scope_and_duplicate_members_in_value_types() {
 }
 
 #[test]
-#[sage::test(meta.classes.override_signature)]
+#[sage::test(meta.language.classes.override_signature)]
 fn checks_nested_arguments_in_fields_results_and_overrides() {
     let errors = check(
         r#"
@@ -424,7 +433,7 @@ fn checks_nested_arguments_in_fields_results_and_overrides() {
 }
 
 #[test]
-#[sage::test(meta.types.qualified_names)]
+#[sage::test(meta.language.types.qualified_names)]
 fn generic_types_resolve_across_crates_with_dependency_checks() {
     let library = parse(
         "lib/crate.sage",
@@ -454,9 +463,9 @@ fn generic_types_resolve_across_crates_with_dependency_checks() {
 }
 
 #[test]
-#[sage::test(meta.types.opaque_representation)]
-#[sage::test(meta.types.generic_parameters)]
-#[sage::test(meta.types.member_commas)]
+#[sage::test(meta.language.types.opaque_representation)]
+#[sage::test(meta.language.types.generic_parameters)]
+#[sage::test(meta.language.types.member_commas)]
 fn rejects_malformed_value_declarations() {
     for body in [
         "struct Bad { x: Vec<Value }",

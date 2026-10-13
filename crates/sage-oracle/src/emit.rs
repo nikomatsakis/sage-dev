@@ -905,6 +905,8 @@ fn oracle_def_kind(kind: HirDefKind) -> Option<rust_ref::DefKind> {
     })
 }
 
+// {anchor}`crates.sage_oracle_harness.crate.fixed_projection`
+// {anchor}`crates.sage_oracle_harness.crate.deterministic_emission`
 pub fn emit_crate(tcx: TyCtxt<'_>) -> Result<Crate<NormalizedDef>, OracleError> {
     if tcx.dcx().has_errors().is_some() {
         return Err(OracleError::CompileError(

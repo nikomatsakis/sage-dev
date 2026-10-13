@@ -8,7 +8,7 @@
   polling, progress wakeups, and cancellation
 - [Trait Solver Cycle Semantics](../trait-solver-cycle-semantics/README.md) —
   provisional recursive results and completion
-- [Trait Solver Design](../../design/trait-solver.md) — sufficient-answer and
+- [Trait Solver Design](../../design/crates/sage_ir/solver-guide.md) — sufficient-answer and
   necessary-envelope contract
 
 ## TL;DR
@@ -165,4 +165,4 @@ would couple alternative scheduling to goal caching and cycle semantics.
 
 ## Implementation
 
-See [Implementation plan and status](./implementation.md).
+See [Implementation plan and status](implementation.md).

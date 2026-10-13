@@ -165,6 +165,7 @@ pub fn assert_crates_eq(
     assert_serialized_text_eq(fixture_name, &lhs_text, &rhs_text)
 }
 
+// {anchor}`crates.sage_oracle_harness.crate.exact_comparison`
 fn assert_serialized_text_eq(
     fixture_name: &str,
     lhs_text: &str,
@@ -201,6 +202,7 @@ mod comparison_tests {
     use super::assert_serialized_text_eq;
 
     #[test]
+    #[sage::test(crates.sage_oracle_harness.crate.exact_comparison)]
     fn exact_text_is_the_conformance_boundary() {
         assert!(assert_serialized_text_eq("same", "{\n  \"x\": 1\n}", "{\n  \"x\": 1\n}").is_ok());
 

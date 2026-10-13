@@ -6,9 +6,9 @@ Rust-correspondence, specification-test, and saved-review checks separately, wit
 coverage independent from executable declarations. A public library check is
 shared by CLI, CI, and a workspace Cargo test. The isolated Salsa fixture
 and explicit-event tests establish the initial runtime checker. The canonical
-rule index, Rust implementation references, and anchor pages are now planned
-alongside broad compiler acceptance, automatic session initialization, async
-propagation, browser replay, and agent transports. Checked boxes describe
+rule index, Rust implementation references, and anchor pages are implemented.
+Broad compiler acceptance, automatic session initialization, async propagation,
+browser replay, and agent transports remain staged work. Checked boxes describe
 completed work, not blanket completion of their containing stage.
 
 Evidence lives in `crates/sage-meta/tests/correspondence.rs`, `cli.rs`,
@@ -44,9 +44,11 @@ review a committed, incrementally checked artifact. This extends the shared
 check before the broader book migration; it uses the existing Markdown and
 Rust test inventories.
 
-- [x] Extract each anchor's paragraph and complete test set, preserving test
+- [x] Extract each anchor's claim and complete test set, preserving test
       source, Cargo identity, configuration conditions, and placeholder status.
-      Test paragraph boundaries and whole-function extraction.
+      The initial paragraph-only extraction is superseded by the
+      [complete-content boundaries](#anchor-content-boundaries) below.
+      Test claim boundaries and whole-function extraction.
 - [x] Compare saved claim/test inputs and schema/policy versions; test changed
       claims, test additions/removals, changed bodies and metadata, and movement
       that changes only source offsets.
@@ -62,9 +64,8 @@ Rust test inventories.
 
 **Current evidence:** `crates/sage-meta/tests/review.rs` exercises extraction,
 freshness, placeholder decisions, read-only preparation, rejected submissions,
-and preservation of unrelated reviews through the library and CLI. The initial
-delegated review recorded 50 approved claims and 35 explicit TODO entries in
-`review-checklist.json`; the shared check accepts all 85 current snapshots.
+and preservation of unrelated reviews through the library and CLI. The committed `review-checklist.json` records reviewed claims and explicit
+TODO/N/A entries; generated anchor pages expose their current decisions.
 
 **Evidence boundary:** The cached judgment concerns what the snapshotted test
 bodies visibly check. Helper bodies are not inputs, and the checklist does not
@@ -75,13 +76,13 @@ and runtime conformance remain separate evidence.
 
 The destination is specified in [The Design Book](../../design/meta/book.md)
 and the anchor mechanics in
-[Architectural Pseudocode](../../design/validation/architecture-language.md#specification-tests-and-workspace-checks).
+[Architectural Pseudocode](../../design/meta/anchors.md#specification-tests-and-workspace-checks).
 These checkpoints extend the existing check and browser; they do not replace
 the runtime-conformance stages below. The RFD explains the change and stages
 work while the Design chapter edits on the same branch state the normative
 rules. Completion does not require promoting specification text out of the RFD.
 
-- [ ] **Review the specification and authoring workflow.** Review the book and
+- [x] **Review the specification and authoring workflow.** Review the book and
       anchor-system rules together, retain coverage for existing guarantees,
       and account for pending implementation and tests through explicit
       `todo` or `not_applicable` entries. Apply the same rules to the anchor
@@ -92,15 +93,19 @@ rules. Completion does not require promoting specification text out of the RFD.
       identities. Generate crate overviews and nested `.sage` module chapters
       using the shared searchable explorer, including embedded Rust source.
       The default CLI/library loader follows the book's configured source
-      directory, and standalone fixtures retain their explicit/legacy roots.
+      directory. Standalone fixtures use the same configured book layout;
+      explicit model paths remain available. Missing book configuration or a
+      missing configured model fails instead of selecting another source tree.
       Build and serve the book without requiring a separate Sage server.
-      Eight preprocessor integration tests cover generated chapters, custom
+      Preprocessor integration tests cover generated chapters, custom
       source roots, crate ownership, relocation, safe embedding, regeneration,
       and path diagnostics. Browser tests cover member routes and parent URL
       synchronization. A Chromium check of the built book verified search,
       direct links, Rust source show/hide, cross-chapter navigation,
       Back/Forward, and reload without page-script errors.
-- [ ] **Complete the shared specification inventory.** Use
+      The embedded explorer also follows mdBook's resolved theme on load and
+      when it changes; the standalone explorer retains its own toggle.
+- [x] **Complete the shared specification inventory.** Use
       the Design chapter tree as the normative inventory, with Markdown and
       `.sage` sources under the book source directory. Specify path and local
       name normalization, then derive namespaces from the complete chapter
@@ -111,7 +116,7 @@ rules. Completion does not require promoting specification text out of the RFD.
       served and generated explorer views. Inventory direct links for every modeled entity under
       the [entity-link contract](../../design/meta/book.md#meta.book.entity_links),
       independently of named specification rules.
-- [ ] **Enforce rule correspondence coverage and migrate anchor names.**
+- [x] **Enforce rule correspondence coverage and migrate anchor names.**
       With `.sage` chapters now in `md/design/crates/<crate>/`, migrate existing
       anchors to chapter-derived names, update references, and redirect old
       URLs. Index point and balanced region markers in real Rust comments;
@@ -121,7 +126,7 @@ rules. Completion does not require promoting specification text out of the RFD.
       entries for every rule and reject dangling references or malformed
       regions. Exercise the shared check, CLI, and workspace test, without
       adding a `cargo build` hook.
-- [ ] **Generate the rule index and anchor pages.** Render a hierarchical index
+- [x] **Generate the rule index and anchor pages.** Render a hierarchical index
       of anchor text and status. Display unfinished entries as **TODO** and
       inapplicable entries as **N/A**. Each anchor page shows its definition, context,
       implementation excerpts, tests, and separately labeled placeholders or
@@ -142,22 +147,94 @@ rules. Completion does not require promoting specification text out of the RFD.
       and crate/module entries, including equal local names under different
       owners. Test unique routes, incoming links from elsewhere in the book,
       and preservation of model entity identities after chapter relocation.
-      Verify [selection URLs](../../design/validation/architecture-language.md#meta.spec.explorer_navigation):
+      Verify [selection URLs](../../design/meta/anchors.md#meta.anchors.explorer_navigation):
       direct links, redirects, and browser navigation restore the selected
       entity or rule in its book context.
       Verify the generated book works without a running `sage-meta serve`.
 
-**Current boundary:** The model has moved into the book's Design source tree.
-The book generates Crates content from that tree and embeds the same explorer
-used by standalone export and serving. The present checker inventories Markdown
-definitions and Rust test references using explicit full names; it does not
-enforce the Design chapter scope or derive chapter namespaces. The complete
-shared specification inventory, comprehensive entity links, implementation
-references, implementation placeholder classification, rule index, and anchor
-pages remain planned. The review checklist classifies test placeholders and distinguishes reviewed
-TODO/N/A decisions from behavioral approval. Cross-reference syntax has not
-yet been selected. Placeholder tests introduced during
-specification review account for pending work; they do not establish the unimplemented behavior.
+**Current boundary:** The shared inventory derives names from Design chapter
+paths and indexes Markdown and `.sage` definitions and references. Rust comment
+entries and annotated tests supply independent implementation/test coverage;
+explicit TODO/N/A entries retain their explanations. The book generates root,
+namespace, and individual anchor pages, linked in both directions with source
+context. Index rows display the final name component beneath their namespace headings;
+tooltips and link destinations retain full identities. Saved test reviews
+remain separate from execution results.
+
+Independent claim/test review covers every current rule. Review findings led
+to stronger receiver, virtual-dispatch, associated-owner, macro-completeness,
+placeholder-coverage, and namespace-filtering assertions. Remaining gaps retain
+claim-specific TODO explanations; they are not inferred to pass from the
+workspace test result. The generated index exposes the saved review alongside
+the independent implementation and test entries.
+
+The handwritten Crates landing page links into generated model and companion
+Markdown chapters. Existing subsystem claims now live beside their modeled
+entities; detailed algorithms remain in crate guides. RFDs preserve decision
+rationale and sequencing. Tenet content and worked examples remain for later
+editorial discussion. Runtime-conformance and agent-transport work below keeps
+its own unfinished checkpoints; this book migration does not establish those
+behaviors.
+
+## Anchor content boundaries
+
+An independently testable claim can need several paragraphs, a list, or an
+example. Paragraph-only extraction silently omits those qualifications from
+both the generated rule and its saved review. The normative edits are in
+[Anchor content](../../design/meta/anchors.md#anchor-content) and
+[Review inputs](../../design/meta/reviews.md#review-inputs); nonnormative
+[Anchor tenets](../../design/tenets.md#anchor-tenets) guide authors in splitting
+independent guarantees. The existing nonempty opening-paragraph syntax stays.
+
+1. **Specify and review the independent claims.** The initial specification
+   stage edited the Design sources directly. Content inclusion, next-definition boundaries, headings,
+   containing-source boundaries, explicit ends, unmatched ends, and literal
+   examples each have an anchor. `source_representation` and `review_scope`
+   were split from the commentary after `complete_test_set`. The paragraph
+   regression remained a test of then-current behavior during that stage;
+   explicit TODO entries identified the unimplemented complete-content rules.
+2. **Implement extraction over Markdown structure.** Select a contiguous source
+   extent using the first closing boundary. Share the logic with `.sage`
+   prose while retaining exact source offsets and the containing modeled entity.
+   Exercise repeated definitions, every heading level and both heading styles,
+   all included block types, EOF, independent `.sage` strings, optional standalone
+   `<!-- end anchor -->`, orphan/repeated terminators, and literal examples.
+   Treat the delimiter as syntax, never as part of the rendered or reviewed claim.
+3. **Audit and migrate the existing corpus.** Inspect each changed extent before
+   switching the default extractor. Keep substantive qualifications within the
+   guarantee; split independent requirements and put explicit ends or headings
+   before unrelated commentary. In particular, audit the eligibility paragraph
+   after `test_references` and general `TyExprData` commentary following
+   `body.macro_expansion`. Parser activation and those source edits land together
+   so no intermediate version silently changes ownership of specification text.
+4. **Connect rendering, snapshots, and evidence.** Use the shared extent in anchor
+   pages, table disclosures, context/source spans, and review preparation. Verify
+   later-paragraph/list/example edits stale the corresponding saved review, while
+   edits beyond a real or explicit boundary do not. Verify implementation-only
+   edits preserve the saved claim/test input and assert line-array JSON directly.
+   Replace each TODO with focused evidence only when its claim is established.
+5. **Review changed inputs and validate the book.** Prepare exact current inputs,
+   delegate every pending claim/test set, and record fresh judgments. Do not copy
+   old approvals over enlarged inputs. Retain unaffected reviews only when their
+   inputs and schema/policy versions still match. Run the shared check, workspace
+   tests, and book build; inspect Markdown and `.sage` context round trips and
+   full disclosures, including literal delimiter examples.
+
+**Current boundary:** Extraction now selects the complete Markdown extent in
+both source formats, including multi-block content and explicit end markers.
+Generated anchor views and review snapshots consume that same extent. Focused
+parser, rendering, and review regressions replace the content-boundary TODO
+entries; review staleness covers changes within later blocks and excludes
+changes after a closing boundary.
+
+The corpus audit inspected all 212 definitions. Twenty claims retain additional
+paragraphs or examples, including test eligibility, contract verification
+scenarios, and source-review qualifications. Ten explicit ends separate topic
+changes, including crate dependency notes and the general `TyExprData`
+description after `body.macro_expansion`. The remaining definitions already end
+at another definition, a heading, or their containing source boundary.
+Independent review of the exact changed inputs and final shared-check,
+workspace-test, and book-build validation complete the fifth stage.
 
 ## Stage 0: Prove source-index matching against Salsa
 

@@ -20,6 +20,7 @@ pub(super) fn node_name<'db>(
     Name::new(db, name_text.to_owned())
 }
 
+// {anchor}`crates.sage_ir.types.spans.item_origin`
 pub(super) fn item_start(
     node: tree_sitter::Node<'_>,
     pending_attrs: &[tree_sitter::Node<'_>],

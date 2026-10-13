@@ -2,10 +2,10 @@
 
 **Status:** Completed
 
-**Parent:** [Semantic Inspector](./README.md)
+**Parent:** [Semantic Inspector](README.md)
 
 This page is the normative JSON contract between the Semantic Inspector
-backend and browser. The [web application walkthrough](./web-application.md)
+backend and browser. The [web application walkthrough](web-application.md)
 explains when each resource is requested and which Sage operation supplies it;
 this page defines the bytes which cross that boundary.
 

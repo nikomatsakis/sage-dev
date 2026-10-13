@@ -7,7 +7,15 @@ module crate::symbols;
 // return the unwrapped result. Trait/impl membership retains its generic binder.
 
 abstract class Symbol {
-    """Erased definition identity; specialized interfaces retain the definition kind."""
+    """
+    Erased definition identity; specialized interfaces retain the definition kind.
+
+    {anchor}`definition_identity`
+    Resolution may use names, paths, scopes, and namespaces to discover a definition, but every successful downstream semantic reference records the resulting symbol. Renaming an import or choosing another path to the same definition must not mint a different definition identity.
+
+    {anchor}`kind_wrappers`
+    Symbol supports heterogeneous membership and resolution results. Operations whose meaning requires a definition kind accept the corresponding kind-specific wrapper; conversion into Symbol preserves identity, checked recovery accepts the right kind, and recovery of a wrong kind fails.
+    """
 }
 
 abstract class FnSymbol extends crate::symbols::Symbol {
@@ -67,14 +75,27 @@ abstract class EnumSymbol extends crate::symbols::Symbol {
 }
 
 class LocalFnSym extends crate::symbols::FnSymbol {
-    """Source-backed definition. Identity detail here is a review abstraction; inspect the linked Rust declaration for the exact per-kind fields."""
+    """
+    Source-backed definition. Identity detail here is a review abstraction; inspect the linked Rust declaration for the exact per-kind fields.
+
+    {anchor}`local_identity`
+    A local symbol's identity fields identify its definition. Independently tracked CST, spans, signatures, members, and bodies do not become part of that identity. Detail-only changes preserve the symbol, and consumers of unchanged sibling facts remain reusable; genuine identity changes are distinguishable.
+
+    {anchor}`associated_identity`
+    A trait or impl function, type, or constant has its own stable symbol tied to its associated owner. Repeated requests and movement among siblings preserve that owner and the associated item identity.
+    """
     identity name: crate::types::Name;
     identity scope: crate::types::Scope;
     input syntax: crate::types::Syntax;
     input span: crate::types::Span;
     identity owner: crate::types::Owner;
     override query signature() -> Option<crate::types::Binder<crate::types::FnSig>> {
-        """Check the declaration in its defining scope; preserve generic identities, binder, predicates, and unsupported eligibility. For associated functions inherit the owner generics and Self before method generics. This models local_syms/fns.rs::sig."""
+        """
+    Check the declaration in its defining scope; preserve generic identities, binder, predicates, and unsupported eligibility. For associated functions inherit the owner generics and Self before method generics. This models local_syms/fns.rs::sig.
+
+    {anchor}`associated_interfaces`
+    Checking an associated signature reuses its owner interface and never reads a sibling associated body.
+    """
         envelope {
             reads self.syntax;
             reads self.scope;
@@ -87,7 +108,12 @@ class LocalFnSym extends crate::symbols::FnSymbol {
         }
     }
     query body() -> crate::types::Body {
-        """Import this signature, bind parameters and Self, and set the solver environment and return type. Check the body in a fresh InferCtx, finalize obligations, then finish the typed tree. A missing body produces the existing recovery representation."""
+        """
+    Import this signature, bind parameters and Self, and set the solver environment and return type. Check the body in a fresh InferCtx, finalize obligations, then finish the typed tree. A missing body produces the existing recovery representation.
+
+    {anchor}`body_interfaces`
+    Checking and elaborating one function may read its own source and signature plus demanded signatures, fields, associated items, impl headers, metadata facts, and solver results. It must not read a callee or sibling body; a callee-body-only edit must not change or reexecute the caller's completed body.
+    """
         envelope {
             reads self.syntax;
             reads self.scope;
@@ -103,7 +129,15 @@ class LocalFnSym extends crate::symbols::FnSymbol {
 }
 
 class ExternalFn extends crate::symbols::FnSymbol {
-    """Logical external branch of the kind wrapper; Rust uses SymExt rather than a separate struct for each kind."""
+    """
+    Logical external branch of the kind wrapper; Rust uses SymExt rather than a separate struct for each kind.
+
+    {anchor}`external_identity`
+    An external symbol identifies a dependency definition by crate number and definition index, independently of the metadata facts requested about it. Metadata adapters supply one consistent definition kind for that identity.
+
+    {anchor}`external_fact_queries`
+    Sage imports external facts through owned, definition-keyed queries. A metadata provider neither resolves Sage-local names nor performs Sage trait proof or normalization; those operations execute on the imported Sage values.
+    """
     identity definition: crate::types::Identity;
     override query signature() -> Option<crate::types::Binder<crate::types::FnSig>> {
         """Read one external signature fact and lower owned metadata into Sage types and binders."""

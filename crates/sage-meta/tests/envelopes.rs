@@ -33,7 +33,7 @@ fn class<'a>(document: &'a Document, name: &str) -> &'a Class {
 }
 
 #[test]
-#[sage::test(meta.classes.single_inheritance)]
+#[sage::test(meta.language.classes.single_inheritance)]
 fn declarations_accept_one_base_and_reject_multiple_bases() {
     for kind in ["class", "context"] {
         let document = valid(&format!(
@@ -61,7 +61,7 @@ fn declarations_accept_one_base_and_reject_multiple_bases() {
 }
 
 #[test]
-#[sage::test(meta.contexts.inheritance)]
+#[sage::test(meta.language.contexts.inheritance)]
 fn context_inheritance_stays_within_the_context_kind() {
     let document = valid(
         r#"context Base { """Working state.""" }
@@ -87,7 +87,7 @@ fn context_inheritance_stays_within_the_context_kind() {
 }
 
 #[test]
-#[sage::test(meta.fields.kinds)]
+#[sage::test(meta.language.fields.kinds)]
 fn fields_preserve_identity_input_and_state_kinds() {
     let document = valid(
         r#"class Item { """Identity and input.""" identity key: u32; input value: u32; }
@@ -99,7 +99,7 @@ fn fields_preserve_identity_input_and_state_kinds() {
 }
 
 #[test]
-#[sage::test(meta.fields.context_state)]
+#[sage::test(meta.language.fields.context_state)]
 fn working_state_fields_require_a_context() {
     valid(r#"context Work { """Work.""" state pending: u32; }"#);
     for kind in ["class", "abstract class"] {
@@ -115,7 +115,7 @@ fn working_state_fields_require_a_context() {
 }
 
 #[test]
-#[sage::test(meta.methods.kinds)]
+#[sage::test(meta.language.methods.kinds)]
 fn query_and_function_kinds_survive_contract_resolution() {
     let document = valid(
         r#"class Item { """Item."""
@@ -140,7 +140,7 @@ fn query_and_function_kinds_survive_contract_resolution() {
 }
 
 #[test]
-#[sage::test(meta.methods.prose)]
+#[sage::test(meta.language.methods.prose)]
 fn method_prose_is_required_first_and_does_not_grant_calls() {
     let document = valid(
         r#"class Item { """Item."""
@@ -172,7 +172,7 @@ fn method_prose_is_required_first_and_does_not_grant_calls() {
 }
 
 #[test]
-#[sage::test(meta.envelopes.reads)]
+#[sage::test(meta.language.envelopes.reads)]
 fn reads_accept_inherited_fields_and_reject_unknown_or_foreign_fields() {
     let source = r#"class Base { """Base.""" input value: u32; }
         class Child extends crate::Base { """Child."""
@@ -187,7 +187,7 @@ fn reads_accept_inherited_fields_and_reject_unknown_or_foreign_fields() {
 }
 
 #[test]
-#[sage::test(meta.envelopes.creates)]
+#[sage::test(meta.language.envelopes.creates)]
 fn creates_resolves_a_context_and_retains_its_binding() {
     let source = r#"context Work { """Local work.""" }
         class Item { """Item."""
@@ -210,7 +210,7 @@ fn creates_resolves_a_context_and_retains_its_binding() {
 }
 
 #[test]
-#[sage::test(meta.envelopes.leaf)]
+#[sage::test(meta.language.envelopes.leaf)]
 fn empty_envelopes_are_leaves_and_are_distinct_from_abstract_methods() {
     let document = valid(
         r#"abstract class Item { """Item."""
@@ -230,7 +230,7 @@ fn empty_envelopes_are_leaves_and_are_distinct_from_abstract_methods() {
 }
 
 #[test]
-#[sage::test(meta.envelopes.permissions)]
+#[sage::test(meta.language.envelopes.permissions)]
 fn permitted_calls_are_optional_and_have_no_execution_order() {
     let model = Arc::new(
         ContractModel::new(&[valid(
@@ -261,8 +261,8 @@ fn permitted_calls_are_optional_and_have_no_execution_order() {
 }
 
 #[test]
-#[sage::test(meta.envelopes.direct_calls)]
-#[sage::test(meta.model.forbidden_paths)]
+#[sage::test(meta.language.envelopes.direct_calls)]
+#[sage::test(meta.language.model.forbidden_paths)]
 fn indirect_reachability_does_not_grant_a_direct_call_permission() {
     let source = r#"class Root { """Root.""" fn run() -> u32 { """Run.""" envelope {
             invokes crate::Helper::work();

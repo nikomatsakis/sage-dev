@@ -1,3 +1,5 @@
+#![feature(register_tool)]
+#![register_tool(sage)]
 #[cfg(test)]
 mod tests {
     use sage_stash::*;
@@ -164,6 +166,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(debug_assertions, should_panic(expected = "stash identity mismatch"))]
+    #[sage::test(crates.sage_stash.storage.handle_ownership)]
     fn cross_stash_ptr_same_type_panics_in_debug() {
         let mut stash1 = Stash::new();
         let mut stash2 = Stash::new();
@@ -174,6 +177,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(debug_assertions, should_panic(expected = "stash identity mismatch"))]
+    #[sage::test(crates.sage_stash.storage.handle_ownership)]
     fn cross_stash_slice_panics_in_debug() {
         let mut stash1 = Stash::new();
         let mut stash2 = Stash::new();
@@ -425,6 +429,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_stash.storage.typed_interning)]
     fn hash_cons_slice_dedup() {
         let mut stash = Stash::new();
         let s1 = stash.alloc_slice(&[Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]);
@@ -441,6 +446,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_stash.storage.typed_interning)]
     fn hash_cons_compound_type() {
         #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
         struct Pair {
@@ -459,6 +465,7 @@ mod tests {
     // -- Collision tests -----
 
     #[test]
+    #[sage::test(crates.sage_stash.storage.typed_interning)]
     fn hash_cons_collision_stores_both() {
         #[derive(Copy, Clone, Debug, PartialEq)]
         struct Collider(u32);
@@ -515,6 +522,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_stash.storage.rooted_equality)]
     fn stashed_hash_consistent_with_eq() {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::Hash;
@@ -538,6 +546,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_stash.storage.rooted_equality)]
     fn stashed_ord_consistent_with_eq() {
         use std::cmp::Ordering;
 
@@ -553,6 +562,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_stash.storage.rooted_equality)]
     fn stashed_eq_compound_dag() {
         #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
         struct Node {
@@ -591,6 +601,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_stash.storage.rooted_equality)]
     fn fingerprint_deterministic() {
         let mut s1 = Stash::new();
         let r1 = s1.alloc(Point { x: 42, y: 99 });
@@ -617,6 +628,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_stash.storage.handle_ownership)]
     fn copy_into_compound() {
         #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
         struct Pair {
@@ -638,6 +650,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_stash.storage.handle_ownership)]
     fn copy_into_with_slice() {
         let mut src = Stash::new();
         let pts = src.alloc_slice(&[Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]);

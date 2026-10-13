@@ -3,7 +3,7 @@
 RFDs are a way of planning out larger changes. They aren't required but they can be useful.
 
 Open a branch and PR containing both an RFD based on the
-[RFD template](./TEMPLATE/README.md) and the corresponding changes to the
+[RFD template](TEMPLATE/README.md) and the corresponding changes to the
 [Design specification](../design/README.md). The RFD records motivation, goals,
 alternatives, and the implementation plan. The Design diff states the proposed
 normative behavior in specification paragraphs and `.sage` declarations. This
@@ -26,16 +26,16 @@ a reviewer can move from the proposal to each normative change. The book and
 anchor system are subject
 to the same process: changes to how specifications are named, rendered, or
 validated change their own Design rules. See the
-[authoring contract](../contributing/maintaining-the-docs.md#conventions) for
+[authoring contract](../contributing/maintaining-the-docs.md#writing-a-rule) for
 the syntax and current tooling limitations.
 
 If the PR is accepted, the RFD will be merged in. At that point you open implementation PRs based on the RFD until it is completed. Each implementation PR should update the RFD's `implementation.md` to reflect its status.
 
 Before marking the RFD complete, account for every affected specification
-anchor. Its rule already lives in Design; update the chapter's Current Status
-and evidence as implementation lands, and record any accepted revision that
-retires a rule. Record genuinely cross-cutting choices in [Architecture
-Decisions](../design/decisions.md); leave feature-local rationale in the RFD.
+anchor through the generated inventory. Record genuinely cross-cutting choices
+and feature-local rationale in the RFD itself. If preserving reasoning that
+predates an RFD, label the record retrospective; do not invent a past proposal
+or acceptance date.
 
 Finally, move it from *Accepted* to *Completed* in SUMMARY.md (the path stays
 the same).

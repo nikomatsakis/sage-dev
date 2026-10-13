@@ -460,8 +460,8 @@ fn test_annotations_preserve_multiple_rules_source_spans_and_cfg() {
     let source = r#"#[cfg(feature = "contracts")]
         mod checks {
             #[test]
-            #[sage::test(meta.calls.declared)]
-            #[sage::test(meta.calls.forbidden)]
+            #[sage::test(meta.language.calls.declared)]
+            #[sage::test(meta.language.calls.forbidden)]
             fn checks_both_rules() {}
         }
     "#;
@@ -469,7 +469,10 @@ fn test_annotations_preserve_multiple_rules_source_spans_and_cfg() {
     assert!(index.diagnostics.is_empty(), "{:?}", index.diagnostics);
     assert!(index.entries.is_empty());
     assert_eq!(index.tests.len(), 2);
-    for anchor in ["meta.calls.declared", "meta.calls.forbidden"] {
+    for anchor in [
+        "meta.language.calls.declared",
+        "meta.language.calls.forbidden",
+    ] {
         let site = &index.tests[anchor][0];
         assert_eq!(site.rust_path, "demo::checks::checks_both_rules");
         assert_eq!(site.target, "lib:demo");
@@ -483,7 +486,7 @@ fn test_annotations_preserve_multiple_rules_source_spans_and_cfg() {
 }
 
 #[test]
-#[sage::test(meta.spec.test_references)]
+#[sage::test(meta.anchors.test_references)]
 fn test_annotations_reject_malformed_names_and_unsupported_placements() {
     for argument in [
         "",
@@ -538,6 +541,30 @@ fn test_annotations_reject_malformed_names_and_unsupported_placements() {
 }
 
 #[test]
+#[sage::test(meta.anchors.test_references)]
+fn tests_from_different_crates_can_reference_the_same_specification_rule() {
+    let spec = sage_meta::spec::SpecIndex::from_sources(&[sage_meta::spec::SpecSource {
+        file: "design/crates/library/api.md".into(),
+        source: "{anchor}`crates.library.api.rule` A library guarantee.".into(),
+    }]);
+    let sources = ["library", "application"].map(|crate_name| RustSource {
+        crate_name: crate_name.into(),
+        target: format!("test:{crate_name}"),
+        file: format!("crates/{crate_name}/tests/api.rs"),
+        source: "#[test] #[sage::test(crates.library.api.rule)] fn verifies_api() {}".into(),
+    });
+    let rust = CorrespondenceIndex::from_sources(&sources).unwrap();
+    assert!(spec.diagnostics.is_empty());
+    assert!(rust.diagnostics.is_empty(), "{:?}", rust.diagnostics);
+    let sites = &rust.tests["crates.library.api.rule"];
+    assert_eq!(sites.len(), 2);
+    assert_eq!(sites[0].crate_name, "library");
+    assert_eq!(sites[1].crate_name, "application");
+    assert!(spec.validate(&rust.tests).is_empty());
+}
+
+#[test]
+#[sage::test(meta.anchors.test_references)]
 fn ignored_tests_cannot_supply_specification_coverage() {
     for ignore in [
         "#[ignore]",
@@ -560,6 +587,7 @@ fn ignored_tests_cannot_supply_specification_coverage() {
 }
 
 #[test]
+#[sage::test(meta.anchors.test_references)]
 fn cargo_discovers_unit_and_integration_tests_and_excludes_disabled_harnesses() {
     let fixture =
         std::env::temp_dir().join(format!("sage-correspondence-tests-{}", std::process::id()));

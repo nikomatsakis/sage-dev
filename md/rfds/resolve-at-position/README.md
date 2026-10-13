@@ -3,8 +3,8 @@
 **Status:** Draft
 
 **Depends on:**
-- [Macro expansion as a tracked query](./macro-expansion-tracked-query.md) — `ParseSource`, `MacroInput`, `expand_macro`
-- [Relative span model](./relative-span-model.md) — `AbsoluteSpan`, `RelativeSpan`, `ItemAst::absolute_span`/`parse_source`
+- [Macro expansion as a tracked query](../macro-expansion-tracked-query/README.md) — `ParseSource`, `MacroInput`, `expand_macro`
+- [Relative span model](../relative-span-model/README.md) — `AbsoluteSpan`, `RelativeSpan`, `ItemAst::absolute_span`/`parse_source`
 
 ## Goal
 

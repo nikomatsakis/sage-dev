@@ -3,12 +3,12 @@
 **Status:** Completed
 
 **Depends on:**
-- [Module sym tree](./module-sym-tree.md) — `Symbol`, `ModSymbol`, `ItemAst`, stash architecture
-- [Relative span model](./relative-span-model.md) — `RelativeSpan` on signature types
-- [Tuple struct constructors](./tuple-struct-ctors.md) — `TupleStructCtor` memmap entry and `SymbolData` variant
+- [Module sym tree](../module-sym-tree/README.md) — `Symbol`, `ModSymbol`, `ItemAst`, stash architecture
+- [Relative span model](../relative-span-model/README.md) — `RelativeSpan` on signature types
+- [Tuple struct constructors](../tuple-struct-ctors/README.md) — `TupleStructCtor` memmap entry and `SymbolData` variant
 
 **Depended on by:**
-- [Per-kind symbol data](./per-kind-symbol-data.md) — `SymbolData` enum migration using the per-kind wrappers defined here
+- [Per-kind symbol data](../per-kind-symbol-data/README.md) — `SymbolData` enum migration using the per-kind wrappers defined here
 
 ## Goal
 
@@ -18,7 +18,7 @@ Introduce the `Ty` type representation, per-kind symbol wrappers (`FnSymbol`, `S
 
 Today sage resolves *names* but not *types*. `TypeRef` is syntactic — `HashMap<K, V>` is just `Path { segments: ["HashMap"] }` with the `<K, V>` arguments discarded. Generic parameter lists (`<T, U>`) are not parsed at all. The AST items (`FnAst`, `StructAst`, etc.) carry `TypeRef`s for their signatures but nothing resolved.
 
-`Symbol<'db>` is a flat wrapper over `SymbolData { Ast(ItemAst), TupleStructCtor(StructAst), Ext(SymExt) }`. The `TupleStructCtor` variant was added by the [tuple struct constructors RFD](./tuple-struct-ctors.md). There are no per-kind wrappers like `FnSymbol` or `StructSymbol` — callers branch on `ItemAst::Function(_)` directly. The RFD for module-sym-tree deferred these to a later milestone. `StructAst` has a `kind: StructKind` tracked field distinguishing `Tuple`, `Unit`, and `Braced` structs.
+`Symbol<'db>` is a flat wrapper over `SymbolData { Ast(ItemAst), TupleStructCtor(StructAst), Ext(SymExt) }`. The `TupleStructCtor` variant was added by the [tuple struct constructors RFD](../tuple-struct-ctors/README.md). There are no per-kind wrappers like `FnSymbol` or `StructSymbol` — callers branch on `ItemAst::Function(_)` directly. The RFD for module-sym-tree deferred these to a later milestone. `StructAst` has a `kind: StructKind` tracked field distinguishing `Tuple`, `Unit`, and `Braced` structs.
 
 ## Design overview
 
@@ -385,7 +385,7 @@ pub struct TraitSymbol<'db> { data: TraitSymbolData<'db> }
 
 Each follows the same template: `Copy` wrapper-of-enum, `From` impls from both arms, `data()` method. A `define_kind_symbol!` macro generates the struct, enum, `From` impls, `data()`, and `Copy`/`Clone`/`Debug`/`PartialEq`/`Eq`/`Hash` derives for each kind.
 
-The `SymbolData` enum migration (rewriting the flat `Ast`/`TupleStructCtor`/`Ext` enum to use per-kind variants, adding `SymExtKind`, and migrating all callers) is covered by the [per-kind symbol data RFD](./per-kind-symbol-data.md).
+The `SymbolData` enum migration (rewriting the flat `Ast`/`TupleStructCtor`/`Ext` enum to use per-kind variants, adding `SymExtKind`, and migrating all callers) is covered by the [per-kind symbol data RFD](../per-kind-symbol-data/README.md).
 
 ## Layer 3: Signature queries
 
@@ -444,7 +444,7 @@ A `FnSymbol::signature` convenience method dispatches: ast arm → call the trac
 
 ### Tuple struct constructor signature
 
-The [tuple struct constructors RFD](./tuple-struct-ctors.md) deferred its Step 4 (signature) to this RFD. The constructor's signature is a `FnSig` derived from the struct's `StructSig` — no separate lowering from `TypeRefAst`, just a transformation of already-resolved types:
+The [tuple struct constructors RFD](../tuple-struct-ctors/README.md) deferred its Step 4 (signature) to this RFD. The constructor's signature is a `FnSig` derived from the struct's `StructSig` — no separate lowering from `TypeRefAst`, just a transformation of already-resolved types:
 
 ```rust
 fn tuple_struct_ctor_signature(struct_sig: &Stashed<Binder<StructSig>>) -> Stashed<Binder<FnSig>>
@@ -841,7 +841,7 @@ In `lower_path_type`, single-segment `Self` is checked after generic params and 
 
 ### Step J: Extract `SymbolData` migration to per-kind-symbol-data RFD ✓
 
-Removed the `SymbolData` enum definition and `TupleStructCtor` migration details from Layer 2. Added a forward reference to the [per-kind symbol data RFD](./per-kind-symbol-data.md) which covers the enum migration as its own scope. Added a "Depended on by" link in the header.
+Removed the `SymbolData` enum definition and `TupleStructCtor` migration details from Layer 2. Added a forward reference to the [per-kind symbol data RFD](../per-kind-symbol-data/README.md) which covers the enum migration as its own scope. Added a "Depended on by" link in the header.
 
 ### Step K: Update `Binder` note and mark completed steps ✓
 
@@ -853,7 +853,7 @@ Updated the `Binder<T>` note to reflect the chosen manual `unsafe impl` with `#[
 
 2. **`self` parameter.** `SigLowerCtx` holds `self_type: Option<Ty<'db>>`. The public `lower_fn_sig` function (non-salsa) accepts this; the `fn_signature` salsa query delegates with `None`. When lowering methods inside an impl block, the caller passes the impl's self type; `Self` in the signature resolves to it, and `&self` becomes `&Self`. The self type is copied from the caller's stash into the destination stash via the Identity folder.
 
-3. **Tuple struct constructors.** Handled by the [tuple struct constructors RFD](./tuple-struct-ctors.md). The expansion phase emits a `TupleStructCtor` memmap entry; the signature layer returns a `FnSig` for it derived from the struct's fields.
+3. **Tuple struct constructors.** Handled by the [tuple struct constructors RFD](../tuple-struct-ctors/README.md). The expansion phase emits a `TupleStructCtor` memmap entry; the signature layer returns a `FnSig` for it derived from the struct's fields.
 
 4. **Naming.** The `*Ast` suffix is kept on `TypeRefAst`, `PathAst`, `PathSegmentAst` for clarity against the resolved `Ty`.
 

@@ -1,7 +1,7 @@
 # Proposed phase chapter shape
 
 This is the concrete chapter form proposed by the
-[Phase-Oriented, Auditable Architecture Guide RFD](./README.md). It is a
+[Phase-Oriented, Auditable Architecture Guide RFD](README.md). It is a
 review template, not yet part of the architecture contract.
 
 # Phase name

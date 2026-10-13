@@ -554,6 +554,8 @@ pub struct Stashed<T> {
 }
 
 impl<T: StashHash + Copy> Stashed<T> {
+    // {anchor}`crates.sage_stash.storage.rooted_equality`
+    // {anchor}`crates.sage_stash.storage.query_value`
     pub fn new(stash: Stash, root: T) -> Self {
         let mut hasher = FingerprintHasher::new();
         root.stash_hash(&stash, &mut hasher);
@@ -862,6 +864,8 @@ impl Stash {
 
     /// Hash-cons a single value. Equal content always produces equal `Ptr`s.
     #[sage::item(crate::storage::Stash::alloc)]
+    // {anchor}`crates.sage_stash.storage.typed_interning`
+    // {anchor}`crates.sage_stash.storage.immutable_entries`
     pub fn alloc<'db, T: AllocStashData<'db>>(&mut self, value: T) -> Ptr<T> {
         let type_id = TypeId::of::<T::StaticSelf>();
         let mut hasher = InternHasher::new();
@@ -1004,6 +1008,7 @@ impl Stash {
     }
 
     #[cfg(debug_assertions)]
+    // {anchor}`crates.sage_stash.storage.handle_ownership`
     fn validate_stash_id<T>(&self, handle_stash_id: u32) {
         assert_eq!(
             handle_stash_id,

@@ -38,7 +38,7 @@ those choices directly.
 ## Change in a nutshell
 
 Completed `CheckedBody` values satisfy the destination contract in [Typed
-IR](../../design/typed-ir.md). Source-shaped nodes may exist during checking,
+IR](../../design/crates/sage_ir/typed-ir-guide.md). Source-shaped nodes may exist during checking,
 but successful finalization consumes them.
 
 Conceptually:
@@ -153,4 +153,4 @@ which a future lifetime or borrow checker may reject.
 
 ## Implementation
 
-See [Implementation plan and status](./implementation.md).
+See [Implementation plan and status](implementation.md).

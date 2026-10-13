@@ -5,13 +5,16 @@ mod browser;
 pub mod check;
 pub mod contracts;
 pub mod correspondence;
+pub mod evidence;
 mod parser;
 pub mod review;
 #[cfg(feature = "salsa")]
 pub mod salsa_contracts;
 pub mod spec;
 pub mod workspace;
-pub use browser::{render_book_browser, render_browser, render_browser_with_workspace};
+pub use browser::{
+    render_book_browser, render_browser, render_browser_with_workspace, render_spec_markdown,
+};
 pub use check::{CheckReport, check};
 mod validate;
 
@@ -57,6 +60,17 @@ pub struct Document {
     pub file: String,
     pub header: Header,
     pub declarations: Vec<Declaration>,
+    /// Triple-quoted Markdown with exact source provenance and local entity ownership.
+    pub prose: Vec<ProseBlock>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct ProseBlock {
+    pub text: String,
+    /// Contents only, excluding the triple quotes.
+    pub span: Span,
+    /// Declaration/member path relative to this document's model namespace.
+    pub owner: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]

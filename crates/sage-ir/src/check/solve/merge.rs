@@ -9,6 +9,8 @@ use super::IrCopier;
 use super::{Atom, Goal, GoalOutput, QueryResult, QueryResultData, SubstEntry, merge_hints};
 
 // ANCHOR: example_merge_candidates
+// {anchor}`crates.sage_ir.solver.alternative_isolation`
+// {anchor}`crates.sage_ir.solver.schedule_independence`
 pub(crate) fn merge_candidate_results<'db>(
     db: &'db dyn crate::Db,
     next_response_param: u32,
@@ -624,6 +626,8 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.solver.alternative_isolation)]
+    #[sage::test(crates.sage_ir.solver.schedule_independence)]
     fn final_answer_rules_are_order_independent() {
         let db = Database::default();
         let no = no_result();

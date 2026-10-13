@@ -541,6 +541,8 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.inference.atomic_checking)]
+    #[sage::test(crates.sage_ir.checking.body.isolated_completion)]
     fn external_method_mismatch_discards_partial_generic_bindings() {
         let database = Database::new(SignatureTcx {
             ordinary_complete: true,

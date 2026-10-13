@@ -1,4 +1,86 @@
+#![feature(register_tool)]
+#![register_tool(sage)]
+
 use sage_meta::{parse, render_browser};
+
+#[test]
+#[sage::test(meta.anchors.content.explicit_end)]
+#[sage::test(meta.anchors.content.literal_syntax)]
+fn prose_rendering_hides_control_comments_but_preserves_literal_examples() {
+    use sage_meta::spec::{SpecChapter, SpecIndex, SpecSource};
+    let source = "{anchor}`demo.rule` A rule.\n\nMore of the rule.\n\n<!-- end anchor -->\n\nOutside commentary.\n\n```html\n<!-- end anchor -->\n```\n\nInline `<!-- end anchor -->`.\n\n<div>\n\n<!-- end anchor -->\n\n</div>\n";
+    let mut spec = SpecIndex::from_sources(&[SpecSource {
+        file: "design/demo.md".into(),
+        source: source.into(),
+    }]);
+    assert!(spec.diagnostics.is_empty(), "{:?}", spec.diagnostics);
+    spec.chapters.insert(
+        "design/demo.md".into(),
+        SpecChapter {
+            file: "design/demo.md".into(),
+            namespace: String::new(),
+            url: "design/demo.html".into(),
+            normative: true,
+        },
+    );
+    let html =
+        sage_meta::render_spec_markdown(&spec, "design/demo.md", source, "sage-explorer.html")
+            .unwrap();
+    assert!(html.contains("More of the rule."));
+    assert!(html.contains("Outside commentary."));
+    assert!(!html.contains("<!-- end anchor -->"));
+    assert_eq!(html.matches("&lt;!-- end anchor --&gt;").count(), 3);
+    assert!(html.contains("<code>&lt;!-- end anchor --&gt;</code>"));
+    assert!(html.contains("<pre><code class=\"language-html\">&lt;!-- end anchor --&gt;"));
+    assert!(html.contains("&lt;div&gt;"));
+}
+
+#[test]
+fn specification_markdown_links_only_parsed_roles_and_keeps_source_html_inert() {
+    use sage_meta::spec::{SpecChapter, SpecIndex, SpecSource};
+    let mut spec = SpecIndex::from_sources(&[SpecSource {
+        file: "design/demo.md".into(),
+        source: "{anchor}`demo.rule` A rule.\n".into(),
+    }]);
+    spec.chapters.insert(
+        "design/demo.md".into(),
+        SpecChapter {
+            file: "design/demo.md".into(),
+            namespace: "demo".into(),
+            url: "design/demo.html".into(),
+            normative: true,
+        },
+    );
+    let html = sage_meta::render_spec_markdown(
+        &spec,
+        "design/demo.md",
+        r#"
+{anchor}`rule` A **rule**.
+
+Read {spec}`demo.rule` and [the guide](guide.md).
+
+Escaped \{spec}`demo.rule` and `literal {spec}`.
+
+```text
+{anchor}`rule`
+{spec}`demo.rule`
+```
+
+<script>alert('inert')</script>
+"#,
+        "sage-explorer.html",
+    )
+    .unwrap();
+    assert_eq!(html.matches("class=\"spec-anchor\"").count(), 1);
+    assert_eq!(html.matches("class=\"spec-reference\"").count(), 1);
+    assert!(html.contains("<strong>rule</strong>"));
+    assert!(html.contains("<a target=\"_parent\" href=\"design/guide.html\">the guide</a>"));
+    assert!(html.contains("{spec}<code>demo.rule</code>"));
+    assert!(html.contains("{anchor}&#96;rule&#96;"));
+    assert!(!html.contains("{anchor}`"));
+    assert!(!html.contains("<script>"));
+    assert!(html.contains("href=\"design/anchor/demo/rule.html\""));
+}
 
 #[test]
 fn standalone_export_escapes_script_terminators_in_model_data() {
@@ -116,7 +198,7 @@ fn serve_rejects_missing_invalid_or_extra_arguments() {
         vec!["serve", "abc"],
         vec!["serve", "0"],
         vec!["serve", "65536"],
-        vec!["serve", "3001", "sage-src", "extra"],
+        vec!["serve", "3001", "md/design/crates", "extra"],
     ] {
         let output = std::process::Command::new(env!("CARGO_BIN_EXE_sage-meta"))
             .args(&args)

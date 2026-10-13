@@ -567,7 +567,7 @@ Tests:
   entry and leaves no task or branch behind.
 - [x] Frame IDs and results remain stable as later frames are appended.
 
-See the [whiteboard implementation sketch](./impl-sketches/whiteboard.md) for
+See the [whiteboard implementation sketch](impl-sketches/whiteboard.md) for
 the proof-frame mechanics. Reconcile the sketch with the rules above before
 copying pseudocode from it.
 

@@ -294,6 +294,7 @@ mod file_module_scope_tests {
     use sage_ir::ty::Ty;
 
     #[test]
+    #[sage::test(crates.sage_ir.modules.parse.syntax_identities)]
     fn items_in_a_file_backed_module_use_that_module_as_their_scope() {
         with_test_crate_files(
             &[("lib.rs", "mod child;"), ("child.rs", "struct Holder;")],
@@ -321,6 +322,7 @@ mod file_module_scope_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.resolution.lookup.precedence)]
     fn transitive_local_globs_resolve_and_glob_cycles_terminate() {
         with_test_crate_files(
             &[(
@@ -374,6 +376,7 @@ mod macro_expansion_tests {
     use sage_ir::symbol::{StructSymbol, SymbolData};
 
     #[test]
+    #[sage::test(crates.sage_ir.modules.expand.recursion_and_fixpoint)]
     fn same_module_macro_resolution_reaches_a_fixed_point() {
         with_test_crate(
             r#"
@@ -1065,6 +1068,9 @@ mod derive_expansion_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.types.lifetimes.dummy)]
+    #[sage::test(crates.sage_ir.types.body.elaborated)]
+    #[sage::test(crates.sage_ir.types.calls.selected_semantics)]
     fn clone_method_call_is_elaborated_to_a_resolved_trait_call() {
         use sage_ir::symbol::{FnSymbol, Symbol};
         use sage_ir::ty::{TraitItemDef, Ty};
@@ -1234,6 +1240,7 @@ mod derive_expansion_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.resolution.lookup.completeness)]
     fn unresolved_item_macro_keeps_method_scope_incomplete() {
         with_test_crate_files_using_db(
             Database::new(BuiltinDeriveTcx::default()),
@@ -1554,6 +1561,8 @@ mod derive_expansion_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.symbols.body_interfaces)]
+    #[sage::test(crates.sage_ir.checking.body.interface_dependencies)]
     fn clone_method_body_has_a_narrow_reusable_semantic_query_trace() {
         let (tcx, tcx_calls) = BuiltinDeriveTcx::tracing();
         let mut database = Database::new(tcx);
@@ -1923,6 +1932,7 @@ mod derive_expansion_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.types.spans.generated_identity)]
     fn duplicate_derive_occurrences_have_distinct_generated_source_identity() {
         with_test_crate_files_using_db(
             Database::new(BuiltinDeriveTcx::default()),
@@ -2009,6 +2019,8 @@ mod derive_expansion_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.types.spans.offset_reuse)]
+    #[sage::test(crates.sage_ir.types.spans.generated_identity)]
     fn moving_source_item_preserves_derive_expansion_identity() {
         use salsa::Setter as _;
         use salsa::plumbing::AsId as _;
@@ -2049,6 +2061,8 @@ mod trait_system_tests {
     use sage_ir::ty::{Lifetime, SolverEligibility, Ty};
 
     #[test]
+    #[sage::test(crates.sage_ir.types.binder.owner_parameters)]
+    #[sage::test(crates.sage_ir.checking.signature.owner_binder)]
     fn trait_and_impl_signatures_share_complete_generic_binders() {
         with_test_crate(
             "trait Bound {}\ntrait PairBound<T> where T: Bound {}\nimpl<T: Bound> PairBound<T> for (T, T) {}",
@@ -2091,6 +2105,7 @@ mod trait_system_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.types.lifetimes.dummy)]
     fn lifetime_generic_impl_uses_dummy_and_remains_solver_eligible() {
         with_test_crate(
             "trait Bound {}\nimpl<'a, T> Bound for &'a T {}",
@@ -2246,6 +2261,7 @@ mod trait_system_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.types.lifetimes.dummy)]
     fn explicit_elided_and_static_lifetimes_collapse_to_dummy() {
         use sage_ir::symbol::FnSymbol;
 
@@ -2291,6 +2307,7 @@ mod trait_system_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.types.binder.owner_parameters)]
     fn associated_items_reuse_owner_generics_and_bodies_resolve_fields() {
         use sage_ir::local_syms::LocalAssociatedOwner;
         use sage_ir::symbol::{FnSymbol, StructSymbol};
@@ -2384,8 +2401,9 @@ mod trait_system_tests {
         );
     }
 
-    // Evidence: ARC-A1, PAR-A2, SYM-A2, INC-A2, INC-A3.
     #[test]
+    #[sage::test(crates.sage_ir.symbols.local_identity)]
+    #[sage::test(crates.sage_ir.modules.parse.detail_firewall)]
     fn detail_edits_preserve_local_symbol_query_keys() {
         use salsa::Setter as _;
 
@@ -2512,8 +2530,8 @@ mod trait_system_tests {
         }
     }
 
-    // Evidence: ARC-A1, PAR-A2, SYM-A2, INC-A2, INC-A3.
     #[test]
+    #[sage::test(crates.sage_ir.symbols.local_identity)]
     fn enum_detail_edits_preserve_variant_query_keys() {
         use sage_ir::local_syms::enums::enum_variants;
         use sage_ir::symbol::EnumSymbol;
@@ -2554,21 +2572,27 @@ mod trait_system_tests {
         );
     }
 
-    // Evidence: SPAN-A1, SPAN-A3, ARC-A1, SYM-A2, INC-A2, INC-A3.
     #[test]
+    #[sage::test(crates.sage_ir.symbols.local_identity)]
+    #[sage::test(crates.sage_ir.symbols.associated_identity)]
+    #[sage::test(crates.sage_ir.types.spans.relative_composition)]
     fn moving_associated_items_preserves_symbol_query_keys() {
+        use sage_ir::local_syms::LocalAssociatedOwner;
+        use sage_ir::symbol::{ConstSymbol, TypeAliasSymbol};
         use sage_ir::ty::TraitItemDef;
         use salsa::Setter as _;
 
         fn force_target_observer(db: &dyn Db, source_file: SourceFile) {
             let (_, root) = setup_root_module(db, source_file);
-            let items = root
+            let (owner, items) = root
                 .expanded_module_items(db)
                 .iter()
                 .find_map(|symbol| match symbol.data(db) {
-                    SymbolData::TraitSymbol(TraitSymbol::Local(owner)) => Some(owner.items(db)),
+                    SymbolData::TraitSymbol(TraitSymbol::Local(owner)) => {
+                        Some((LocalAssociatedOwner::Trait(owner), owner.items(db)))
+                    }
                     SymbolData::ImplSymbol(sage_ir::symbol::ImplSymbol::Local(owner)) => {
-                        Some(owner.items(db))
+                        Some((LocalAssociatedOwner::Impl(owner), owner.items(db)))
                     }
                     _ => None,
                 })
@@ -2578,9 +2602,19 @@ mod trait_system_tests {
                 .iter()
                 .find_map(|item| {
                     let symbol = match *item {
-                        TraitItemDef::Function(symbol) => Symbol::from(symbol),
-                        TraitItemDef::Type(symbol) => Symbol::from(symbol),
-                        TraitItemDef::Const(symbol) => Symbol::from(symbol),
+                        TraitItemDef::Function(FnSymbol::Local(symbol)) => {
+                            assert_eq!(symbol.owner(db), Some(owner));
+                            Symbol::from(FnSymbol::Local(symbol))
+                        }
+                        TraitItemDef::Type(TypeAliasSymbol::Local(symbol)) => {
+                            assert_eq!(symbol.owner(db), Some(owner));
+                            Symbol::from(TypeAliasSymbol::Local(symbol))
+                        }
+                        TraitItemDef::Const(ConstSymbol::Local(symbol)) => {
+                            assert_eq!(symbol.owner(db), Some(owner));
+                            Symbol::from(ConstSymbol::Local(symbol))
+                        }
+                        _ => panic!("expected local associated items"),
                     };
                     let name = symbol.name(db)?.0.text(db);
                     name.eq_ignore_ascii_case("target").then_some(symbol)
@@ -2676,8 +2710,8 @@ mod trait_system_tests {
         }
     }
 
-    // Evidence: SPAN-A1, SPAN-A3, ARC-A1, SYM-A2, INC-A2, INC-A3.
     #[test]
+    #[sage::test(crates.sage_ir.types.spans.offset_reuse)]
     fn moving_associated_item_reuses_method_signature_and_body() {
         use sage_ir::ty::TraitItemDef;
         use salsa::Setter as _;
@@ -2779,6 +2813,8 @@ mod trait_system_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.symbols.associated_identity)]
+    #[sage::test(crates.sage_ir.types.binder.owner_parameters)]
     fn trait_items_have_stable_symbols_and_owner_identity() {
         use sage_ir::local_syms::LocalAssociatedOwner;
         use sage_ir::local_syms::associated::local_associated_items;
@@ -2922,6 +2958,7 @@ mod trait_solver_boundary_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.inference.canonical_boundary)]
     fn canonical_equality_round_trips_transactionally() {
         with_test_crate("trait Marker {}", |db, root| {
             let krate = crate_from_root_items(db, root);
@@ -3240,6 +3277,7 @@ mod trait_solver_boundary_tests {
 
     #[test]
     #[should_panic(expected = "solver operation returned an incompatible output kind")]
+    #[sage::test(crates.sage_ir.solver.canonical_outputs)]
     fn canonical_response_rejects_an_output_for_the_wrong_operation() {
         with_test_crate("trait Marker {}", |db, root| {
             let krate = crate_from_root_items(db, root);
@@ -3270,6 +3308,7 @@ mod trait_solver_boundary_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.types.aliases.identity)]
     fn alias_variants_copy_fold_and_display_without_erasing_identity() {
         use rustc_hash::FxHashMap;
         use sage_ir::display::TyDisplay;
@@ -3490,6 +3529,7 @@ mod trait_solver_boundary_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.types.aliases.identity)]
     fn aliases_round_trip_through_canonical_query_and_response_stashes() {
         with_test_crate("trait Marker {}\ntype Named<T> = T;", |db, root| {
             let krate = crate_from_root_items(db, root);
@@ -3708,6 +3748,7 @@ mod trait_solver_proof_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.solver.canonical_outputs)]
     fn local_associated_type_normalization_produces_a_type_output() {
         with_test_crate(
             "trait Iterable { type Item; }\n\
@@ -3985,6 +4026,7 @@ mod trait_solver_proof_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.solver.alternative_isolation)]
     fn incompatible_normalization_outputs_are_ambiguous_but_identical_outputs_merge() {
         let check = |second_value: &str, expect_yes: bool| {
             let source = format!(
@@ -4067,6 +4109,7 @@ mod trait_solver_proof_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.inference.canonical_boundary)]
     fn response_local_type_output_round_trips_with_sharing() {
         with_test_crate(
             "trait Iterable { type Item; }\n\
@@ -4496,11 +4539,35 @@ mod trait_solver_proof_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.modules.expand.completeness)]
     fn unresolved_item_macro_prevents_ground_no() {
-        with_test_crate(
-            "missing!();\ntrait Marker {}",
-            assert_ground_bool_marker_is_maybe,
-        );
+        with_test_crate("missing!();\ntrait Marker {}", |db, root| {
+            let (marker, krate) = trait_and_crate(db, root, "Marker");
+            let mut stash = Stash::new();
+            let egraph = VersionedEGraph::new();
+            let self_ty = stash.alloc(Ty::Bool);
+            let args = stash.alloc_slice(&[]);
+            let assumptions = stash.alloc_slice::<Assumption>(&[]);
+            let canonical = canonicalize_goal(
+                db,
+                &stash,
+                &egraph,
+                Version::ROOT,
+                krate,
+                Universe::ROOT,
+                true,
+                assumptions,
+                Goal::Atom(Atom::TraitImpl {
+                    self_ty,
+                    trait_ref: TraitRef {
+                        trait_sym: marker,
+                        args,
+                    },
+                }),
+            );
+            let result = GoalQuery::new(db, canonical.data).prove(db);
+            assert!(matches!(result.root().value, QueryResultData::Maybe { .. }));
+        });
     }
 
     #[test]
@@ -4512,10 +4579,37 @@ mod trait_solver_proof_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.modules.expand.completeness)]
     fn malformed_item_macro_output_prevents_ground_no_without_panicking() {
         with_test_crate(
             "macro_rules! bad { () => { impl } }\nbad!();\ntrait Marker {}",
-            assert_ground_bool_marker_is_maybe,
+            |db, root| {
+                let (marker, krate) = trait_and_crate(db, root, "Marker");
+                let mut stash = Stash::new();
+                let egraph = VersionedEGraph::new();
+                let self_ty = stash.alloc(Ty::Bool);
+                let args = stash.alloc_slice(&[]);
+                let assumptions = stash.alloc_slice::<Assumption>(&[]);
+                let canonical = canonicalize_goal(
+                    db,
+                    &stash,
+                    &egraph,
+                    Version::ROOT,
+                    krate,
+                    Universe::ROOT,
+                    true,
+                    assumptions,
+                    Goal::Atom(Atom::TraitImpl {
+                        self_ty,
+                        trait_ref: TraitRef {
+                            trait_sym: marker,
+                            args,
+                        },
+                    }),
+                );
+                let result = GoalQuery::new(db, canonical.data).prove(db);
+                assert!(matches!(result.root().value, QueryResultData::Maybe { .. }));
+            },
         );
     }
 

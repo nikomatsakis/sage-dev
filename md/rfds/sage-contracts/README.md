@@ -9,7 +9,7 @@ makes the book's Design chapter tree authoritative, using both Markdown and
 `.sage` sources, connects rules to Rust implementation excerpts, and gives every
 rule an anchor page. That extension, broad compiler enforcement, walkthrough
 replay, and agent integration remain
-staged work; see [Implementation plan and status](./implementation.md).
+staged work; see [Implementation plan and status](implementation.md).
 
 ## Motivation
 
@@ -36,11 +36,11 @@ tradeoffs rather than introducing another copy of the rules.
 | Present searchable, interlinked Crates content from `design/crates/<crate>/*.sage` with specified browsing, source panes, and navigation | [Displaying Sage files](../../design/meta/book.md#displaying-sage-files), [browser delivery](../../design/meta/book.md#meta.book.browser_delivery), [crate ownership](../../design/meta/book.md#meta.book.crate_ownership) |
 | Give every modeled entity a direct link that prose and other model content can reference, using model identities independently of specification rule names | [Entity links](../../design/meta/book.md#meta.book.entity_links) |
 | Derive names from the complete chapter source path relative to Design plus local rule names, independently of headings | [Chapter names](../../design/meta/book.md#meta.book.chapter_names), [moves and redirects](../../design/meta/book.md#meta.book.anchor_moves) |
-| Require implementation and test entries with explicit TODO and N/A accounting, and extract Rust points or regions | [Implementation coverage](../../design/validation/architecture-language.md#meta.spec.implementation_coverage), [test coverage](../../design/validation/architecture-language.md#meta.spec.test_coverage), [placeholder status](../../design/validation/architecture-language.md#meta.spec.placeholder_status) |
-| Generate the grouped text/status index and linked rule pages | [Index rows](../../design/meta/book.md#meta.book.index_rows), [grouping](../../design/meta/book.md#meta.book.index_groups), [status labels](../../design/meta/book.md#meta.book.index_status), [anchor pages](../../design/validation/architecture-language.md#meta.spec.anchor_pages) |
-| Review RFD rationale and the normative Design edits together, then preserve direct links through the book and explorer | [RFD changes](../../design/meta/book.md#meta.book.rfd_changes), [explorer navigation](../../design/validation/architecture-language.md#meta.spec.explorer_navigation) |
+| Require implementation and test entries with explicit TODO and N/A accounting, and extract Rust points or regions | [Implementation coverage](../../design/meta/anchors.md#meta.anchors.implementation_coverage), [test coverage](../../design/meta/anchors.md#meta.anchors.test_coverage), [placeholder status](../../design/meta/anchors.md#meta.anchors.placeholder_status) |
+| Generate the grouped text/status index and linked rule pages | [Index rows](../../design/meta/book.md#meta.book.index_rows), [grouping](../../design/meta/book.md#meta.book.index_groups), [status labels](../../design/meta/book.md#meta.book.index_status), [anchor pages](../../design/meta/anchors.md#meta.anchors.anchor_pages) |
+| Review RFD rationale and the normative Design edits together, then preserve direct links through the book and explorer | [RFD changes](../../design/meta/book.md#meta.book.rfd_changes), [explorer navigation](../../design/meta/anchors.md#meta.anchors.explorer_navigation) |
 
-The [HTML interaction sketch](./anchor-index-sketch.html) illustrates the
+The [HTML interaction sketch](anchor-index-sketch.html) illustrates the
 proposed index and anchor-page navigation using example data. It is a review
 artifact, not implemented book generation or evidence of coverage.
 
@@ -127,10 +127,12 @@ selects a model directory and performs the full check in its containing
 workspace. Model-only consumers retain the legacy positional CLI invocation
 and the library's `workspace::load_documents` and `validate` APIs.
 
-Use a custom MyST-style <code>{anchor}&#96;meta.calls.declared&#96;</code> marker at the start
-of a specification paragraph and an inert `#[sage::test(meta.calls.declared)]`
-attribute on each test covering it. Names describe independently testable rules
-and do not depend on paragraph order. Each anchor has at least one test; all
+Use a local MyST-style <code>{anchor}&#96;calls.declared&#96;</code> marker at the start
+of a specification paragraph in `design/meta/language.md`. Its chapter-derived
+identity is `meta.language.calls.declared`; an inert
+`#[sage::test(meta.language.calls.declared)]` attribute references that full name
+from each test covering it. Names describe independently testable rules and do
+not depend on paragraph order. Each anchor has at least one test; all
 test references resolve to a rule and occur on tests. Duplicate/malformed
 anchors, missing tests, and dangling/misplaced references fail the shared check.
 Tests may cover multiple rules across crate boundaries. Evidence must be a
@@ -148,11 +150,11 @@ Source correspondence and runtime coverage remain separate requirements.
 ## Incremental review checklist
 
 Annotation coverage cannot determine whether a test meaningfully checks the
-paragraph it names. A committed `review-checklist.json` makes that judgment an
+claim it names. A committed `review-checklist.json` makes that judgment an
 explicit review step while allowing unchanged claim-and-test inputs to reuse
 a completed decision. The [review specification](../../design/meta/reviews.md)
 defines the extracted text, complete test-set input, stale decisions, and CI
-gate; the [implementation checkpoint](./implementation.md#review-checklist)
+gate; the [implementation checkpoint](implementation.md#review-checklist)
 tracks the work.
 
 The repository skill prepares only pending work, assigns related claims to
@@ -191,19 +193,21 @@ modules. These links resolve through model entity identities, independently of
 paragraph anchor names. Providing a link does not automatically declare a
 specification rule or impose paragraph-rule coverage on that entity. The
 [entity-link contract](../../design/meta/book.md#meta.book.entity_links) fixes
-that behavior; exact cross-reference syntax remains open.
+that behavior. Source chapter links retain the selected entity through its
+`#item:<model-identity>` route; specification references use
+<code>{spec}&#96;full.rule.name&#96;</code>.
 
 The book generates a hierarchical index of rule text and status, as well as a
 page for each rule connecting its definition, context, Rust implementation,
 and tests or recorded evidence. Unfinished entries display **TODO**; inapplicable
 entries display **N/A**. The existing Rust-to-Sage item mapping remains
 a separate relationship. The rationale is recorded in
-[D22](../../design/decisions.md#d22-the-design-book-is-the-canonical-specification).
+[The Design book is the canonical specification](../architectural-foundations/README.md#the-design-book-is-the-canonical-specification).
 
 The living specification is [The Design Book](../../design/meta/book.md), with
 point and region references, coverage, placeholder accounting, and navigation
 specified in
-[Architectural Pseudocode](../../design/validation/architecture-language.md#specification-tests-and-workspace-checks).
+[Architectural Pseudocode](../../design/meta/anchors.md#specification-tests-and-workspace-checks).
 Existing mdBook explanatory excerpt delimiters remain independent. The anchor
 system specifies itself using these same rules and coverage requirements;
 it has no privileged exceptions. Shared CLI, CI, and workspace-test validation
@@ -215,13 +219,13 @@ RFD completion to become authoritative, and completion does not promote a
 second specification from the RFD. Implementation status and explicit
 placeholders show what remains unbuilt.
 
-The [rollout checkpoints](./implementation.md#canonical-anchor-system) start
-with specification review and a book-inventory pilot, followed by source
-relocation, coverage, pages, and navigation. Exact `.sage` definition/reference
-syntax, cross-reference spelling, source-path/name normalization, conflicting
-nested placeholder statuses, and ingestion of executed-test or trace evidence
-remain design decisions. The
-source index must distinguish declared associations from observed results.
+The [implementation checkpoints](implementation.md#canonical-anchor-system)
+record the inventory, source relocation, coverage, page generation, and
+navigation work. Definitions in Markdown and `.sage` prose now use local
+anchor names; references use full names. Chapter paths establish namespaces,
+and conflicting nested placeholder statuses are rejected. The Design chapters
+specify those conventions. Ingestion of executed-test and trace evidence remains
+separate work; source associations do not imply observed results.
 
 ## Runtime model and crate boundaries
 
@@ -376,8 +380,10 @@ crates/sage-meta/tests/
   contracts.rs
   fixtures/contracts/
     Cargo.toml
+    book.toml
     src/lib.rs
-    sage-src/sage_contract_fixture/crate.sage
+    md/SUMMARY.md
+    md/design/crates/sage_contract_fixture/crate.sage
     expected/
       allowed.trace
       forbidden.diagnostic
@@ -445,7 +451,7 @@ static call analysis and formal Rust semantic rules are later work.
 
 ## Implementation
 
-See [Implementation plan and status](./implementation.md) for independently
-reviewable stages and acceptance checks. On acceptance, extend D21 to record
-Rust-declared correspondence and shared runtime evidence. Keep macro mechanics
-and protocol details local to this RFD.
+See [Implementation plan and status](implementation.md) for independently
+reviewable stages and acceptance checks. Keep the Design rules for source
+correspondence and runtime evidence current with implementation changes; this
+RFD retains their rationale, macro mechanics, protocol choices, and sequencing.

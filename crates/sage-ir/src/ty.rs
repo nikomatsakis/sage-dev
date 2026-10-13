@@ -55,6 +55,7 @@ pub enum Ty<'db> {
 /// caller explicitly requests normalization.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 #[sage::item(crate::types::AliasTy)]
+// {anchor}`crates.sage_ir.types.aliases.identity`
 pub enum AliasTy<'db> {
     Named(NamedAliasTy<'db>),
     Associated(ProjectionTy<'db>),
@@ -131,6 +132,8 @@ pub enum FloatTy {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 #[sage::item(crate::types::Lifetime)]
+// {anchor}`crates.sage_ir.types.lifetimes.dummy`
+// {anchor}`crates.sage_ir.types.lifetimes.unchecked_borrows`
 pub enum Lifetime {
     /// Lifetime semantics are intentionally deferred until Sage introduces
     /// unified type-and-lifetime inference and borrow checking.

@@ -25,6 +25,7 @@ impl<T> Provided<T> {
 }
 
 // ANCHOR: semantic_inspector_service_boundary
+// {anchor}`crates.sage_inspector.inspection.typed_service`
 pub trait InspectionProvider {
     fn current_revision(&self) -> RevisionId;
     fn revision(&mut self) -> Result<Provided<()>, ApiError>;
@@ -315,6 +316,8 @@ impl InspectionClient {
 }
 
 #[sage::item(crate::inspection::InspectionService::request)]
+// {anchor}`crates.sage_inspector.inspection.workspace_actor`
+// {anchor}`crates.sage_inspector.inspection.revision_and_demand`
 pub fn serve_actor(mut provider: impl InspectionProvider, mut actor: ActorReceiver) {
     let provider_name = std::any::type_name_of_val(&provider);
     macro_rules! complete_request {

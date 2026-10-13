@@ -34,6 +34,10 @@ impl Fixture {
              [dependencies]\nsupport = { path = 'support' }\n",
         );
         fixture.write("book.toml", &format!("[book]\nsrc = '{source}'\n"));
+        fixture.doc("SUMMARY.md", "# Summary\n\n- [Design](design/README.md)\n  - [Crates](design/crates/README.md)\n  - [Handwritten](design/handwritten.md)\n");
+        fixture.doc("design/README.md", "# Design\n");
+        fixture.doc("design/crates/README.md", "# Crates\n");
+        fixture.doc("design/handwritten.md", "# Handwritten\nKeep this text.\n");
         fixture.write(
             "src/lib.rs",
             "#[sage::item(crate)] mod architecture {}\n\
@@ -78,6 +82,12 @@ impl Fixture {
         std::fs::write(path, text).unwrap();
     }
 
+    fn doc(&self, relative: &str, text: &str) {
+        let path = self.source.join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+
     fn input(&self, items_key: &str) -> Value {
         json!([
             {
@@ -93,7 +103,7 @@ impl Fixture {
                 "sub_items": [
                     {"Chapter": {
                         "name": "Crates", "content": "# Crates\n", "number": [2, 1],
-                        "path": "design/crates.md", "source_path": "design/crates.md",
+                        "path": "design/crates/README.md", "source_path": "design/crates/README.md",
                         "parent_names": ["Design"], "sub_items": [],
                     }},
                     {"Chapter": {
@@ -150,7 +160,10 @@ fn chapters(items: &[Value]) -> BTreeMap<String, &Value> {
     let mut result = BTreeMap::new();
     for item in items {
         if let Some(chapter) = item.get("Chapter") {
-            let path = chapter["source_path"].as_str().unwrap();
+            let path = chapter["source_path"]
+                .as_str()
+                .or_else(|| chapter["path"].as_str())
+                .unwrap();
             assert!(result.insert(path.into(), chapter).is_none());
             for (path, child) in chapters(chapter["sub_items"].as_array().unwrap()) {
                 assert!(result.insert(path, child).is_none());
@@ -158,6 +171,327 @@ fn chapters(items: &[Value]) -> BTreeMap<String, &Value> {
         }
     }
     result
+}
+
+#[test]
+#[sage::test(meta.book.crates_landing)]
+fn curated_crates_landing_preserves_prose_and_links_to_generated_chapters() {
+    let fixture = Fixture::new("manual");
+    let landing = "# Crates\n\nStart with [symbols](demo/symbols.sage#item:demo::symbols::Item).\n\nOur handwritten tour.\n";
+    fixture.doc("design/crates/README.md", landing);
+    fixture.doc(
+        "design/crates/demo/guide.md",
+        "# Semantic guide\n\nRead [symbols](symbols.sage).\n",
+    );
+    let mut input = fixture.input("items");
+    input[1]["items"][0]["Chapter"]["sub_items"][0]["Chapter"]["content"] = json!(landing);
+    let output = fixture.run(&input);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let book: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let entries = chapters(book["items"].as_array().unwrap());
+    let rendered = entries["design/crates/README.md"]["content"]
+        .as_str()
+        .unwrap();
+    assert!(rendered.contains("Our handwritten tour."));
+    assert!(rendered.contains("demo/symbols.html#item:demo::symbols::Item"));
+    assert!(!rendered.contains("<iframe"));
+    let guide = entries["design/crates/demo/guide.md"];
+    assert!(guide["content"].as_str().unwrap().contains("symbols.html"));
+    assert_eq!(guide["parent_names"], json!(["Design", "Crates", "demo"]));
+    let data = script_data(
+        &std::fs::read_to_string(fixture.asset()).unwrap(),
+        "book-data",
+    );
+    assert_eq!(data["home"], "design/crates/index.html");
+}
+
+#[test]
+#[sage::test(meta.book.index_namespace_pages)]
+#[sage::test(meta.book.index_rows)]
+#[sage::test(meta.book.index_groups)]
+#[sage::test(meta.book.index_status)]
+#[sage::test(meta.anchors.anchor_pages)]
+#[sage::test(meta.anchors.context_navigation)]
+fn generated_anchor_pages_join_namespaces_claims_implementations_tests_and_reviews() {
+    let fixture = Fixture::new("manual");
+    fixture.doc("SUMMARY.md", "# Summary\n\n- [Design](design/README.md)\n  - [Crates](design/crates/README.md)\n  - [Meta](design/meta.md)\n  - [Anchors](design/anchor/README.md)\n  - [Handwritten](design/handwritten.md)\n");
+    let definitions = "# Meta\n\n{anchor}`foo`\nThe **parent rule** with `code`.\n\n{anchor}`foo.bar`\nThe child rule.\n\n{anchor}`other.leaf`\nA rule in a sibling branch.\n";
+    fixture.doc("design/meta.md", definitions);
+    fixture.doc("design/anchor/README.md", "# Anchors\n");
+    let source = std::fs::read_to_string(fixture.root.join("src/lib.rs")).unwrap();
+    fixture.write(
+        "src/lib.rs",
+        &format!(
+            "{source}\n{}",
+            r#"
+// {anchor}`meta.foo`
+fn implementation() {}
+#[test]
+#[sage::test(meta.foo)]
+fn behavior() { assert_eq!(2 + 2, 4); }
+mod todo {
+    // {anchor}`meta.foo`
+    // TODO: Additional implementation and edge case.
+    #[test]
+    #[sage::test(meta.foo)]
+    fn remaining() {}
+}
+mod not_applicable {
+    // {anchor}`meta.foo.bar`<<
+    // N/A: This requirement describes an editorial convention.
+    #[test]
+    #[sage::test(meta.foo.bar)]
+    fn editorial() {}
+    // >>
+
+    // {anchor}`meta.other.leaf`
+    // N/A: This sibling rule is also editorial.
+    #[test]
+    #[sage::test(meta.other.leaf)]
+    fn sibling_editorial() {}
+}
+"#
+        ),
+    );
+    let mut packet = sage_meta::review::prepare(&fixture.root).unwrap();
+    for record in &mut packet.reviews {
+        record.decision = if record.anchor == "meta.foo" {
+            sage_meta::review::Decision::Todo
+        } else {
+            sage_meta::review::Decision::NotApplicable
+        };
+        record.reason = "Explicit placeholder status reviewed.".into();
+        record.reviewer = "fixture".into();
+    }
+    sage_meta::review::record(&fixture.root, &packet).unwrap();
+    let mut input = fixture.input("items");
+    let children = input[1]["items"][0]["Chapter"]["sub_items"]
+        .as_array_mut()
+        .unwrap();
+    children.push(json!({"Chapter":{"name":"Meta","content":definitions,"path":"design/meta.md","source_path":"design/meta.md","number":[2,3],"parent_names":["Design"],"sub_items":[]}}));
+    children.push(json!({"Chapter":{"name":"Anchors","content":"# Anchors\n","path":"design/anchor/README.md","source_path":"design/anchor/README.md","number":[2,4],"parent_names":["Design"],"sub_items":[]}}));
+    let output = fixture.run(&input);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let book: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let entries = chapters(book["items"].as_array().unwrap());
+    let overview = entries["design/anchor/README.md"]["content"]
+        .as_str()
+        .unwrap();
+    assert!(overview.contains("data-group=\"meta\""));
+    assert!(overview.contains("data-group=\"meta.foo\""));
+    assert!(overview.contains("3 anchors"));
+    assert!(overview.contains("1 Implemented"));
+    assert!(overview.contains("1 TODO"));
+    assert!(overview.contains("2 N/A"));
+    assert!(overview.contains("aria-controls=\"anchor-text-meta-foo\""));
+    assert!(overview.contains("<strong>parent rule</strong>"));
+    let table_rows = |content: &str| {
+        content
+            .split("data-anchor=\"")
+            .skip(1)
+            .map(|tail| tail.split('"').next().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        table_rows(overview),
+        ["meta.foo", "meta.foo.bar", "meta.other.leaf"]
+    );
+    for prefix in ["meta", "meta/foo", "meta/other"] {
+        assert!(entries.contains_key(format!("design/anchor/{prefix}.md").as_str()));
+    }
+    assert_eq!(
+        table_rows(
+            entries["design/anchor/meta.md"]["content"]
+                .as_str()
+                .unwrap()
+        ),
+        ["meta.foo", "meta.foo.bar", "meta.other.leaf"]
+    );
+    assert_eq!(
+        table_rows(
+            entries["design/anchor/meta/other.md"]["content"]
+                .as_str()
+                .unwrap()
+        ),
+        ["meta.other.leaf"]
+    );
+    assert!(entries.contains_key("design/anchor/meta/other/leaf.md"));
+    let leaf = entries["design/anchor/meta/foo.md"];
+    assert_eq!(
+        leaf["sub_items"].as_array().unwrap().len(),
+        1,
+        "a rule can also be a namespace"
+    );
+    assert!(
+        leaf["source_path"].is_null(),
+        "generated views have no canonical source"
+    );
+    let content = leaf["content"].as_str().unwrap();
+    assert_eq!(table_rows(content), ["meta.foo", "meta.foo.bar"]);
+    assert!(content.contains("../../meta.html#meta.foo"));
+    assert!(content.contains("fn implementation()"));
+    assert!(content.contains("fn behavior() { assert_eq!(2 + 2, 4); }"));
+    assert!(content.contains("See more source"));
+    assert!(content.contains("Review: <strong>Todo</strong>"));
+    assert!(content.contains("Additional implementation and edge case."));
+    let child = entries["design/anchor/meta/foo/bar.md"]["content"]
+        .as_str()
+        .unwrap();
+    assert!(child.contains("N/A: This requirement describes an editorial convention."));
+    let definition = entries["design/meta.md"]["content"].as_str().unwrap();
+    assert!(definition.contains("href=\"anchor/meta/foo.html\""));
+    let inventory = sage_meta::spec::SpecIndex::load_workspace(&fixture.root).unwrap();
+    assert_eq!(
+        inventory.anchors.len(),
+        3,
+        "rendered copies never become definitions"
+    );
+}
+
+#[test]
+#[sage::test(meta.reviews.claim_text)]
+fn anchor_pages_and_disclosures_render_the_complete_reviewed_content() {
+    let fixture = Fixture::new("manual");
+    fixture.doc("SUMMARY.md", "# Summary\n\n- [Design](design/README.md)\n  - [Crates](design/crates/README.md)\n  - [Handwritten](design/handwritten.md)\n  - [Anchors](design/anchor/README.md)\n");
+    fixture.doc("design/anchor/README.md", "# Anchors\n");
+    let claim = "The **cached result** is reused.\n\nA second paragraph preserves `identity` with [crate context](crates/README.md).\n\n- Same input\n- Same result\n\n| Input | Result |\n| --- | --- |\n| unchanged | reused |\n\n```rust\nassert_eq!(first, second);\n\n// The blank line belongs to this example.\nassert!(cached);\n```";
+    let definitions = format!(
+        "# Handwritten\n\n{{anchor}}`multiblock`\n{claim}\n\n<!-- end anchor -->\n\nUnrelated commentary is outside the claim.\n"
+    );
+    fixture.doc("design/handwritten.md", &definitions);
+    let spec = sage_meta::spec::SpecIndex::load_workspace(&fixture.root).unwrap();
+    assert!(spec.diagnostics.is_empty(), "{:?}", spec.diagnostics);
+    let rust = sage_meta::correspondence::CorrespondenceIndex::load(&fixture.root).unwrap();
+    let inputs = sage_meta::review::inventory(&spec, &rust).unwrap();
+    assert_eq!(inputs["handwritten.multiblock"].claim.join("\n"), claim);
+
+    let mut input = fixture.input("items");
+    let children = input[1]["items"][0]["Chapter"]["sub_items"]
+        .as_array_mut()
+        .unwrap();
+    children[1]["Chapter"]["content"] = json!(definitions);
+    children.push(json!({"Chapter":{"name":"Anchors","content":"# Anchors\n","path":"design/anchor/README.md","source_path":"design/anchor/README.md","number":[2,3],"parent_names":["Design"],"sub_items":[]}}));
+    let output = fixture.run(&input);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let book: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let entries = chapters(book["items"].as_array().unwrap());
+    let page = entries["design/anchor/handwritten/multiblock.md"]["content"]
+        .as_str()
+        .unwrap();
+    let definition = page
+        .split_once("<div class=\"anchor-definition\">")
+        .unwrap()
+        .1
+        .split_once("</div>")
+        .unwrap()
+        .0;
+    let overview = entries["design/anchor/README.md"]["content"]
+        .as_str()
+        .unwrap();
+    let disclosure = overview
+        .split_once("data-anchor-text=\"handwritten.multiblock\"")
+        .unwrap()
+        .1
+        .split_once("<td colspan=\"3\">")
+        .unwrap()
+        .1
+        .split_once("<p><a href=")
+        .unwrap()
+        .0;
+    for (rendered, crate_href) in [
+        (definition, "../../crates/index.html"),
+        (disclosure, "../crates/index.html"),
+    ] {
+        assert!(
+            !rendered.contains("\n\n"),
+            "raw HTML must survive mdBook's Markdown pass"
+        );
+        let rendered = rendered.replace("&#10;", "\n");
+        assert!(rendered.contains("<p>The <strong>cached result</strong> is reused.</p>"));
+        assert!(rendered.contains("<p>A second paragraph preserves <code>identity</code>"));
+        assert!(rendered.contains(&format!("href=\"{crate_href}\">crate context</a>")));
+        assert!(rendered.contains("<ul>\n<li>Same input</li>\n<li>Same result</li>\n</ul>"));
+        assert!(rendered.contains("<table>"));
+        assert!(rendered.contains("<th>Input</th><th>Result</th>"));
+        assert!(rendered.contains("<td>unchanged</td><td>reused</td>"));
+        assert!(rendered.contains(
+            "<pre><code class=\"language-rust\">assert_eq!(first, second);\n\n// The blank line belongs to this example.\nassert!(cached);\n</code></pre>"
+        ));
+        assert!(!rendered.contains("end anchor"));
+        assert!(!rendered.contains("Unrelated commentary"));
+    }
+    assert_eq!(
+        definition.replace("../../crates/index.html", "../crates/index.html"),
+        disclosure,
+        "the page and disclosure present the same claim with page-relative links"
+    );
+    for (chapter, protected_claim) in [(page, definition), (overview, disclosure)] {
+        let events = pulldown_cmark::Parser::new_ext(chapter, pulldown_cmark::Options::all())
+            .collect::<Vec<_>>();
+        assert!(events.iter().all(|event| !matches!(
+            event,
+            pulldown_cmark::Event::Start(pulldown_cmark::Tag::CodeBlock(_))
+        )));
+        assert!(
+            events.iter().all(|event| !matches!(
+                event,
+                pulldown_cmark::Event::Text(text) if text.contains("assert!(cached)")
+            )),
+            "an example must not escape its generated HTML into Markdown prose"
+        );
+        let mut final_html = String::new();
+        pulldown_cmark::html::push_html(&mut final_html, events.into_iter());
+        assert!(
+            final_html.contains(protected_claim),
+            "mdBook's Markdown pass must retain the complete claim HTML"
+        );
+    }
+    let context = entries["design/handwritten.md"]["content"]
+        .as_str()
+        .unwrap();
+    assert!(context.contains("Unrelated commentary is outside the claim."));
+}
+
+#[test]
+#[sage::test(meta.anchors.context_navigation)]
+fn sage_anchor_links_retain_the_containing_entity_and_exact_prose() {
+    let fixture = Fixture::new("manual");
+    fixture.model("demo/symbols.sage", "module crate::symbols;\nstruct Item {\n    \"\"\"\n    {anchor}`stable`\n    Every **symbol** keeps its identity.\n    \"\"\"\n    value: $support::Value,\n}\n");
+    fixture.book("items");
+    let data = script_data(
+        &std::fs::read_to_string(fixture.asset()).unwrap(),
+        "source-data",
+    );
+    let anchor = &data["anchors"]["crates.demo.symbols.stable"];
+    assert_eq!(anchor["entity"], "demo::symbols::Item");
+    assert_eq!(
+        anchor["context_url"],
+        "design/crates/demo/symbols.html#anchor:crates.demo.symbols.stable"
+    );
+    let prose = data["prose"]
+        .as_object()
+        .unwrap()
+        .values()
+        .flat_map(|file| file.as_object().unwrap().values())
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(prose.contains("<strong>symbol</strong>"));
+    assert!(prose.contains("id=\"crates.demo.symbols.stable\""));
+    assert!(prose.contains("href=\"design/anchor/crates/demo/symbols/stable.html\""));
+    assert!(prose.contains("target=\"_parent\""));
 }
 
 fn script_data(html: &str, id: &str) -> Value {
@@ -184,7 +518,7 @@ fn generates_crate_and_module_chapters_for_both_mdbook_protocols() {
             entries.keys().map(String::as_str).collect::<Vec<_>>(),
             [
                 "design/README.md",
-                "design/crates.md",
+                "design/crates/README.md",
                 "design/crates/demo/crate.sage",
                 "design/crates/demo/symbols.sage",
                 "design/crates/support/crate.sage",
@@ -296,7 +630,7 @@ fn relocating_crate_sources_preserves_model_identity_and_updates_book_routes() {
         "demo::symbols::ActualItem"
     );
     let navigation = script_data(&after, "book-data");
-    assert_eq!(navigation["home"], "design/crates.html");
+    assert_eq!(navigation["home"], "design/crates/index.html");
     assert_eq!(
         navigation["chapters"]["demo::symbols"],
         "design/crates/compiler/frontend/symbols.html"
@@ -342,7 +676,7 @@ fn book_asset_is_self_contained_and_embeds_exact_script_safe_model_and_source() 
     );
     fixture.write("src/lib.rs", &rust);
     let crates = fixture.source.join("design/crates");
-    let escaped_parent = crates.join("unsafe</script><script>");
+    let escaped_parent = crates.join("nested");
     std::fs::create_dir_all(&escaped_parent).unwrap();
     std::fs::rename(crates.join("demo"), escaped_parent.join("demo")).unwrap();
     fixture.book("items");
@@ -370,7 +704,7 @@ fn book_asset_is_self_contained_and_embeds_exact_script_safe_model_and_source() 
     assert_eq!(navigation["chapters"].as_object().unwrap().len(), 3);
     assert_eq!(
         navigation["chapters"]["demo"],
-        "design/crates/unsafe%3C/script%3E%3Cscript%3E/demo/crate.html"
+        "design/crates/nested/demo/crate.html"
     );
 }
 
@@ -453,7 +787,7 @@ fn orphan_sage_module_and_nonexistent_rust_crate_are_rejected() {
         (
             "orphan.sage",
             "module crate::orphan;",
-            "no containing crate.sage",
+            "no modeled crate owner",
         ),
         (
             "missing/crate.sage",
@@ -481,6 +815,10 @@ fn books_without_a_crates_chapter_do_not_load_or_publish_a_model() {
         .unwrap()
         .remove(0);
     std::fs::remove_dir_all(fixture.source.join("design/crates")).unwrap();
+    fixture.doc(
+        "SUMMARY.md",
+        "# Summary\n\n- [Design](design/README.md)\n  - [Handwritten](design/handwritten.md)\n",
+    );
     let output = fixture.run(&input);
     assert!(output.status.success(), "{:?}", output);
     let book: Value = serde_json::from_slice(&output.stdout).unwrap();

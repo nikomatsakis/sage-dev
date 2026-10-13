@@ -124,6 +124,9 @@ impl<'db> Resolver<'db> {
 
     // ANCHOR: architecture_resolve_path
     #[sage::item(crate::resolution::Resolver::resolve)]
+    // {anchor}`crates.sage_ir.resolution.lookup.precedence`
+    // {anchor}`crates.sage_ir.resolution.lookup.identity_only`
+    // {anchor}`crates.sage_ir.resolution.lookup.dependencies`
     pub fn resolve_path(
         &mut self,
         stash: &Stash,

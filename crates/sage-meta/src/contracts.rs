@@ -228,10 +228,11 @@ impl ContractSession {
         id
     }
 
+    // {anchor}`meta.language.calls.declared`
     fn check_request(&mut self, invocation: &Invocation) {
         if let Some(caller) = self.active.last().cloned() {
             if let Some(contract) = self.model.operations.get(&caller.operation) {
-                // {anchor}`meta.envelopes.permissions`
+                // {anchor}`meta.language.envelopes.permissions`
                 let permissions: Vec<_> = contract
                     .invokes
                     .iter()
@@ -288,6 +289,7 @@ impl ContractSession {
         }
     }
 
+    // {anchor}`meta.language.calls.forbidden`
     fn check_prohibitions(&mut self, invocation: &Invocation) {
         // Restrictions apply to execution reached through incremental validation
         // as well as source requests, regardless of direct-call permissions.

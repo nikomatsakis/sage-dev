@@ -1,4 +1,6 @@
 //! mdBook chapters backed by the same model and renderer as the local explorer.
+mod anchors;
+mod redirects;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io::{self, Read};
@@ -7,7 +9,8 @@ use std::path::Path;
 use sage_meta::{Declaration, Document, Header};
 use serde_json::{Value, json};
 
-const CRATES_CHAPTER: &str = "design/crates.md";
+const CRATES_CHAPTER: &str = "design/crates/README.md";
+const CRATES_URL: &str = "design/crates/index.html";
 const EXPLORER_ASSET: &str = "sage-explorer.html";
 
 pub fn preprocess(args: &[OsString]) -> Result<(), Box<dyn std::error::Error>> {
@@ -34,13 +37,33 @@ pub fn preprocess(args: &[OsString]) -> Result<(), Box<dyn std::error::Error>> {
         .get_mut(items_key)
         .and_then(serde_json::Value::as_array_mut)
         .ok_or("mdBook input must contain book items or sections")?;
-    render_sections(sections)?;
+    let root = Path::new(
+        context
+            .get("root")
+            .and_then(Value::as_str)
+            .ok_or("mdBook context must specify its root")?,
+    );
+    let spec = sage_meta::spec::SpecIndex::load_workspace(root)?;
+    if !spec.diagnostics.is_empty() {
+        return Err(spec
+            .diagnostics
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n")
+            .into());
+    }
+    render_sections(sections, &spec)?;
     if count_crates_chapters(sections) > 0 {
         if count_crates_chapters(sections) != 1 {
-            return Err("the book must contain exactly one design/crates.md chapter".into());
+            return Err("the book must contain exactly one design/crates/README.md chapter".into());
         }
-        generate_crates(&context, sections)?;
+        generate_crates(&context, sections, &spec)?;
     }
+    if let Some(landing) = find_chapter(sections, anchors::CHAPTER) {
+        anchors::generate(root, &spec, landing)?;
+    }
+    redirects::apply(&context, sections)?;
     println!("{}", serde_json::to_string(&book)?);
     Ok(())
 }
@@ -60,15 +83,19 @@ fn count_crates_chapters(sections: &[Value]) -> usize {
 }
 
 fn crates_chapter(sections: &mut [Value]) -> Option<&mut Value> {
+    find_chapter(sections, CRATES_CHAPTER)
+}
+
+fn find_chapter<'a>(sections: &'a mut [Value], source: &str) -> Option<&'a mut Value> {
     for section in sections {
         let Some(chapter) = section.get_mut("Chapter") else {
             continue;
         };
-        if chapter.get("source_path").and_then(Value::as_str) == Some(CRATES_CHAPTER) {
+        if chapter.get("source_path").and_then(Value::as_str) == Some(source) {
             return Some(chapter);
         }
         if let Some(children) = chapter.get_mut("sub_items").and_then(Value::as_array_mut)
-            && let Some(found) = crates_chapter(children)
+            && let Some(found) = find_chapter(children, source)
         {
             return Some(found);
         }
@@ -76,9 +103,12 @@ fn crates_chapter(sections: &mut [Value]) -> Option<&mut Value> {
     None
 }
 
+// {anchor}`meta.book.crates_landing`
+// {anchor}`meta.book.crate_ownership`
 fn generate_crates(
     context: &Value,
     sections: &mut [Value],
+    spec: &sage_meta::spec::SpecIndex,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let root = Path::new(
         context
@@ -148,10 +178,9 @@ fn generate_crates(
         .cloned()
         .unwrap_or_default();
     let mut children = Vec::new();
-    let mut listing = String::from("<ul>");
     for (namespace, (document, path)) in &inventory {
-        let (name, purpose) = match &document.header {
-            Header::Crate { name, purpose, .. } => (name, purpose),
+        let name = match &document.header {
+            Header::Crate { name, .. } => name,
             Header::Module(_) => continue,
         };
         let mut crate_number = number.clone();
@@ -182,15 +211,49 @@ fn generate_crates(
                 document_outline(module),
             ));
         }
-        let crate_url = chapters[namespace]
-            .strip_prefix("design/")
-            .ok_or("crate chapter outside Design")?;
-        listing.push_str(&format!(
-            "<li><a href=\"{}\">{}</a> — {}</li>",
-            escape(crate_url),
-            escape(name),
-            escape(purpose.trim())
-        ));
+        // Companion prose belongs to the nearest enclosing modeled crate, just
+        // like .sage source. Authors do not maintain a second SUMMARY inventory.
+        for (file, prose_chapter) in &spec.chapters {
+            if !file.ends_with(".md") || file == CRATES_CHAPTER {
+                continue;
+            }
+            let file_path = Path::new(file);
+            let owner = inventory
+                .iter()
+                .filter(|(_, (document, _))| matches!(document.header, Header::Crate { .. }))
+                .filter(|(_, (_, root))| {
+                    file_path.starts_with(root.parent().unwrap_or(Path::new("")))
+                })
+                .max_by_key(|(_, (_, root))| root.components().count());
+            if owner.map(|(owner, _)| owner) != Some(namespace) {
+                continue;
+            }
+            let prose = &spec.sources[file];
+            let title = prose
+                .lines()
+                .find_map(|line| line.strip_prefix("# "))
+                .unwrap_or_else(|| {
+                    file_path
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .unwrap_or("Guide")
+                });
+            let mut module_number = crate_number.clone();
+            module_number.push(json!(modules.len() + 1));
+            let rendered = spec.render_chapter(file, prose).map_err(|errors| {
+                errors
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })?;
+            modules.push(json!({"Chapter": {
+                "name": title, "content": rendered,
+                "path": Path::new(&prose_chapter.url).with_extension("md"),
+                "source_path": file, "parent_names": module_parents,
+                "number": module_number, "sub_items": [],
+            }}));
+        }
         children.push(chapter(
             name,
             path,
@@ -201,21 +264,11 @@ fn generate_crates(
             document_outline(document),
         ));
     }
-    listing.push_str("</ul>");
-    let existing = landing
-        .get("content")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    landing["content"] = format!(
-        "{existing}\n{}\n<details><summary>Crate directory</summary>{listing}</details>\n",
-        explorer_frame(Path::new(CRATES_CHAPTER), "home")
-    )
-    .into();
     landing["sub_items"] = children.into();
 
     // mdBook copies non-Markdown files from its source tree after preprocessing.
     // Reuse one asset across all chapters. Stable writes avoid serve rebuild loops.
-    let html = sage_meta::render_book_browser(&documents, root, "design/crates.html", &chapters)?;
+    let html = sage_meta::render_book_browser(&documents, root, CRATES_URL, &chapters)?;
     let asset = source.join(EXPLORER_ASSET);
     if std::fs::read(&asset).ok().as_deref() != Some(html.as_bytes()) {
         std::fs::write(asset, html)?;
@@ -243,6 +296,8 @@ fn chapter(
     }})
 }
 
+// {anchor}`meta.anchors.book_explorer`
+// {anchor}`meta.anchors.explorer_navigation`
 fn explorer_frame(chapter: &Path, route: &str) -> String {
     let depth = chapter
         .parent()
@@ -278,7 +333,7 @@ fn document_outline(document: &Document) -> String {
         } => {
             html.push_str(&format!(
                 "<p>{}</p><p>Dependencies: {}</p><p>Modules: {}</p>",
-                escape(purpose),
+                escape(purpose).replace('\n', " "),
                 escape(&dependencies.join(", ")),
                 escape(&modules.join(", "))
             ));
@@ -293,7 +348,7 @@ fn document_outline(document: &Document) -> String {
         html.push_str(&format!(
             "<h3>{}</h3><p>{}</p>",
             escape(name),
-            escape(description.unwrap_or_default())
+            escape(description.unwrap_or_default()).replace('\n', " ")
         ));
         match declaration {
             Declaration::Class(class) => {
@@ -302,7 +357,7 @@ fn document_outline(document: &Document) -> String {
                         "<p><strong>{}::{}</strong> {}</p>",
                         escape(name),
                         escape(&method.name),
-                        escape(&method.description)
+                        escape(&method.description).replace('\n', " ")
                     ));
                 }
             }
@@ -334,9 +389,13 @@ fn escape(text: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
+        .replace('`', "&#96;")
 }
 
-fn render_sections(sections: &mut [serde_json::Value]) -> Result<(), Box<dyn std::error::Error>> {
+fn render_sections(
+    sections: &mut [serde_json::Value],
+    spec: &sage_meta::spec::SpecIndex,
+) -> Result<(), Box<dyn std::error::Error>> {
     for section in sections {
         let Some(chapter) = section.get_mut("Chapter") else {
             continue;
@@ -345,7 +404,11 @@ fn render_sections(sections: &mut [serde_json::Value]) -> Result<(), Box<dyn std
             .get("content")
             .and_then(serde_json::Value::as_str)
             .ok_or("mdBook chapter has no content")?;
-        let rendered = sage_meta::spec::render_anchors(content).map_err(|mut errors| {
+        let file = chapter
+            .get("source_path")
+            .and_then(Value::as_str)
+            .unwrap_or("<chapter>");
+        let rendered = spec.render_chapter(file, content).map_err(|mut errors| {
             let path = chapter
                 .get("source_path")
                 .and_then(serde_json::Value::as_str)
@@ -364,7 +427,7 @@ fn render_sections(sections: &mut [serde_json::Value]) -> Result<(), Box<dyn std
             .get_mut("sub_items")
             .and_then(serde_json::Value::as_array_mut)
         {
-            render_sections(children)?;
+            render_sections(children, spec)?;
         }
     }
     Ok(())

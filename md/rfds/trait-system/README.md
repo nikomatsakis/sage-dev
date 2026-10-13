@@ -39,7 +39,7 @@ impl's applicability conditions.
 The type-only consumers do not instantiate lifetime or const candidate
 variables. Const generics, const predicates, and other deferred applicability
 forms therefore make a trait or impl `Unsupported`. Lifetime syntax is
-different under [D12](../../design/decisions.md#d12-lifetimes-collapse-to-dummy-and-borrow-checking-is-deferred):
+different under [Lifetimes collapse to `Dummy` and borrow checking is deferred](../architectural-foundations/README.md#lifetimes-collapse-to-dummy-and-borrow-checking-is-deferred):
 the binder remains in the source model, but every occurrence lowers directly
 to `Lifetime::Dummy`, and lifetime/outlives predicates are trivially true.
 Consumers skip lifetime binders rather than opening inference variables for

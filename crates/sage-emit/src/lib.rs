@@ -16,6 +16,8 @@ use sage_stash::Stash;
 use rust_ref::*;
 
 #[sage::item(crate::emission::Emitter::emit_module)]
+// {anchor}`crates.sage_oracle_harness.crate.fixed_projection`
+// {anchor}`crates.sage_oracle_harness.crate.deterministic_emission`
 pub fn emit_module<'db>(db: &'db dyn Db, module: ModSymbol<'db>) -> Crate<NormalizedDef> {
     let mut emitter = Emitter::new(db);
     emitter.pre_register_mod(module);

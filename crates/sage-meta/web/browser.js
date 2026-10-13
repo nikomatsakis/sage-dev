@@ -22,7 +22,7 @@
         const item = {...value, key, namespace, crateName, file: doc.file, kind, isClass: !!declaration.Class, abstract: value.kind === 'Abstract'};
         items.set(key, item);
         modules.get(namespace).declarations.push(item);
-        for (const method of value.methods || []) methods.set(`${key}::${method.name}`, {...method, key:`${key}::${method.name}`, owner:key, namespace, crateName, kind:method.kind === 'Query' ? 'query' : 'fn'});
+        for (const method of value.methods || []) methods.set(`${key}::${method.name}`, {...method, key:`${key}::${method.name}`, owner:key, namespace, crateName, file:doc.file, kind:method.kind === 'Query' ? 'query' : 'fn'});
         function addMember(value, kind, scope=key) {
           const member={...value, key:`${scope}::${value.name}`, owner:key, namespace, crateName, kind};
           members.set(`${kind}:${member.key}`,member);
@@ -78,6 +78,10 @@
   }
 
   function createRenderer(model, link=defaultLink) {
+    function proseHtml(text, owner) {
+      const rendered=owner && model.sources.prose?.[owner.file]?.[text];
+      return rendered ? `<div class="prose markdown">${rendered}</div>` : prose(text);
+    }
     function typeText(type) {
       if (type.kind.Tuple) return `(${type.kind.Tuple.map(typeText).join(', ')})`;
       const {path, arguments:args} = type.kind.Named;
@@ -98,7 +102,7 @@
     }
     function fields(values,item,scope=item.key,selected=null) {
       if (!values.length) return '<p class="section-note">No fields.</p>';
-      return `<table><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody>${values.map(f=>`<tr ${selected===`field:${scope}::${f.name}`?'class="selected-member" data-selected-member="true"':''}><td><code>${link(`field:${scope}::${f.name}`,f.name)}</code>${f.kind ? ` ${badge(f.kind.toLowerCase())}`:''}</td><td><code>${typeHtml(f.ty,item,item.parameters||[])}</code></td><td>${prose(f.description)}</td></tr>`).join('')}</tbody></table>`;
+      return `<table><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody>${values.map(f=>`<tr ${selected===`field:${scope}::${f.name}`?'class="selected-member" data-selected-member="true"':''}><td><code>${link(`field:${scope}::${f.name}`,f.name)}</code>${f.kind ? ` ${badge(f.kind.toLowerCase())}`:''}</td><td><code>${typeHtml(f.ty,item,item.parameters||[])}</code></td><td>${proseHtml(f.description,item)}</td></tr>`).join('')}</tbody></table>`;
     }
     function methodLink(key) { return link(`method:${key}`,key); }
     function effectHtml(effect, method) {
@@ -119,28 +123,37 @@
     }
     function methodCard(method, detail=false) {
       const owner = model.items.get(method.owner);
-      return `<section class="method"><div class="method-title">${badge(method.kind)}<code>${link(`method:${method.key}`,`${method.name}()`)} → ${typeHtml(method.result,owner)}</code>${method.is_override?badge('override'):''}${method.envelope===null?badge('abstract'):''}</div>${prose(method.description)}${detail ? `<h3>Dependency envelope</h3>${method.envelope===null ? '<p class="section-note">Abstract declaration; follow its implementations below.</p>' : `<ul class="effect-list">${method.envelope.map(e=>effectHtml(e,method)).join('')}</ul>${method.envelope.length===0?'<p class="section-note">A leaf computation in this model.</p>':''}`}` : ''}</section>`;
+      return `<section class="method"><div class="method-title">${badge(method.kind)}<code>${link(`method:${method.key}`,`${method.name}()`)} → ${typeHtml(method.result,owner)}</code>${method.is_override?badge('override'):''}${method.envelope===null?badge('abstract'):''}</div>${proseHtml(method.description,owner)}${detail ? `<h3>Dependency envelope</h3>${method.envelope===null ? '<p class="section-note">Abstract declaration; follow its implementations below.</p>' : `<ul class="effect-list">${method.envelope.map(e=>effectHtml(e,method)).join('')}</ul>${method.envelope.length===0?'<p class="section-note">A leaf computation in this model.</p>':''}`}` : ''}</section>`;
     }
     function breadcrumbs(item) {
       return `<div class="breadcrumb">${link('home','Architecture')} / ${link(`crate:${item.crateName}`,item.crateName)} / ${link(`module:${item.namespace}`,item.namespace.split('::').slice(1).join('::') || 'crate')}</div>`;
     }
     function itemCard(item) {
-      return `<div class="card">${badge(item.kind)}<h3 style="margin-top:12px">${link(`item:${item.key}`,item.name)}</h3>${prose((item.description||'').trim().split('\n')[0])}</div>`;
+      return `<div class="card">${badge(item.kind)}<h3 style="margin-top:12px">${link(`item:${item.key}`,item.name)}</h3>${proseHtml((item.description||'').trim().split('\n')[0])}</div>`;
     }
     function overview() {
       const featured=['sage_ir::symbols::LocalFnSym','sage_ir::types::Ty','sage_ir::inference::InferCtx','sage_ir::solver::Solver'].map(k=>model.items.get(k)).filter(Boolean);
-      return `<div class="eyebrow">The compiler, one computation at a time</div><h1>Explore the architecture</h1><div class="prose">Follow a symbol to its methods, a method to the interfaces it uses, and a type to the values it contains.</div><div class="stats"><div><strong>${model.crates.size}</strong><span>crates</span></div><div><strong>${model.items.size}</strong><span>declarations</span></div><div><strong>${model.methods.size}</strong><span>methods & queries</span></div></div>${featured.length?`<h2>Start exploring</h2><div class="grid">${featured.map(itemCard).join('')}</div>`:''}<h2>Crates</h2><div class="grid">${[...model.crates.values()].map(c=>`<div class="card"><h3>${link(`crate:${c.name}`,c.name)}</h3>${prose(c.purpose.split('\n')[0])}<p class="section-note">${c.modules.length} logical modules · ${c.dependencies.length} dependencies</p></div>`).join('')}</div>`;
+      return `<div class="eyebrow">The compiler, one computation at a time</div><h1>Explore the architecture</h1><div class="prose">Follow a symbol to its methods, a method to the interfaces it uses, and a type to the values it contains.</div><div class="stats"><div><strong>${model.crates.size}</strong><span>crates</span></div><div><strong>${model.items.size}</strong><span>declarations</span></div><div><strong>${model.methods.size}</strong><span>methods & queries</span></div></div>${featured.length?`<h2>Start exploring</h2><div class="grid">${featured.map(itemCard).join('')}</div>`:''}<h2>Crates</h2><div class="grid">${[...model.crates.values()].map(c=>`<div class="card"><h3>${link(`crate:${c.name}`,c.name)}</h3>${proseHtml(c.purpose.split('\n')[0])}<p class="section-note">${c.modules.length} logical modules · ${c.dependencies.length} dependencies</p></div>`).join('')}</div>`;
     }
     function render(route, selected=null) {
       if (!route || route==='home') return overview();
       const cut=route.indexOf(':'), kind=route.slice(0,cut), key=route.slice(cut+1);
+      if(kind==='anchor') { const entity=anchorEntity(model,key); if(entity) return render(entityRoute(entity)); }
+      if(kind==='source') {
+        const match=key.match(/^(.*):(\d+):(\d+)$/);
+        if(match && Object.hasOwn(model.sources.files,match[1])) {
+          const [,file,start,end]=match;
+          const lines=model.sources.files[file].split('\n');
+          return `<div class="eyebrow">Rust source snapshot</div><h1>${escape(file)}</h1><p class="section-note">Lines ${Number(start)}–${Number(end)} · source associations do not establish execution.</p><pre class="raw-source"><code>${lines.map((line,index)=>`<span class="raw-source-line ${index+1>=Number(start)&&index+1<=Number(end)?'selected-source-line':''}" ${index+1===Number(start)?'data-source-focus="true"':''}><span class="raw-source-number">${index+1}</span>${escape(line)}</span>`).join('\n')}</code></pre>`;
+        }
+      }
       if((kind==='field'||kind==='variant') && model.members.has(route)) {
         return render(`item:${model.members.get(route).owner}`,route);
       }
       if (kind==='crate' && model.crates.has(key)) {
         const c=model.crates.get(key);
         const own=[...model.items.values()].filter(i=>i.namespace===key);
-        return `<div class="breadcrumb">${link('home','Architecture')} / ${escape(key)}</div><div class="eyebrow">Crate</div><h1>${escape(key)}</h1>${prose(c.purpose)}${origin(c)}<h2>Workspace dependencies</h2><p>${c.dependencies.map(d=>link(`crate:${d}`,d)).join(' · ') || 'None declared.'}</p><h2>Logical modules</h2><div class="grid">${c.modules.map(name=>`<div class="card"><h3>${link(`module:${key}::${name}`,name)}</h3><span class="muted">${model.modules.get(`${key}::${name}`)?.declarations.length||0} declarations</span></div>`).join('') || '<p class="section-note">This crate is described at the crate level.</p>'}</div>${own.length?`<h2>Declarations</h2><div class="grid">${own.map(itemCard).join('')}</div>`:''}<p class="file">${escape(c.file)}</p>`;
+        return `<div class="breadcrumb">${link('home','Architecture')} / ${escape(key)}</div><div class="eyebrow">Crate</div><h1>${escape(key)}</h1>${proseHtml(c.purpose,c)}${origin(c)}<h2>Workspace dependencies</h2><p>${c.dependencies.map(d=>link(`crate:${d}`,d)).join(' · ') || 'None declared.'}</p><h2>Logical modules</h2><div class="grid">${c.modules.map(name=>`<div class="card"><h3>${link(`module:${key}::${name}`,name)}</h3><span class="muted">${model.modules.get(`${key}::${name}`)?.declarations.length||0} declarations</span></div>`).join('') || '<p class="section-note">This crate is described at the crate level.</p>'}</div>${own.length?`<h2>Declarations</h2><div class="grid">${own.map(itemCard).join('')}</div>`:''}<p class="file">${escape(c.file)}</p>`;
       }
       if (kind==='module' && model.modules.has(key)) {
         const mod=model.modules.get(key);
@@ -158,9 +171,9 @@
           for(const ancestor of model.ancestors(key).slice(1)) for(const method of model.items.get(ancestor)?.methods||[]) if(!methodNames.has(method.name)){methodNames.add(method.name);inherited.push(`${ancestor}::${method.name}`);}
           if(inherited.length) content+=`<h2>Inherited methods</h2><ul class="call-list">${inherited.map(k=>`<li>${methodLink(k)}</li>`).join('')}</ul>`;
         } else if(item.kind==='struct') content=`<h2>Fields</h2>${fields(item.shape.Struct,item,key,selected)}`;
-        else if(item.kind==='enum') content=`<h2>Variants</h2>${item.shape.Enum.map(v=>`<details open ${selected===`variant:${key}::${v.name}`?'class="selected-member" data-selected-member="true"':''}><summary>${link(`variant:${key}::${v.name}`,v.name)}${v.fields.Tuple ? `(${v.fields.Tuple.map(t=>typeHtml(t,item,item.parameters)).join(', ')})`:''}</summary>${prose(v.description)}${v.fields.Named?fields(v.fields.Named,item,`${key}::${v.name}`,selected):''}</details>`).join('')}`;
+        else if(item.kind==='enum') content=`<h2>Variants</h2>${item.shape.Enum.map(v=>`<details open ${selected===`variant:${key}::${v.name}`?'class="selected-member" data-selected-member="true"':''}><summary>${link(`variant:${key}::${v.name}`,v.name)}${v.fields.Tuple ? `(${v.fields.Tuple.map(t=>typeHtml(t,item,item.parameters)).join(', ')})`:''}</summary>${proseHtml(v.description,item)}${v.fields.Named?fields(v.fields.Named,item,`${key}::${v.name}`,selected):''}</details>`).join('')}`;
         else content='<p class="section-note">Opaque by design. Its meaning is described above; its representation is left unspecified.</p>';
-        return `${breadcrumbs(item)}<div class="eyebrow">${item.abstract?'abstract ':''}${escape(item.kind)}</div><h1>${escape(item.name)}${item.parameters?.length?`&lt;${item.parameters.map(escape).join(', ')}&gt;`:''}</h1>${prose(item.description)}${origin(item)}${content}<p class="file">${escape(item.file)} · byte ${item.span.start}</p>`;
+        return `${breadcrumbs(item)}<div class="eyebrow">${item.abstract?'abstract ':''}${escape(item.kind)}</div><h1>${escape(item.name)}${item.parameters?.length?`&lt;${item.parameters.map(escape).join(', ')}&gt;`:''}</h1>${proseHtml(item.description,item)}${origin(item)}${content}<p class="file">${escape(item.file)} · byte ${item.span.start}</p>`;
       }
       if(kind==='method' && model.methods.has(key)) {
         const method=model.methods.get(key), owner=model.items.get(method.owner);
@@ -186,7 +199,12 @@
     const kind=['crate','module','field','variant'].includes(item.kind)?item.kind:item.owner?'method':'item';
     return `${kind}:${item.key}`;
   }
+  function anchorEntity(model, name) {
+    const key=model.sources.anchors?.[name]?.entity;
+    return model.methods.get(key)||model.items.get(key)||model.members.get(`field:${key}`)||model.members.get(`variant:${key}`)||model.crates.get(key)||model.modules.get(key);
+  }
   function sourceOwner(model, route) {
+    if(route.startsWith('anchor:')) { const entity=anchorEntity(model,route.slice(7)); return entity ? sourceOwner(model,entityRoute(entity)) : null; }
     if(route.startsWith('crate:')) return model.crates.get(route.slice(6));
     if(route.startsWith('module:')) return model.modules.get(route.slice(7));
     if(route.startsWith('item:')) return model.items.get(route.slice(5));
@@ -226,7 +244,7 @@
       // Sharing that parent URL must retain its heading navigation while the
       // frame displays the chapter's default model selection. Model routes,
       // including routes to missing entities, still reach the renderer.
-      if(embedded && selected!=='invalid' && !/^(?:home$|(?:crate|module|item|method|field|variant):)/.test(selected)) return fallback;
+      if(embedded && selected!=='invalid' && !/^(?:home$|(?:crate|module|item|method|field|variant|anchor):)/.test(selected)) return fallback;
       return selected;
     };
     const href=id=>embedded?new URL(bookHref(model,book,id),frame.location.href).href:`#${encodeURIComponent(id)}`;
@@ -264,6 +282,21 @@
   const navigationState=createNavigation(window,model,bookData?JSON.parse(bookData.textContent):null);
   const {route,link}=navigationState;
   document.body.classList.toggle('embedded',navigationState.embedded);
+  const themeButton=document.getElementById('theme');
+  if(navigationState.embedded) {
+    // Follow mdBook's resolved theme, including its automatic OS preference.
+    const bookRoot=navigationState.host.document.documentElement;
+    const syncTheme=()=>{
+      const dark=['navy','coal','ayu'].some(theme=>bookRoot.classList.contains(theme));
+      document.body.classList.toggle('dark',dark);
+      document.documentElement.style.colorScheme=dark?'dark':'light';
+    };
+    syncTheme();
+    new MutationObserver(syncTheme).observe(bookRoot,{attributes:true,attributeFilter:['class']});
+    themeButton.hidden=true;
+  } else {
+    themeButton.addEventListener('click',()=>document.body.classList.toggle('dark'));
+  }
   const renderer=createRenderer(model,link), search=document.getElementById('search'), crateFilter=document.getElementById('crate-filter'), kindFilter=document.getElementById('kind-filter');
   const brand=document.querySelector('.brand');
   brand.href=navigationState.href('home');
@@ -312,12 +345,11 @@
   document.getElementById('source-close').addEventListener('click',()=>{toggleSource(false);document.getElementById('source-toggle').focus();});
   document.addEventListener('change',event=>{if(event.target.id==='source-location')refreshSource(event.target.value);});
   document.addEventListener('click',event=>{const button=event.target.closest('[data-source]');if(button){selectedSource=button.dataset.source;toggleSource(true);document.getElementById('source-location')?.focus();}});
-  function show(){selectedSource=null;if(sourceOpen)refreshSource();const main=document.getElementById('content');main.innerHTML=renderer.render(route());main.scrollTop=0;main.querySelector('[data-selected-member]')?.scrollIntoView({block:'center'});navigation();navigationState.updateFullPage();document.title=`${route()==='home'?'Architecture':route().split(':').slice(1).join(':')} · Sage`;}
+  function show(){selectedSource=null;if(sourceOpen)refreshSource();const main=document.getElementById('content');main.innerHTML=renderer.render(route());main.scrollTop=0;main.querySelector('[data-selected-member], [data-source-focus]')?.scrollIntoView({block:'center'});if(route().startsWith('anchor:')){const marker=document.getElementById(route().slice(7));marker?.classList.add('selected-anchor');marker?.scrollIntoView({block:'center'});}navigation();navigationState.updateFullPage();document.title=`${route()==='home'?'Architecture':route().split(':').slice(1).join(':')} · Sage`;}
   search.addEventListener('input',navigation);crateFilter.addEventListener('change',navigation);kindFilter.addEventListener('change',navigation);
   navigationState.host.addEventListener('hashchange',show);
   document.querySelector('.skip').addEventListener('click',event=>{event.preventDefault();document.getElementById('content').focus();});
   document.addEventListener('keydown',event=>{if(event.key==='/'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)){event.preventDefault();search.focus();}if(event.key==='Escape'&&document.activeElement===search){search.value='';navigation();}});
-  document.getElementById('theme').addEventListener('click',()=>{document.body.classList.toggle('dark');});
   document.addEventListener('click',async event=>{const button=event.target.closest('[data-copy]');if(!button)return;try{await navigator.clipboard.writeText(button.dataset.copy);button.textContent='Copied';}catch{button.textContent='Select path to copy';}});
   show();
 })();

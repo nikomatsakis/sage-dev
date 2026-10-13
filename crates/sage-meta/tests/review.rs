@@ -20,16 +20,23 @@ impl Fixture {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        for path in ["src", "md", "sage-src/demo"] {
+        for path in ["src", "md/design/crates/demo"] {
             std::fs::create_dir_all(root.join(path)).unwrap();
         }
+        std::fs::write(root.join("book.toml"), "[book]\nsrc = 'md'\n").unwrap();
+        std::fs::write(
+            root.join("md/SUMMARY.md"),
+            "- [Design](design/README.md)\n  - [Crates](design/crates/README.md)\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("md/design/crates/README.md"), "# Crates\n").unwrap();
         std::fs::write(
             root.join("Cargo.toml"),
             "[package]\nname = \"demo\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n",
         )
         .unwrap();
         std::fs::write(
-            root.join("sage-src/demo/crate.sage"),
+            root.join("md/design/crates/demo/crate.sage"),
             "crate demo { \"\"\"Review fixture.\"\"\" }",
         )
         .unwrap();
@@ -40,13 +47,19 @@ impl Fixture {
     }
 
     fn claim(&self, text: &str) {
-        std::fs::write(self.0.join("md/rules.md"), text).unwrap();
+        std::fs::write(self.0.join("md/design/README.md"), text).unwrap();
     }
 
     fn rust(&self, text: &str) {
+        let spec = sage_meta::spec::SpecIndex::load_workspace(&self.0).unwrap();
+        let implementation = spec
+            .anchors
+            .keys()
+            .map(|name| format!("// {{anchor}}`{name}`\n"))
+            .collect::<String>();
         std::fs::write(
             self.0.join("src/lib.rs"),
-            format!("#[sage::item(crate)] mod model {{}}\n{text}\n"),
+            format!("#[sage::item(crate)] mod model {{}}\n{implementation}{text}\n"),
         )
         .unwrap();
     }
@@ -84,18 +97,148 @@ impl Drop for Fixture {
 
 #[test]
 #[sage::test(meta.reviews.claim_text)]
-fn claim_snapshot_contains_exactly_the_anchored_paragraph() {
+#[sage::test(meta.reviews.source_representation)]
+fn claim_snapshot_contains_the_complete_content_without_outer_whitespace() {
     let fixture = Fixture::new();
     fixture.claim(
-        "# Context\n\n{anchor}`demo.rule`\nThe **result** is four,\nincluding this second line.\n\nExplanation outside the claim.\n\n- Additional list item.\n\n```rust\nassert_eq!(2 + 2, 4);\n```\n",
+        "# Context\n\n{anchor}`demo.rule`  \nThe **result** is four,  \nincluding this second line.\n\nA qualification of the claim.\n\n- Additional list item.\n\n```rust\n    assert_eq!(2 + 2, 4);\n```\n\n| Input | Result |\n| --- | --- |\n| 2 + 2 | 4 |\n\n<!-- end anchor -->\n\nCommentary outside the claim.\n",
     );
     let pending = review::prepare(&fixture.0).unwrap();
     assert_eq!(pending.reviews.len(), 1);
     assert_eq!(pending.reviews[0].anchor, "demo.rule");
     assert_eq!(
         pending.reviews[0].input.claim,
-        ["The **result** is four,", "including this second line."]
+        [
+            "The **result** is four,  ",
+            "including this second line.",
+            "",
+            "A qualification of the claim.",
+            "",
+            "- Additional list item.",
+            "",
+            "```rust",
+            "    assert_eq!(2 + 2, 4);",
+            "```",
+            "",
+            "| Input | Result |",
+            "| --- | --- |",
+            "| 2 + 2 | 4 |",
+        ]
     );
+}
+
+#[test]
+#[sage::test(meta.reviews.claim_text)]
+#[sage::test(meta.reviews.staleness)]
+fn later_blocks_invalidate_reviews_but_content_beyond_a_boundary_does_not() {
+    for boundary in [
+        "<!-- end anchor -->",
+        "## Commentary",
+        "Commentary\n----------",
+        "{anchor}`demo.other`\nA separate rule.",
+    ] {
+        let fixture = Fixture::new();
+        let claim = format!(
+            "{CLAIM}\nA later qualification.\n\n- A list case.\n\n```text\nA worked example.\n```\n\n{boundary}\n\nOutside commentary.\n"
+        );
+        fixture.claim(&claim);
+        let has_other = boundary.starts_with("{anchor}");
+        fixture.rust(&if has_other {
+            format!("{TEST}\n#[test] #[sage::test(demo.other)] fn other() {{ assert!(true); }}")
+        } else {
+            TEST.into()
+        });
+        fixture.approve();
+        for original in ["A later qualification", "A list case", "A worked example"] {
+            fixture.claim(&claim.replace(original, "Changed content"));
+            let pending = review::prepare(&fixture.0).unwrap();
+            assert_eq!(pending.reviews.len(), 1, "{boundary}: {original}");
+            assert_eq!(pending.reviews[0].anchor, "demo.rule");
+            assert!(!sage_meta::check(&fixture.0).is_valid());
+        }
+        fixture.claim(&claim.replace("Outside commentary", "Edited outside commentary"));
+        let pending = review::prepare(&fixture.0).unwrap();
+        if has_other {
+            assert_eq!(pending.reviews.len(), 1);
+            assert_eq!(pending.reviews[0].anchor, "demo.other");
+        } else {
+            assert!(pending.reviews.is_empty(), "{boundary}");
+            assert!(sage_meta::check(&fixture.0).is_valid());
+        }
+        fixture.claim(&claim);
+        assert!(review::prepare(&fixture.0).unwrap().reviews.is_empty());
+    }
+
+    let fixture = Fixture::new();
+    fixture.approve();
+    fixture.claim(&format!("{CLAIM}\nA paragraph appended at EOF.\n"));
+    let pending = review::prepare(&fixture.0).unwrap();
+    assert_eq!(pending.reviews.len(), 1);
+    assert_eq!(pending.reviews[0].anchor, "demo.rule");
+    assert_eq!(
+        pending.reviews[0].input.claim,
+        ["The result is four.", "", "A paragraph appended at EOF."]
+    );
+}
+
+#[test]
+#[sage::test(meta.reviews.source_representation)]
+fn persisted_source_line_arrays_reconstruct_claim_and_annotated_test() {
+    let fixture = Fixture::new();
+    let claim =
+        "The **result** is four.  \n\nFor example:\n\n```rust\n    assert_eq!(2 + 2, 4);\n```";
+    let function = "#[test]\n#[sage::test(demo.rule)]\nfn verifies_result() {\n    // **Evidence** preserves spacing.\n\n    assert_eq!(2 + 2, 4);\n}";
+    fixture.claim(&format!("{{anchor}}`demo.rule`\n{claim}\n"));
+    fixture.rust(function);
+    fixture.approve();
+    let json: serde_json::Value = serde_json::from_str(&fixture.saved()).unwrap();
+    let input = &json["reviews"][0]["input"];
+    for (lines, original) in [
+        (&input["claim"], claim),
+        (&input["tests"][0]["source"], function),
+    ] {
+        let lines = lines.as_array().expect("source is saved as an array");
+        let strings = lines
+            .iter()
+            .map(|line| line.as_str().expect("each line is a JSON string"))
+            .collect::<Vec<_>>();
+        assert!(strings.contains(&""), "internal blank lines survive");
+        assert_eq!(strings.join("\n"), original);
+    }
+    let loaded = review::load(&fixture.0.join(review::CHECKLIST_FILE)).unwrap();
+    assert_eq!(loaded.reviews[0].input.claim.join("\n"), claim);
+    assert_eq!(loaded.reviews[0].input.tests[0].source.join("\n"), function);
+}
+
+#[test]
+#[sage::test(meta.reviews.review_scope)]
+fn implementation_only_edits_preserve_the_approval_input_and_review() {
+    let fixture = Fixture::new();
+    let implementation = "// {anchor}`demo.rule`<<\nfn implementation() -> u32 { 2 + 2 }\n// >>";
+    fixture.rust(&format!("{implementation}\n{TEST}"));
+    let reviewed = fixture.approve();
+    let saved = fixture.saved();
+    let input = serde_json::to_value(&reviewed.reviews[0].input).unwrap();
+    let fields = input.as_object().unwrap();
+    assert_eq!(fields.len(), 2);
+    assert!(fields.contains_key("claim"));
+    assert!(fields.contains_key("tests"));
+    assert!(
+        !serde_json::to_string(&input)
+            .unwrap()
+            .contains("fn implementation")
+    );
+
+    fixture.rust(&format!("{}\n{TEST}", implementation.replace("2 + 2", "4")));
+    let spec = sage_meta::spec::SpecIndex::load_workspace(&fixture.0).unwrap();
+    let rust = sage_meta::correspondence::CorrespondenceIndex::load(&fixture.0).unwrap();
+    assert_eq!(
+        review::inventory(&spec, &rust).unwrap()["demo.rule"],
+        reviewed.reviews[0].input
+    );
+    assert!(review::prepare(&fixture.0).unwrap().reviews.is_empty());
+    assert!(sage_meta::check(&fixture.0).is_valid());
+    assert_eq!(fixture.saved(), saved);
 }
 
 #[test]

@@ -493,6 +493,9 @@ mod tests {
     use crate::tytree::TyExprData;
 
     #[test]
+    #[sage::test(crates.sage_ir.inference.body_local_quiescence)]
+    #[sage::test(crates.sage_ir.checking.owned_products)]
+    #[sage::test(crates.sage_ir.checking.body.elaboration)]
     fn body_finalization_resolves_types_into_a_fresh_stash() {
         let mut source = Stash::new();
         let mut egraph = VersionedEGraph::new();

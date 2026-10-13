@@ -408,6 +408,9 @@ pub(crate) fn prove_query<'db>(
     solve_query(db, query)
 }
 
+// {anchor}`crates.sage_ir.solver.normalization_demand`
+// {anchor}`crates.sage_ir.solver.bounded_completeness`
+// {anchor}`crates.sage_ir.solver.shared_final_result`
 pub(crate) fn solve_query<'db>(
     db: &'db dyn crate::Db,
     query: &Stashed<GoalQueryData<'db>>,

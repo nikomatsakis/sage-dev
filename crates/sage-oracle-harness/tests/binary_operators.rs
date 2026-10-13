@@ -1,4 +1,5 @@
-#![feature(rustc_private)]
+#![feature(rustc_private, register_tool)]
+#![register_tool(sage)]
 
 use std::path::PathBuf;
 
@@ -272,6 +273,9 @@ fn selected_operator_impl_narrows_unsuffixed_integer_literal() {
 }
 
 #[test]
+#[sage::test(crates.sage_ir.types.operators.trait_calls)]
+#[sage::test(crates.sage_ir.types.body.elaborated)]
+#[sage::test(crates.sage_ir.types.lifetimes.dummy)]
 fn comparisons_materialize_signature_required_shared_borrows() {
     let (diagnostics, _cold, _warm) =
         combined::with_proxy_database(&fixture(), |database, files| {
@@ -320,6 +324,8 @@ fn comparisons_materialize_signature_required_shared_borrows() {
 }
 
 #[test]
+#[sage::test(crates.sage_ir.types.operators.trait_calls)]
+#[sage::test(crates.sage_ir.types.calls.selected_semantics)]
 fn local_operator_impl_can_choose_distinct_rhs_and_output() {
     let (diagnostics, cold, _warm) =
         combined::with_proxy_database(&fixture(), |database, files| {
@@ -372,6 +378,7 @@ fn local_operator_impl_can_choose_distinct_rhs_and_output() {
 }
 
 #[test]
+#[sage::test(crates.sage_ir.types.body.diagnosed_recovery)]
 fn failed_operator_proof_becomes_one_diagnostic_and_an_error_node() {
     const SOURCE: &str = "fn bad(left: bool, right: bool) { let _ = left + right; }";
     let (result, _cold, _warm) = combined::with_proxy_database(&fixture(), |database, _| {

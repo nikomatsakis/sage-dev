@@ -13,83 +13,77 @@
 
 mod todo {
     #[test]
-    #[sage::test(meta.spec.canonical_sources)]
-    #[sage::test(meta.spec.unique_names)]
+    #[sage::test(meta.anchors.canonical_sources)]
+    #[sage::test(meta.anchors.unique_names)]
     fn definitions_across_markdown_and_sage() {
         // TODO: Check both definition origins, cross-source duplicates,
         // references, preserved context, and the chapter-based naming rules.
     }
 
     #[test]
-    #[sage::test(meta.spec.implementation_references)]
+    #[sage::test(meta.anchors.implementation_references)]
     fn rust_implementation_references() {
         // TODO: Resolve real comments across crates; reject malformed/dangling
         // references and exclude marker-like string contents.
     }
 
     #[test]
-    #[sage::test(meta.spec.implementation_coverage)]
+    #[sage::test(meta.anchors.implementation_coverage)]
     fn independent_implementation_coverage() {
         // TODO: Missing implementation fails even when a test or Sage item
         // mapping exists; explicit placeholder entries retain their status.
     }
 
     #[test]
-    #[sage::test(meta.spec.point_excerpts)]
+    #[sage::test(meta.anchors.point_excerpts)]
     fn point_excerpts_and_surrounding_source() {
         // TODO: Verify marker plus five lines, EOF truncation, and See more.
     }
 
     #[test]
-    #[sage::test(meta.spec.region_excerpts)]
+    #[sage::test(meta.anchors.region_excerpts)]
     fn nested_region_excerpts() {
         // TODO: Verify explicit boundaries, nearest-opener nesting, point
         // references within regions, and navigation to surrounding source.
     }
 
     #[test]
-    #[sage::test(meta.spec.region_balance)]
-    fn unmatched_region_delimiters() {
-        // TODO: Reject unmatched openers/closers; ignore delimiters in strings.
-    }
-
-    #[test]
-    #[sage::test(meta.spec.placeholder_status)]
+    #[sage::test(meta.anchors.placeholder_status)]
     fn implementation_and_test_placeholder_status() {
         // TODO: Classify todo and not_applicable entries separately on each
         // side, retain explanations, and ensure empty modules add no entries.
     }
 
     #[test]
-    #[sage::test(meta.spec.evidence_status)]
+    #[sage::test(meta.anchors.evidence_status)]
     fn source_associations_are_distinct_from_run_evidence() {
         // TODO: Preserve cfg and separate declarations, recorded results, and
         // traces; a passing dummy test must keep its placeholder status.
     }
 
     #[test]
-    #[sage::test(meta.spec.anchor_pages)]
+    #[sage::test(meta.anchors.anchor_pages)]
     fn canonical_anchor_pages() {
         // TODO: Verify stable pages with definitions, all implementation/test
         // sites, their excerpts, individual statuses, and explanations.
     }
 
     #[test]
-    #[sage::test(meta.spec.context_navigation)]
+    #[sage::test(meta.anchors.context_navigation)]
     fn anchor_pages_and_definition_context_links() {
         // TODO: Badges open the anchor page; context links return precisely to
         // Markdown or Sage definitions while preserving context permalinks.
     }
 
     #[test]
-    #[sage::test(meta.spec.book_explorer)]
+    #[sage::test(meta.anchors.book_explorer)]
     fn self_contained_book_explorer() {
         // TODO: Build an embedded/full-page explorer with Rust source, browse
         // without a Sage server, and refresh snapshots after source changes.
     }
 
     #[test]
-    #[sage::test(meta.spec.explorer_navigation)]
+    #[sage::test(meta.anchors.explorer_navigation)]
     fn synchronized_explorer_urls() {
         // TODO: Verify direct item/anchor URLs and back/forward synchronization
         // between the chapter and embedded explorer.

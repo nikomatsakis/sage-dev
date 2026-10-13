@@ -92,6 +92,10 @@ pub fn unexpanded_items<'db>(
 // ANCHOR: example_expanded_module_query
 #[salsa::tracked(returns(ref), cycle_initial = expanded_module_initial)]
 #[sage::item(crate::modules::LocalModSym::expanded_items)]
+// {anchor}`crates.sage_ir.modules.expand.direct_members`
+// {anchor}`crates.sage_ir.modules.expand.completeness`
+// {anchor}`crates.sage_ir.modules.expand.dependencies`
+// {anchor}`crates.sage_ir.modules.expand.recursion_and_fixpoint`
 pub fn local_expanded_module_items<'db>(
     db: &'db dyn Db,
     module: LocalModSym<'db>,

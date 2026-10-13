@@ -64,6 +64,8 @@ impl<'a, 'db> Check<'a, 'db> {
         }
     }
 
+    // {anchor}`crates.sage_ir.checking.owned_products`
+    // {anchor}`crates.sage_ir.checking.signature.storage`
     pub fn finish<T: StashHash + Copy>(self, root: T) -> Stashed<T> {
         Stashed::new(self.target_stash, root)
     }

@@ -39,6 +39,7 @@ pub(crate) struct RequiredUnifyFailure<'db> {
 }
 
 /// Apply one structural equality atomically against `parent`.
+// {anchor}`crates.sage_ir.inference.numeric_domains`
 pub fn try_unify<'db>(
     egraph: &mut VersionedEGraph<'db>,
     stash: &mut Stash,
@@ -208,6 +209,8 @@ pub fn try_set_bound<'db>(
 /// Own a short-lived child probe from creation through exactly one commit or
 /// discard path. Solver candidates intentionally do not use this helper: they
 /// extract and discard their long-lived alternative branches instead.
+// {anchor}`crates.sage_ir.inference.transaction_isolation`
+// {anchor}`crates.sage_ir.inference.atomic_checking`
 fn try_probe<'db, T>(
     egraph: &mut VersionedEGraph<'db>,
     stash: &mut Stash,
@@ -683,6 +686,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.inference.numeric_domains)]
     fn variable_union_intersects_domains_in_both_orders() {
         for reverse in [false, true] {
             let mut egraph = VersionedEGraph::new();
@@ -717,6 +721,8 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.inference.numeric_domains)]
+    #[sage::test(crates.sage_ir.inference.transaction_isolation)]
     fn incompatible_transitive_domain_union_rolls_back() {
         let mut egraph = VersionedEGraph::new();
         let mut stash = Stash::new();

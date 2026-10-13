@@ -23,6 +23,8 @@ impl StashDirect for ExprSlot {}
 
 /// What a path resolved to.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::PathResolution)]
+// {anchor}`crates.sage_ir.types.body.resolved_references`
 pub enum PathResolution<'db> {
     Def(Symbol<'db>),
     Local(LocalId),
@@ -34,10 +36,13 @@ pub type Res<'db> = PathResolution<'db>;
 
 /// Identifies a local variable within a function body.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::LocalId)]
+// {anchor}`crates.sage_ir.types.scoped_identities`
 pub struct LocalId(pub u32);
 
 /// Metadata about a local variable.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::LocalVar)]
 pub struct LocalVar<'db> {
     pub name: Name<'db>,
     pub span: RelativeSpan,
@@ -56,6 +61,7 @@ pub struct ResolvedField<'db> {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::CallDispatch)]
 pub enum CallDispatch<'db> {
     Direct,
     StaticTrait {
@@ -65,6 +71,8 @@ pub enum CallDispatch<'db> {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::ResolvedCallTarget)]
+// {anchor}`crates.sage_ir.types.calls.selected_semantics`
 pub struct ResolvedCallTarget<'db> {
     pub function: FnSymbol<'db>,
     pub dispatch: CallDispatch<'db>,
@@ -111,6 +119,8 @@ pub struct TyBodyData<'db> {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::TyExpr)]
+// {anchor}`crates.sage_ir.types.body.typed_provenance`
 pub struct TyExpr<'db> {
     pub data: TyExprData<'db>,
     pub ty: Ptr<Ty<'db>>,
@@ -118,6 +128,7 @@ pub struct TyExpr<'db> {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
+#[sage::item(crate::types::TyExprData)]
 pub enum TyExprData<'db> {
     Literal(Literal<'db>),
     Path(Res<'db>),

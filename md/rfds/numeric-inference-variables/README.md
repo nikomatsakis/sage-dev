@@ -8,7 +8,7 @@
   variables, versioned transactions, and finalization
 - [Typed IR Elaboration](../typed-ir-elaboration/README.md) — resolved calls,
   explicit semantic operations, and recovery nodes
-- [External Metadata](../../design/subsystems/external-metadata.md) — relevant
+- [External Metadata](../../design/crates/sage_ir/metadata-guide.md) — relevant
   impl identities and headers from `core` and other dependency crates
 
 ## TL;DR
@@ -40,7 +40,7 @@
 Sage currently assigns the same unconstrained `Ty::InferVar` to every
 unsuffixed numeric literal. The expression `1 + true` therefore equates the
 literal variable with `bool` and completes without a type diagnostic. This is
-[KD-7](../../implementation/known-deviations.md#kd-7-arithmetic-operators-do-not-require-numeric-operands).
+[KD-7](../implementation-sequencing/deviations.md#kd-7-arithmetic-operators-do-not-require-numeric-operands).
 
 The same missing information prevents the checker from preserving what an
 unsuffixed literal is allowed to become while other constraints are pending:
@@ -321,7 +321,7 @@ can bypass or compete with trait selection.
 
 Expected result types constrain the trait method result but do not bypass the
 trait goal or decide otherwise ambiguous semantic dispatch. This follows
-[BODY-A4](../../design/pipeline/body-checking.md#body-a4): caller expectations
+[crates.sage_ir.checking.body.expected_types](../../design/anchor/crates/sage_ir/checking/body/expected_types.html): caller expectations
 must not select a semantic candidate.
 
 <a id="niv-a4"></a>
@@ -521,4 +521,4 @@ keeps calls uniform through Typed IR and defers that split to codegen.
 
 ## Implementation
 
-See the [detailed implementation checklist and status](./implementation.md).
+See the [detailed implementation checklist and status](implementation.md).

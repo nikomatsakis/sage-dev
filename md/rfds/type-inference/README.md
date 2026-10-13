@@ -4,7 +4,7 @@
 
 > **Current operator architecture:** The operator-specific parts of this
 > historical RFD are superseded by
-> [D20](../../design/decisions.md#d20-overloadable-operators-remain-trait-calls-through-typed-ir)
+> [Overloadable operators remain trait calls through Typed IR](../architectural-foundations/README.md#overloadable-operators-remain-trait-calls-through-typed-ir)
 > and the accepted [Numeric Inference Domains and Binary Operator Typing
 > RFD](../numeric-inference-variables/README.md). Every proven overloadable
 > operator remains a resolved trait-method call through Typed IR, including

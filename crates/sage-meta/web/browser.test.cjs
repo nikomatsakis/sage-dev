@@ -9,6 +9,33 @@ const files = JSON.parse(html.split('<script id="model-data" type="application/j
 const sources=JSON.parse(html.split('<script id="source-data" type="application/json">')[1].split('</script>')[0]);
 const model = buildModel(files,sources), renderer = createRenderer(model);
 
+test('anchor context routes select their owning entity and rendered definition',()=>{
+  const source=structuredClone(sources);
+  const item=model.items.get('sage_ir::types::Ty');
+  const name='crates.sage_ir.types.identity';
+  source.anchors={[name]:{entity:item.key}};
+  source.prose={[item.file]:{[item.description]:`<p><a class="spec-anchor" id="${name}" href="design/anchor/crates/sage_ir/types/identity.html">identity</a> A type.</p>`}};
+  const anchored=buildModel(files,source);
+  const page=createRenderer(anchored).render(`anchor:${name}`);
+  assert.match(page,/id="crates.sage_ir.types.identity"/);
+  assert.match(page,/<h2>Variants<\/h2>/);
+  assert.equal(sourceOwner(anchored,`anchor:${name}`).key,item.key);
+  assert.equal(bookHref(anchored,{home:'design/crates/index.html',chapters:{'sage_ir::types':'design/crates/sage_ir/types.html'}},`anchor:${name}`),`design/crates/sage_ir/types.html#${encodeURIComponent(`anchor:${name}`)}`);
+  assert.match(createRenderer(anchored).render('anchor:missing'),/Not found/);
+});
+
+test('Rust evidence links show source snapshots at the requested line range',()=>{
+  const snapshot={...sources, files:{...sources.files,'tests/claim.rs':'fn before() {}\n// <script>inert</script>\nfn claim() {}\n'}};
+  const page=createRenderer(buildModel(files,snapshot)).render('source:tests/claim.rs:2:3');
+  assert.match(page,/Rust source snapshot/);
+  assert.match(page,/Lines 2–3/);
+  assert.equal((page.match(/selected-source-line/g)||[]).length,2);
+  assert.equal((page.match(/data-source-focus/g)||[]).length,1);
+  assert.match(page,/&lt;script&gt;inert/);
+  assert.doesNotMatch(page,/<script>/);
+  assert.match(createRenderer(buildModel(files,snapshot)).render('source:missing.rs:1:2'),/Not found/);
+});
+
 test('indexes actual crates, types, methods, and Rust annotations',()=>{
   assert.ok(model.items.size > 0);
   assert.ok(model.crates.has('sage_ir'));

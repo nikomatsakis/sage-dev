@@ -3,7 +3,7 @@
 **Status:** Implemented (Steps 1–3); Step 4 (Signature) deferred to type-signatures RFD
 
 **Depends on:**
-- [Module sym tree](./module-sym-tree.md) — `MemmapEntry`, `ExpandedModule`, `Symbol`, `SymbolData`
+- [Module sym tree](../module-sym-tree/README.md) — `MemmapEntry`, `ExpandedModule`, `Symbol`, `SymbolData`
 
 ## Goal
 
@@ -121,7 +121,7 @@ Every step follows **test-first**: write the tests, verify they fail (compile er
 
 ### Step 4: Signature (deferred)
 
-Depends on the [type-signatures RFD](./type-signatures.md) — `FnSig`, `StructSig`, `Ty`, and the signature query infrastructure are not yet implemented.
+Depends on the [type-signatures RFD](../type-signatures/README.md) — `FnSig`, `StructSig`, `Ty`, and the signature query infrastructure are not yet implemented.
 
 **Tests first.** Write signature tests — these fail initially (the signature query for constructors doesn't exist):
 1. `struct Foo(i32, String);` → the `TupleStructCtor` symbol's signature is `FnSig { params: [Int(I32), Adt(String, [])], ret: Adt(Foo, []) }`.

@@ -5,7 +5,8 @@ Rust queries. `cargo test -p sage-meta --test contracts` compiles and runs it;
 it can also be run with `cargo test --manifest-path
 crates/sage-meta/tests/fixtures/contracts/Cargo.toml`.
 
-The `.sage` files are loaded from disk at session creation. The Rust index is
+The `.sage` files are loaded from `md/design/crates/` at session creation,
+using the source directory configured by this fixture's `book.toml`. The Rust index is
 also loaded from disk and compared with `include_str!("queries.rs")` embedded
 in the test binary before source matching. Reviewed expectations in `expected/`
 are written independently of that index. They name both Sage operations and

@@ -45,6 +45,8 @@ impl<'db> LocalStructSym<'db> {
     // ANCHOR: example_struct_sig
     #[salsa::tracked]
     #[sage::item(crate::symbols::LocalStructSym::signature)]
+    // {anchor}`crates.sage_ir.checking.identity_minting`
+    // {anchor}`crates.sage_ir.checking.signature.owner_binder`
     pub fn sig(self, db: &'db dyn crate::Db) -> Stashed<Binder<'db, StructSig<'db>>> {
         use crate::check::Check;
         use crate::cst::generics::CheckGenerics;
@@ -78,6 +80,7 @@ impl<'db> LocalStructSym<'db> {
     // ANCHOR: example_struct_fields
     #[salsa::tracked]
     #[sage::item(crate::symbols::LocalStructSym::value)]
+    // {anchor}`crates.sage_ir.checking.signature.narrow_detail`
     pub fn fields(self, db: &'db dyn crate::Db) -> Stashed<StructFields<'db>> {
         use crate::check::Check;
         use crate::resolve::Resolver;

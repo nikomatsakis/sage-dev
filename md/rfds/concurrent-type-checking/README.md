@@ -3,7 +3,7 @@
 **Status:** Proposed
 
 **Depends on:**
-- [Type Inference](./type-inference.md) — the async executor sketch, structured concurrency model
+- [Type Inference](../type-inference/README.md) — the async executor sketch, structured concurrency model
 
 ## Problem
 

@@ -894,6 +894,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
 
     /// Relate an expression at a coercion site and materialize any selected
     /// conversion in the typed tree.
+    // {anchor}`crates.sage_ir.inference.subtyping_and_coercion`
     pub fn coerce_expr(
         &self,
         expr: Ptr<TyExpr<'db>>,
@@ -1090,6 +1091,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     }
 
     /// Catch a CheckError: record the diagnostic and substitute an error node.
+    // {anchor}`crates.sage_ir.types.body.diagnosed_recovery`
     pub fn error_expr(&self, err: CheckError<'db>, span: RelativeSpan) -> Ptr<TyExpr<'db>> {
         let e = self.catch(err.0);
         let ty = self.alloc_ty(Ty::Error(e));
@@ -2202,6 +2204,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     }
 
     #[sage::item(crate::inference::InferCtx::finalize)]
+    // {anchor}`crates.sage_ir.inference.terminal_obligations`
     pub fn finalize(&self) {
         // First consume every proof that current inference already enables.
         self.process_ready_obligations();
@@ -2295,6 +2298,9 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     // ------------------------------------------------------------------
 
     #[sage::item(crate::inference::InferCtx::finish)]
+    // {anchor}`crates.sage_ir.types.body.no_inference`
+    // {anchor}`crates.sage_ir.inference.body_local_quiescence`
+    // {anchor}`crates.sage_ir.inference.completed_body_boundary`
     pub fn finish(self, root: Ptr<TyExpr<'db>>, span: RelativeSpan) -> CheckedBody<'db> {
         assert!(
             !self.obligations.borrow().has_pending(),

@@ -96,6 +96,7 @@ impl Drop for ChildGuard {
 
 struct TempProject(std::path::PathBuf);
 
+// {anchor}`crates.sage_inspector.inspection.source_evidence`
 fn inspector_project() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("test-projects/semantic-inspector/db-drop-guard")

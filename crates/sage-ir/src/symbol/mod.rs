@@ -57,6 +57,7 @@ pub enum SymExtKind {
 #[sage::item(crate::symbols::ExternalImpl)]
 #[sage::item(crate::symbols::ExternalStruct)]
 #[sage::item(crate::symbols::ExternalEnum)]
+// {anchor}`crates.sage_ir.symbols.external_identity`
 pub struct SymExt<'db> {
     pub crate_num: CrateNum,
     pub def_index: DefIndex,
@@ -322,6 +323,8 @@ macro_rules! define_kind_symbols {
 }
 
 // ANCHOR: architecture_symbol_family
+// {anchor}`crates.sage_ir.symbols.definition_identity`
+// {anchor}`crates.sage_ir.symbols.kind_wrappers`
 define_kind_symbols! {
     #[sage::item(crate::symbols::Symbol)]
     pub struct Symbol<'db> { data: SymbolDataPriv<'db> }
@@ -347,6 +350,7 @@ define_kind_symbols! {
     #[sage::item(crate::symbols::ImplSymbol)]
     pub enum ImplSymbol<'db> { Local(crate::local_syms::impls::LocalImplSym<'db>), Ext(SymExtKind::Impl) }
     pub enum ModSymbol<'db> { Local(crate::local_syms::mods::LocalModSym<'db>), Ext(SymExtKind::Mod) }
+    #[sage::item(crate::types::MacroDefSymbol)]
     pub enum MacroDefSymbol<'db> { Local(crate::local_syms::macro_defs::LocalMacroDefSym<'db>), Ext(SymExtKind::MacroDef) }
     pub enum UseSymbol<'db> { Local(crate::local_syms::uses::LocalUseSym<'db>), Ext(SymExtKind::Mod) }
 

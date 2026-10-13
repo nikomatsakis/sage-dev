@@ -3,8 +3,8 @@
 **Status:** Partially Implemented
 
 **Depends on:**
-- [Type Signatures](./type-signatures.md) — `Ty`, `Binder`, stash-allocated types
-- [Per-kind symbol data](./per-kind-symbol-data.md) — `StructSymbol`, `FnSymbol`, etc.
+- [Type Signatures](../type-signatures/README.md) — `Ty`, `Binder`, stash-allocated types
+- [Per-kind symbol data](../per-kind-symbol-data/README.md) — `StructSymbol`, `FnSymbol`, etc.
 
 ## Problem
 
@@ -153,7 +153,7 @@ A struct is an ADT with a single variant; an enum is an ADT with multiple varian
 
 ```rust
 /// Shared by both StructSymbol and EnumSymbol.
-/// (`WherePredicate` is defined in the [Trait System](./trait-system.md) RFD;
+/// (`WherePredicate` is defined in the [Trait System](../trait-system/README.md) RFD;
 /// initially an always-empty slice until where-clause lowering is implemented.)
 pub struct AdtSignature<'db> {
     pub where_clauses: Binder<'db, Slice<WherePredicate<'db>>>,

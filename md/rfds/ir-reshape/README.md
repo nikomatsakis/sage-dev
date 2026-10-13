@@ -3,7 +3,7 @@
 **Status:** Partially Implemented (Phase 1 & 2 complete, Phase 3 not started)
 
 **Supersedes:**
-- [Symbol-Level Signature Queries](./symbol-signatures.md) (partially implemented, to be reworked)
+- [Symbol-Level Signature Queries](../symbol-signatures/README.md) (partially implemented, to be reworked)
 
 ## Problem
 

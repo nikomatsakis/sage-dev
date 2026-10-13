@@ -37,8 +37,8 @@ class Leaf { """Final."""
 "#;
 
 #[test]
-#[sage::test(meta.calls.declared)]
-#[sage::test(meta.calls.forbidden)]
+#[sage::test(meta.language.calls.declared)]
+#[sage::test(meta.language.calls.forbidden)]
 fn reports_direct_and_ancestor_violation_with_complete_path_and_rule() {
     let mut session = session(model(FORBIDDEN), &["Root::run"]);
     let root = session.enter("demo::Root::run", Some("root:1"));
@@ -71,7 +71,7 @@ fn reports_direct_and_ancestor_violation_with_complete_path_and_rule() {
 }
 
 #[test]
-#[sage::test(meta.calls.forbidden)]
+#[sage::test(meta.language.calls.forbidden)]
 fn immediate_permission_does_not_override_an_active_ancestor_prohibition() {
     let model = model(
         r#"
@@ -142,9 +142,9 @@ fn repeated_roots_are_independent_and_models_are_shared_immutably() {
 }
 
 #[test]
-#[sage::test(meta.calls.declared)]
+#[sage::test(meta.language.calls.declared)]
 #[sage::test(meta.contracts.cache_invocations)]
-#[sage::test(meta.envelopes.receiver_calls)]
+#[sage::test(meta.language.envelopes.receiver_calls)]
 fn same_operation_entry_is_recursion_and_needs_permission() {
     let leaf = r#"class Tree { """Tree.""" fn walk() -> u32 { """Walk.""" envelope {} } }"#;
     let mut denied = session(model(leaf), &["Tree::walk"]);
@@ -171,7 +171,7 @@ fn same_operation_entry_is_recursion_and_needs_permission() {
 
 #[test]
 #[sage::test(meta.contracts.observation_coverage)]
-#[sage::test(meta.envelopes.receiver_calls)]
+#[sage::test(meta.language.envelopes.receiver_calls)]
 fn self_permission_rejects_different_and_unknown_receivers() {
     let model = model(
         r#"
@@ -198,11 +198,10 @@ fn self_permission_rejects_different_and_unknown_receivers() {
 }
 
 #[test]
-#[sage::test(meta.envelopes.class_calls)]
+#[sage::test(meta.language.envelopes.class_calls)]
 fn a_class_wide_permission_does_not_require_receiver_identity() {
-    let mut session = session(
-        model(
-            r#"
+    let model = model(
+        r#"
         class Item { """Item."""
             fn run() -> u32 { """Run.""" envelope {
                 invokes self.read(); invokes crate::Item::read();
@@ -210,14 +209,15 @@ fn a_class_wide_permission_does_not_require_receiver_identity() {
             query read() -> u32 { """Read.""" envelope {} }
         }
     "#,
-        ),
-        &["Item::run"],
     );
-    let run = session.enter("demo::Item::run", None);
-    let read = session.enter("demo::Item::read", None);
-    session.exit(read);
-    session.exit(run);
-    session.finish().assert_calls_conform();
+    for (caller, callee) in [(None, None), (Some("item:1"), Some("item:2"))] {
+        let mut checked = session(model.clone(), &["Item::run"]);
+        let run = checked.enter("demo::Item::run", caller);
+        let read = checked.enter("demo::Item::read", callee);
+        checked.exit(read);
+        checked.exit(run);
+        checked.finish().assert_calls_conform();
+    }
 }
 
 #[test]
@@ -250,7 +250,7 @@ fn interface_dispatch_retains_both_frames_and_receiver_check() {
 }
 
 #[test]
-#[sage::test(meta.envelopes.class_calls)]
+#[sage::test(meta.language.envelopes.class_calls)]
 fn overrides_inherit_prohibitions_and_calls_dispatch_to_known_implementations() {
     let mut session = session(
         model(
@@ -343,7 +343,7 @@ fn internal_reexecution_establishes_context_without_fabricating_a_call() {
 }
 
 #[test]
-#[sage::test(meta.calls.forbidden)]
+#[sage::test(meta.language.calls.forbidden)]
 fn internal_reexecution_cannot_bypass_an_active_ancestor_prohibition() {
     let mut session = session(model(FORBIDDEN), &["Root::run"]);
     let root = session.enter("demo::Root::run", None);

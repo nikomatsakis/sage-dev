@@ -74,8 +74,9 @@ impl Observer {
 }
 
 fn documents() -> Vec<sage_meta::Document> {
-    sage_meta::workspace::load_documents(&Path::new(env!("CARGO_MANIFEST_DIR")).join("sage-src"))
-        .unwrap()
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let model = sage_meta::workspace::default_model_root(workspace).unwrap();
+    sage_meta::workspace::load_documents(&model).unwrap()
 }
 
 fn session(index: Arc<CorrespondenceIndex>, compiled_source: &str) -> SalsaObserver {

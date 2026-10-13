@@ -3,11 +3,11 @@
 **Status:** Implemented
 
 **Depends on:**
-- [Type Signatures](./type-signatures.md) — current `Ty`, `Binder`, `BoundVar` representation
-- [Per-kind symbol data](./per-kind-symbol-data.md) — `Symbol`, `SymbolData`, per-kind wrappers
+- [Type Signatures](../type-signatures/README.md) — current `Ty`, `Binder`, `BoundVar` representation
+- [Per-kind symbol data](../per-kind-symbol-data/README.md) — `Symbol`, `SymbolData`, per-kind wrappers
 
 **Depended on by:**
-- [Type Inference](./type-inference.md) — assumes this representation for the elaboration engine
+- [Type Inference](../type-inference/README.md) — assumes this representation for the elaboration engine
 
 ## Goal
 

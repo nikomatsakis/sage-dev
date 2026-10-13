@@ -1,3 +1,4 @@
+// {anchor}`crates.sage_ir.symbols.external_fact_queries`
 //! Typed imports from the owned `TcxDb` metadata boundary.
 
 use rustc_hash::FxHashMap;
@@ -22,6 +23,7 @@ use crate::ty::{
 // ANCHOR: architecture_external_trait_signature_query
 #[salsa::tracked]
 #[sage::item(crate::symbols::ExternalTrait::signature)]
+// {anchor}`crates.sage_ir.metadata.keyed_reuse`
 pub fn external_trait_signature<'db>(
     db: &'db dyn crate::Db,
     trait_sym: SymExt<'db>,

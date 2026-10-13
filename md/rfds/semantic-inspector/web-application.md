@@ -2,12 +2,12 @@
 
 **Status:** Completed
 
-**Parent:** [Semantic Inspector](./README.md)
+**Parent:** [Semantic Inspector](README.md)
 
 ## Purpose
 
 This sub-RFD follows the Semantic Inspector from the visible page inward. For
-each part of the [interaction mockup](./mockup.html), it explains:
+each part of the [interaction mockup](mockup.html), it explains:
 
 1. what the user does;
 2. how JavaScript assembles or updates that view;
@@ -26,7 +26,7 @@ chain from a visible fact to the semantic operation which produced it.
   style="width: 100%; height: 900px; border: 1px solid #dbe1dc; border-radius: 8px; background: white;"
 ></iframe>
 
-Use the [full-page mockup](./mockup.html) when the embedded viewport is too
+Use the [full-page mockup](mockup.html) when the embedded viewport is too
 narrow.
 
 The current mockup contains four principal regions:
@@ -83,7 +83,7 @@ and cannot execute additional Sage queries.
 
 ## JSON contract summary
 
-The normative [`/api/v1` protocol](./protocol.md) defines route spelling,
+The normative [`/api/v1` protocol](protocol.md) defines route spelling,
 headers, request and response DTOs, canonical-path encoding, rendering and reflected-value
 variants, trace ordering, and source-driven snapshot serialization. This section is a
 walkthrough-oriented summary. If an example here disagrees with the protocol,
@@ -243,9 +243,9 @@ The exact protocol snapshots may evolve, but changes are reviewed as protocol ch
 Tests do not parse and reserialize an Axum response before comparison, because
 doing so could hide field-order, omission, or formatting drift.
 
-The complete protocol contributes to [SI-A2](./README.md#si-a2),
-[SI-A3](./README.md#si-a3), [SI-A4](./README.md#si-a4),
-[SI-A7](./README.md#si-a7), and [SI-A8](./README.md#si-a8) at the slices shown
+The complete protocol contributes to [SI-A2](README.md#si-a2),
+[SI-A3](README.md#si-a3), [SI-A4](README.md#si-a4),
+[SI-A7](README.md#si-a7), and [SI-A8](README.md#si-a8) at the slices shown
 in the anchor matrix.
 
 ## React application shape
@@ -426,7 +426,7 @@ and constructs a generic selected-symbol summary: canonical path, display
 label, presentation, optional parent, and complete positive product list.
 Fields, items, and other child enumeration remain separate products; selecting
 a symbol does not enumerate them. Product tabs follow
-[SI-A4](./README.md#si-a4), and the browser does not infer them from an empty
+[SI-A4](README.md#si-a4), and the browser does not infer them from an empty
 result, origin, or symbol kind.
 
 The browser never sends search text to the backend. It filters the complete
@@ -546,7 +546,7 @@ context inlines arena values while guarding recursive reentry, depth, and node
 limits. Product producers
 compose the resulting `ValueNode` into a `RenderNode`; they do not manually
 serialize the underlying Sage value. This establishes
-[SI-A16](./README.md#si-a16).
+[SI-A16](README.md#si-a16).
 
 ### How Axum handles a product request
 
@@ -761,7 +761,7 @@ visible through a stable unmapped category and key; their raw debug payload is
 attached only to interactive diagnostics and test-failure artifacts. Existing
 `WillExecute` and `DidValidateMemoizedValue` events supply dispositions within
 the invocation span but do not replace it. This establishes
-[SI-A17](./README.md#si-a17).
+[SI-A17](README.md#si-a17).
 
 ## 8. What happens when source changes
 
@@ -1027,7 +1027,7 @@ to the human terminal. Tests parse only the JSON events, not prose, and HTTP
 client interception is not the source of truth. Assigned test ports,
 durations, raw concurrent arrival order, and raw Salsa debug keys are retained
 only in failure artifacts. The checked transcript follows
-[SI-A12](./README.md#si-a12): it groups requests by browser action, canonically
+[SI-A12](README.md#si-a12): it groups requests by browser action, canonically
 orders explicitly unordered siblings, and compares every included field and
 rendered value by exact textual identity.
 

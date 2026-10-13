@@ -12,9 +12,14 @@ use crate::{Diagnostic, Span};
 
 #[derive(Debug, serde::Serialize)]
 pub struct ModelCheck {
+    /// Whether all model documents loaded, parsed, and passed static validation.
     pub valid: bool,
+    /// Number of parsed `.sage` documents; zero if loading did not complete.
     pub documents: usize,
+    /// Static model errors, including invalid declarations and dependency envelopes.
+    /// Failures to locate, read, or parse the model are reported in `load_error`.
     pub diagnostics: Vec<Diagnostic>,
+    /// Failure to locate, read, or parse the model, preventing static validation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub load_error: Option<String>,
 }
@@ -47,6 +52,7 @@ pub struct AnchorCoverage {
     pub file: String,
     pub span: Span,
     pub tests: Vec<RustSite>,
+    pub implementations: Vec<crate::evidence::ImplementationSite>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -77,10 +83,18 @@ pub struct ReviewCheck {
 /// A report is successful only when every build-time validation stage ran and passed.
 #[derive(Debug, serde::Serialize)]
 pub struct CheckReport {
+    /// Model loading and static consistency results, always present even on load failure.
     pub model: ModelCheck,
+    /// Bidirectional, crate-correct mappings between Sage items and Rust declarations.
+    /// Absent when model loading or validation prevented this stage from starting.
     pub correspondence: Option<CorrespondenceCheck>,
+    /// Anchor definitions and their Rust implementation and test associations.
+    /// Absent if static model validation failed or the Rust source index could not load.
     pub specification: Option<SpecificationCheck>,
+    /// Freshness and decisions of saved claim-and-test reviews, without executing tests.
+    /// Absent when specification validation or an earlier prerequisite failed.
     pub review: Option<ReviewCheck>,
+    /// Formatted diagnostics and load failures, including source excerpts when available.
     /// Prepared while validating, so formatting does not depend on later source edits.
     #[serde(skip)]
     rendered_errors: Vec<String>,
@@ -345,23 +359,33 @@ fn check_roots(model_root: &Path, rust_root: Option<&Path>) -> CheckReport {
     };
     // A selected model may be inside a member crate. Cargo, rather than the
     // nearest manifest's directory, determines the documentation workspace.
-    let docs_root = index.workspace_root().unwrap_or(rust_root).join("md");
-    match SpecIndex::load(&docs_root) {
+    let workspace = index.workspace_root().unwrap_or(rust_root);
+    let docs_root = if workspace.join("book.toml").is_file() {
+        crate::workspace::book_source_root(workspace).unwrap_or_else(|_| workspace.join("md"))
+    } else {
+        workspace.join("md")
+    };
+    match SpecIndex::load_workspace(workspace) {
         Ok(spec) => {
             specification.documents = spec.documents;
             specification.anchors = spec.anchors.len();
-            let anchor_errors = spec.validate_anchors(&index.tests);
+            let mut anchor_errors = spec.validate_anchors(&index.tests);
+            anchor_errors.extend(spec.validate_implementations(&index));
             report
                 .rendered_errors
                 .extend(anchor_errors.iter().map(|diagnostic| {
-                    let path = format!("md/{}", diagnostic.file);
+                    let path = docs_root
+                        .join(&diagnostic.file)
+                        .to_string_lossy()
+                        .into_owned();
                     render_diagnostic(
                         diagnostic,
                         &path,
                         spec.sources.get(&diagnostic.file).map(String::as_str),
                     )
                 }));
-            let test_errors = spec.validate_test_references(&index.tests);
+            let mut test_errors = spec.validate_test_references(&index.tests);
+            test_errors.extend(spec.validate_implementation_references(&index));
             report
                 .rendered_errors
                 .extend(test_errors.iter().map(|diagnostic| {
@@ -382,6 +406,7 @@ fn check_roots(model_root: &Path, rust_root: Option<&Path>) -> CheckReport {
                     file: anchor.file.clone(),
                     span: anchor.span.clone(),
                     tests: index.tests.get(name).cloned().unwrap_or_default(),
+                    implementations: index.implementations.get(name).cloned().unwrap_or_default(),
                 })
                 .collect();
             if specification.valid {
@@ -420,6 +445,11 @@ fn check_reviews(
         diagnostics: Vec::new(),
         load_error: None,
     };
+    let docs_root = if workspace.join("book.toml").is_file() {
+        crate::workspace::book_source_root(workspace).unwrap_or_else(|_| workspace.join("md"))
+    } else {
+        workspace.join("md")
+    };
     let inputs = review::inventory(spec, rust);
     let checklist = review::load(&workspace.join(review::CHECKLIST_FILE));
     match inputs.and_then(|inputs| checklist.map(|checklist| (inputs, checklist))) {
@@ -449,7 +479,7 @@ fn check_reviews(
                 let diagnostic = Diagnostic {
                     file: anchor.map_or_else(
                         || review::CHECKLIST_FILE.into(),
-                        |anchor| format!("md/{}", anchor.file),
+                        |anchor| docs_root.join(&anchor.file).to_string_lossy().into_owned(),
                     ),
                     span: anchor.map_or(Span { start: 0, end: 0 }, |anchor| anchor.span.clone()),
                     message: issue.message,

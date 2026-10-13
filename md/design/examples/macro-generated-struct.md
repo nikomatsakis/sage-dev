@@ -65,4 +65,4 @@ the semantic pipeline operates on the generated item symbol.
 
 The complete phase contract, including same-module fixed-point resolution and
 terminal incompleteness, is in [Module and Macro
-Expansion](../pipeline/module-expansion.md).
+Expansion](../crates/sage_ir/expansion-guide.md).
