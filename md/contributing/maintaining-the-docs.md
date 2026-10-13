@@ -138,6 +138,11 @@ cargo run -p sage-meta -- check
 mdbook build
 ```
 
+With the configured HTML and linkcheck renderers, the rendered site is in
+`book/html/`. The Pages workflow publishes that directory and checks that
+`index.html` exists there before uploading; publishing `book/` instead nests
+the site under `/html/` and leaves the site's root URL returning 404.
+
 The same library check runs in workspace Cargo tests. Run focused behavior tests
 for changed claims, format Rust, and build the workspace. Inspect the generated
 index and representative source → anchor → source links, including `.sage`
