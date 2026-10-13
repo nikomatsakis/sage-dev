@@ -916,6 +916,87 @@ fn generated_crate_guides_are_canonical_and_link_to_rendered_sage_chapters() {
 
 #[test]
 #[sage::test(meta.book.shared_model)]
+fn only_owned_crate_guides_are_automatically_published() {
+    let fixture = BookFixture::new(
+        "- [Crates](design/crates/README.md)\n  - [Shared](design/crates/shared.md)\n",
+    );
+    fixture.write("design/crates/README.md", "# Crates\n");
+    fixture.write(
+        "design/crates/demo/crate.sage",
+        "crate demo { \"\"\"Demo.\"\"\" }",
+    );
+    fixture.write(
+        "design/crates/demo/guide.md",
+        "{anchor}`claim` Owned guide.\n",
+    );
+    fixture.write(
+        "design/crates/shared.md",
+        "{anchor}`claim` Explicit chapter.\n",
+    );
+    fixture.write(
+        "design/crates/unowned/guide.md",
+        "{anchor}`claim` Unpublished guide.\n",
+    );
+
+    let index = fixture.load();
+    assert!(index.chapters.contains_key("design/crates/README.md"));
+    assert!(index.chapters.contains_key("design/crates/demo/guide.md"));
+    assert!(index.anchors.contains_key("crates.demo.guide.claim"));
+    assert!(index.chapters.contains_key("design/crates/shared.md"));
+    assert!(index.anchors.contains_key("crates.shared.claim"));
+    assert!(
+        !index
+            .chapters
+            .contains_key("design/crates/unowned/guide.md")
+    );
+    assert!(!index.anchors.contains_key("crates.unowned.guide.claim"));
+    assert_eq!(index.diagnostics.len(), 1, "{:?}", index.diagnostics);
+    assert_eq!(index.diagnostics[0].file, "design/crates/unowned/guide.md");
+    assert!(
+        index.diagnostics[0]
+            .message
+            .contains("omitted from the Design chapter inventory")
+    );
+}
+
+#[test]
+#[sage::test(meta.book.shared_model)]
+fn noncanonical_crates_chapters_do_not_activate_generated_sources() {
+    let fixture = BookFixture::new("- [Crates](design/crates.md)\n");
+    fixture.write(
+        "design/crates.md",
+        "{anchor}`landing` An explicit chapter.\n",
+    );
+    fixture.write(
+        "design/crates/demo/crate.sage",
+        "crate demo { \"\"\"Demo.\"\"\" }",
+    );
+    fixture.write(
+        "design/crates/demo/guide.md",
+        "{anchor}`claim` Owned guide.\n",
+    );
+
+    let index = fixture.load();
+    assert_eq!(index.chapters.len(), 1);
+    assert!(index.chapters.contains_key("design/crates.md"));
+    assert_eq!(index.anchors.len(), 1);
+    assert!(index.anchors.contains_key("crates.landing"));
+    assert_eq!(index.diagnostics.len(), 2, "{:?}", index.diagnostics);
+    for file in [
+        "design/crates/demo/crate.sage",
+        "design/crates/demo/guide.md",
+    ] {
+        assert!(index.diagnostics.iter().any(|error| {
+            error.file == file
+                && error
+                    .message
+                    .contains("omitted from the Design chapter inventory")
+        }));
+    }
+}
+
+#[test]
+#[sage::test(meta.book.shared_model)]
 #[sage::test(meta.anchors.canonical_sources)]
 fn nonnormative_book_chapters_reference_rules_without_defining_them() {
     let fixture = BookFixture::new(

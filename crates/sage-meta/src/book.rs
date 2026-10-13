@@ -218,14 +218,8 @@ fn generate_crates(
                 continue;
             }
             let file_path = Path::new(file);
-            let owner = inventory
-                .iter()
-                .filter(|(_, (document, _))| matches!(document.header, Header::Crate { .. }))
-                .filter(|(_, (_, root))| {
-                    file_path.starts_with(root.parent().unwrap_or(Path::new("")))
-                })
-                .max_by_key(|(_, (_, root))| root.components().count());
-            if owner.map(|(owner, _)| owner) != Some(namespace) {
+            let owner = sage_meta::workspace::crate_source_owner(&documents, &source.join(file));
+            if owner != Some(namespace.as_str()) {
                 continue;
             }
             let prose = &spec.sources[file];

@@ -105,11 +105,15 @@ retain their saved review even if source line numbers move.
 
 ## Navigation and generated content
 
-Register handwritten chapters in `SUMMARY.md`. Keep `.sage` files under
-`design/crates/<crate>/` with a `crate.sage` manifest. The preprocessor generates
-crate subchapters and anchor pages; do not create Markdown copies of `.sage`
-sources. Write links to the relevant source chapters and use direct entity
-links when pointing to a particular operation or value type.
+Register handwritten chapters in `SUMMARY.md`, except companion Markdown
+guides under `design/crates/<crate>/`: the Crates chapter includes those through
+the shared chapter inventory. Keep `.sage` files in that same crate directory
+with a `crate.sage` manifest. The preprocessor generates crate subchapters and
+anchor pages; do not create Markdown copies of `.sage` sources. CI's orphan
+chapter check uses this inventory, including generated chapters, and rejects
+Markdown sources that would not be published. Write links to the relevant
+source chapters and use direct entity links when pointing to an operation or
+value type.
 
 A source badge opens the rule's generated anchor page. Its context link returns
 to the precise definition. Moving or renaming a rule requires updating its

@@ -25,25 +25,32 @@ pub fn book_source_root(workspace: &Path) -> Result<PathBuf, Box<dyn std::error:
     Ok(workspace.join(config.book.src.unwrap_or_else(|| PathBuf::from("src"))))
 }
 
+/// Find the nearest enclosing modeled crate for a source file. The source and
+/// document paths must use the same root, as they do in the shared book loader.
+pub fn crate_source_owner<'a>(documents: &'a [Document], source: &Path) -> Option<&'a str> {
+    documents
+        .iter()
+        .filter_map(|document| match &document.header {
+            crate::Header::Crate { name, .. } => Some((
+                name.as_str(),
+                Path::new(&document.file).parent().unwrap_or(Path::new("")),
+            )),
+            crate::Header::Module(_) => None,
+        })
+        .filter(|(_, root)| source.starts_with(root))
+        .max_by_key(|(_, root)| root.components().count())
+        .map(|(name, _)| name)
+}
+
 /// Stable namespace shared by source correspondence and browser navigation.
 /// The model validator separately diagnoses invalid headers and file placement.
 pub fn document_namespace(documents: &[Document], document: &Document) -> Option<String> {
     match &document.header {
         crate::Header::Crate { name, .. } => Some(name.clone()),
         crate::Header::Module(path) => {
-            let (name, _) = documents
-                .iter()
-                .filter_map(|document| match &document.header {
-                    crate::Header::Crate { name, .. } => Some((
-                        name,
-                        Path::new(&document.file).parent().unwrap_or(Path::new("")),
-                    )),
-                    crate::Header::Module(_) => None,
-                })
-                .filter(|(_, root)| Path::new(&document.file).starts_with(root))
-                .max_by_key(|(_, root)| root.components().count())?;
+            let name = crate_source_owner(documents, Path::new(&document.file))?;
             Some(
-                std::iter::once(name.as_str())
+                std::iter::once(name)
                     .chain(path.segments.iter().map(String::as_str))
                     .collect::<Vec<_>>()
                     .join("::"),

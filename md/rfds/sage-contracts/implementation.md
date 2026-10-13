@@ -176,6 +176,11 @@ editorial discussion. Runtime-conformance and agent-transport work below keeps
 its own unfinished checkpoints; this book migration does not establish those
 behaviors.
 
+CI's orphan-chapter lint uses the same `sage-meta` chapter inventory as book
+generation, including companion crate guides. It checks the configured book
+source directory and rejects unpublished Markdown without requiring generated
+chapters to be repeated in `SUMMARY.md`.
+
 ## Anchor content boundaries
 
 An independently testable claim can need several paragraphs, a list, or an

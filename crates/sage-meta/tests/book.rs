@@ -210,6 +210,35 @@ fn curated_crates_landing_preserves_prose_and_links_to_generated_chapters() {
 }
 
 #[test]
+#[sage::test(meta.book.shared_model)]
+fn companion_guides_use_the_nearest_enclosing_crate_in_inventory_and_book() {
+    let fixture = Fixture::new("manual");
+    std::fs::rename(
+        fixture.source.join("design/crates/support"),
+        fixture.source.join("design/crates/demo/support"),
+    )
+    .unwrap();
+    fixture.doc("design/crates/demo/guide.md", "# Demo guide\n");
+    fixture.doc("design/crates/demo/support/guide.md", "# Support guide\n");
+
+    let spec = sage_meta::spec::SpecIndex::load_workspace(&fixture.root).unwrap();
+    assert!(spec.diagnostics.is_empty(), "{:?}", spec.diagnostics);
+    let book = fixture.book("items");
+    let entries = chapters(book["items"].as_array().unwrap());
+    for (file, owner) in [
+        ("design/crates/demo/guide.md", "demo"),
+        ("design/crates/demo/support/guide.md", "support"),
+    ] {
+        assert!(spec.chapters.contains_key(file));
+        assert_eq!(entries[file]["source_path"], file);
+        assert_eq!(
+            entries[file]["parent_names"],
+            json!(["Design", "Crates", owner])
+        );
+    }
+}
+
+#[test]
 #[sage::test(meta.book.index_namespace_pages)]
 #[sage::test(meta.book.index_rows)]
 #[sage::test(meta.book.index_groups)]

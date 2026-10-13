@@ -647,8 +647,7 @@ impl SpecIndex {
                 }
             }
         }
-        let has_crates =
-            files.contains("design/crates/README.md") || files.contains("design/crates.md");
+        let has_crates = files.contains("design/crates/README.md");
         let documents = if root.join("design/crates").is_dir() {
             crate::workspace::load_documents(&root.join("design/crates"))?
         } else {
@@ -666,11 +665,13 @@ impl SpecIndex {
             let mut markdown = Vec::new();
             markdown_files(&root.join("design/crates"), &mut markdown)?;
             for path in markdown {
-                files.insert(
-                    path.strip_prefix(&root)?
-                        .to_string_lossy()
-                        .replace('\\', "/"),
-                );
+                if crate::workspace::crate_source_owner(&documents, &path).is_some() {
+                    files.insert(
+                        path.strip_prefix(&root)?
+                            .to_string_lossy()
+                            .replace('\\', "/"),
+                    );
+                }
             }
         }
         let mut index = Self::default();

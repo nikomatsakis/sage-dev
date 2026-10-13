@@ -7,6 +7,7 @@ publish = false
 [dependencies]
 xshell = "0.2"
 xflags = "0.3"
+sage-meta = { version = "0.1.0", path = "../crates/sage-meta" }
 
 [package.metadata.battery-pack]
 ci-battery-pack = { features = ["xtask"] }
