@@ -118,7 +118,7 @@ Rust fixture
 The semantic unit test catches regressions in Sage's elaborated body, while
 the structural checks, exact snapshot, and exact cross-emitter comparison
 establish this fixture's current coverage and representation boundary. The
-broader destination contract is specified in [Oracle Test Harness](../oracle-test-harness.md).
+broader destination contract is specified in [Oracle Test Harness](../crates/sage_oracle_harness/oracle-guide.md).
 
 ## Review packet
 

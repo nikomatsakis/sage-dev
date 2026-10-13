@@ -13,6 +13,12 @@ pub struct Event {
 
     /// What sort of event was it.
     pub kind: EventKind,
+
+    /// Original query declaration, when this is a query lifecycle event.
+    pub query_source: Option<QuerySource>,
+
+    /// Distinguishes a source-level fetch from accumulator graph inspection.
+    pub request_cause: Option<RequestCause>,
 }
 
 impl Event {
@@ -20,8 +26,38 @@ impl Event {
         Self {
             thread_id: thread::current().id(),
             kind,
+            query_source: None,
+            request_cause: None,
         }
     }
+
+    pub(crate) fn with_query<C: crate::function::Configuration>(mut self) -> Self {
+        self.query_source = Some(QuerySource {
+            file: C::LOCATION.file,
+            line: C::LOCATION.line,
+            name: C::DEBUG_NAME,
+        });
+        self
+    }
+
+    pub(crate) fn with_request_cause(mut self, cause: RequestCause) -> Self {
+        self.request_cause = Some(cause);
+        self
+    }
+}
+
+/// Source provenance emitted by Salsa's existing query expansion.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct QuerySource {
+    pub file: &'static str,
+    pub line: u32,
+    pub name: &'static str,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum RequestCause {
+    Fetch,
+    AccumulatorTraversal,
 }
 
 /// An enum identifying the various kinds of events that can occur.
@@ -31,9 +67,7 @@ pub enum EventKind {
     /// already-current cache hits are observable and nested request structure
     /// can be reconstructed without instrumenting individual query bodies.
     // ANCHOR: semantic_inspector_salsa_events
-    WillRequest {
-        database_key: DatabaseKeyIndex,
-    },
+    WillRequest { database_key: DatabaseKeyIndex },
 
     /// The tracked query invocation is ending. Every `WillRequest` has one
     /// matching `DidRequest`, including unwinding and cancellation paths.
@@ -42,7 +76,6 @@ pub enum EventKind {
         disposition: QueryDisposition,
     },
     // ANCHOR_END: semantic_inspector_salsa_events
-
     /// Occurs when we found that all inputs to a memoized value are
     /// up-to-date and hence the value can be re-used without
     /// executing the closure.
@@ -74,6 +107,10 @@ pub enum EventKind {
         /// The database-key for the affected value. Implements `Debug`.
         database_key: DatabaseKeyIndex,
     },
+
+    /// Balances `WillExecute`, including unwinding. This scope is distinct from
+    /// a request: incremental validation may execute a dependency internally.
+    DidExecute { database_key: DatabaseKeyIndex },
 
     /// Salsa starts a new fixpoint iteration for the cycle with `database_key` as its
     /// outermost cycle.

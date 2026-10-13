@@ -7,7 +7,7 @@ use crate::ty::{Const, InferVarIndex, Lifetime, Ty};
 use super::bound::Bound;
 use super::egraph::{CommitEffects, VersionedEGraph};
 use super::skeleton::decompose;
-use super::version::{Universe, Version};
+use super::version::{InferDomain, Universe, Version};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum UnifyError<'db> {
@@ -23,10 +23,23 @@ pub enum UnifyError<'db> {
         variable: InferVarIndex,
         ceiling: Universe,
     },
+    DomainConflict {
+        left: Ptr<Ty<'db>>,
+        left_domain: Option<InferDomain>,
+        right: Ptr<Ty<'db>>,
+        right_domain: Option<InferDomain>,
+    },
     Reported(ErrorReported),
 }
 
+#[derive(Debug)]
+pub(crate) struct RequiredUnifyFailure<'db> {
+    pub error: UnifyError<'db>,
+    pub affected: Vec<InferVarIndex>,
+}
+
 /// Apply one structural equality atomically against `parent`.
+// {anchor}`crates.sage_ir.inference.numeric_domains`
 pub fn try_unify<'db>(
     egraph: &mut VersionedEGraph<'db>,
     stash: &mut Stash,
@@ -35,6 +48,88 @@ pub fn try_unify<'db>(
     right: Ptr<Ty<'db>>,
 ) -> Result<CommitEffects, UnifyError<'db>> {
     try_unify_batch(egraph, stash, parent, &[(left, right)])
+}
+
+/// Attempt a source-required equality in a child transaction.
+///
+/// On a domain conflict, capture every parent-visible member of either
+/// unresolved conflicting class, including members joined only in the child,
+/// before rolling the child back. The diagnostic boundary uses that list to
+/// install precise `Ty::Error` recovery. Speculative solver probes do not need
+/// this additional recovery metadata.
+pub(crate) fn try_unify_required<'db>(
+    egraph: &mut VersionedEGraph<'db>,
+    stash: &mut Stash,
+    parent: Version,
+    left: Ptr<Ty<'db>>,
+    right: Ptr<Ty<'db>>,
+) -> Result<CommitEffects, RequiredUnifyFailure<'db>> {
+    let child = egraph.branch_from(parent);
+    match unify_in_probe(egraph, stash, child, left, right) {
+        Ok(()) => {
+            egraph.rebuild(child, stash);
+            Ok(egraph.collapse_into(child, parent))
+        }
+        Err(error) => {
+            let affected = match error {
+                UnifyError::DomainConflict { left, right, .. } => {
+                    affected_variables(egraph, stash, parent, child, left, right)
+                }
+                UnifyError::Mismatch { .. }
+                | UnifyError::OccursCheck { .. }
+                | UnifyError::UniverseLeak { .. }
+                | UnifyError::Reported(_) => Vec::new(),
+            };
+            egraph.discard(child);
+            Err(RequiredUnifyFailure { error, affected })
+        }
+    }
+}
+
+/// Expand the unresolved classes represented by the two conflicting child
+/// types to every parent-visible member. Variables nested inside a rigid side
+/// are not part of the conflicting equality class and remain inferable.
+fn affected_variables<'db>(
+    egraph: &VersionedEGraph<'db>,
+    stash: &mut Stash,
+    parent: Version,
+    child: Version,
+    left: Ptr<Ty<'db>>,
+    right: Ptr<Ty<'db>>,
+) -> Vec<InferVarIndex> {
+    let mut roots = Vec::new();
+    for ty in [left, right] {
+        let root = egraph.find(child, ty);
+        match stash[root] {
+            Ty::InferVar(_) => roots.push(root),
+            Ty::Bool
+            | Ty::Char
+            | Ty::Int(_)
+            | Ty::Uint(_)
+            | Ty::Float(_)
+            | Ty::Str
+            | Ty::Adt(_, _)
+            | Ty::Alias(_)
+            | Ty::Ref(_, _, _)
+            | Ty::Tuple(_)
+            | Ty::Slice(_)
+            | Ty::Array(_, _)
+            | Ty::FnPtr(_, _)
+            | Ty::Param(_)
+            | Ty::Never
+            | Ty::Error(_) => {}
+        }
+    }
+
+    let visible: Vec<_> = egraph.version_tree().visible_variables(parent).collect();
+    let mut affected = Vec::new();
+    for variable in visible {
+        let ty = stash.alloc(Ty::InferVar(variable));
+        if roots.contains(&egraph.find(child, ty)) {
+            affected.push(variable);
+        }
+    }
+    affected
 }
 
 /// Apply a batch of structural equalities in one transaction.
@@ -87,17 +182,23 @@ pub fn try_set_bound<'db>(
                 });
             }
         };
-        if let Some(bound_ty) = bound.ty() {
-            let ceiling = egraph.current_universe(child, variable);
-            make_accessible(
-                egraph,
-                stash,
-                child,
-                bound_ty,
-                variable,
-                ceiling,
-                &mut FxHashSet::default(),
-            )?;
+        match bound {
+            Bound::None => {}
+            Bound::AtLeast(bound_ty) => {
+                let ceiling = egraph.current_universe(child, variable);
+                make_accessible(
+                    egraph,
+                    stash,
+                    child,
+                    bound_ty,
+                    variable,
+                    ceiling,
+                    &mut FxHashSet::default(),
+                )?;
+            }
+            Bound::Exactly(bound_ty) => {
+                unify_in_probe(egraph, stash, child, variable_ty, bound_ty)?;
+            }
         }
         egraph.set_bound_in(child, stash, variable_ty, bound);
         Ok(())
@@ -108,6 +209,8 @@ pub fn try_set_bound<'db>(
 /// Own a short-lived child probe from creation through exactly one commit or
 /// discard path. Solver candidates intentionally do not use this helper: they
 /// extract and discard their long-lived alternative branches instead.
+// {anchor}`crates.sage_ir.inference.transaction_isolation`
+// {anchor}`crates.sage_ir.inference.atomic_checking`
 fn try_probe<'db, T>(
     egraph: &mut VersionedEGraph<'db>,
     stash: &mut Stash,
@@ -147,19 +250,24 @@ pub(crate) fn unify_in_probe<'db>(
             return Err(UnifyError::Reported(error));
         }
         (Ty::InferVar(left_var), Ty::InferVar(right_var)) => {
+            let domain = compatible_domain(egraph, stash, version, left, right)?
+                .expect("two inference classes must have a common domain");
             let common_ceiling = egraph
                 .current_universe(version, left_var)
                 .min(egraph.current_universe(version, right_var));
             egraph.lower_universe(version, left_var, common_ceiling);
             egraph.lower_universe(version, right_var, common_ceiling);
-            egraph.union(version, stash, left, right);
+            let root = egraph.union(version, stash, left, right);
+            egraph.set_domain_in(version, stash, root, domain);
             return Ok(());
         }
         (Ty::InferVar(variable), _) => {
+            compatible_domain(egraph, stash, version, left, right)?;
             bind_variable(egraph, stash, version, left, variable, right)?;
             return Ok(());
         }
         (_, Ty::InferVar(variable)) => {
+            compatible_domain(egraph, stash, version, left, right)?;
             bind_variable(egraph, stash, version, right, variable, left)?;
             return Ok(());
         }
@@ -210,6 +318,89 @@ pub(crate) fn unify_in_probe<'db>(
     Ok(())
 }
 
+/// Return the intersection when both sides are unresolved inference classes.
+/// A successful variable-to-rigid relation has already passed membership and
+/// therefore returns `None`.
+fn compatible_domain<'db>(
+    egraph: &VersionedEGraph<'db>,
+    stash: &Stash,
+    version: Version,
+    left: Ptr<Ty<'db>>,
+    right: Ptr<Ty<'db>>,
+) -> Result<Option<InferDomain>, UnifyError<'db>> {
+    let left = egraph.find(version, left);
+    let right = egraph.find(version, right);
+    let left_domain = egraph.effective_domain(version, stash, left);
+    let right_domain = egraph.effective_domain(version, stash, right);
+
+    match (left_domain, right_domain) {
+        (Some(left_domain), Some(right_domain)) => left_domain
+            .intersect(right_domain)
+            .map(Some)
+            .ok_or_else(|| domain_conflict(egraph, stash, version, left, right)),
+        (Some(domain), None) => {
+            if domain.admits(stash[right]) {
+                Ok(None)
+            } else {
+                Err(domain_conflict(egraph, stash, version, left, right))
+            }
+        }
+        (None, Some(domain)) => {
+            if domain.admits(stash[left]) {
+                Ok(None)
+            } else {
+                Err(domain_conflict(egraph, stash, version, left, right))
+            }
+        }
+        (None, None) => Ok(None),
+    }
+}
+
+fn domain_conflict<'db>(
+    egraph: &VersionedEGraph<'db>,
+    stash: &Stash,
+    version: Version,
+    left: Ptr<Ty<'db>>,
+    right: Ptr<Ty<'db>>,
+) -> UnifyError<'db> {
+    UnifyError::DomainConflict {
+        left,
+        left_domain: semantic_domain(egraph, stash, version, left),
+        right,
+        right_domain: semantic_domain(egraph, stash, version, right),
+    }
+}
+
+fn semantic_domain<'db>(
+    egraph: &VersionedEGraph<'db>,
+    stash: &Stash,
+    version: Version,
+    ty: Ptr<Ty<'db>>,
+) -> Option<InferDomain> {
+    let root = egraph.find(version, ty);
+    if let Some(domain) = egraph.effective_domain(version, stash, root) {
+        return Some(domain);
+    }
+    match stash[root] {
+        Ty::Int(_) | Ty::Uint(_) => Some(InferDomain::Integer),
+        Ty::Float(_) => Some(InferDomain::Float),
+        Ty::Bool
+        | Ty::Char
+        | Ty::Str
+        | Ty::Adt(_, _)
+        | Ty::Alias(_)
+        | Ty::Ref(_, _, _)
+        | Ty::Tuple(_)
+        | Ty::Slice(_)
+        | Ty::Array(_, _)
+        | Ty::FnPtr(_, _)
+        | Ty::Param(_)
+        | Ty::InferVar(_)
+        | Ty::Never
+        | Ty::Error(_) => None,
+    }
+}
+
 fn bind_variable<'db>(
     egraph: &mut VersionedEGraph<'db>,
     stash: &mut Stash,
@@ -245,6 +436,77 @@ fn bind_variable<'db>(
     egraph.set_bound_in(version, stash, variable_ty, Bound::Exactly(value));
     egraph.union(version, stash, variable_ty, value);
     Ok(())
+}
+
+/// Install a previously reported error as the exact recovery type.
+pub(crate) fn install_error_recovery<'db>(
+    egraph: &mut VersionedEGraph<'db>,
+    stash: &mut Stash,
+    parent: Version,
+    variable_ty: Ptr<Ty<'db>>,
+    error_ty: Ptr<Ty<'db>>,
+) -> Result<CommitEffects, UnifyError<'db>> {
+    try_probe(egraph, stash, parent, |egraph, stash, child| {
+        let variable_ty = egraph.find(child, variable_ty);
+        let error_ty = egraph.find(child, error_ty);
+        match stash[variable_ty] {
+            Ty::InferVar(_) => {}
+            Ty::Bool
+            | Ty::Char
+            | Ty::Int(_)
+            | Ty::Uint(_)
+            | Ty::Float(_)
+            | Ty::Str
+            | Ty::Adt(_, _)
+            | Ty::Alias(_)
+            | Ty::Ref(_, _, _)
+            | Ty::Tuple(_)
+            | Ty::Slice(_)
+            | Ty::Array(_, _)
+            | Ty::FnPtr(_, _)
+            | Ty::Param(_)
+            | Ty::Never
+            | Ty::Error(_) => {
+                return Err(UnifyError::Mismatch {
+                    left: variable_ty,
+                    right: error_ty,
+                });
+            }
+        }
+        match stash[error_ty] {
+            Ty::Error(_) => {}
+            Ty::Bool
+            | Ty::Char
+            | Ty::Int(_)
+            | Ty::Uint(_)
+            | Ty::Float(_)
+            | Ty::Str
+            | Ty::Adt(_, _)
+            | Ty::Alias(_)
+            | Ty::Ref(_, _, _)
+            | Ty::Tuple(_)
+            | Ty::Slice(_)
+            | Ty::Array(_, _)
+            | Ty::FnPtr(_, _)
+            | Ty::Param(_)
+            | Ty::InferVar(_)
+            | Ty::Never => {
+                return Err(UnifyError::Mismatch {
+                    left: variable_ty,
+                    right: error_ty,
+                });
+            }
+        }
+        debug_assert!(
+            egraph
+                .effective_domain(child, stash, variable_ty)
+                .is_some_and(|domain| domain.admits(stash[error_ty]))
+        );
+        egraph.set_bound_in(child, stash, variable_ty, Bound::Exactly(error_ty));
+        egraph.union(child, stash, variable_ty, error_ty);
+        Ok(())
+    })
+    .map(|(_, effects)| effects)
 }
 
 fn occurs_in<'db>(
@@ -374,8 +636,11 @@ fn make_accessible<'db>(
 mod tests {
     use super::*;
     use crate::db::Database;
+    use crate::diagnostic::{Diagnostic, Span, report};
     use crate::generic_param::{AlphaEquivParam, GenericParam, GenericParamKind};
-    use crate::ty::IntTy;
+    use crate::source::SourceFile;
+    use crate::span::{AbsoluteSpan, ParseSource};
+    use crate::ty::{FloatTy, IntTy, UintTy};
 
     fn variable<'db>(
         egraph: &mut VersionedEGraph<'db>,
@@ -385,6 +650,425 @@ mod tests {
     ) -> Ptr<Ty<'db>> {
         let index = egraph.alloc_var(version, universe);
         stash.alloc(Ty::InferVar(index))
+    }
+
+    fn variable_in_domain<'db>(
+        egraph: &mut VersionedEGraph<'db>,
+        stash: &mut Stash,
+        version: Version,
+        universe: Universe,
+        domain: InferDomain,
+    ) -> Ptr<Ty<'db>> {
+        let index = egraph.alloc_var_in_domain(version, universe, domain);
+        stash.alloc(Ty::InferVar(index))
+    }
+
+    fn variable_index(stash: &Stash, variable: Ptr<Ty<'_>>) -> InferVarIndex {
+        match stash[variable] {
+            Ty::InferVar(index) => index,
+            Ty::Bool
+            | Ty::Char
+            | Ty::Int(_)
+            | Ty::Uint(_)
+            | Ty::Float(_)
+            | Ty::Str
+            | Ty::Adt(_, _)
+            | Ty::Alias(_)
+            | Ty::Ref(_, _, _)
+            | Ty::Tuple(_)
+            | Ty::Slice(_)
+            | Ty::Array(_, _)
+            | Ty::FnPtr(_, _)
+            | Ty::Param(_)
+            | Ty::Never
+            | Ty::Error(_) => panic!("expected inference variable"),
+        }
+    }
+
+    #[test]
+    #[sage::test(crates.sage_ir.inference.numeric_domains)]
+    fn variable_union_intersects_domains_in_both_orders() {
+        for reverse in [false, true] {
+            let mut egraph = VersionedEGraph::new();
+            let mut stash = Stash::new();
+            let any = variable(&mut egraph, &mut stash, Version::ROOT, Universe::ROOT);
+            let integer = variable_in_domain(
+                &mut egraph,
+                &mut stash,
+                Version::ROOT,
+                Universe::ROOT,
+                InferDomain::Integer,
+            );
+            let any_index = variable_index(&stash, any);
+            let (left, right) = if reverse {
+                (integer, any)
+            } else {
+                (any, integer)
+            };
+
+            let effects = try_unify(&mut egraph, &mut stash, Version::ROOT, left, right).unwrap();
+
+            assert_eq!(
+                egraph.effective_domain(Version::ROOT, &stash, any),
+                Some(InferDomain::Integer)
+            );
+            assert_eq!(
+                egraph.effective_domain(Version::ROOT, &stash, integer),
+                Some(InferDomain::Integer)
+            );
+            assert!(effects.wakes.contains(&any_index));
+        }
+    }
+
+    #[test]
+    #[sage::test(crates.sage_ir.inference.numeric_domains)]
+    #[sage::test(crates.sage_ir.inference.transaction_isolation)]
+    fn incompatible_transitive_domain_union_rolls_back() {
+        let mut egraph = VersionedEGraph::new();
+        let mut stash = Stash::new();
+        let any = variable(&mut egraph, &mut stash, Version::ROOT, Universe::ROOT);
+        let integer = variable_in_domain(
+            &mut egraph,
+            &mut stash,
+            Version::ROOT,
+            Universe::ROOT,
+            InferDomain::Integer,
+        );
+        let float = variable_in_domain(
+            &mut egraph,
+            &mut stash,
+            Version::ROOT,
+            Universe::ROOT,
+            InferDomain::Float,
+        );
+        try_unify(&mut egraph, &mut stash, Version::ROOT, any, integer).unwrap();
+        let integer_root = egraph.find(Version::ROOT, any);
+        let float_root = egraph.find(Version::ROOT, float);
+        let revision = egraph.semantic_revision(Version::ROOT);
+
+        assert!(matches!(
+            try_unify(&mut egraph, &mut stash, Version::ROOT, any, float),
+            Err(UnifyError::DomainConflict {
+                left_domain: Some(InferDomain::Integer),
+                right_domain: Some(InferDomain::Float),
+                ..
+            })
+        ));
+        assert_eq!(egraph.find(Version::ROOT, any), integer_root);
+        assert_eq!(egraph.find(Version::ROOT, float), float_root);
+        assert_eq!(
+            egraph.effective_domain(Version::ROOT, &stash, any),
+            Some(InferDomain::Integer)
+        );
+        assert_eq!(egraph.semantic_revision(Version::ROOT), revision);
+    }
+
+    #[test]
+    fn required_conflict_tracks_provisional_class_without_unvisited_siblings() {
+        let mut egraph = VersionedEGraph::new();
+        let mut stash = Stash::new();
+        let any = variable(&mut egraph, &mut stash, Version::ROOT, Universe::ROOT);
+        let integer = variable_in_domain(
+            &mut egraph,
+            &mut stash,
+            Version::ROOT,
+            Universe::ROOT,
+            InferDomain::Integer,
+        );
+        let float = variable_in_domain(
+            &mut egraph,
+            &mut stash,
+            Version::ROOT,
+            Universe::ROOT,
+            InferDomain::Float,
+        );
+        let unvisited = variable_in_domain(
+            &mut egraph,
+            &mut stash,
+            Version::ROOT,
+            Universe::ROOT,
+            InferDomain::Integer,
+        );
+        let u32_ty = stash.alloc(Ty::Uint(UintTy::U32));
+        let left_elements = stash.alloc_slice(&[any, integer, unvisited]);
+        let left = stash.alloc(Ty::Tuple(left_elements));
+        let right_elements = stash.alloc_slice(&[integer, float, u32_ty]);
+        let right = stash.alloc(Ty::Tuple(right_elements));
+
+        let failure =
+            try_unify_required(&mut egraph, &mut stash, Version::ROOT, left, right).unwrap_err();
+
+        assert!(matches!(failure.error, UnifyError::DomainConflict { .. }));
+        assert_eq!(
+            failure.affected,
+            [any, integer, float].map(|ty| variable_index(&stash, ty)),
+        );
+        assert!(
+            !failure
+                .affected
+                .contains(&variable_index(&stash, unvisited))
+        );
+        assert_eq!(egraph.find(Version::ROOT, any), any);
+        assert_eq!(egraph.find(Version::ROOT, integer), integer);
+    }
+
+    #[test]
+    fn numeric_domains_accept_members_and_reject_other_families() {
+        for integer in [Ty::Int(IntTy::I128), Ty::Uint(UintTy::Usize)] {
+            let mut egraph = VersionedEGraph::new();
+            let mut stash = Stash::new();
+            let variable = variable_in_domain(
+                &mut egraph,
+                &mut stash,
+                Version::ROOT,
+                Universe::ROOT,
+                InferDomain::Integer,
+            );
+            let value = stash.alloc(integer);
+            try_unify(&mut egraph, &mut stash, Version::ROOT, variable, value).unwrap();
+            assert_eq!(egraph.find(Version::ROOT, variable), value);
+        }
+
+        for float in [FloatTy::F32, FloatTy::F64] {
+            let mut egraph = VersionedEGraph::new();
+            let mut stash = Stash::new();
+            let variable = variable_in_domain(
+                &mut egraph,
+                &mut stash,
+                Version::ROOT,
+                Universe::ROOT,
+                InferDomain::Float,
+            );
+            let value = stash.alloc(Ty::Float(float));
+            try_unify(&mut egraph, &mut stash, Version::ROOT, variable, value).unwrap();
+            assert_eq!(egraph.find(Version::ROOT, variable), value);
+        }
+
+        let mut egraph = VersionedEGraph::new();
+        let mut stash = Stash::new();
+        let integer = variable_in_domain(
+            &mut egraph,
+            &mut stash,
+            Version::ROOT,
+            Universe::ROOT,
+            InferDomain::Integer,
+        );
+        let float = stash.alloc(Ty::Float(FloatTy::F32));
+        let revision = egraph.semantic_revision(Version::ROOT);
+        assert!(matches!(
+            try_unify(&mut egraph, &mut stash, Version::ROOT, integer, float),
+            Err(UnifyError::DomainConflict { .. })
+        ));
+        assert_eq!(egraph.find(Version::ROOT, integer), integer);
+        assert_eq!(egraph.semantic_revision(Version::ROOT), revision);
+
+        let mut egraph = VersionedEGraph::new();
+        let mut stash = Stash::new();
+        let float = variable_in_domain(
+            &mut egraph,
+            &mut stash,
+            Version::ROOT,
+            Universe::ROOT,
+            InferDomain::Float,
+        );
+        let integer = stash.alloc(Ty::Uint(UintTy::U32));
+        let revision = egraph.semantic_revision(Version::ROOT);
+        assert!(matches!(
+            try_unify(&mut egraph, &mut stash, Version::ROOT, float, integer,),
+            Err(UnifyError::DomainConflict { .. })
+        ));
+        assert_eq!(egraph.find(Version::ROOT, float), float);
+        assert_eq!(egraph.semantic_revision(Version::ROOT), revision);
+    }
+
+    #[test]
+    fn exact_bounds_enforce_domains_transactionally() {
+        let mut egraph = VersionedEGraph::new();
+        let mut stash = Stash::new();
+        let integer = variable_in_domain(
+            &mut egraph,
+            &mut stash,
+            Version::ROOT,
+            Universe::ROOT,
+            InferDomain::Integer,
+        );
+        let float = stash.alloc(Ty::Float(FloatTy::F64));
+        let revision = egraph.semantic_revision(Version::ROOT);
+
+        assert!(matches!(
+            try_set_bound(
+                &mut egraph,
+                &mut stash,
+                Version::ROOT,
+                integer,
+                Bound::Exactly(float)
+            ),
+            Err(UnifyError::DomainConflict { .. })
+        ));
+        assert_eq!(egraph.get_bound(Version::ROOT, integer), Bound::None);
+        assert_eq!(
+            egraph.effective_domain(Version::ROOT, &stash, integer),
+            Some(InferDomain::Integer)
+        );
+        assert_eq!(egraph.semantic_revision(Version::ROOT), revision);
+    }
+
+    #[test]
+    fn exact_bounds_join_the_validated_equality_class() {
+        let mut egraph = VersionedEGraph::new();
+        let mut stash = Stash::new();
+        let any = variable(&mut egraph, &mut stash, Version::ROOT, Universe::ROOT);
+        let integer = variable_in_domain(
+            &mut egraph,
+            &mut stash,
+            Version::ROOT,
+            Universe::ROOT,
+            InferDomain::Integer,
+        );
+
+        try_set_bound(
+            &mut egraph,
+            &mut stash,
+            Version::ROOT,
+            any,
+            Bound::Exactly(integer),
+        )
+        .unwrap();
+        assert_eq!(egraph.find(Version::ROOT, any), integer);
+        assert_eq!(
+            egraph.effective_domain(Version::ROOT, &stash, any),
+            Some(InferDomain::Integer)
+        );
+
+        let float = stash.alloc(Ty::Float(FloatTy::F32));
+        let revision = egraph.semantic_revision(Version::ROOT);
+        assert!(matches!(
+            try_set_bound(
+                &mut egraph,
+                &mut stash,
+                Version::ROOT,
+                any,
+                Bound::Exactly(float),
+            ),
+            Err(UnifyError::DomainConflict { .. })
+        ));
+        assert_eq!(egraph.find(Version::ROOT, any), integer);
+        assert_eq!(egraph.semantic_revision(Version::ROOT), revision);
+
+        let mut egraph = VersionedEGraph::new();
+        let mut stash = Stash::new();
+        let any = variable(&mut egraph, &mut stash, Version::ROOT, Universe::ROOT);
+        let float = stash.alloc(Ty::Float(FloatTy::F32));
+        try_set_bound(
+            &mut egraph,
+            &mut stash,
+            Version::ROOT,
+            any,
+            Bound::Exactly(float),
+        )
+        .unwrap();
+        let integer = variable_in_domain(
+            &mut egraph,
+            &mut stash,
+            Version::ROOT,
+            Universe::ROOT,
+            InferDomain::Integer,
+        );
+        assert!(matches!(
+            try_unify(&mut egraph, &mut stash, Version::ROOT, integer, any,),
+            Err(UnifyError::DomainConflict { .. })
+        ));
+    }
+
+    #[test]
+    fn reported_error_recovery_is_admitted_by_numeric_domains() {
+        let db = Database::default();
+        let source = SourceFile::new(&db, "domain-recovery.rs".to_owned(), String::new());
+        let mut diagnostics = Vec::new();
+        let reported = report(
+            &mut diagnostics,
+            Diagnostic::error(
+                Span::Absolute(AbsoluteSpan {
+                    source: ParseSource::SourceFile(source),
+                    start: 0,
+                    end: 0,
+                }),
+                "test recovery",
+            ),
+        );
+        assert_eq!(diagnostics.len(), 1);
+
+        let mut egraph = VersionedEGraph::new();
+        let mut stash = Stash::new();
+        let error_ty = stash.alloc(Ty::Error(reported));
+        let error_alias = variable(&mut egraph, &mut stash, Version::ROOT, Universe::ROOT);
+        install_error_recovery(
+            &mut egraph,
+            &mut stash,
+            Version::ROOT,
+            error_alias,
+            error_ty,
+        )
+        .unwrap();
+
+        for domain in [InferDomain::Integer, InferDomain::Float] {
+            let restricted = variable_in_domain(
+                &mut egraph,
+                &mut stash,
+                Version::ROOT,
+                Universe::ROOT,
+                domain,
+            );
+            install_error_recovery(
+                &mut egraph,
+                &mut stash,
+                Version::ROOT,
+                restricted,
+                error_alias,
+            )
+            .unwrap();
+            assert_eq!(egraph.find(Version::ROOT, restricted), error_ty);
+        }
+    }
+
+    #[test]
+    fn domain_narrowing_follows_child_commit_and_discard() {
+        let mut egraph = VersionedEGraph::new();
+        let mut stash = Stash::new();
+        let any = variable(&mut egraph, &mut stash, Version::ROOT, Universe::ROOT);
+        let integer = variable_in_domain(
+            &mut egraph,
+            &mut stash,
+            Version::ROOT,
+            Universe::ROOT,
+            InferDomain::Integer,
+        );
+        let any_index = variable_index(&stash, any);
+
+        let discarded = egraph.branch_from(Version::ROOT);
+        unify_in_probe(&mut egraph, &mut stash, discarded, any, integer).unwrap();
+        assert_eq!(
+            egraph.effective_domain(discarded, &stash, any),
+            Some(InferDomain::Integer)
+        );
+        assert_eq!(
+            egraph.effective_domain(Version::ROOT, &stash, any),
+            Some(InferDomain::Any)
+        );
+        egraph.discard(discarded);
+        assert_eq!(
+            egraph.effective_domain(Version::ROOT, &stash, any),
+            Some(InferDomain::Any)
+        );
+
+        let committed = egraph.branch_from(Version::ROOT);
+        unify_in_probe(&mut egraph, &mut stash, committed, integer, any).unwrap();
+        let effects = egraph.collapse_into(committed, Version::ROOT);
+        assert_eq!(
+            egraph.effective_domain(Version::ROOT, &stash, any),
+            Some(InferDomain::Integer)
+        );
+        assert!(effects.wakes.contains(&any_index));
     }
 
     #[test]

@@ -14,7 +14,8 @@ use crate::resolve::{Namespace, Resolution, Resolver};
 use crate::scope::LocalCrateSymbol;
 use crate::span::RelativeSpan;
 use crate::ty::{
-    AliasTy, Binder, CheckedParameterEnv, FnSig, InferVarIndex, SolverEligibility, Ty,
+    AliasTy, Binder, CheckedParameterEnv, FnSig, InferVarIndex, Lifetime, MethodReceiver,
+    SolverEligibility, Ty,
 };
 use crate::tytree::*;
 
@@ -22,11 +23,14 @@ use super::infer::bound::Bound;
 use super::infer::egraph::VersionedEGraph;
 use super::infer::obligations::{
     Obligation, ObligationGoal, ObligationManager, ObligationProvenance, ObligationReason,
-    ObligationState, StagedObligationBatch,
+    ObligationRecovery, ObligationState, StagedObligationBatch,
 };
 use super::infer::runtime::Runtime;
-use super::infer::unify::{UnifyError, try_set_bound, try_unify};
-use super::infer::version::{Universe, Version};
+use super::infer::unify::{
+    RequiredUnifyFailure, UnifyError, install_error_recovery, try_set_bound, try_unify,
+    try_unify_required,
+};
+use super::infer::version::{InferDomain, Universe, Version};
 
 struct MainTaskWake(AtomicBool);
 
@@ -120,8 +124,18 @@ pub enum TypeErrorKind<'db> {
         expected: Ptr<Ty<'db>>,
         actual: Ptr<Ty<'db>>,
     },
+    DomainConflict {
+        expected: Ptr<Ty<'db>>,
+        expected_domain: Option<InferDomain>,
+        actual: Ptr<Ty<'db>>,
+        actual_domain: Option<InferDomain>,
+        affected: Vec<InferVarIndex>,
+        relation_expected: Ptr<Ty<'db>>,
+        relation_actual: Ptr<Ty<'db>>,
+    },
     UnresolvedInferVar {
         var: InferVarIndex,
+        domain: InferDomain,
     },
     AmbiguousName {
         count: usize,
@@ -142,6 +156,12 @@ pub enum ErrorContext {
     },
 }
 
+enum RequiredRelationRecovery<'db> {
+    Done,
+    Atom(Ptr<Ty<'db>>, Ptr<Ty<'db>>),
+    Children(Vec<(Ptr<Ty<'db>>, Ptr<Ty<'db>>)>),
+}
+
 impl<'db> TypeError<'db> {
     pub fn with_context(mut self, context: ErrorContext) -> Self {
         match &mut self {
@@ -150,6 +170,59 @@ impl<'db> TypeError<'db> {
         }
         self
     }
+}
+
+fn domain_side_description<'db>(
+    db: &'db dyn crate::Db,
+    stash: &Stash,
+    ty: Ptr<Ty<'db>>,
+    domain: Option<InferDomain>,
+) -> String {
+    match stash[ty] {
+        Ty::InferVar(_) => match domain {
+            Some(InferDomain::Integer) => "an integer".to_owned(),
+            Some(InferDomain::Float) => "a floating-point type".to_owned(),
+            Some(InferDomain::Any) | None => "some type".to_owned(),
+        },
+        Ty::Bool
+        | Ty::Char
+        | Ty::Int(_)
+        | Ty::Uint(_)
+        | Ty::Float(_)
+        | Ty::Str
+        | Ty::Adt(_, _)
+        | Ty::Alias(_)
+        | Ty::Ref(_, _, _)
+        | Ty::Tuple(_)
+        | Ty::Slice(_)
+        | Ty::Array(_, _)
+        | Ty::FnPtr(_, _)
+        | Ty::Param(_)
+        | Ty::Never
+        | Ty::Error(_) => {
+            let display = TyDisplay::new(db, stash, ty).to_string();
+            format!("`{}`", hide_inference_indices(&display))
+        }
+    }
+}
+
+fn hide_inference_indices(display: &str) -> String {
+    // `TyDisplay`'s only source-internal fragment is an inference variable
+    // written as `?<digits>`. Preserve its structural formatting while
+    // replacing those fragments with source-level placeholders.
+    let mut result = String::with_capacity(display.len());
+    let mut characters = display.chars().peekable();
+    while let Some(character) = characters.next() {
+        if character == '?' && characters.peek().is_some_and(char::is_ascii_digit) {
+            result.push('_');
+            while characters.peek().is_some_and(char::is_ascii_digit) {
+                characters.next();
+            }
+        } else {
+            result.push(character);
+        }
+    }
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +263,8 @@ impl<'db> RecordErr<'db> for Result<(), TypeError<'db>> {
 /// concurrent tasks. Protected by `RefCell` since the executor is
 /// single-threaded and cooperative.
 // ANCHOR: architecture_infer_context
+#[sage::item(crate::inference::InferCtx)]
+#[sage::item(crate::types::InferenceState)]
 pub struct InferCtx<'check, 'db> {
     pub db: &'db dyn crate::Db,
     pub(crate) source_stash: &'check Stash,
@@ -301,9 +376,155 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     pub fn catch(&self, err: TypeError<'db>) -> ErrorReported {
         match &err {
             TypeError::Reported(e) => *e,
-            TypeError::Fresh { .. } => {
+            TypeError::Fresh { kind, .. } => {
                 let diag = self.type_error_to_diagnostic(&err).unwrap();
-                self.record(diag)
+                let reported = self.record(diag);
+                match kind {
+                    TypeErrorKind::DomainConflict {
+                        expected: _,
+                        expected_domain: _,
+                        actual: _,
+                        actual_domain: _,
+                        affected,
+                        relation_expected,
+                        relation_actual,
+                    } => {
+                        self.recover_domain_conflict(affected, reported);
+                        self.recover_required_relation(
+                            *relation_actual,
+                            *relation_expected,
+                            reported,
+                        );
+                    }
+                    TypeErrorKind::Mismatch { .. }
+                    | TypeErrorKind::UnresolvedInferVar { .. }
+                    | TypeErrorKind::AmbiguousName { .. } => {}
+                }
+                reported
+            }
+        }
+    }
+
+    /// Relate every still-unresolved affected class to one reported error.
+    fn recover_domain_conflict(&self, affected: &[InferVarIndex], reported: ErrorReported) {
+        let roots = {
+            let mut stash = self.target_stash.borrow_mut();
+            let egraph = self.egraph.borrow();
+            let mut roots = Vec::new();
+            for variable in affected {
+                let ty = stash.alloc(Ty::InferVar(*variable));
+                let root = egraph.find(Version::ROOT, ty);
+                if matches!(stash[root], Ty::InferVar(_)) && !roots.contains(&root) {
+                    roots.push(root);
+                }
+            }
+            roots
+        };
+        if roots.is_empty() {
+            return;
+        }
+
+        let error_ty = self.target_stash.borrow_mut().alloc(Ty::Error(reported));
+        for root in roots {
+            let effects = {
+                let mut egraph = self.egraph.borrow_mut();
+                let mut stash = self.target_stash.borrow_mut();
+                let root = egraph.find_mut(Version::ROOT, root);
+                if !matches!(stash[root], Ty::InferVar(_)) {
+                    None
+                } else {
+                    Some(
+                        install_error_recovery(
+                            &mut egraph,
+                            &mut stash,
+                            Version::ROOT,
+                            root,
+                            error_ty,
+                        )
+                        .expect("domain-error recovery must accept a reported error type"),
+                    )
+                }
+            };
+            if let Some(effects) = effects {
+                self.publish_commit_effects(effects);
+            }
+        }
+    }
+
+    /// Replay the non-conflicting children of an equality after its primary
+    /// domain error has been recovered. This restores compatible constraints
+    /// that the atomic unifier rolled back without poisoning unrelated types.
+    fn recover_required_relation(
+        &self,
+        actual: Ptr<Ty<'db>>,
+        expected: Ptr<Ty<'db>>,
+        reported: ErrorReported,
+    ) {
+        self.recover_required_relation_inner(actual, expected, reported, &mut FxHashSet::default());
+    }
+
+    fn recover_required_relation_inner(
+        &self,
+        actual: Ptr<Ty<'db>>,
+        expected: Ptr<Ty<'db>>,
+        reported: ErrorReported,
+        visited: &mut FxHashSet<(Ptr<Ty<'db>>, Ptr<Ty<'db>>)>,
+    ) {
+        let step = {
+            let stash = self.target_stash.borrow();
+            let egraph = self.egraph.borrow();
+            let actual = egraph.find(Version::ROOT, actual);
+            let expected = egraph.find(Version::ROOT, expected);
+            if actual == expected || !visited.insert((actual, expected)) {
+                RequiredRelationRecovery::Done
+            } else if matches!(stash[actual], Ty::Error(_))
+                || matches!(stash[expected], Ty::Error(_))
+            {
+                RequiredRelationRecovery::Done
+            } else if matches!(stash[actual], Ty::InferVar(_))
+                || matches!(stash[expected], Ty::InferVar(_))
+            {
+                RequiredRelationRecovery::Atom(actual, expected)
+            } else {
+                let actual = super::infer::skeleton::decompose(&stash, actual);
+                let expected = super::infer::skeleton::decompose(&stash, expected);
+                if actual.skeleton != expected.skeleton
+                    || actual.children.len() != expected.children.len()
+                {
+                    RequiredRelationRecovery::Done
+                } else {
+                    RequiredRelationRecovery::Children(
+                        actual.children.into_iter().zip(expected.children).collect(),
+                    )
+                }
+            }
+        };
+
+        match step {
+            RequiredRelationRecovery::Done => {}
+            RequiredRelationRecovery::Atom(actual, expected) => {
+                let result = {
+                    let mut egraph = self.egraph.borrow_mut();
+                    let mut stash = self.target_stash.borrow_mut();
+                    try_unify_required(&mut egraph, &mut stash, Version::ROOT, actual, expected)
+                };
+                match result {
+                    Ok(effects) => self.publish_commit_effects(effects),
+                    Err(RequiredUnifyFailure { error, affected }) => match error {
+                        UnifyError::DomainConflict { .. } => {
+                            self.recover_domain_conflict(&affected, reported);
+                        }
+                        UnifyError::Mismatch { .. }
+                        | UnifyError::OccursCheck { .. }
+                        | UnifyError::UniverseLeak { .. }
+                        | UnifyError::Reported(_) => {}
+                    },
+                }
+            }
+            RequiredRelationRecovery::Children(children) => {
+                for (actual, expected) in children {
+                    self.recover_required_relation_inner(actual, expected, reported, visited);
+                }
             }
         }
     }
@@ -362,6 +583,41 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         visit(&stash, &egraph, ty, &mut FxHashSet::default())
     }
 
+    fn mismatch_diagnostic(
+        &self,
+        span: Span<'db>,
+        context: &[ErrorContext],
+        expected: &str,
+        actual: &str,
+    ) -> Diagnostic<'db> {
+        let message = format!("type mismatch: expected {expected}, found {actual}");
+        let mut diagnostic =
+            Diagnostic::error(span.clone(), message).label(span, format!("found {actual}"));
+        for context in context {
+            match context {
+                ErrorContext::ReturnType { ret_span } => {
+                    diagnostic = diagnostic.secondary(
+                        self.span(*ret_span),
+                        format!("expected {expected} because of return type"),
+                    );
+                }
+                ErrorContext::Argument { index, call_span } => {
+                    diagnostic = diagnostic.secondary(
+                        self.span(*call_span),
+                        format!("expected {expected} for argument {}", index + 1),
+                    );
+                }
+                ErrorContext::FieldInit { field_span } => {
+                    diagnostic = diagnostic.secondary(
+                        self.span(*field_span),
+                        format!("expected {expected} for this field"),
+                    );
+                }
+            }
+        }
+        diagnostic
+    }
+
     fn type_error_to_diagnostic(&self, err: &TypeError<'db>) -> Option<Diagnostic<'db>> {
         let TypeError::Fresh {
             kind,
@@ -375,44 +631,32 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         let stash = self.target_stash.borrow();
         Some(match kind {
             TypeErrorKind::Mismatch { expected, actual } => {
-                let expected_str = TyDisplay::new(self.db, &*stash, *expected).to_string();
-                let actual_str = TyDisplay::new(self.db, &*stash, *actual).to_string();
-                let msg = format!(
-                    "type mismatch: expected `{}`, found `{}`",
-                    expected_str, actual_str,
-                );
-                let mut diag = Diagnostic::error(span_resolved.clone(), &msg)
-                    .label(span_resolved, format!("found `{actual_str}`"));
-
-                for ctx in context {
-                    match ctx {
-                        ErrorContext::ReturnType { ret_span } => {
-                            diag = diag.secondary(
-                                self.span(*ret_span),
-                                format!("expected `{expected_str}` because of return type"),
-                            );
-                        }
-                        ErrorContext::Argument { index, call_span } => {
-                            diag = diag.secondary(
-                                self.span(*call_span),
-                                format!("expected `{expected_str}` for argument {}", index + 1),
-                            );
-                        }
-                        ErrorContext::FieldInit { field_span } => {
-                            diag = diag.secondary(
-                                self.span(*field_span),
-                                format!("expected `{expected_str}` for this field"),
-                            );
-                        }
-                    }
-                }
-
-                diag
+                let expected = format!("`{}`", TyDisplay::new(self.db, &*stash, *expected));
+                let actual = format!("`{}`", TyDisplay::new(self.db, &*stash, *actual));
+                self.mismatch_diagnostic(span_resolved, context, &expected, &actual)
             }
-            TypeErrorKind::UnresolvedInferVar { var } => Diagnostic::error(
-                span_resolved,
-                format!("could not infer type for ?{}", var.0),
-            ),
+            TypeErrorKind::DomainConflict {
+                expected,
+                expected_domain,
+                actual,
+                actual_domain,
+                affected: _,
+                relation_expected: _,
+                relation_actual: _,
+            } => {
+                let expected =
+                    domain_side_description(self.db, &stash, *expected, *expected_domain);
+                let actual = domain_side_description(self.db, &stash, *actual, *actual_domain);
+                self.mismatch_diagnostic(span_resolved, context, &expected, &actual)
+            }
+            TypeErrorKind::UnresolvedInferVar { var, domain } => {
+                let message = match domain {
+                    InferDomain::Any => format!("could not infer type for ?{}", var.0),
+                    InferDomain::Integer => "could not infer an integer type".to_owned(),
+                    InferDomain::Float => "could not infer a floating-point type".to_owned(),
+                };
+                Diagnostic::error(span_resolved, message)
+            }
             TypeErrorKind::AmbiguousName { count } => {
                 Diagnostic::error(span_resolved, format!("ambiguous name: {count} candidates"))
             }
@@ -449,11 +693,27 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     // ------------------------------------------------------------------
 
     pub fn fresh_ty_var(&self) -> Ptr<Ty<'db>> {
-        self.fresh_ty_var_in(Version::ROOT, Universe(1))
+        self.fresh_ty_var_with_domain(InferDomain::Any)
+    }
+
+    pub(crate) fn fresh_ty_var_with_domain(&self, domain: InferDomain) -> Ptr<Ty<'db>> {
+        self.fresh_ty_var_in_domain(Version::ROOT, Universe(1), domain)
     }
 
     pub(crate) fn fresh_ty_var_in(&self, version: Version, universe: Universe) -> Ptr<Ty<'db>> {
-        let idx = self.egraph.borrow_mut().alloc_var(version, universe);
+        self.fresh_ty_var_in_domain(version, universe, InferDomain::Any)
+    }
+
+    pub(crate) fn fresh_ty_var_in_domain(
+        &self,
+        version: Version,
+        universe: Universe,
+        domain: InferDomain,
+    ) -> Ptr<Ty<'db>> {
+        let idx = self
+            .egraph
+            .borrow_mut()
+            .alloc_var_in_domain(version, universe, domain);
         let ty = Ty::InferVar(idx);
         self.target_stash.borrow_mut().alloc(ty)
     }
@@ -508,6 +768,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         }
     }
 
+    #[sage::item(crate::inference::InferCtx::relate)]
     pub fn require_eq(
         &self,
         a: Ptr<Ty<'db>>,
@@ -517,35 +778,56 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         let result = {
             let mut egraph = self.egraph.borrow_mut();
             let mut stash = self.target_stash.borrow_mut();
-            try_unify(&mut egraph, &mut stash, Version::ROOT, a, b)
+            try_unify_required(&mut egraph, &mut stash, Version::ROOT, a, b)
         };
         match result {
             Ok(effects) => {
                 self.publish_commit_effects(effects);
                 Ok(())
             }
-            Err(UnifyError::Reported(error)) => Err(TypeError::Reported(error)),
-            Err(UnifyError::Mismatch { left, right }) => Err(TypeError::Fresh {
-                kind: TypeErrorKind::Mismatch {
-                    expected: right,
-                    actual: left,
-                },
-                span,
-                context: Vec::new(),
-            }),
-            Err(UnifyError::OccursCheck { .. } | UnifyError::UniverseLeak { .. }) => {
-                Err(TypeError::Fresh {
+            Err(RequiredUnifyFailure { error, affected }) => match error {
+                UnifyError::Reported(error) => Err(TypeError::Reported(error)),
+                UnifyError::Mismatch { left, right } => Err(TypeError::Fresh {
                     kind: TypeErrorKind::Mismatch {
-                        expected: self.find(b),
-                        actual: self.find(a),
+                        expected: right,
+                        actual: left,
                     },
                     span,
                     context: Vec::new(),
-                })
-            }
+                }),
+                UnifyError::DomainConflict {
+                    left,
+                    left_domain,
+                    right,
+                    right_domain,
+                } => Err(TypeError::Fresh {
+                    kind: TypeErrorKind::DomainConflict {
+                        expected: right,
+                        expected_domain: right_domain,
+                        actual: left,
+                        actual_domain: left_domain,
+                        affected,
+                        relation_expected: b,
+                        relation_actual: a,
+                    },
+                    span,
+                    context: Vec::new(),
+                }),
+                UnifyError::OccursCheck { .. } | UnifyError::UniverseLeak { .. } => {
+                    Err(TypeError::Fresh {
+                        kind: TypeErrorKind::Mismatch {
+                            expected: self.find(b),
+                            actual: self.find(a),
+                        },
+                        span,
+                        context: Vec::new(),
+                    })
+                }
+            },
         }
     }
 
+    #[sage::item(crate::inference::InferCtx::relate)]
     pub fn require_sub(
         &self,
         a: Ptr<Ty<'db>>,
@@ -595,6 +877,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         }
     }
 
+    #[sage::item(crate::inference::InferCtx::relate)]
     pub fn require_coerce(
         &self,
         a: Ptr<Ty<'db>>,
@@ -611,6 +894,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
 
     /// Relate an expression at a coercion site and materialize any selected
     /// conversion in the typed tree.
+    // {anchor}`crates.sage_ir.inference.subtyping_and_coercion`
     pub fn coerce_expr(
         &self,
         expr: Ptr<TyExpr<'db>>,
@@ -807,6 +1091,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     }
 
     /// Catch a CheckError: record the diagnostic and substitute an error node.
+    // {anchor}`crates.sage_ir.types.body.diagnosed_recovery`
     pub fn error_expr(&self, err: CheckError<'db>, span: RelativeSpan) -> Ptr<TyExpr<'db>> {
         let e = self.catch(err.0);
         let ty = self.alloc_ty(Ty::Error(e));
@@ -970,6 +1255,22 @@ impl<'check, 'db> InferCtx<'check, 'db> {
             .alloc(TyExpr { data, ty, span })
     }
 
+    pub(crate) fn adjust_method_receiver(
+        &self,
+        expression: Ptr<TyExpr<'db>>,
+        receiver_ty: Ptr<Ty<'db>>,
+        receiver: MethodReceiver,
+        span: RelativeSpan,
+    ) -> Ptr<TyExpr<'db>> {
+        match receiver {
+            MethodReceiver::Value { .. } => expression,
+            MethodReceiver::Ref { mutability } => {
+                let reference_ty = self.alloc_ty(Ty::Ref(receiver_ty, mutability, Lifetime::Dummy));
+                self.alloc_expr(TyExprData::Ref(expression, mutability), reference_ty, span)
+            }
+        }
+    }
+
     // ------------------------------------------------------------------
     // Locals
     // ------------------------------------------------------------------
@@ -1101,7 +1402,13 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         let transaction = egraph.branch_from(Version::ROOT);
         let result = try_unify(&mut egraph, &mut stash, transaction, left, right);
         egraph.discard(transaction);
-        !matches!(result, Err(UnifyError::Mismatch { .. }))
+        match result {
+            Ok(_)
+            | Err(UnifyError::OccursCheck { .. })
+            | Err(UnifyError::UniverseLeak { .. })
+            | Err(UnifyError::Reported(_)) => true,
+            Err(UnifyError::Mismatch { .. } | UnifyError::DomainConflict { .. }) => false,
+        }
     }
 
     fn elaborate_solver_predicates(
@@ -1191,10 +1498,11 @@ impl<'check, 'db> InferCtx<'check, 'db> {
                         trait_ref: predicate.trait_ref,
                     }),
                     provenance,
+                    None,
                 );
             }
             if environment.solver_eligibility == SolverEligibility::Unsupported {
-                self.submit_obligation_goal(Goal::Maybe, provenance);
+                self.submit_obligation_goal(Goal::Maybe, provenance, None);
             }
         }
     }
@@ -1210,6 +1518,63 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         self.submit_obligation_goal(
             super::solve::Goal::Atom(super::solve::Atom::TraitImpl { self_ty, trait_ref }),
             ObligationProvenance { span, reason },
+            None,
+        );
+    }
+
+    pub(crate) fn submit_operator_trait_obligation(
+        &self,
+        self_ty: Ptr<Ty<'db>>,
+        trait_ref: crate::ty::TraitRef<'db>,
+        span: RelativeSpan,
+        slot: ExprSlot,
+        watched_types: Vec<Ptr<Ty<'db>>>,
+    ) {
+        self.submit_operator_obligation(
+            ObligationGoal::Prove(super::solve::Goal::Atom(super::solve::Atom::TraitImpl {
+                self_ty,
+                trait_ref,
+            })),
+            span,
+            slot,
+            watched_types,
+        );
+    }
+
+    pub(crate) fn submit_operator_alias_relation(
+        &self,
+        alias: AliasTy<'db>,
+        expected: Ptr<Ty<'db>>,
+        span: RelativeSpan,
+        slot: ExprSlot,
+        watched_types: Vec<Ptr<Ty<'db>>>,
+    ) {
+        self.submit_operator_obligation(
+            ObligationGoal::Normalize { alias, expected },
+            span,
+            slot,
+            watched_types,
+        );
+    }
+
+    fn submit_operator_obligation(
+        &self,
+        goal: ObligationGoal<'db>,
+        span: RelativeSpan,
+        slot: ExprSlot,
+        watched_types: Vec<Ptr<Ty<'db>>>,
+    ) {
+        self.submit_obligation(
+            goal,
+            ObligationProvenance {
+                span,
+                reason: ObligationReason::BinaryOperator,
+            },
+            Some(ObligationRecovery {
+                slot,
+                span,
+                watched_types,
+            }),
         );
     }
 
@@ -1299,8 +1664,9 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         &self,
         goal: super::solve::Goal<'db>,
         provenance: ObligationProvenance,
+        recovery: Option<ObligationRecovery<'db>>,
     ) {
-        self.submit_obligation(ObligationGoal::Prove(goal), provenance);
+        self.submit_obligation(ObligationGoal::Prove(goal), provenance, recovery);
     }
 
     fn submit_alias_relation(
@@ -1309,10 +1675,19 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         expected: Ptr<Ty<'db>>,
         provenance: ObligationProvenance,
     ) {
-        self.submit_obligation(ObligationGoal::Normalize { alias, expected }, provenance);
+        self.submit_obligation(
+            ObligationGoal::Normalize { alias, expected },
+            provenance,
+            None,
+        );
     }
 
-    fn submit_obligation(&self, goal: ObligationGoal<'db>, provenance: ObligationProvenance) {
+    fn submit_obligation(
+        &self,
+        goal: ObligationGoal<'db>,
+        provenance: ObligationProvenance,
+        recovery: Option<ObligationRecovery<'db>>,
+    ) {
         let local_crate = self
             .local_crate
             .expect("solver obligations require a local crate context");
@@ -1321,22 +1696,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         let (canonical, stalled_on) =
             self.canonicalize_obligation_goal(local_crate, assumptions_complete, assumptions, goal);
 
-        let mut manager = self.obligations.borrow_mut();
-        if let Some(existing) = manager.obligations.iter_mut().find(|existing| {
-            matches!(goal, ObligationGoal::Prove(_))
-                && matches!(existing.goal, ObligationGoal::Prove(_))
-                && existing.state != ObligationState::Terminal
-                && existing.canonical_goal == canonical.data
-                && existing.mapping.absolute_universe_base
-                    == canonical.mapping.absolute_universe_base
-                && existing.mapping.inputs == canonical.mapping.inputs
-        }) {
-            if !existing.provenance.contains(&provenance) {
-                existing.provenance.push(provenance);
-            }
-            return;
-        }
-        manager.obligations.push(Obligation {
+        let candidate = Obligation {
             goal,
             assumptions,
             assumptions_complete,
@@ -1344,10 +1704,21 @@ impl<'check, 'db> InferCtx<'check, 'db> {
             canonical_goal: canonical.data,
             mapping: canonical.mapping,
             provenance: vec![provenance],
+            recoveries: recovery.into_iter().collect(),
             state: ObligationState::Ready,
             stalled_on,
             last_attempted_revision: None,
-        });
+        };
+        let mut manager = self.obligations.borrow_mut();
+        if let Some(existing) = manager.obligations.iter_mut().find(|existing| {
+            existing.state != ObligationState::Terminal && existing.same_dedup_key(&candidate)
+        }) {
+            if !existing.provenance.contains(&provenance) {
+                existing.provenance.push(provenance);
+            }
+            return;
+        }
+        manager.obligations.push(candidate);
     }
 
     fn recanonicalize_obligation(&self, index: usize) -> u64 {
@@ -1402,12 +1773,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
                 let equivalent = {
                     let left = &manager.obligations[index];
                     let right = &manager.obligations[duplicate];
-                    matches!(left.goal, ObligationGoal::Prove(_))
-                        && matches!(right.goal, ObligationGoal::Prove(_))
-                        && left.canonical_goal == right.canonical_goal
-                        && left.mapping.absolute_universe_base
-                            == right.mapping.absolute_universe_base
-                        && left.mapping.inputs == right.mapping.inputs
+                    left.same_dedup_key(right)
                 };
                 if equivalent {
                     let additional = manager.obligations[duplicate].provenance.clone();
@@ -1422,8 +1788,13 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         }
     }
 
+    #[sage::item(crate::inference::InferCtx::obligation)]
     fn attempt_obligation(&self, index: usize, terminal: bool) {
         let revision = self.recanonicalize_obligation(index);
+        if let Some(error) = self.obligation_recovery_error(index) {
+            self.terminalize_obligation_with_error(index, revision, error);
+            return;
+        }
         let (goal, canonical_goal, mapping, unchanged) = {
             let manager = self.obligations.borrow();
             let obligation = &manager.obligations[index];
@@ -1434,6 +1805,19 @@ impl<'check, 'db> InferCtx<'check, 'db> {
                 obligation.last_attempted_revision == Some(revision),
             )
         };
+        match goal {
+            ObligationGoal::Prove(_) => {}
+            ObligationGoal::Normalize { alias, expected } => {
+                let alias = self.alloc_ty(Ty::Alias(alias));
+                if let Some(error) = self
+                    .error_in_ty(alias)
+                    .or_else(|| self.error_in_ty(expected))
+                {
+                    self.terminalize_obligation_with_error(index, revision, error);
+                    return;
+                }
+            }
+        }
         if unchanged && !terminal {
             self.obligations.borrow_mut().obligations[index].state = ObligationState::Stalled;
             return;
@@ -1630,9 +2014,18 @@ impl<'check, 'db> InferCtx<'check, 'db> {
                 return NormalizationProgress::No;
             }
         };
-        if try_unify(&mut egraph, &mut stash, transaction, output, expected).is_err() {
-            egraph.discard(transaction);
-            return NormalizationProgress::No;
+        match try_unify(&mut egraph, &mut stash, transaction, output, expected) {
+            Ok(_) => {}
+            Err(
+                UnifyError::Mismatch { .. }
+                | UnifyError::OccursCheck { .. }
+                | UnifyError::UniverseLeak { .. }
+                | UnifyError::DomainConflict { .. }
+                | UnifyError::Reported(_),
+            ) => {
+                egraph.discard(transaction);
+                return NormalizationProgress::No;
+            }
         }
         let complete = modulo.is_trivially_true(&stash);
         let effects = egraph.collapse_into(transaction, Version::ROOT);
@@ -1647,14 +2040,14 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     }
 
     fn fail_obligation(&self, index: usize, message: &str) {
-        let provenances = {
+        let (provenances, recoveries) = {
             let mut manager = self.obligations.borrow_mut();
             let obligation = &mut manager.obligations[index];
             if obligation.state == ObligationState::Terminal {
                 return;
             }
             obligation.state = ObligationState::Terminal;
-            obligation.provenance.clone()
+            (obligation.provenance.clone(), obligation.recoveries.clone())
         };
         let Some(first) = provenances.first().copied() else {
             return;
@@ -1665,7 +2058,99 @@ impl<'check, 'db> InferCtx<'check, 'db> {
             diagnostic =
                 diagnostic.secondary(self.span(provenance.span), provenance.reason.description());
         }
-        self.record(diagnostic);
+        let error = self.record(diagnostic);
+        self.recover_expr_slots(&recoveries, error);
+    }
+
+    fn obligation_recovery_error(&self, index: usize) -> Option<ErrorReported> {
+        let recoveries = self.obligations.borrow().obligations[index]
+            .recoveries
+            .clone();
+        for recovery in &recoveries {
+            let expression = self.expr_slots.borrow()[recovery.slot.0 as usize]
+                .expect("obligation expression slot must be filled before solving");
+            match self.target_stash.borrow()[expression].data {
+                TyExprData::Error(error) => return Some(error),
+                TyExprData::Literal(_)
+                | TyExprData::Path(_)
+                | TyExprData::Block(_, _)
+                | TyExprData::Call(_, _)
+                | TyExprData::ResolvedCall(_, _)
+                | TyExprData::MethodCall(_, _, _)
+                | TyExprData::Field(_, _)
+                | TyExprData::Binary(_, _, _)
+                | TyExprData::Unary(_, _)
+                | TyExprData::Deref(_)
+                | TyExprData::Ref(_, _)
+                | TyExprData::NeverToAny(_)
+                | TyExprData::If(_, _, _)
+                | TyExprData::IfLet(_, _, _, _)
+                | TyExprData::Match(_, _)
+                | TyExprData::Loop(_)
+                | TyExprData::While(_, _)
+                | TyExprData::WhileLet(_, _, _)
+                | TyExprData::For(_, _, _)
+                | TyExprData::Break(_)
+                | TyExprData::Continue
+                | TyExprData::Return(_)
+                | TyExprData::Assign(_, _)
+                | TyExprData::Await(_)
+                | TyExprData::Try(_)
+                | TyExprData::Closure(_, _)
+                | TyExprData::Tuple(_)
+                | TyExprData::Array(_)
+                | TyExprData::Index(_, _)
+                | TyExprData::Cast(_, _)
+                | TyExprData::StructLit(_, _)
+                | TyExprData::Range(_, _)
+                | TyExprData::MacroCall(_, _)
+                | TyExprData::Unresolved(_)
+                | TyExprData::Missing => {}
+            }
+            if let Some(error) = recovery
+                .watched_types
+                .iter()
+                .copied()
+                .find_map(|ty| self.error_in_ty(ty))
+            {
+                return Some(error);
+            }
+        }
+        None
+    }
+
+    fn terminalize_obligation_with_error(&self, index: usize, revision: u64, error: ErrorReported) {
+        let recoveries = {
+            let mut manager = self.obligations.borrow_mut();
+            let obligation = &mut manager.obligations[index];
+            obligation.state = ObligationState::Terminal;
+            obligation.last_attempted_revision = Some(revision);
+            obligation.recoveries.clone()
+        };
+        self.recover_expr_slots(&recoveries, error);
+    }
+
+    fn recover_expr_slots(&self, recoveries: &[ObligationRecovery<'db>], error: ErrorReported) {
+        let error_ty = self.alloc_ty(Ty::Error(error));
+        for recovery in recoveries {
+            let original = self.expr_slots.borrow()[recovery.slot.0 as usize]
+                .expect("obligation expression slot must be filled before solving");
+            let original_ty = self.target_stash.borrow()[original].ty;
+            let root = self.find(original_ty);
+            if matches!(self.target_stash.borrow()[root], Ty::InferVar(_)) {
+                let effects = install_error_recovery(
+                    &mut self.egraph.borrow_mut(),
+                    &mut self.target_stash.borrow_mut(),
+                    Version::ROOT,
+                    root,
+                    error_ty,
+                )
+                .expect("obligation recovery must accept a reported error type");
+                self.publish_commit_effects(effects);
+            }
+            let expression = self.alloc_expr(TyExprData::Error(error), error_ty, recovery.span);
+            self.fill_expr_slot(recovery.slot, expression);
+        }
     }
 
     fn terminally_discharge_obligations(&self) {
@@ -1718,6 +2203,8 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         }
     }
 
+    #[sage::item(crate::inference::InferCtx::finalize)]
+    // {anchor}`crates.sage_ir.inference.terminal_obligations`
     pub fn finalize(&self) {
         // First consume every proof that current inference already enables.
         self.process_ready_obligations();
@@ -1761,39 +2248,39 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         }
 
         for (ty, idx) in unresolved_vars {
+            let root = self.egraph.borrow_mut().find_mut(Version::ROOT, ty);
+            if root != ty || !matches!(self.target_stash.borrow()[root], Ty::InferVar(_)) {
+                continue;
+            }
             let span = RelativeSpan { start: 0, end: 0 };
+            let domain = self
+                .egraph
+                .borrow()
+                .effective_domain(Version::ROOT, &self.target_stash.borrow(), ty)
+                .expect("unresolved inference class must retain a domain");
             let err = TypeError::Fresh {
-                kind: TypeErrorKind::UnresolvedInferVar { var: idx },
+                kind: TypeErrorKind::UnresolvedInferVar { var: idx, domain },
                 span,
                 context: Vec::new(),
             };
             let e = self.catch(err);
 
             let error_ty = self.target_stash.borrow_mut().alloc(Ty::Error(e));
-            let effects = try_unify(
+            let effects = install_error_recovery(
                 &mut self.egraph.borrow_mut(),
                 &mut self.target_stash.borrow_mut(),
                 Version::ROOT,
                 ty,
                 error_ty,
-            );
-            match effects {
-                Ok(effects) => self.publish_commit_effects(effects),
-                // Error recovery deliberately relates an unresolved variable
-                // to the sentinel even though ordinary equality propagates it.
-                Err(UnifyError::Reported(_)) => {
-                    let child = self.egraph.borrow_mut().branch_from(Version::ROOT);
-                    {
-                        let stash = self.target_stash.borrow();
-                        let mut egraph = self.egraph.borrow_mut();
-                        egraph.set_bound_in(child, &stash, ty, Bound::Exactly(error_ty));
-                        egraph.union(child, &stash, ty, error_ty);
-                    }
-                    let effects = self.egraph.borrow_mut().collapse_into(child, Version::ROOT);
-                    self.publish_commit_effects(effects);
-                }
-                Err(error) => panic!("failed to install error recovery type: {error:?}"),
-            }
+            )
+            .expect("error recovery must accept a reported error type");
+            self.publish_commit_effects(effects);
+
+            // A diagnostic for one unresolved input may invalidate a retained
+            // expression and bind its synthetic result to the same error. Do
+            // that before diagnosing the next variable so the dependent
+            // result does not produce a second, cascading inference error.
+            self.process_ready_obligations();
         }
 
         // Fallback and final bounds may make retained goals concrete. Give
@@ -1810,6 +2297,10 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     // Finish — consumes self, produces CheckedBody
     // ------------------------------------------------------------------
 
+    #[sage::item(crate::inference::InferCtx::finish)]
+    // {anchor}`crates.sage_ir.types.body.no_inference`
+    // {anchor}`crates.sage_ir.inference.body_local_quiescence`
+    // {anchor}`crates.sage_ir.inference.completed_body_boundary`
     pub fn finish(self, root: Ptr<TyExpr<'db>>, span: RelativeSpan) -> CheckedBody<'db> {
         assert!(
             !self.obligations.borrow().has_pending(),
@@ -1828,10 +2319,26 @@ impl<'check, 'db> InferCtx<'check, 'db> {
             "body finished with unpublished inference wakes"
         );
         let local_vars = self.local_vars.into_inner();
+        let expr_slots: Vec<_> = self
+            .expr_slots
+            .into_inner()
+            .into_iter()
+            .enumerate()
+            .map(|(index, expression)| {
+                expression.unwrap_or_else(|| panic!("expression slot {index} was never filled"))
+            })
+            .collect();
         let source = self.target_stash.into_inner();
         let egraph = self.egraph.into_inner();
         CheckedBody {
-            body: super::finalize::finalize_typed_body(&source, &egraph, root, &local_vars, span),
+            body: super::finalize::finalize_typed_body(
+                &source,
+                &egraph,
+                root,
+                &expr_slots,
+                &local_vars,
+                span,
+            ),
             diagnostics: self.diagnostics.into_inner(),
         }
     }
@@ -2163,3 +2670,9 @@ mod tests {
         });
     }
 }
+
+/// Speculation spans branch creation, candidate checking, and commit/discard
+/// across method probing and inference. This anchor does not imply that one
+/// ordinary function instruments that complete lifetime.
+#[sage::item(crate::inference::InferCtx::speculate)]
+mod r#abstract {}

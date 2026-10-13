@@ -13,7 +13,7 @@ Key terms used throughout sage's design and code.
 | **TyData** | The interned payload behind a `Ptr<Ty>` — an enum of type kinds (scalar, reference, tuple, ADT, etc.). |
 | **BodyCheck** | The per-function type-checking context; runs async and independently per function body. |
 | **Salsa** | The incremental computation framework; all major queries are salsa tracked functions. |
-| **RFD** | Request for Discussion — a design document proposing a change (see [RFDs](./rfds/README.md)). |
+| **RFD** | Request for Discussion — a design document proposing a change (see [RFDs](rfds/README.md)). |
 | **Compilation phase** | A demand-driven transformation with a stated semantic input, output, granularity, and downstream guarantees. |
 | **Semantic subsystem** | A service, such as name resolution or trait solving, used by more than one compilation phase rather than one step in a linear pipeline. |
 | **Representation** | A shared semantic data model, such as symbols or Typed IR, that is produced or consumed across phase boundaries. |

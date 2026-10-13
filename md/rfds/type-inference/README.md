@@ -2,6 +2,15 @@
 
 **Status:** Completed
 
+> **Current operator architecture:** The operator-specific parts of this
+> historical RFD are superseded by
+> [Overloadable operators remain trait calls through Typed IR](../architectural-foundations/README.md#overloadable-operators-remain-trait-calls-through-typed-ir)
+> and the accepted [Numeric Inference Domains and Binary Operator Typing
+> RFD](../numeric-inference-variables/README.md). Every proven overloadable
+> operator remains a resolved trait-method call through Typed IR, including
+> operations over primitive operands; primitive specialization is deferred to
+> future codegen.
+
 **Depends on:**
 - [Type Signatures](../type-signatures/README.md) — `Ty`, `Binder`, `TyFolder`, stash-allocated types
 - [Per-kind symbol data](../per-kind-symbol-data/README.md) — `FnSymbol`, `StructSymbol`, etc.
@@ -415,7 +424,7 @@ This means we don't need to choose upfront whether something is "fully desugared
 | `?` | `Desugar(QuestionMark, ...)` | Involves `Try` + `FromResidual`; special-case for Result/Option |
 | `for` loops | `Desugar(ForLoop, ...)` | Involves `IntoIterator`; special-case for known iterators |
 | `.await` | `Desugar(Await, ...)` | Involves `Future::poll`; special-case to just yield `Output` type |
-| Operators on primitives | Intrinsic typing rules | No desugaring needed; trait dispatch only for custom types |
+| Operators on primitives | Intrinsic typing rules | Historical design; superseded by D20's uniform trait-call representation |
 
 ## Execution model: async type checking
 

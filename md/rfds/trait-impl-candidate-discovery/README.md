@@ -7,7 +7,7 @@
 - [Trait System](../trait-system/README.md) — checked trait and impl signatures
 - [Trait Solving](../trait-solving/README.md) — candidate assembly and result
   completeness
-- [Trait Solver Design](../../design/trait-solver.md) — destination discovery
+- [Trait Solver Design](../../design/crates/sage_ir/solver-guide.md) — destination discovery
   and incrementality contract
 
 ## TL;DR
@@ -260,4 +260,4 @@ discovery belongs behind an explicit query contract.
 
 ## Implementation
 
-See [Implementation plan and status](./implementation.md).
+See [Implementation plan and status](implementation.md).

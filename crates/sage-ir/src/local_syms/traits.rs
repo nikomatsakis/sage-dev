@@ -6,6 +6,7 @@ use crate::scope::ScopeSymbol;
 use crate::span::AbsoluteSpan;
 
 #[salsa::tracked(debug)]
+#[sage::item(crate::symbols::LocalTraitSym)]
 pub struct LocalTraitSym<'db> {
     pub name: Name<'db>,
     pub scope: ScopeSymbol<'db>,
@@ -36,6 +37,7 @@ impl<'db> LocalTraitSym<'db> {
 #[salsa::tracked]
 impl<'db> LocalTraitSym<'db> {
     #[salsa::tracked]
+    #[sage::item(crate::symbols::LocalTraitSym::signature)]
     pub fn sig(
         self,
         db: &'db dyn crate::Db,
@@ -92,6 +94,7 @@ impl<'db> LocalTraitSym<'db> {
     }
 
     #[salsa::tracked]
+    #[sage::item(crate::symbols::LocalTraitSym::items)]
     pub fn items(self, db: &'db dyn crate::Db) -> sage_stash::Stashed<crate::ty::TraitItems<'db>> {
         use crate::ty::BinderExt;
 

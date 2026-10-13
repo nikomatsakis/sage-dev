@@ -1,3 +1,5 @@
+#![feature(register_tool)]
+#![register_tool(sage)]
 extern crate self as sage_reflect;
 
 use std::cell::{Cell, RefCell};
@@ -7,10 +9,12 @@ use std::rc::Rc;
 use sage_stash::{Ptr, Slice, Stash, StashData, StashHash, Stashed};
 use serde::{Deserialize, Serialize};
 
+// {anchor}`crates.sage_inspector.inspection.derive_reflection`
 pub use sage_reflect_derive::Reflect;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
+#[sage::item(crate::reflection::ValueNode)]
 pub enum ValueNode {
     Record {
         type_name: String,
@@ -158,6 +162,7 @@ impl<'resolver> ReflectionContext<'resolver> {
         self
     }
 
+    // {anchor}`crates.sage_inspector.inspection.owned_reflection`
     pub fn reflect_node(
         &mut self,
         summary: &str,
@@ -449,7 +454,9 @@ impl Default for ReflectionContext<'_> {
     }
 }
 
+#[sage::item(crate::reflection::Reflect)]
 pub trait Reflect<'db> {
+    #[sage::item(crate::reflection::Reflect::reflect)]
     fn reflect(&self, context: &mut ReflectionContext<'_>, stash: Option<&Stash>) -> ValueNode;
 
     fn reflected(&self) -> ValueNode {
@@ -749,6 +756,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_inspector.inspection.derive_reflection)]
     fn derive_preserves_fields() {
         let value = Example {
             label: "value".to_owned(),
@@ -772,6 +780,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_inspector.inspection.derive_reflection)]
     fn derive_preserves_every_enum_payload_shape() {
         assert!(
             matches!(Choice::Unit.reflected(), ValueNode::Variant { variant_name, fields, .. } if variant_name == "Unit" && fields.is_empty())
@@ -804,6 +813,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_inspector.inspection.owned_reflection)]
     fn node_budget_bounds_root_and_all_continuations() {
         let value = vec![1_u32; 100];
         let mut context = ReflectionContext::with_continuation_prefix(64, 8, "bounded");
@@ -852,6 +862,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_inspector.inspection.owned_reflection)]
     fn repeated_arena_edges_are_reflected_inline() {
         let mut stash = Stash::new();
         let value = stash.alloc(22_u32);
@@ -866,6 +877,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_inspector.inspection.owned_reflection)]
     fn only_an_active_recursive_stash_edge_becomes_a_cycle() {
         let mut context = ReflectionContext::default();
         let reflected = context.reflect_stash_entry("stash-0-ptr:u32:0".to_owned(), |context| {
@@ -884,4 +896,14 @@ mod tests {
             });
         assert!(matches!(reflected_again, ValueNode::Scalar { .. }));
     }
+}
+
+// Source anchors for architectural modules and distributed representations.
+mod sage_model {
+    /// Architectural crate anchor.
+    #[sage::item(crate)]
+    mod crate_model {}
+    /// Architectural module anchor.
+    #[sage::item(crate::reflection)]
+    mod reflection_model {}
 }

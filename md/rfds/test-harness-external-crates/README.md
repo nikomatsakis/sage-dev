@@ -3,7 +3,7 @@
 **Status:** Completed
 
 **Depends on:**
-- [Oracle Test Framework](./oracle-test-framework.md) — the existing comparison infrastructure
+- [Oracle Test Framework](../oracle-test-framework/README.md) — the existing comparison infrastructure
 
 ## Goal
 

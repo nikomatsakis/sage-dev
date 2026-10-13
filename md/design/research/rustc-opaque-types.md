@@ -12,9 +12,9 @@ new-solver opaques describes an older normalization implementation in several
 places. The source and tests at this revision are authoritative for this
 report.
 
-[Typed IR]: ../typed-ir.md
-[Trait Solver]: ../trait-solver.md
-[D13]: ../decisions.md#d13-named-associated-and-opaque-aliases-share-one-semantic-family
+[Typed IR]: ../crates/sage_ir/typed-ir-guide.md
+[Trait Solver]: ../crates/sage_ir/solver-guide.md
+[D13]: ../../rfds/architectural-foundations/README.md#named-associated-and-opaque-aliases-share-one-semantic-family
 
 ## Executive summary
 

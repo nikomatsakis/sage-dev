@@ -1,8 +1,9 @@
 # Implementation plan and status
 
-The first isolated `DbDropGuard::db` vertical slice is implemented and covered
-by an exact oracle fixture plus a semantic dependency trace. The broader steps
-remain incomplete where their checkboxes are still open.
+The isolated `DbDropGuard::db` vertical slice and the ground binary-operator
+sub-slice are implemented. Exact oracle fixtures cover both, and semantic
+dependency traces cover their external inputs. The broader steps remain
+incomplete where their checkboxes are still open.
 
 ### Step 1: Completed-IR data model and finalization checks
 
@@ -56,8 +57,17 @@ remain incomplete where their checkboxes are still open.
 
 - [ ] Land the separate normalization design needed to represent and solve
   associated-type projections while preserving unnormalized alias bounds.
-- [ ] Elaborate overloaded operators, indexing, callable values, `for`, and
-  `?` into their resolved semantic operations.
+- [ ] Elaborate overloadable operators (including primitive operands),
+  indexing, callable values, `for`, and `?` into their resolved semantic
+  operations.
+  - [x] Ground primitive and local user-defined binary operators use ordinary
+    trait proof and associated-output normalization, materialize signature
+    adjustments, and complete as resolved static trait calls. The
+    `binary_operators` integration suite covers exact oracle agreement and
+    cold/warm metadata dependencies.
+  - [ ] Represent generic associated-output assumptions and unknown-`Self`
+    candidate hints, then complete the operator matrix and the other expression
+    families in this step.
 - [ ] Add one focused fixture and query-dependency assertion per family.
 
 ### Step 5: Closures and async

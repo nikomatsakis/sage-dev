@@ -5,31 +5,19 @@ restriction eliminates significant implementation complexity while affecting
 little real-world code. Restrictions are documented here with rationale and may
 be lifted as sage matures.
 
-<a id="sub-a1"></a>
-> **SUB-A1 — A language restriction is explicit at its semantic boundary.** An
-> intentionally unsupported Rust construct states what is excluded, why Sage
-> excludes it, its user-visible impact, and the response at the responsible
-> phase. That response is normally a diagnostic or conservative incomplete
-> result; any temporary semantic approximation, such as `Lifetime::Dummy`, is
-> identified explicitly as a soundness exception rather than silently
-> presented as full Rust semantics.
->
-> **Required verification:** Every listed restriction has focused acceptance
-> and rejection fixtures at the phase which encounters it, and the observable
-> diagnostic, incomplete result, or documented approximation agrees with the
-> stated impact.
+{spec}`crates.sage_ir.crate.explicit_restrictions`
 
-<a id="sub-a2"></a>
-> **SUB-A2 — Destination restrictions and implementation gaps have different
-> owners.** This page lists deliberate limits on Sage's language contract.
-> Temporary gaps in otherwise supported Rust belong in the relevant phase or
-> subsystem's Current Status and in cross-cutting roadmap slices, not in the
-> destination restriction list.
->
-> **Required verification:** Documentation review traces every unsupported
-> fixture either to a deliberate restriction here or to a capability gap and
-> roadmap owner, and rejects restrictions justified only by the implementation
-> not having been written yet.
+Verification scenarios: Every listed restriction has focused acceptance
+and rejection fixtures at the phase which encounters it, and the observable
+diagnostic, incomplete result, or documented approximation agrees with the
+stated impact.
+
+{spec}`crates.sage_ir.crate.restrictions_and_gaps`
+
+Verification scenarios: Documentation review traces every unsupported
+fixture either to a deliberate restriction here or to a capability gap and
+roadmap owner, and rejects restrictions justified only by the implementation
+not having been written yet.
 
 ## Restrictions
 
@@ -131,18 +119,14 @@ an ambiguous type-checking result.
 
 Outside that explicit lifetime exception, unsupported or unrepresented source
 is governed by
-[D16](./decisions.md#d16-incompleteness-is-an-explicit-terminal-outcome).
+[Incompleteness is an explicit terminal outcome](../rfds/architectural-foundations/README.md#incompleteness-is-an-explicit-terminal-outcome).
 
-<a id="sub-a3"></a>
-> **SUB-A3 — Unrepresented source never becomes negative evidence.** Published
-> symbols from an incomplete phase may support their own positive facts, but
-> omitted or unsupported source cannot justify a false proof, failed lookup,
-> or exhaustive ground `No` in a downstream consumer.
->
-> **Required verification:** Malformed, unresolved, unsupported-attribute, and
-> resource-limited fixtures retain usable represented symbols while each
-> potentially affected resolution or solver-negative query remains explicitly
-> incomplete or ambiguous.
+{spec}`crates.sage_ir.crate.represented_completeness`
+
+Verification scenarios: Malformed, unresolved, unsupported-attribute, and
+resource-limited fixtures retain usable represented symbols while each
+potentially affected resolution or solver-negative query remains explicitly
+incomplete or ambiguous.
 
 ## Supported features
 
@@ -163,55 +147,13 @@ recorded below and in the build-out roadmap.
 - Type aliases, constants, statics
 - `cfg` attributes
 
-## Current status
+## Implementation and test evidence
 
-### Current frontier and evidence
+The generated [anchor pages](anchor/crates/sage_ir/crate.html) report implementation entries,
+annotated tests, explicit TODO/N/A gaps, and saved claim/test reviews. These
+associations do not themselves establish that a test ran.
 
-The destination feature list above is not an implementation-coverage list.
-Current coverage is driven by reviewed vertical slices and recorded locally in
-the architecture guide. These links establish [SUB-A2](#sub-a2)'s current ownership
-split for the named phases:
-
-- [Module and Macro Expansion](./pipeline/module-expansion.md#current-status)
-  records the empty-input local `macro_rules!` subset, built-in derives,
-  external bang expansion, active-attribute incompleteness, and depth limit.
-- [Name Resolution](./subsystems/name-resolution.md#current-status) records
-  represented path/import/prelude behavior and associated lookup limitations.
-- [Signature Checking](./pipeline/signature-checking.md#current-status) records
-  supported interface forms and the `Dummy` lifetime boundary.
-- [Body Checking](./pipeline/body-checking.md#current-status) records the
-  implemented expression, method, inference, and obligation frontier.
-- [Typed IR](./typed-ir.md#current-status) records which source constructs are
-  fully elaborated rather than merely parsed or retained for recovery.
-
-Unsupported or malformed items remain explicit error items. Incomplete item
-or attribute expansion is conservatively visible to name resolution and trait
-candidate discovery, so unrepresented code cannot justify a false proof or
-ground negative result. Lint-only inner attributes are treated as inert; other
-unrepresented active attributes remain incomplete. The focused tests
-`unresolved_item_macro_prevents_ground_no`,
-`malformed_item_macro_output_prevents_ground_no_without_panicking`, and
-`recursive_item_macro_hits_expansion_limit_and_returns_maybe` establish the
-unresolved, malformed, and resource-limited expansion portion of
-[SUB-A3](#sub-a3).
-
-### Current limitations
-
-- **Known deviation [KD-3](../implementation/known-deviations.md#kd-3-derive-helper-attributes-do-not-produce-the-promised-warning):**
-  registered derive helper attributes are not distinguished from arbitrary
-  potentially active attributes, so Sage omits the affected item
-  conservatively instead of retaining it and reporting the promised warning.
-- The restriction list does not yet link focused acceptance, rejection, or
-  approximation fixtures for every entry, so SUB-A1 is not established as a
-  complete matrix.
-- Several entries are phrased as “not yet supported.” They still need an audit
-  to determine whether they are deliberate destination restrictions or
-  temporary phase gaps before SUB-A2 is fully established.
-- SUB-A3 has focused expansion-to-solver evidence, but not yet the complete
-  downstream resolution and solver matrix for every incomplete source class.
-
-### Related roadmap slices
-
-The [Build-Out Roadmap](../implementation/roadmap.md) orders the next
-cross-cutting coverage slices. This page owns only intentional language
-restrictions; phase Current Status sections own temporary implementation gaps.
+The [earlier coverage snapshot](../rfds/implementation-sequencing/coverage-history.md#language-subsetting)
+preserves the former capability descriptions, edit experiments, and limitations
+as historical evidence. Current coverage comes from the generated entries;
+implementation plans and decision rationale belong in the relevant RFDs.

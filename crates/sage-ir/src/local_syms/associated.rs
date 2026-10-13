@@ -19,6 +19,7 @@ pub(crate) enum LocalAssociatedItemKind {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+// {anchor}`crates.sage_ir.symbols.associated_identity`
 pub(crate) struct LocalAssociatedItemKey<'db> {
     pub kind: LocalAssociatedItemKind,
     pub name: Name<'db>,

@@ -98,7 +98,7 @@ pub enum MethodResolution<'db> {
 
 `ReceiverAdjustments` is an internal candidate-selection and commit recipe. A
 successful method call consumes it while constructing the [elaborated typed
-IR](../../design/typed-ir.md): dereferences, borrows, and coercions become
+IR](../../design/crates/sage_ir/typed-ir-guide.md): dereferences, borrows, and coercions become
 ordinary expression nodes, and the completed body contains a resolved call
 target rather than `MethodCall` plus an adjustment list.
 
@@ -372,4 +372,4 @@ mini-redis [`Parse::next` vertical slice](../associated-type-normalization/READM
 - Primitive, slice, `str`, and other builtin method providers.
 - Specialization-aware priority after coherence support exists.
 
-See [Implementation plan and status](./implementation.md) for the staged work.
+See [Implementation plan and status](implementation.md) for the staged work.

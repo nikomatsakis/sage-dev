@@ -1,0 +1,102 @@
+/* Local shield-style permalinks for named specification paragraphs. */
+.content a.spec-anchor {
+    display: inline-flex;
+    max-inline-size: 100%;
+    margin-inline-end: 0.45em;
+    border-radius: 4px;
+    box-shadow: 0 1px 2px #0002;
+    color: #fff;
+    font: 12px/1.6 var(--mono-font, monospace);
+    text-decoration: none;
+    vertical-align: 0.1em;
+    scroll-margin-block-start: calc(var(--menu-bar-height, 50px) + 1.5rem);
+}
+
+.content a.spec-anchor:visited,
+.content a.spec-anchor:hover,
+.content a.spec-anchor:active {
+    color: #fff;
+    text-decoration: none;
+}
+
+.spec-anchor-label,
+.spec-anchor-name {
+    padding: 2px 8px;
+    background-image: linear-gradient(#ffffff14, #00000014);
+    text-shadow: 0 1px 1px #0003;
+}
+
+.spec-anchor-label {
+    flex: 0 0 auto;
+    border-radius: 4px 0 0 4px;
+    background-color: #48515c;
+    font-family: var(--font-family, sans-serif);
+}
+
+.spec-anchor-name {
+    min-inline-size: 0;
+    border-radius: 0 4px 4px 0;
+    background-color: #28688c;
+    overflow-wrap: anywhere;
+}
+
+.spec-anchor:hover .spec-anchor-name {
+    background-color: #205675;
+}
+
+.content a.spec-anchor:focus-visible,
+.content a.spec-anchor:target {
+    outline: 2px solid var(--links, #28688c);
+    outline-offset: 3px;
+}
+
+@media print {
+    .content a.spec-anchor {
+        border: 1px solid #888;
+        box-shadow: none;
+    }
+
+    .spec-anchor-label,
+    .spec-anchor-name {
+        background: none;
+        color: #222;
+        text-shadow: none;
+    }
+}
+
+/* Generated anchor pages inherit mdBook's theme and need no running server. */
+.anchor-index { margin-block: 1.5rem; }
+.anchor-index [hidden] { display: none !important; }
+.anchor-index .anchor-scroll { overflow-x: auto; }
+.anchor-index table { display: table; table-layout: fixed; width: 100%; margin: 0; }
+.anchor-index thead th:first-child { width: 56%; }
+.anchor-index thead th:not(:first-child) { width: 22%; }
+.anchor-index code { overflow-wrap: anywhere; }
+.anchor-index caption { text-align: left; font-size: .85em; margin-block-end: .6em; }
+.anchor-index th, .anchor-index td { text-align: left; vertical-align: top; }
+.anchor-index tbody th { font-weight: normal; padding-inline-start: calc(.5em + var(--anchor-depth, 0) * .7em); }
+.anchor-index .anchor-group { background: var(--table-alternate-bg); }
+.anchor-index .anchor-group th { font-weight: bold; }
+.anchor-index button { color: var(--fg); background: var(--bg); border: 1px solid var(--table-border-color); border-radius: 4px; cursor: pointer; }
+.anchor-index button[data-toggle-group], .anchor-index button[data-toggle-text] { min-width: 1.7em; border: 0; background: transparent; }
+.anchor-tools { display: flex; flex-wrap: wrap; gap: .5em; align-items: center; }
+.anchor-tools button { padding: .4em .7em; }
+.anchor-tools span { margin-inline-start: auto; font-size: .85em; }
+.anchor-count { display: inline-block; white-space: nowrap; font-size: .8em; margin-inline-end: .7em; }
+.anchor-index .anchor-text td { padding: .5em 1em 1em 2em; }
+.anchor-text p:first-child { margin-block-start: 0; }
+.anchor-selected { outline: 2px solid var(--links); outline-offset: -2px; }
+.anchor-status { display: inline-block; white-space: nowrap; font: .8em/1.5 var(--font-family); padding: .15em .5em; margin: 0 .3em .25em 0; border: 1px solid var(--table-border-color); border-radius: 4px; }
+.anchor-status[data-status="Implemented"] { background: color-mix(in srgb, #2da44e 20%, var(--bg)); }
+.anchor-status[data-status="TODO"] { background: color-mix(in srgb, #d29922 25%, var(--bg)); }
+.anchor-status[data-status="N/A"] { background: var(--table-alternate-bg); }
+.anchor-status.missing, .anchor-missing { color: var(--links); font-weight: bold; }
+.anchor-definition { border-inline-start: 3px solid var(--links); padding-inline-start: 1em; margin-block: 1.5em; }
+.anchor-definition p { line-height: 1.65; }
+.anchor-evidence { border-block-start: 1px solid var(--table-border-color); margin-block: 1em; padding-block-start: .5em; }
+.anchor-evidence pre { max-height: 35em; overflow: auto; }
+.anchor-evidence details { margin-block: 1em; }
+.anchor-neighbors { margin-block: 2em; }
+.anchor-neighbors summary { cursor: pointer; color: var(--links); }
+.anchor-breadcrumbs { font-size: .85em; }
+.anchor-index :focus-visible { outline: 2px solid var(--links); outline-offset: 2px; }

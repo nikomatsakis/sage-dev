@@ -3,8 +3,8 @@
 **Status:** Step 1 implemented; Step 2 deferred
 
 **Depends on:**
-- [Hash-consed stash with fingerprinted equality](./stash-hash-consing.md) — hash-consing, `StashHasher`, `Fingerprint`
-- [Module sym tree](./module-sym-tree.md) — stash architecture, `Stashed<T>`
+- [Hash-consed stash with fingerprinted equality](../stash-hash-consing/README.md) — hash-consing, `StashHasher`, `Fingerprint`
+- [Module sym tree](../module-sym-tree/README.md) — stash architecture, `Stashed<T>`
 
 ## Goal
 
@@ -52,7 +52,7 @@ pub struct Ptr<T> {
 }
 ```
 
-**Prerequisite: hash-consing.** Embedding `stash_id` in `Ptr`/`Slice` changes their byte representation in debug mode. With hash-consing (from the [hash-consing RFD](./stash-hash-consing.md)), equality never touches raw bytes — `Ptr` compares by index, compounds compare field-by-field — so the debug-only `stash_id` field is invisible to the equality and hashing machinery.
+**Prerequisite: hash-consing.** Embedding `stash_id` in `Ptr`/`Slice` changes their byte representation in debug mode. With hash-consing (from the [hash-consing RFD](../stash-hash-consing/README.md)), equality never touches raw bytes — `Ptr` compares by index, compounds compare field-by-field — so the debug-only `stash_id` field is invisible to the equality and hashing machinery.
 
 **Scope of the check.** The assertion fires on `stash[ptr]` and `stash[slice]` — the two `Index` impls. It does not fire on `Ptr::PartialEq` or `Ptr::Hash` (those only compare `index`). The stash ID is a diagnostic, not a semantic property.
 
@@ -81,7 +81,7 @@ The caller never sees raw `Ptr`/`Slice` values from the source stash — the API
 
 ## Current state
 
-- The identity tagging was partially implemented but reverted after discovering that it requires value-based equality as a prerequisite (now addressed by the [hash-consing RFD](./stash-hash-consing.md)).
+- The identity tagging was partially implemented but reverted after discovering that it requires value-based equality as a prerequisite (now addressed by the [hash-consing RFD](../stash-hash-consing/README.md)).
 - Adding `stash_id` to `Ptr`/`Slice` broke `Stashed::PartialEq` (byte-level comparison of stash buffers). Two independently-built stashes with identical logical content failed equality because the embedded stash IDs differed in the byte buffer.
 - The existing test `cross_stash_ptr_same_type_reads_wrong_data` documents the current bad behavior (silently reading wrong data from the wrong stash).
 
@@ -103,4 +103,4 @@ Add methods to `Stashed<Binder<FnSig>>`, `Stashed<Binder<StructSig>>`, etc. Migr
 
 **Out of scope:**
 - Phantom-lifetime or type-system approaches to prevent cross-stash misuse at compile time (too costly for the benefit)
-- Hash-consing and fingerprinted equality (covered by [stash-hash-consing](./stash-hash-consing.md))
+- Hash-consing and fingerprinted equality (covered by [stash-hash-consing](../stash-hash-consing/README.md))

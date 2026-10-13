@@ -1,51 +1,42 @@
-# Design
+# Overview
 
-This section is a reference and guide to Sage's architecture. Start with the
-[tenets](./tenets.md), then use the [architecture overview](./architecture.md)
-to see the whole compilation pipeline and the concepts shared across it.
+Sage is a demand-driven Rust semantic frontend. Symbols give definitions stable
+identities. Parsing and expansion create those symbols; resolution discovers
+them; signature and body queries compute semantic products when requested.
+Checking a body brings together name resolution, type inference, trait solving,
+and elaboration into a completed typed tree.
 
-The detailed chapters are organized in four groups:
+```mermaid
+flowchart LR
+    Source[Source] --> Symbols[Parse and expand symbols]
+    Symbols --> Resolve[Resolve names]
+    Resolve --> Signature[Check signatures]
+    Signature --> Body[Check and elaborate a body]
+    Metadata[Dependency metadata] --> Resolve
+    Metadata --> Signature
+    Infer[Inference and trait solving] --> Body
+    Body --> Typed[Typed IR]
+```
 
-- [Rust Compilation Pipeline](./pipeline/README.md) — the phases that transform
-  Rust source into checked signatures and elaborated typed bodies. Phase
-  chapters lead with their input, output, guarantees, granularity, and entry
-  queries.
-- [Semantic Subsystems](./subsystems/README.md) — services such as name
-  resolution, type inference, trait solving, and external metadata that are
-  used from more than one phase.
-- [Representations and Infrastructure](./infrastructure/README.md) — the
-  symbols, Typed IR, spans, Stash storage, and incremental identities that
-  connect the phases.
-- [Validation and Inspection](./validation/README.md) — oracle conformance,
-  worked examples, snapshots, query traces, and interactive inspection.
+This is a map of demand boundaries, not a mandatory batch sequence. Start with
+[Crates](crates/README.md) to follow the modeled entities and operations.
 
-Architecture chapters describe the destination in their main text. Their
-**Current Status** sections state what is implemented now, the current
-limitations, and inspectable evidence. The [Build-Out
-Roadmap](../implementation/roadmap.md) instead organizes future work into
-cross-cutting implementation slices.
+- [Meta](meta/README.md) specifies how this book, its architecture language,
+  source correspondence, and review system work.
+- [Tenets](tenets.md) explains the principles behind the design.
+- [Anchors](anchor/README.md) lists the specification's named claims with
+  generated implementation and test status. Every rule has a page connecting
+  its source definition, implementation excerpts, tests, and review.
+- [Crates](crates/README.md) is a guided entry into the compiler model. Its
+  subchapters render `.sage` declarations and their Rust implementations.
+- [RFDs](../rfds/README.md) record changes, alternatives, rationale, and plans.
+  Their normative changes are expressed directly in this specification.
 
-## Reading design anchors
+Markdown and `.sage` are equally authoritative specification formats. Each
+anchor states one independently testable claim. A source badge opens the
+anchor's generated page; its context link returns to the definition.
+**TODO** and **N/A** describe explicit implementation or test entries, not
+successful verification. Evidence and status are generated from code, tests,
+and saved reviews rather than maintained as a second specification.
 
-The chapters place stable design anchors such as `EXP-A1` or `TIR-A2` beside
-the key, non-obvious rules of the system. Each anchor has two parts:
-
-- a destination invariant which the implementation must preserve; and
-- **Required verification** describing the evidence needed to establish it.
-
-An anchor does not by itself claim that Sage already satisfies the rule. The
-chapter's **Current Status** section links the evidence which exists today and
-names the remaining gap. Cross-cutting choices and rationale use `D<n>` entries
-in [Architecture Decisions](./decisions.md); chapter anchors express the local,
-auditable consequences of those choices.
-
-When an RFD completes, its destination anchors and verification requirements
-are promoted into these chapters. The architecture guide is therefore the
-living reference; the RFD remains the historical design and implementation
-record.
-
-This organization was shaped in part by Kari Wilhelm's ideas for **Anchor
-Driven Development**: identify the small, load-bearing claims from which the
-rest of a design follows, give them stable names, and connect them to
-inspectable evidence. Those ideas helped guide the restructuring of this book.
-Many thanks to Kari for articulating the approach.
+For tool usage, start with the [User's Guide](../guide/README.md).

@@ -9,12 +9,19 @@ use crate::span::RelativeSpan;
 use crate::ty::Ty;
 use crate::tytree::*;
 
+use super::infer::version::InferDomain;
 use super::infer_ctx::{CheckError, ErrorContext, InferCtx, RecordErr, Scope, resolve_path};
 
 type CheckResult<'db> = Result<Ptr<TyExpr<'db>>, CheckError<'db>>;
 
 impl<'db> ExprCst<'db> {
     /// Check an expression, catching fatal errors and substituting error nodes.
+    #[sage::item(crate::checking::BodyCheck::check)]
+    // {anchor}`crates.sage_ir.checking.body.elaboration`
+    // {anchor}`crates.sage_ir.checking.body.interface_dependencies`
+    // {anchor}`crates.sage_ir.checking.body.isolated_completion`
+    // {anchor}`crates.sage_ir.checking.body.expected_types`
+    // {anchor}`crates.sage_ir.checking.body.operator_calls`
     pub(crate) async fn check_with(
         &self,
         cx: &InferCtx<'_, 'db>,
@@ -50,8 +57,8 @@ impl<'db> ExprCst<'db> {
         let span = self.span;
         let (kind, ty) = match &self.kind {
             ExprCstKind::Literal(lit) => {
-                let ty = check_literal_ty(cx, *lit);
-                (TyExprData::Literal(*lit), ty)
+                let (literal, ty) = check_literal(cx, *lit, span);
+                (TyExprData::Literal(literal), ty)
             }
             ExprCstKind::Path(path_ptr) => {
                 let path = cx.source_stash[*path_ptr];
@@ -162,21 +169,12 @@ impl<'db> ExprCst<'db> {
                                 .expect("resolved dot-call method must have a receiver");
                             cx.require_eq(receiver_ty, checked_receiver.owner_self_ty, span)
                                 .record_err(cx);
-                            let receiver = match checked_receiver.form {
-                                crate::ty::MethodReceiver::Value { .. } => ro,
-                                crate::ty::MethodReceiver::Ref { mutability } => {
-                                    let reference_ty = cx.alloc_ty(Ty::Ref(
-                                        receiver_ty,
-                                        mutability,
-                                        crate::ty::Lifetime::Dummy,
-                                    ));
-                                    cx.alloc_expr(
-                                        TyExprData::Ref(ro, mutability),
-                                        reference_ty,
-                                        span,
-                                    )
-                                }
-                            };
+                            let receiver = cx.adjust_method_receiver(
+                                ro,
+                                receiver_ty,
+                                checked_receiver.form,
+                                span,
+                            );
 
                             let params = cx.stash()[method.signature.params].to_vec();
                             if params.len() != rargs.len() {
@@ -239,10 +237,7 @@ impl<'db> ExprCst<'db> {
             ExprCstKind::Binary(lhs, op, rhs) => {
                 let rl = cx.source_stash[*lhs].check_with(cx, scope).await;
                 let rr = cx.source_stash[*rhs].check_with(cx, scope).await;
-                let lhs_ty = cx.stash()[rl].ty;
-                let rhs_ty = cx.stash()[rr].ty;
-                let ty = check_binary_op_ty(cx, *op, lhs_ty, rhs_ty, span);
-                (TyExprData::Binary(rl, *op, rr), ty)
+                super::operator::check_binary_operator(cx, scope, *op, rl, rr, span)
             }
             ExprCstKind::Unary(op, operand) => {
                 let ro = cx.source_stash[*operand].check_with(cx, scope).await;
@@ -558,6 +553,7 @@ impl<'db> StmtCst<'db> {
 
 impl<'db> PatCst<'db> {
     /// Check a pattern, mutating the scope to add bindings.
+    #[sage::item(crate::checking::BodyCheck::check)]
     pub(crate) fn check_pat(
         &self,
         cx: &InferCtx<'_, 'db>,
@@ -920,20 +916,252 @@ fn intrinsic_to_ty(intrinsic: Intrinsic) -> Ty<'static> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn check_literal_ty<'db>(cx: &InferCtx<'_, 'db>, lit: Literal<'db>) -> Ptr<Ty<'db>> {
+fn check_literal<'db>(
+    cx: &InferCtx<'_, 'db>,
+    lit: Literal<'db>,
+    span: RelativeSpan,
+) -> (Literal<'db>, Ptr<Ty<'db>>) {
     match lit {
-        Literal::Bool(_) => cx.alloc_ty(Ty::Bool),
-        Literal::Int(_) => cx.fresh_ty_var(),
-        Literal::Float(_) => cx.fresh_ty_var(),
+        Literal::Bool(_) => (lit, cx.alloc_ty(Ty::Bool)),
+        Literal::Int(name) => {
+            let class = classify_integer_literal(name.text(cx.db));
+            let literal = match class {
+                NumericLiteralClass::Suffixed(Intrinsic::Float(_)) => Literal::Float(name),
+                NumericLiteralClass::Unsuffixed(InferDomain::Integer)
+                | NumericLiteralClass::Suffixed(Intrinsic::Int(_) | Intrinsic::Uint(_))
+                | NumericLiteralClass::Invalid => lit,
+                NumericLiteralClass::Unsuffixed(InferDomain::Any | InferDomain::Float)
+                | NumericLiteralClass::Suffixed(
+                    Intrinsic::Bool | Intrinsic::Char | Intrinsic::Str,
+                ) => unreachable!("integer literal classifier returned an impossible class"),
+            };
+            (literal, finish_numeric_literal(cx, class, "integer", span))
+        }
+        Literal::Float(name) => {
+            let class = classify_float_literal(name.text(cx.db));
+            (
+                lit,
+                finish_numeric_literal(cx, class, "floating-point", span),
+            )
+        }
         Literal::String(_) => {
             let str_ty = cx.alloc_ty(Ty::Str);
-            cx.alloc_ty(Ty::Ref(
-                str_ty,
-                Mutability::Shared,
-                crate::ty::Lifetime::Dummy,
-            ))
+            (
+                lit,
+                cx.alloc_ty(Ty::Ref(
+                    str_ty,
+                    Mutability::Shared,
+                    crate::ty::Lifetime::Dummy,
+                )),
+            )
         }
-        Literal::Char(_) => cx.alloc_ty(Ty::Char),
+        Literal::Char(_) => (lit, cx.alloc_ty(Ty::Char)),
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum NumericLiteralClass {
+    Unsuffixed(InferDomain),
+    Suffixed(Intrinsic),
+    Invalid,
+}
+
+/// Classify the full token spelling rather than trusting the tree-sitter node
+/// kind. A decimal token such as `1f32` is an `integer_literal` in the CST but
+/// has type `f32`, while the `f32` in `0xf32` consists entirely of hex digits.
+fn classify_integer_literal(text: &str) -> NumericLiteralClass {
+    let (radix, digits_start) = if text.starts_with("0x") {
+        (16, 2)
+    } else if text.starts_with("0o") {
+        (8, 2)
+    } else if text.starts_with("0b") {
+        (2, 2)
+    } else {
+        (10, 0)
+    };
+    let suffix_start = text[digits_start..]
+        .find(|character: char| character != '_' && !is_radix_digit(character, radix))
+        .map_or(text.len(), |offset| digits_start + offset);
+    let suffix = &text[suffix_start..];
+    let has_digit = text[digits_start..suffix_start]
+        .chars()
+        .any(|character| is_radix_digit(character, radix));
+    if !has_digit {
+        return NumericLiteralClass::Invalid;
+    }
+    if suffix.is_empty() {
+        return NumericLiteralClass::Unsuffixed(InferDomain::Integer);
+    }
+
+    match Intrinsic::from_name(suffix) {
+        Some(intrinsic @ (Intrinsic::Int(_) | Intrinsic::Uint(_))) => {
+            NumericLiteralClass::Suffixed(intrinsic)
+        }
+        Some(intrinsic @ Intrinsic::Float(_)) if radix == 10 => {
+            NumericLiteralClass::Suffixed(intrinsic)
+        }
+        Some(Intrinsic::Bool | Intrinsic::Char | Intrinsic::Str | Intrinsic::Float(_)) | None => {
+            NumericLiteralClass::Invalid
+        }
+    }
+}
+
+fn is_radix_digit(character: char, radix: u32) -> bool {
+    match radix {
+        2 => matches!(character, '0' | '1'),
+        8 => matches!(character, '0'..='7'),
+        10 => character.is_ascii_digit(),
+        16 => character.is_ascii_hexdigit(),
+        _ => unreachable!("numeric literal radix must be supported"),
+    }
+}
+
+fn classify_float_literal(text: &str) -> NumericLiteralClass {
+    let Ok(suffix_start) = decimal_float_suffix_start(text) else {
+        return NumericLiteralClass::Invalid;
+    };
+    let suffix = &text[suffix_start..];
+    if suffix.is_empty() {
+        return NumericLiteralClass::Unsuffixed(InferDomain::Float);
+    }
+
+    match Intrinsic::from_name(suffix) {
+        Some(intrinsic @ Intrinsic::Float(_)) => NumericLiteralClass::Suffixed(intrinsic),
+        Some(
+            Intrinsic::Bool
+            | Intrinsic::Char
+            | Intrinsic::Str
+            | Intrinsic::Int(_)
+            | Intrinsic::Uint(_),
+        )
+        | None => NumericLiteralClass::Invalid,
+    }
+}
+
+fn decimal_float_suffix_start(text: &str) -> Result<usize, ()> {
+    let bytes = text.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() && (bytes[index].is_ascii_digit() || bytes[index] == b'_') {
+        index += 1;
+    }
+    if bytes.get(index) == Some(&b'.') {
+        index += 1;
+        if bytes.get(index) == Some(&b'_') {
+            return Err(());
+        }
+        while index < bytes.len() && (bytes[index].is_ascii_digit() || bytes[index] == b'_') {
+            index += 1;
+        }
+    }
+    if matches!(bytes.get(index), Some(b'e' | b'E')) {
+        index += 1;
+        if matches!(bytes.get(index), Some(b'+' | b'-')) {
+            index += 1;
+        }
+        let exponent_start = index;
+        while index < bytes.len() && (bytes[index].is_ascii_digit() || bytes[index] == b'_') {
+            index += 1;
+        }
+        if !bytes[exponent_start..index].iter().any(u8::is_ascii_digit) {
+            return Err(());
+        }
+    }
+    Ok(index)
+}
+
+fn finish_numeric_literal<'db>(
+    cx: &InferCtx<'_, 'db>,
+    class: NumericLiteralClass,
+    literal_kind: &str,
+    span: RelativeSpan,
+) -> Ptr<Ty<'db>> {
+    match class {
+        NumericLiteralClass::Unsuffixed(domain) => cx.fresh_ty_var_with_domain(domain),
+        NumericLiteralClass::Suffixed(intrinsic) => cx.alloc_ty(intrinsic_to_ty(intrinsic)),
+        NumericLiteralClass::Invalid => {
+            let error = cx.record(Diagnostic::error(
+                cx.span(span),
+                format!("invalid {literal_kind} literal"),
+            ));
+            cx.alloc_ty(Ty::Error(error))
+        }
+    }
+}
+
+#[cfg(test)]
+mod numeric_literal_tests {
+    use super::*;
+    use crate::ty::{FloatTy, IntTy, UintTy};
+
+    #[test]
+    fn classifies_every_supported_numeric_suffix() {
+        for (literal, expected) in [
+            ("1i8", Intrinsic::Int(IntTy::I8)),
+            ("1i16", Intrinsic::Int(IntTy::I16)),
+            ("1i32", Intrinsic::Int(IntTy::I32)),
+            ("1i64", Intrinsic::Int(IntTy::I64)),
+            ("1i128", Intrinsic::Int(IntTy::I128)),
+            ("1isize", Intrinsic::Int(IntTy::Isize)),
+            ("0xff_u8", Intrinsic::Uint(UintTy::U8)),
+            ("1u16", Intrinsic::Uint(UintTy::U16)),
+            ("1u32", Intrinsic::Uint(UintTy::U32)),
+            ("1u64", Intrinsic::Uint(UintTy::U64)),
+            ("1u128", Intrinsic::Uint(UintTy::U128)),
+            ("1usize", Intrinsic::Uint(UintTy::Usize)),
+            ("1f32", Intrinsic::Float(FloatTy::F32)),
+            ("1_f64", Intrinsic::Float(FloatTy::F64)),
+        ] {
+            assert_eq!(
+                classify_integer_literal(literal),
+                NumericLiteralClass::Suffixed(expected),
+                "literal {literal}",
+            );
+        }
+        assert_eq!(
+            classify_float_literal("1.0_f32"),
+            NumericLiteralClass::Suffixed(Intrinsic::Float(FloatTy::F32)),
+        );
+        assert_eq!(
+            classify_float_literal("1e+3f64"),
+            NumericLiteralClass::Suffixed(Intrinsic::Float(FloatTy::F64)),
+        );
+    }
+
+    #[test]
+    fn hexadecimal_digits_are_not_mistaken_for_float_suffixes() {
+        for literal in ["0xf32", "0xff_f32"] {
+            assert_eq!(
+                classify_integer_literal(literal),
+                NumericLiteralClass::Unsuffixed(InferDomain::Integer),
+                "literal {literal}",
+            );
+        }
+    }
+
+    #[test]
+    fn classifies_unsuffixed_and_malformed_numeric_literals() {
+        assert_eq!(
+            classify_float_literal("1.0"),
+            NumericLiteralClass::Unsuffixed(InferDomain::Float),
+        );
+        assert_eq!(
+            classify_float_literal("1e3"),
+            NumericLiteralClass::Unsuffixed(InferDomain::Float),
+        );
+        for literal in ["1.0u8", "1.0i32", "1.0f99", "1e_", "1._0"] {
+            assert_eq!(
+                classify_float_literal(literal),
+                NumericLiteralClass::Invalid,
+                "literal {literal}",
+            );
+        }
+        for literal in ["0b101f32", "0x_"] {
+            assert_eq!(
+                classify_integer_literal(literal),
+                NumericLiteralClass::Invalid,
+                "literal {literal}",
+            );
+        }
     }
 }
 
@@ -1069,37 +1297,6 @@ fn instantiate_local_enum<'db>(
         crate::check::infer::obligations::ObligationReason::AdtWellFormedness,
     );
     (local_enum.into(), type_args_slice, instantiated)
-}
-
-fn check_binary_op_ty<'db>(
-    cx: &InferCtx<'_, 'db>,
-    op: BinaryOp,
-    lhs_ty: Ptr<Ty<'db>>,
-    rhs_ty: Ptr<Ty<'db>>,
-    span: RelativeSpan,
-) -> Ptr<Ty<'db>> {
-    cx.require_eq(rhs_ty, lhs_ty, span).record_err(cx);
-    match op {
-        BinaryOp::Eq
-        | BinaryOp::Ne
-        | BinaryOp::Lt
-        | BinaryOp::Le
-        | BinaryOp::Gt
-        | BinaryOp::Ge
-        | BinaryOp::And
-        | BinaryOp::Or => cx.alloc_ty(Ty::Bool),
-
-        BinaryOp::Add
-        | BinaryOp::Sub
-        | BinaryOp::Mul
-        | BinaryOp::Div
-        | BinaryOp::Rem
-        | BinaryOp::BitAnd
-        | BinaryOp::BitOr
-        | BinaryOp::BitXor
-        | BinaryOp::Shl
-        | BinaryOp::Shr => lhs_ty,
-    }
 }
 
 use sage_stash::Slice;

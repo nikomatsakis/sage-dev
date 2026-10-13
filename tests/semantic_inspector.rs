@@ -96,6 +96,7 @@ impl Drop for ChildGuard {
 
 struct TempProject(std::path::PathBuf);
 
+// {anchor}`crates.sage_inspector.inspection.source_evidence`
 fn inspector_project() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("test-projects/semantic-inspector/db-drop-guard")
@@ -407,6 +408,7 @@ fn real_symbol_index_is_complete_local_and_detail_free() {
         assert!(!selected_trace.contains("LocalFnSym::body"));
 
         let mut external_reference = None;
+        let mut product_shapes = Vec::new();
         for product in ["concrete-ir", "signature", "typed-ir"] {
             let page = provider.product(&method.path, product).unwrap();
             let run = provider.run(page.run_id.as_deref().unwrap()).unwrap();
@@ -451,7 +453,7 @@ fn real_symbol_index_is_complete_local_and_detail_free() {
                 panic!("{product} must be a reflected value tree")
             };
             let shape = value_shape(&value);
-            match product {
+            let expected = match product {
                 "concrete-ir" => expect_test::expect![[r#"
                     record Stashed
                       .root
@@ -595,7 +597,7 @@ fn real_symbol_index_is_complete_local_and_detail_free() {
                                 scalar u32
                               .end
                                 scalar u32
-                "#]].assert_eq(&shape),
+                "#]],
                 "signature" => expect_test::expect![[r#"
                     record Stashed
                       .root
@@ -646,7 +648,7 @@ fn real_symbol_index_is_complete_local_and_detail_free() {
                                 scalar bool
                           .generics
                             sequence slice [0]
-                "#]].assert_eq(&shape),
+                "#]],
                 "typed-ir" => expect_test::expect![[r#"
                     record CheckedBody
                       .body
@@ -668,7 +670,7 @@ fn real_symbol_index_is_complete_local_and_detail_free() {
                                                   .0
                                                     record ResolvedCallTarget
                                                       .function
-                                                        reference external/core-dd2c57927e223d81/module-clone-0/trait-Clone-0/fn-clone-0
+                                                        reference external/core-<sysroot>/module-clone-0/trait-Clone-0/fn-clone-0
                                                       .dispatch
                                                         variant CallDispatch::StaticTrait
                                                           .self_ty
@@ -680,7 +682,7 @@ fn real_symbol_index_is_complete_local_and_detail_free() {
                                                           .trait_ref
                                                             record TraitRef
                                                               .trait_sym
-                                                                reference external/core-dd2c57927e223d81/module-clone-0/trait-Clone-0
+                                                                reference external/core-<sysroot>/module-clone-0/trait-Clone-0
                                                               .args
                                                                 sequence slice [0]
                                                       .owner_type_args
@@ -828,9 +830,10 @@ fn real_symbol_index_is_complete_local_and_detail_free() {
                                     scalar u32
                       .diagnostics
                         sequence Vec [0]
-                "#]].assert_eq(&shape),
+                "#]],
                 _ => unreachable!(),
-            }
+            };
+            product_shapes.push((expected, shape));
             if product == "typed-ir" {
                 external_reference = first_external_reference(&value).cloned();
             }
@@ -890,6 +893,42 @@ fn real_symbol_index_is_complete_local_and_detail_free() {
         assert!(matches!(signature.value.content, RenderNode::Value { .. }));
         let signature_run = provider.run(signature.run_id.as_deref().unwrap()).unwrap();
         assert!(!format!("{:#?}", signature_run.value).contains("local_expanded_module_items"));
+
+        // Rustc's stable crate ID identifies a particular sysroot build and
+        // differs across target platforms. Obtain the expected core identity
+        // independently, after the cold/warm demand assertions above so this
+        // metadata read cannot warm their setup or alter their recorded work.
+        drop(provider);
+        let core = host.with_context(|context| {
+            use sage_ir::Db as _;
+
+            let tcx = context.db.tcx();
+            let crate_num = tcx.extern_crate("core").expect("fixture depends on core");
+            tcx.canonical_def_path(crate_num, sage_ir::symbol::DefIndex(0))
+                .expect("core has a canonical crate identity")
+        });
+        assert_eq!(core.krate, "core");
+        assert!(core.segments.is_empty());
+        let core_root = format!("external/core-{:016x}", core.crate_disambiguator);
+        assert_eq!(
+            external_reference.path,
+            format!("{core_root}/module-clone-0/trait-Clone-0/fn-clone-0")
+        );
+        for (expected, shape) in product_shapes {
+            // Only the independently verified sysroot root is substituted;
+            // wrong crate IDs and every ownership segment remain exact checks.
+            expected
+                .assert_eq(&shape.replace(&format!("{core_root}/"), "external/core-<sysroot>/"));
+        }
+        let forged_path = format!(
+            "external/core-{:016x}/module-clone-0/trait-Clone-0/fn-clone-0",
+            core.crate_disambiguator ^ 1
+        );
+        assert!(
+            LiveInspectionProvider::new(host)
+                .symbol(&forged_path)
+                .is_err()
+        );
     });
 }
 

@@ -93,7 +93,13 @@ where
         key: Id,
     ) -> (Option<&'db AccumulatedMap>, InputAccumulatedValues) {
         let (zalsa, zalsa_local) = db.zalsas();
-        let (memo, _) = self.refresh_memo_traced(db, zalsa, zalsa_local, key);
+        let (memo, _) = self.refresh_memo_traced(
+            db,
+            zalsa,
+            zalsa_local,
+            key,
+            crate::RequestCause::AccumulatorTraversal,
+        );
         (
             memo.revisions.accumulated(),
             memo.revisions.accumulated_inputs.load(),

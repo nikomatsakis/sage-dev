@@ -11,7 +11,7 @@ part of exact reuse but deliberately excluded from cycle identity.
 
 ## Isolated producers
 
-Under [D8](../../../design/decisions.md#d8-whiteboard-producers-own-isolated-proof-contexts),
+Under [Whiteboard producers own isolated proof contexts](../../architectural-foundations/README.md#whiteboard-producers-own-isolated-proof-contexts),
 each producer imports its canonical query into a fresh `QueryProofState`: its
 own stash, egraph, and root version. Each candidate alternative imports the
 same canonical query into another independent proof state and performs head

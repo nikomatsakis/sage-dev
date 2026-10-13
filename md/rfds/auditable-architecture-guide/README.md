@@ -6,7 +6,7 @@
 
 - [Maintaining this book](../../contributing/maintaining-the-docs.md) — the
   existing ownership rules for architecture pages, RFDs, and the roadmap
-- [Architecture](../../design/architecture.md) — the current structural
+- [Architecture](../../design/crates/sage_ir/architecture-guide.md) — the current structural
   overview that this RFD will reshape
 
 **Related:**
@@ -14,9 +14,9 @@
 - [Semantic Inspector and Incremental Query Testing](../semantic-inspector/README.md)
   — the planned interactive source of readable semantic output and query
   traces
-- [Oracle Test Harness](../../design/oracle-test-harness.md) — exact
+- [Oracle Test Harness](../../design/crates/sage_oracle_harness/oracle-guide.md) — exact
   cross-implementation conformance evidence
-- [Mini-redis Conformance Roadmap](../../implementation/mini-redis.md) —
+- [Mini-redis Conformance Roadmap](../implementation-sequencing/mini-redis.md) —
   application-scale vertical slices and acceptance evidence
 
 ## TL;DR
@@ -224,7 +224,7 @@ symbol construction is an independent linear compilation phase.
 ### Phase-chapter contract
 
 Every compilation-phase chapter follows the common structure proposed in
-[Phase chapter shape](./phase-chapter-shape.md):
+[Phase chapter shape](phase-chapter-shape.md):
 
 1. role in the pipeline and granularity;
 2. input;
@@ -489,4 +489,4 @@ changes are outside this RFD.
 
 ## Implementation
 
-See [Implementation plan and status](./implementation.md).
+See [Implementation plan and status](implementation.md).

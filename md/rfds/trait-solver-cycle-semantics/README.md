@@ -6,7 +6,7 @@
 
 - [Trait Solving](../trait-solving/README.md) — canonical goals, responses,
   active frames, and the current inductive MVP
-- [Trait Solver Design](../../design/trait-solver.md) — destination semantic
+- [Trait Solver Design](../../design/crates/sage_ir/solver-guide.md) — destination semantic
   contract
 
 ## TL;DR
@@ -150,4 +150,4 @@ limit prevents completion.
 
 ## Implementation
 
-See [Implementation plan and status](./implementation.md).
+See [Implementation plan and status](implementation.md).

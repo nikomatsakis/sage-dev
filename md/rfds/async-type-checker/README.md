@@ -573,5 +573,8 @@ prerequisites described above.
   `await_concrete` and depend on the scoped-runtime/body-completion gate. Their
   implementation plans own the remaining solver-specific steps; this RFD
   records the shared runtime destination.
-- **Numeric Inference Variables** — trivial addon once the async model is in place; numeric vars just have additional constraints on what `next_bound` accepts.
+- **Numeric Inference Domains and Binary Operator Typing** — class-wide
+  numeric domains are versioned semantic state. Committed proof-derived
+  narrowing reuses this RFD's revision and wake machinery; the numeric RFD
+  deliberately defines no fallback or scheduler-local defaulting rule.
 - **Concurrent Type Checking (old RFD)** — fully subsumed. The questions it raised are answered here.

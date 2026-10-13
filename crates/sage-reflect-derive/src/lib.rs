@@ -1,3 +1,5 @@
+#![feature(register_tool)]
+#![register_tool(sage)]
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{Data, DeriveInput, Fields, parse_macro_input};
@@ -148,3 +150,10 @@ fn struct_body(name: &syn::Ident, fields: Fields) -> proc_macro2::TokenStream {
     }
 }
 // ANCHOR_END: semantic_inspector_reflect_derive
+
+// Source anchors for architectural modules and distributed representations.
+mod sage_model {
+    /// Architectural crate anchor.
+    #[sage::item(crate)]
+    mod crate_model {}
+}

@@ -8,7 +8,7 @@
   wakeups, cancellation, and body quiescence
 - [Trait Solver Cycle Semantics](../trait-solver-cycle-semantics/README.md) —
   recursive completion and deterministic resource outcomes
-- [Trait Solver Design](../../design/trait-solver.md) — destination semantic
+- [Trait Solver Design](../../design/crates/sage_ir/solver-guide.md) — destination semantic
   contract
 
 ## TL;DR
@@ -146,4 +146,4 @@ branch before another schedule discovers an absorbing answer.
 
 ## Implementation
 
-See [Implementation plan and status](./implementation.md).
+See [Implementation plan and status](implementation.md).

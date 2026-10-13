@@ -1,6 +1,7 @@
 use rustc_hash::FxHashSet;
 use sage_stash::{AllocStashData, Ptr, Slice, Stash};
 
+use crate::check::infer::version::InferDomain;
 use crate::generic_param::{AlphaEquivParam, GenericParamKind};
 use crate::ty::Ty;
 
@@ -19,9 +20,11 @@ pub struct ResponseVarInfo<'db> {
     pub param: AlphaEquivParam<'db>,
     pub kind: GenericParamKind,
     pub relative_universe: u32,
+    pub domain: InferDomain,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+#[sage::item(crate::types::Answer)]
 pub struct QueryResult<'db> {
     pub bound_vars: Slice<ResponseVarInfo<'db>>,
     pub value: QueryResultData<'db>,

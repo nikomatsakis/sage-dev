@@ -52,6 +52,12 @@ pub enum SymExtKind {
 /// `Copy` struct, structural identity.
 // ANCHOR: architecture_external_symbol
 #[salsa::interned(debug)]
+#[sage::item(crate::symbols::ExternalFn)]
+#[sage::item(crate::symbols::ExternalTrait)]
+#[sage::item(crate::symbols::ExternalImpl)]
+#[sage::item(crate::symbols::ExternalStruct)]
+#[sage::item(crate::symbols::ExternalEnum)]
+// {anchor}`crates.sage_ir.symbols.external_identity`
 pub struct SymExt<'db> {
     pub crate_num: CrateNum,
     pub def_index: DefIndex,
@@ -154,6 +160,7 @@ impl<'db> SymExt<'db> {
 
 macro_rules! define_kind_symbols {
     (
+        $(#[$sym_meta:meta])*
         $SymVis:vis struct $SymName:ident<$SymLt:lifetime> { data: $SymPrivateData:ident<$SymPrivateDataLt:lifetime>}
         $SymDataVis:vis enum $SymData:ident<$SymDataLt:lifetime> { .. }
 
@@ -173,6 +180,7 @@ macro_rules! define_kind_symbols {
         )*
     ) => {
         #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+        $(#[$sym_meta])*
         $SymVis struct $SymName<$SymLt> {
             data: $SymPrivateData<$SymLt>,
         }
@@ -315,23 +323,34 @@ macro_rules! define_kind_symbols {
 }
 
 // ANCHOR: architecture_symbol_family
+// {anchor}`crates.sage_ir.symbols.definition_identity`
+// {anchor}`crates.sage_ir.symbols.kind_wrappers`
 define_kind_symbols! {
+    #[sage::item(crate::symbols::Symbol)]
     pub struct Symbol<'db> { data: SymbolDataPriv<'db> }
     pub enum SymbolData<'db> { .. }
 
     { /* Local + external */}
 
+    #[sage::item(crate::symbols::FnSymbol)]
     pub enum FnSymbol<'db> { Local(crate::local_syms::fns::LocalFnSym<'db>), Ext(SymExtKind::Fn) }
+    #[sage::item(crate::symbols::StructSymbol)]
     pub enum StructSymbol<'db> { Local(crate::local_syms::structs::LocalStructSym<'db>), Ext(SymExtKind::Struct) }
+    #[sage::item(crate::symbols::EnumSymbol)]
     pub enum EnumSymbol<'db> { Local(crate::local_syms::enums::LocalEnumSym<'db>), Ext(SymExtKind::Enum) }
     pub enum VariantSymbol<'db> { Local(crate::local_syms::enums::LocalVariantSym<'db>), Ext(SymExtKind::Variant) }
     pub enum VariantCtorSymbol<'db> { Local(crate::local_syms::enums::LocalVariantCtorSym<'db>), Ext(SymExtKind::VariantCtor) }
+    #[sage::item(crate::symbols::TraitSymbol)]
     pub enum TraitSymbol<'db> { Local(crate::local_syms::traits::LocalTraitSym<'db>), Ext(SymExtKind::Trait) }
+    #[sage::item(crate::types::TypeAliasSymbol)]
     pub enum TypeAliasSymbol<'db> { Local(crate::local_syms::type_aliases::LocalTypeAliasSym<'db>), Ext(SymExtKind::TypeAlias) }
+    #[sage::item(crate::types::ConstSymbol)]
     pub enum ConstSymbol<'db> { Local(crate::local_syms::consts::LocalConstSym<'db>), Ext(SymExtKind::Const) }
     pub enum StaticSymbol<'db> { Local(crate::local_syms::statics::LocalStaticSym<'db>), Ext(SymExtKind::Static) }
+    #[sage::item(crate::symbols::ImplSymbol)]
     pub enum ImplSymbol<'db> { Local(crate::local_syms::impls::LocalImplSym<'db>), Ext(SymExtKind::Impl) }
     pub enum ModSymbol<'db> { Local(crate::local_syms::mods::LocalModSym<'db>), Ext(SymExtKind::Mod) }
+    #[sage::item(crate::types::MacroDefSymbol)]
     pub enum MacroDefSymbol<'db> { Local(crate::local_syms::macro_defs::LocalMacroDefSym<'db>), Ext(SymExtKind::MacroDef) }
     pub enum UseSymbol<'db> { Local(crate::local_syms::uses::LocalUseSym<'db>), Ext(SymExtKind::Mod) }
 
@@ -540,6 +559,7 @@ impl<'db> ModSymbol<'db> {
 }
 
 impl<'db> EnumSymbol<'db> {
+    #[sage::item(crate::symbols::EnumSymbol::items)]
     pub fn variants(self, db: &'db dyn Db) -> &'db [Symbol<'db>] {
         match self {
             EnumSymbol::Local(sym) => crate::local_syms::enums::enum_variants(db, sym),
@@ -549,6 +569,7 @@ impl<'db> EnumSymbol<'db> {
 }
 
 impl<'db> TraitSymbol<'db> {
+    #[sage::item(crate::symbols::TraitSymbol::signature)]
     pub fn sig(
         self,
         db: &'db dyn Db,
@@ -561,6 +582,7 @@ impl<'db> TraitSymbol<'db> {
         }
     }
 
+    #[sage::item(crate::symbols::TraitSymbol::items)]
     pub fn items(self, db: &'db dyn Db) -> Option<sage_stash::Stashed<crate::ty::TraitItems<'db>>> {
         match self {
             TraitSymbol::Local(local) => Some(local.items(db)),
@@ -570,6 +592,7 @@ impl<'db> TraitSymbol<'db> {
 }
 
 impl<'db> FnSymbol<'db> {
+    #[sage::item(crate::symbols::FnSymbol::signature)]
     pub fn sig(
         self,
         db: &'db dyn Db,
@@ -582,6 +605,15 @@ impl<'db> FnSymbol<'db> {
 }
 
 pub struct MacroExpandError;
+
+/// Architectural interfaces whose Rust callers currently select local/external
+/// producers directly. These location anchors are not executable dispatchers.
+#[sage::item(crate::symbols::StructSymbol::signature)]
+#[sage::item(crate::symbols::StructSymbol::value)]
+#[sage::item(crate::symbols::EnumSymbol::signature)]
+#[sage::item(crate::symbols::ImplSymbol::signature)]
+#[sage::item(crate::symbols::ImplSymbol::items)]
+mod r#abstract {}
 
 impl<'db> MacroDefSymbol<'db> {
     pub fn expand(self, db: &'db dyn Db, input: &str) -> Result<String, MacroExpandError> {

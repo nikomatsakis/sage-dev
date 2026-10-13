@@ -1,3 +1,5 @@
+#![feature(register_tool)]
+#![register_tool(sage)]
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use xshell::{Shell, cmd};
@@ -85,35 +87,50 @@ fn ci_test() -> Result<()> {
     let sh = Shell::new()?;
     let root = project_root();
     let _dir = sh.push_dir(&root);
+    cmd!(sh, "cargo run -p sage-meta -- check").run()?;
     cmd!(sh, "cargo test --all --workspace").run()?;
     println!("ci: all tests passed");
     Ok(())
 }
 
-/// Verify every `.md` file under `md/` is referenced in `SUMMARY.md`.
+/// Verify every Markdown source belongs to the book's shared chapter inventory.
 fn check_orphaned_chapters() -> Result<()> {
-    let root = project_root();
-    let md_dir = root.join("md");
-    let summary_path = md_dir.join("SUMMARY.md");
+    check_orphaned_chapters_at(&project_root())?;
+    println!("ci: all markdown files belong to the book chapter inventory");
+    Ok(())
+}
+
+// {anchor}`meta.book.shared_model`
+fn check_orphaned_chapters_at(root: &Path) -> Result<()> {
+    let md_dir = sage_meta::workspace::book_source_root(root)?;
+    let inventory = sage_meta::spec::SpecIndex::load_workspace(root)?;
 
     let mut md_files = BTreeSet::new();
     collect_md_files(&md_dir, &md_dir, &mut md_files)?;
     md_files.remove(Path::new("SUMMARY.md"));
 
-    let summary = std::fs::read_to_string(&summary_path)?;
-    let referenced = parse_summary_links(&summary);
+    let published = inventory.chapters.keys().map(PathBuf::from).collect();
 
-    let orphans: Vec<_> = md_files.difference(&referenced).collect();
+    let orphans: Vec<_> = md_files.difference(&published).collect();
     if !orphans.is_empty() {
         let list = orphans
             .iter()
-            .map(|p| format!("  md/{}", p.display()))
+            .map(|p| format!("  {}", md_dir.join(p).display()))
             .collect::<Vec<_>>()
             .join("\n");
-        return Err(format!("orphaned markdown files not listed in SUMMARY.md:\n{list}").into());
+        return Err(
+            format!("orphaned markdown files outside the book chapter inventory:\n{list}").into(),
+        );
     }
-
-    println!("ci: all markdown files are referenced in SUMMARY.md");
+    if !inventory.diagnostics.is_empty() {
+        return Err(inventory
+            .diagnostics
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n")
+            .into());
+    }
     Ok(())
 }
 
@@ -131,27 +148,6 @@ fn collect_md_files(base: &Path, dir: &Path, out: &mut BTreeSet<PathBuf>) -> Res
     Ok(())
 }
 
-fn parse_summary_links(content: &str) -> BTreeSet<PathBuf> {
-    let mut links = BTreeSet::new();
-    for line in content.lines() {
-        let mut rest = line;
-        while let Some(start) = rest.find("](") {
-            rest = &rest[start + 2..];
-            if let Some(end) = rest.find(')') {
-                let link = &rest[..end];
-                let link = link.strip_prefix("./").unwrap_or(link);
-                if link.ends_with(".md") {
-                    links.insert(PathBuf::from(link));
-                }
-                rest = &rest[end + 1..];
-            } else {
-                break;
-            }
-        }
-    }
-    links
-}
-
 /// Run `mdbook build` to validate the book (including linkcheck if installed).
 fn check_book_build() -> Result<()> {
     let sh = Shell::new()?;
@@ -160,4 +156,69 @@ fn check_book_build() -> Result<()> {
     cmd!(sh, "mdbook build").run()?;
     println!("ci: mdbook build succeeded");
     Ok(())
+}
+
+// Source anchors for architectural modules and distributed representations.
+mod sage_model {
+    /// Architectural crate anchor.
+    #[sage::item(crate)]
+    mod crate_model {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::check_orphaned_chapters_at;
+
+    #[test]
+    #[sage::test(meta.book.shared_model)]
+    fn orphan_check_uses_generated_chapters_and_rejects_unpublished_sources() {
+        let root = std::env::temp_dir().join(format!(
+            "sage-book-lint-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let source = root.join("manual");
+        std::fs::create_dir_all(source.join("design/crates/demo")).unwrap();
+        std::fs::write(root.join("book.toml"), "[book]\nsrc = 'manual'\n").unwrap();
+        for (path, text) in [
+            (
+                "SUMMARY.md",
+                "- [Guide](./guide.md#usage)\n- [Crates](design/crates/README.md)\n",
+            ),
+            ("guide.md", "# Usage\n"),
+            ("design/crates/README.md", "# Crates\n"),
+            (
+                "design/crates/demo/crate.sage",
+                "crate demo { \"\"\"Demo model.\"\"\" }",
+            ),
+            ("design/crates/demo/guide.md", "# Generated crate guide\n"),
+        ] {
+            std::fs::write(source.join(path), text).unwrap();
+        }
+        // The generated guide is published without its own SUMMARY.md entry.
+        check_orphaned_chapters_at(&root).unwrap();
+
+        std::fs::write(source.join("orphan.md"), "# Unpublished\n").unwrap();
+        let error = check_orphaned_chapters_at(&root).unwrap_err().to_string();
+        assert!(error.contains("orphaned markdown files"), "{error}");
+        assert!(error.contains("manual/orphan.md"), "{error}");
+        assert!(!error.contains("demo/guide.md"), "{error}");
+        std::fs::remove_file(source.join("orphan.md")).unwrap();
+
+        // A generated companion needs an enclosing modeled crate.
+        std::fs::write(source.join("design/crates/unowned.md"), "# Unowned\n").unwrap();
+        let error = check_orphaned_chapters_at(&root).unwrap_err().to_string();
+        assert!(error.contains("design/crates/unowned.md"), "{error}");
+        assert!(!error.contains("demo/guide.md"), "{error}");
+        std::fs::remove_file(source.join("design/crates/unowned.md")).unwrap();
+
+        // Merely residing under design/crates does not publish a chapter.
+        std::fs::write(source.join("SUMMARY.md"), "- [Guide](guide.md)\n").unwrap();
+        let error = check_orphaned_chapters_at(&root).unwrap_err().to_string();
+        assert!(error.contains("design/crates/demo/guide.md"), "{error}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

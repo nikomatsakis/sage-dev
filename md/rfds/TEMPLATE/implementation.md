@@ -6,7 +6,9 @@
 
     ### Step 1: Description
 
-    What this step does and how to verify it (tests, commands, etc.).
+    What this step does, the Design anchors it establishes, and how to verify
+    it (tests, commands, etc.). The proposal branch already contains the
+    normative Design diff; implementation replaces its explicit placeholders.
 
     - [ ] PR link or description
 
@@ -15,8 +17,9 @@
 
 ## Completion checklist
 
-- [ ] Every living RFD design anchor and its required verification is promoted
-      into the relevant Architecture & Design chapter.
+- [ ] Every specification rule affected by this RFD is accounted for in the
+      Design chapters changed with the proposal; accepted revisions are reflected
+      there and referenced from this plan.
 - [ ] The chapter's Current Status section links the evidence which establishes
       each implemented anchor and states any remaining gap.
 - [ ] Every genuinely cross-cutting choice is recorded or updated in

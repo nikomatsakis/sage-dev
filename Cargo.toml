@@ -1,6 +1,6 @@
 [workspace]
 members = ["crates/*", "xtask"]
-exclude = ["test-fixtures", "test-projects"]
+exclude = ["test-fixtures", "test-projects", "vendor/salsa", "vendor/salsa-macros"]
 resolver = "3"
 
 [patch.crates-io]
@@ -21,6 +21,9 @@ path = "src/main.rs"
 [lib]
 name = "sage"
 path = "src/lib.rs"
+# Rustdoc's --extern sage shadows the inert sage tool namespace. This facade
+# has no doctests; its compiler scenarios live in the integration test suites.
+doctest = false
 
 [dependencies]
 clap = { version = "4.6.1", features = ["derive"] }

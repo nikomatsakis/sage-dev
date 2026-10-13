@@ -2,7 +2,7 @@
 
 This page records related work informing Sage's trait-solver search design. It
 is descriptive rather than normative; the intended Sage contract lives in
-[Trait Solver Design](../trait-solver.md).
+[Trait Solver Design](../crates/sage_ir/solver-guide.md).
 
 ## miniKanren interleaving
 

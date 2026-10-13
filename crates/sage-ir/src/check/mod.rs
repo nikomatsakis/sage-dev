@@ -3,6 +3,7 @@ mod finalize;
 pub mod infer;
 pub mod infer_ctx;
 pub(crate) mod method;
+pub(crate) mod operator;
 pub mod resolve;
 pub mod sig;
 pub mod solve;

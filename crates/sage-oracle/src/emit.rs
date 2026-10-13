@@ -4,6 +4,7 @@ use rustc_hir::def::{DefKind as HirDefKind, Res};
 use rustc_middle::ty::{self, TyCtxt};
 use rustc_span::def_id::{CRATE_DEF_ID, CRATE_DEF_INDEX, DefId, LocalDefId, LocalModDefId};
 use rustc_span::hygiene::{ExpnKind, MacroKind};
+use rustc_span::sym;
 
 use rust_ref::*;
 
@@ -158,13 +159,13 @@ impl<'tcx> Emitter<'tcx> {
         emitted
     }
 
-    fn emit_method_receiver_adjustments(
+    fn emit_call_argument_adjustments(
         &self,
         expr: &'tcx hir::Expr<'tcx>,
         typeck: &'tcx ty::TypeckResults<'tcx>,
         locals: &mut LocalMap,
     ) -> Expr<NormalizedDef> {
-        let mut emitted = self.emit_expr_with_locals(expr, typeck, locals);
+        let mut emitted = self.emit_unadjusted_expr_with_locals(expr, typeck, locals);
         for adjustment in typeck.expr_adjustments(expr) {
             match adjustment.kind {
                 ty::adjustment::Adjust::Deref(ty::adjustment::DerefAdjustKind::Builtin) => {
@@ -183,10 +184,163 @@ impl<'tcx> Emitter<'tcx> {
                         ty: self.emit_type(adjustment.target),
                     };
                 }
-                ref other => panic!("unsupported method receiver adjustment in oracle: {other:?}"),
+                ty::adjustment::Adjust::NeverToAny => {
+                    emitted = Expr::NeverToAny {
+                        expr: Box::new(emitted),
+                        ty: self.emit_type(adjustment.target),
+                    };
+                }
+                ref other => panic!("unsupported call argument adjustment in oracle: {other:?}"),
             }
         }
         emitted
+    }
+
+    fn emit_call_resolution(
+        &self,
+        target: DefId,
+        generic_args: ty::GenericArgsRef<'tcx>,
+    ) -> (
+        CallDispatch<NormalizedDef>,
+        Vec<Type<NormalizedDef>>,
+        Vec<Type<NormalizedDef>>,
+    ) {
+        let generics = self.tcx.generics_of(target);
+        let owner_type_count = (0..generics.parent_count)
+            .filter(|&index| {
+                matches!(
+                    generics.param_at(index, self.tcx).kind,
+                    ty::GenericParamDefKind::Type { .. }
+                )
+            })
+            .count();
+        let type_arguments: Vec<_> = generic_args.types().map(|ty| self.emit_type(ty)).collect();
+        let (owner_type_args, method_type_args) = type_arguments.split_at(owner_type_count);
+        let owner_type_args = owner_type_args.to_vec();
+        let method_type_args = method_type_args.to_vec();
+        let dispatch = self
+            .tcx
+            .associated_item(target)
+            .trait_container(self.tcx)
+            .map_or(CallDispatch::Direct, |trait_def_id| {
+                let [self_ty, trait_type_args @ ..] = owner_type_args.as_slice() else {
+                    panic!("trait method call must retain its Self substitution")
+                };
+                CallDispatch::StaticTrait {
+                    self_ty: self_ty.clone(),
+                    trait_target: self.normalize_def(trait_def_id),
+                    trait_type_args: trait_type_args.to_vec(),
+                }
+            });
+        (dispatch, owner_type_args, method_type_args)
+    }
+
+    fn binary_operator_method(&self, operation: hir::BinOpKind) -> DefId {
+        let lang_items = self.tcx.lang_items();
+        let (trait_def_id, method_name) = match operation {
+            hir::BinOpKind::Add => (lang_items.add_trait(), sym::add),
+            hir::BinOpKind::Sub => (lang_items.sub_trait(), sym::sub),
+            hir::BinOpKind::Mul => (lang_items.mul_trait(), sym::mul),
+            hir::BinOpKind::Div => (lang_items.div_trait(), sym::div),
+            hir::BinOpKind::Rem => (lang_items.rem_trait(), sym::rem),
+            hir::BinOpKind::BitXor => (lang_items.bitxor_trait(), sym::bitxor),
+            hir::BinOpKind::BitAnd => (lang_items.bitand_trait(), sym::bitand),
+            hir::BinOpKind::BitOr => (lang_items.bitor_trait(), sym::bitor),
+            hir::BinOpKind::Shl => (lang_items.shl_trait(), sym::shl),
+            hir::BinOpKind::Shr => (lang_items.shr_trait(), sym::shr),
+            hir::BinOpKind::Lt => (lang_items.partial_ord_trait(), sym::lt),
+            hir::BinOpKind::Le => (lang_items.partial_ord_trait(), sym::le),
+            hir::BinOpKind::Ge => (lang_items.partial_ord_trait(), sym::ge),
+            hir::BinOpKind::Gt => (lang_items.partial_ord_trait(), sym::gt),
+            hir::BinOpKind::Eq => (lang_items.eq_trait(), sym::eq),
+            hir::BinOpKind::Ne => (lang_items.eq_trait(), sym::ne),
+            hir::BinOpKind::And | hir::BinOpKind::Or => {
+                unreachable!("lazy boolean operators are not trait calls")
+            }
+        };
+        let trait_def_id = trait_def_id.expect("binary operator trait language item must exist");
+        let mut methods = self
+            .tcx
+            .associated_items(trait_def_id)
+            .filter_by_name_unhygienic(method_name)
+            .filter(|item| item.is_fn());
+        let method = methods
+            .next()
+            .expect("binary operator trait method must exist");
+        assert!(
+            methods.next().is_none(),
+            "binary operator trait method must be unique"
+        );
+        method.def_id
+    }
+
+    fn emit_binary_operator(
+        &self,
+        expr: &'tcx hir::Expr<'tcx>,
+        operation: hir::BinOpKind,
+        lhs: &'tcx hir::Expr<'tcx>,
+        rhs: &'tcx hir::Expr<'tcx>,
+        typeck: &'tcx ty::TypeckResults<'tcx>,
+        locals: &mut LocalMap,
+    ) -> Expr<NormalizedDef> {
+        if matches!(operation, hir::BinOpKind::And | hir::BinOpKind::Or) {
+            return Expr::BinaryOp {
+                op: self.emit_bin_op(operation),
+                lhs: Box::new(self.emit_expr_with_locals(lhs, typeck, locals)),
+                rhs: Box::new(self.emit_expr_with_locals(rhs, typeck, locals)),
+                ty: self.emit_type(typeck.expr_ty(expr)),
+            };
+        }
+
+        let recorded_target = typeck.type_dependent_def_id(expr.hir_id);
+        let (target, generic_args) = recorded_target.map_or_else(
+            || {
+                let target = self.binary_operator_method(operation);
+                let generic_args = self.tcx.mk_args(&[
+                    typeck.expr_ty_adjusted(lhs).into(),
+                    typeck.expr_ty_adjusted(rhs).into(),
+                ]);
+                (target, generic_args)
+            },
+            |target| (target, typeck.node_args(expr.hir_id)),
+        );
+        let (dispatch, owner_type_args, method_type_args) =
+            self.emit_call_resolution(target, generic_args);
+        let signature = self
+            .tcx
+            .fn_sig(target)
+            .instantiate(self.tcx, generic_args)
+            .skip_binder();
+        let [lhs_input, rhs_input] = signature.inputs() else {
+            panic!("binary operator method must take exactly two arguments")
+        };
+        let synthesize_scalar_borrows = recorded_target.is_none() && !operation.is_by_value();
+        let emit_operand = |operand, input: ty::Ty<'tcx>, locals: &mut LocalMap| {
+            let emitted = self.emit_call_argument_adjustments(operand, typeck, locals);
+            if synthesize_scalar_borrows {
+                let ty::TyKind::Ref(_, _, mutability) = input.kind() else {
+                    panic!("by-reference binary operator method must take references")
+                };
+                Expr::Ref {
+                    mutable: mutability.is_mut(),
+                    expr: Box::new(emitted),
+                    ty: self.emit_type(input),
+                }
+            } else {
+                emitted
+            }
+        };
+        Expr::Call {
+            target: self.normalize_def(target),
+            dispatch,
+            owner_type_args,
+            method_type_args,
+            args: vec![
+                emit_operand(lhs, *lhs_input, locals),
+                emit_operand(rhs, *rhs_input, locals),
+            ],
+            ty: self.emit_type(typeck.expr_ty(expr)),
+        }
     }
 
     fn def_path_for(&self, def_id: DefId) -> DefPath {
@@ -527,13 +681,7 @@ impl<'tcx> Emitter<'tcx> {
                 Expr::Literal { kind, value }
             }
             hir::ExprKind::Binary(op, lhs, rhs) => {
-                let bin_op = self.emit_bin_op(op.node);
-                Expr::BinaryOp {
-                    op: bin_op,
-                    lhs: Box::new(self.emit_expr_with_locals(lhs, typeck, locals)),
-                    rhs: Box::new(self.emit_expr_with_locals(rhs, typeck, locals)),
-                    ty: self.emit_type(expr_ty),
-                }
+                self.emit_binary_operator(expr, op.node, lhs, rhs, typeck, locals)
             }
             hir::ExprKind::Call(callee, args) => {
                 if let hir::ExprKind::Path(qpath) = &callee.kind {
@@ -577,39 +725,10 @@ impl<'tcx> Emitter<'tcx> {
                 let target = typeck
                     .type_dependent_def_id(expr.hir_id)
                     .expect("type-checked method call must name its selected function");
-                let generics = self.tcx.generics_of(target);
-                let owner_type_count = (0..generics.parent_count)
-                    .filter(|&index| {
-                        matches!(
-                            generics.param_at(index, self.tcx).kind,
-                            ty::GenericParamDefKind::Type { .. }
-                        )
-                    })
-                    .count();
-                let type_arguments: Vec<_> = typeck
-                    .node_args(expr.hir_id)
-                    .types()
-                    .map(|ty| self.emit_type(ty))
-                    .collect();
-                let (owner_type_args, method_type_args) = type_arguments.split_at(owner_type_count);
-                let owner_type_args = owner_type_args.to_vec();
-                let method_type_args = method_type_args.to_vec();
-                let dispatch = self
-                    .tcx
-                    .associated_item(target)
-                    .trait_container(self.tcx)
-                    .map_or(CallDispatch::Direct, |trait_def_id| {
-                        let [self_ty, trait_type_args @ ..] = owner_type_args.as_slice() else {
-                            panic!("trait method call must retain its Self substitution")
-                        };
-                        CallDispatch::StaticTrait {
-                            self_ty: self_ty.clone(),
-                            trait_target: self.normalize_def(trait_def_id),
-                            trait_type_args: trait_type_args.to_vec(),
-                        }
-                    });
+                let (dispatch, owner_type_args, method_type_args) =
+                    self.emit_call_resolution(target, typeck.node_args(expr.hir_id));
                 let mut emitted_args = Vec::with_capacity(args.len() + 1);
-                emitted_args.push(self.emit_method_receiver_adjustments(receiver, typeck, locals));
+                emitted_args.push(self.emit_call_argument_adjustments(receiver, typeck, locals));
                 emitted_args.extend(
                     args.iter()
                         .map(|argument| self.emit_expr_with_locals(argument, typeck, locals)),
@@ -786,6 +905,8 @@ fn oracle_def_kind(kind: HirDefKind) -> Option<rust_ref::DefKind> {
     })
 }
 
+// {anchor}`crates.sage_oracle_harness.crate.fixed_projection`
+// {anchor}`crates.sage_oracle_harness.crate.deterministic_emission`
 pub fn emit_crate(tcx: TyCtxt<'_>) -> Result<Crate<NormalizedDef>, OracleError> {
     if tcx.dcx().has_errors().is_some() {
         return Err(OracleError::CompileError(

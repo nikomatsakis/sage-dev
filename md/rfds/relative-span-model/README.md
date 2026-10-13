@@ -70,7 +70,7 @@ The item's `AbsoluteSpan` does change, but `AbsoluteSpan` is only read by positi
 ### `SpanTable` is removed
 
 Its two roles are taken over by simpler mechanisms:
-- **File identity:** carried directly on items as `source_file: SourceFile`. (When [macro expansion as a tracked query](./macro-expansion-tracked-query.md) lands, this becomes `parse_source: ParseSource<'db>`.)
+- **File identity:** carried directly on items as `source_file: SourceFile`. (When [macro expansion as a tracked query](../macro-expansion-tracked-query/README.md) lands, this becomes `parse_source: ParseSource<'db>`.)
 - **Byte offset storage:** replaced by `AbsoluteSpan` (item-level) + `RelativeSpan` (everything inside an item: signatures, bodies, resolved bodies). No indirection table needed.
 
 ### Lowering changes

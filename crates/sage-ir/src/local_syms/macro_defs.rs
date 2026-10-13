@@ -7,6 +7,7 @@ use crate::span::AbsoluteSpan;
 
 /// A `macro_rules!` definition at item level.
 #[salsa::tracked(debug)]
+#[sage::item(crate::symbols::LocalMacroDefSym)]
 pub struct LocalMacroDefSym<'db> {
     pub name: Name<'db>,
     pub scope: ScopeSymbol<'db>,

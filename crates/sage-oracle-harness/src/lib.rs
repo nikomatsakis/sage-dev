@@ -1,3 +1,5 @@
+#![feature(register_tool)]
+#![register_tool(sage)]
 #![feature(rustc_private)]
 
 extern crate rustc_driver;
@@ -163,6 +165,7 @@ pub fn assert_crates_eq(
     assert_serialized_text_eq(fixture_name, &lhs_text, &rhs_text)
 }
 
+// {anchor}`crates.sage_oracle_harness.crate.exact_comparison`
 fn assert_serialized_text_eq(
     fixture_name: &str,
     lhs_text: &str,
@@ -199,6 +202,7 @@ mod comparison_tests {
     use super::assert_serialized_text_eq;
 
     #[test]
+    #[sage::test(crates.sage_oracle_harness.crate.exact_comparison)]
     fn exact_text_is_the_conformance_boundary() {
         assert!(assert_serialized_text_eq("same", "{\n  \"x\": 1\n}", "{\n  \"x\": 1\n}").is_ok());
 
@@ -336,4 +340,11 @@ pub fn check_annotations(
     } else {
         Err(errors.join("\n"))
     }
+}
+
+// Source anchors for architectural modules and distributed representations.
+mod sage_model {
+    /// Architectural crate anchor.
+    #[sage::item(crate)]
+    mod crate_model {}
 }

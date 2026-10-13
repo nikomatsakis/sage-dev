@@ -38,7 +38,7 @@ those choices directly.
 ## Change in a nutshell
 
 Completed `CheckedBody` values satisfy the destination contract in [Typed
-IR](../../design/typed-ir.md). Source-shaped nodes may exist during checking,
+IR](../../design/crates/sage_ir/typed-ir-guide.md). Source-shaped nodes may exist during checking,
 but successful finalization consumes them.
 
 Conceptually:
@@ -87,8 +87,10 @@ alias relations are proved.
 ### Materialize implicit operations
 
 Autoderef, autoref, unsizing, and other selected coercions become explicit
-tree nodes. Primitive operations may remain intrinsics; overloaded operations
-become resolved trait calls.
+tree nodes. Proven overloadable operators, including those over primitive
+operands, become resolved trait calls; future codegen may recognize and lower
+primitive instances specially. Non-overloadable operations such as lazy
+boolean conjunction and disjunction remain explicit semantic operations.
 
 ### Preserve structured control flow
 
@@ -151,4 +153,4 @@ which a future lifetime or borrow checker may reject.
 
 ## Implementation
 
-See [Implementation plan and status](./implementation.md).
+See [Implementation plan and status](implementation.md).

@@ -1,3 +1,5 @@
+#![feature(register_tool)]
+#![register_tool(sage)]
 use serde::{Deserialize, Serialize};
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -6,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(serialize = "Def: Serialize", deserialize = "Def: Deserialize<'de>"))]
+#[sage::item(crate::Representation)]
 pub struct Crate<Def> {
     pub root: Module<Def>,
 }
@@ -880,4 +883,11 @@ mod tests {
         let deserialized: Crate<String> = serde_json::from_str(&json).unwrap();
         assert_eq!(krate, deserialized);
     }
+}
+
+// Source anchors for architectural modules and distributed representations.
+mod sage_model {
+    /// Architectural crate anchor.
+    #[sage::item(crate)]
+    mod crate_model {}
 }

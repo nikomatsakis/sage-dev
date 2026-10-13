@@ -63,11 +63,19 @@ pub struct RawDefId {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum RawSelfTypeHead {
     Adt(RawDefId),
+    /// A nominal type declared in the crate currently being checked. Upstream
+    /// rigid impl heads cannot match it, while blanket heads still may.
+    LocalAdt,
     Bool,
     Char,
     Int,
     Uint,
-    Float,
+    /// Float widths are kept distinct because rustc exposes explicit impls for
+    /// `f16` and `f128`, whose signatures Sage cannot represent yet.
+    Float16,
+    Float32,
+    Float64,
+    Float128,
     Str,
     Ref,
     Tuple,
@@ -255,6 +263,9 @@ pub enum RawGenericDefault {
 /// interning into salsa types (`Name`, `Symbol`). This keeps the trait
 /// free of salsa lifetimes, enabling channel-based implementations.
 // ANCHOR: architecture_external_metadata_interface
+// {anchor}`crates.sage_ir.metadata.provider_authority`
+// {anchor}`crates.sage_ir.metadata.explicit_incompleteness`
+// {anchor}`crates.sage_ir.metadata.product_boundaries`
 pub trait TcxDb: Send + Sync {
     fn extern_crate(&self, name: &str) -> Option<CrateNum>;
 
@@ -274,6 +285,7 @@ pub trait TcxDb: Send + Sync {
             .then_some(crate_num)
     }
 
+    #[sage::item(crate::metadata::ExternalFacts::items)]
     fn module_children(&self, crate_num: CrateNum, def_index: DefIndex) -> Vec<RawChild>;
 
     /// Return the name of the item with the given id or None if it is something anonymous (e.g., an impl).
@@ -319,6 +331,7 @@ pub trait TcxDb: Send + Sync {
 
     /// Checked signature data for an external trait, expressed without rustc
     /// or Salsa lifetimes. Missing/incomplete data cannot justify a proof.
+    #[sage::item(crate::metadata::ExternalFacts::signature)]
     fn trait_signature(
         &self,
         _crate_num: CrateNum,
@@ -330,6 +343,7 @@ pub trait TcxDb: Send + Sync {
     /// Return the associated items of an external trait without loading their
     /// signatures. Keeping enumeration separate preserves narrow incremental
     /// dependencies for name-based method lookup.
+    #[sage::item(crate::metadata::ExternalFacts::items)]
     fn associated_items(
         &self,
         _crate_num: CrateNum,
@@ -339,6 +353,7 @@ pub trait TcxDb: Send + Sync {
     }
 
     /// Checked signature data for an external function or method.
+    #[sage::item(crate::metadata::ExternalFacts::signature)]
     fn fn_signature(&self, _crate_num: CrateNum, _def_index: DefIndex) -> Option<RawFnSignature> {
         None
     }
@@ -346,6 +361,7 @@ pub trait TcxDb: Send + Sync {
     /// Generic parameters, trailing type defaults, and ordinary predicates
     /// for an external nominal type. This intentionally excludes fields,
     /// variants, inherent items, and impls.
+    #[sage::item(crate::metadata::ExternalFacts::signature)]
     fn adt_signature(&self, _crate_num: CrateNum, _def_index: DefIndex) -> Option<RawAdtSignature> {
         None
     }
@@ -354,6 +370,7 @@ pub trait TcxDb: Send + Sync {
     /// exactly the requested source name. Associated functions without a
     /// `self` parameter are excluded. This name-keyed boundary is used both to
     /// audit trait-method shadowing and to select inherent methods.
+    #[sage::item(crate::metadata::ExternalFacts::candidates)]
     fn inherent_method_candidates(
         &self,
         _crate_num: CrateNum,
@@ -366,6 +383,7 @@ pub trait TcxDb: Send + Sync {
     /// Deterministic explicit upstream impl identities for one fixed trait.
     /// A supplied self head may remove only provably disjoint rigid headers;
     /// blanket and unclassifiable headers remain in the result.
+    #[sage::item(crate::metadata::ExternalFacts::candidates)]
     fn relevant_trait_impls(
         &self,
         _crate_num: CrateNum,
@@ -377,6 +395,7 @@ pub trait TcxDb: Send + Sync {
 
     /// Binder-aware header for one external trait impl. Associated values and
     /// impl items are intentionally separate metadata operations.
+    #[sage::item(crate::metadata::ExternalFacts::signature)]
     fn impl_signature(
         &self,
         _crate_num: CrateNum,
@@ -387,6 +406,7 @@ pub trait TcxDb: Send + Sync {
 
     /// Value of one requested associated type in one external impl. This is
     /// intentionally separate from the impl header and item enumeration.
+    #[sage::item(crate::metadata::ExternalFacts::value)]
     fn associated_type_value(
         &self,
         _impl_crate_num: CrateNum,

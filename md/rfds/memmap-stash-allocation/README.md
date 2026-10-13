@@ -3,16 +3,16 @@
 **Status:** Completed (historical; storage mechanism superseded)
 
 **Depends on:**
-- [Hash-consed stash](./stash-hash-consing.md) — `Stash`, `Slice<T>`, `Stashed<T>`, `AllocStashData`
+- [Hash-consed stash](../stash-hash-consing/README.md) — `Stash`, `Slice<T>`, `Stashed<T>`, `AllocStashData`
 
 > **Current disposition.** This RFD records an intermediate representation
 > which was completed and later replaced. Its fixpoint originally mutated
 > hash-consed stash entries in place. That mechanism is superseded by
-> [D2](../../design/decisions.md#d2-stash-for-type-level-interning) and
-> [STASH-A5](../../design/stash.md#stash-a5): allocated stash entries are now
+> [Stash for type-level interning](../architectural-foundations/README.md#stash-for-type-level-interning) and
+> [crates.sage_stash.storage.immutable_entries](../../design/anchor/crates/sage_stash/storage/immutable_entries.html): allocated stash entries are now
 > immutable. Current module expansion returns an ordinary ordered symbol
 > sequence and lets Salsa perform fixed-point recovery; see
-> [Module and Macro Expansion](../../design/pipeline/module-expansion.md).
+> [Module and Macro Expansion](../../design/crates/sage_ir/expansion-guide.md).
 
 ## Background
 

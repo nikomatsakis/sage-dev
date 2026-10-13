@@ -1,3 +1,5 @@
+#![feature(register_tool)]
+#![register_tool(sage)]
 use expect_test::Expect;
 pub use expect_test::expect;
 use sage_ir::Db;
@@ -292,6 +294,7 @@ mod file_module_scope_tests {
     use sage_ir::ty::Ty;
 
     #[test]
+    #[sage::test(crates.sage_ir.modules.parse.syntax_identities)]
     fn items_in_a_file_backed_module_use_that_module_as_their_scope() {
         with_test_crate_files(
             &[("lib.rs", "mod child;"), ("child.rs", "struct Holder;")],
@@ -319,6 +322,7 @@ mod file_module_scope_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.resolution.lookup.precedence)]
     fn transitive_local_globs_resolve_and_glob_cycles_terminate() {
         with_test_crate_files(
             &[(
@@ -372,6 +376,7 @@ mod macro_expansion_tests {
     use sage_ir::symbol::{StructSymbol, SymbolData};
 
     #[test]
+    #[sage::test(crates.sage_ir.modules.expand.recursion_and_fixpoint)]
     fn same_module_macro_resolution_reaches_a_fixed_point() {
         with_test_crate(
             r#"
@@ -1063,6 +1068,9 @@ mod derive_expansion_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.types.lifetimes.dummy)]
+    #[sage::test(crates.sage_ir.types.body.elaborated)]
+    #[sage::test(crates.sage_ir.types.calls.selected_semantics)]
     fn clone_method_call_is_elaborated_to_a_resolved_trait_call() {
         use sage_ir::symbol::{FnSymbol, Symbol};
         use sage_ir::ty::{TraitItemDef, Ty};
@@ -1232,6 +1240,7 @@ mod derive_expansion_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.resolution.lookup.completeness)]
     fn unresolved_item_macro_keeps_method_scope_incomplete() {
         with_test_crate_files_using_db(
             Database::new(BuiltinDeriveTcx::default()),
@@ -1552,6 +1561,8 @@ mod derive_expansion_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.symbols.body_interfaces)]
+    #[sage::test(crates.sage_ir.checking.body.interface_dependencies)]
     fn clone_method_body_has_a_narrow_reusable_semantic_query_trace() {
         let (tcx, tcx_calls) = BuiltinDeriveTcx::tracing();
         let mut database = Database::new(tcx);
@@ -1921,6 +1932,7 @@ mod derive_expansion_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.types.spans.generated_identity)]
     fn duplicate_derive_occurrences_have_distinct_generated_source_identity() {
         with_test_crate_files_using_db(
             Database::new(BuiltinDeriveTcx::default()),
@@ -2007,6 +2019,8 @@ mod derive_expansion_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.types.spans.offset_reuse)]
+    #[sage::test(crates.sage_ir.types.spans.generated_identity)]
     fn moving_source_item_preserves_derive_expansion_identity() {
         use salsa::Setter as _;
         use salsa::plumbing::AsId as _;
@@ -2047,6 +2061,8 @@ mod trait_system_tests {
     use sage_ir::ty::{Lifetime, SolverEligibility, Ty};
 
     #[test]
+    #[sage::test(crates.sage_ir.types.binder.owner_parameters)]
+    #[sage::test(crates.sage_ir.checking.signature.owner_binder)]
     fn trait_and_impl_signatures_share_complete_generic_binders() {
         with_test_crate(
             "trait Bound {}\ntrait PairBound<T> where T: Bound {}\nimpl<T: Bound> PairBound<T> for (T, T) {}",
@@ -2089,6 +2105,7 @@ mod trait_system_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.types.lifetimes.dummy)]
     fn lifetime_generic_impl_uses_dummy_and_remains_solver_eligible() {
         with_test_crate(
             "trait Bound {}\nimpl<'a, T> Bound for &'a T {}",
@@ -2244,6 +2261,7 @@ mod trait_system_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.types.lifetimes.dummy)]
     fn explicit_elided_and_static_lifetimes_collapse_to_dummy() {
         use sage_ir::symbol::FnSymbol;
 
@@ -2289,6 +2307,7 @@ mod trait_system_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.types.binder.owner_parameters)]
     fn associated_items_reuse_owner_generics_and_bodies_resolve_fields() {
         use sage_ir::local_syms::LocalAssociatedOwner;
         use sage_ir::symbol::{FnSymbol, StructSymbol};
@@ -2382,8 +2401,9 @@ mod trait_system_tests {
         );
     }
 
-    // Evidence: ARC-A1, PAR-A2, SYM-A2, INC-A2, INC-A3.
     #[test]
+    #[sage::test(crates.sage_ir.symbols.local_identity)]
+    #[sage::test(crates.sage_ir.modules.parse.detail_firewall)]
     fn detail_edits_preserve_local_symbol_query_keys() {
         use salsa::Setter as _;
 
@@ -2510,8 +2530,8 @@ mod trait_system_tests {
         }
     }
 
-    // Evidence: ARC-A1, PAR-A2, SYM-A2, INC-A2, INC-A3.
     #[test]
+    #[sage::test(crates.sage_ir.symbols.local_identity)]
     fn enum_detail_edits_preserve_variant_query_keys() {
         use sage_ir::local_syms::enums::enum_variants;
         use sage_ir::symbol::EnumSymbol;
@@ -2552,21 +2572,27 @@ mod trait_system_tests {
         );
     }
 
-    // Evidence: SPAN-A1, SPAN-A3, ARC-A1, SYM-A2, INC-A2, INC-A3.
     #[test]
+    #[sage::test(crates.sage_ir.symbols.local_identity)]
+    #[sage::test(crates.sage_ir.symbols.associated_identity)]
+    #[sage::test(crates.sage_ir.types.spans.relative_composition)]
     fn moving_associated_items_preserves_symbol_query_keys() {
+        use sage_ir::local_syms::LocalAssociatedOwner;
+        use sage_ir::symbol::{ConstSymbol, TypeAliasSymbol};
         use sage_ir::ty::TraitItemDef;
         use salsa::Setter as _;
 
         fn force_target_observer(db: &dyn Db, source_file: SourceFile) {
             let (_, root) = setup_root_module(db, source_file);
-            let items = root
+            let (owner, items) = root
                 .expanded_module_items(db)
                 .iter()
                 .find_map(|symbol| match symbol.data(db) {
-                    SymbolData::TraitSymbol(TraitSymbol::Local(owner)) => Some(owner.items(db)),
+                    SymbolData::TraitSymbol(TraitSymbol::Local(owner)) => {
+                        Some((LocalAssociatedOwner::Trait(owner), owner.items(db)))
+                    }
                     SymbolData::ImplSymbol(sage_ir::symbol::ImplSymbol::Local(owner)) => {
-                        Some(owner.items(db))
+                        Some((LocalAssociatedOwner::Impl(owner), owner.items(db)))
                     }
                     _ => None,
                 })
@@ -2576,9 +2602,19 @@ mod trait_system_tests {
                 .iter()
                 .find_map(|item| {
                     let symbol = match *item {
-                        TraitItemDef::Function(symbol) => Symbol::from(symbol),
-                        TraitItemDef::Type(symbol) => Symbol::from(symbol),
-                        TraitItemDef::Const(symbol) => Symbol::from(symbol),
+                        TraitItemDef::Function(FnSymbol::Local(symbol)) => {
+                            assert_eq!(symbol.owner(db), Some(owner));
+                            Symbol::from(FnSymbol::Local(symbol))
+                        }
+                        TraitItemDef::Type(TypeAliasSymbol::Local(symbol)) => {
+                            assert_eq!(symbol.owner(db), Some(owner));
+                            Symbol::from(TypeAliasSymbol::Local(symbol))
+                        }
+                        TraitItemDef::Const(ConstSymbol::Local(symbol)) => {
+                            assert_eq!(symbol.owner(db), Some(owner));
+                            Symbol::from(ConstSymbol::Local(symbol))
+                        }
+                        _ => panic!("expected local associated items"),
                     };
                     let name = symbol.name(db)?.0.text(db);
                     name.eq_ignore_ascii_case("target").then_some(symbol)
@@ -2674,8 +2710,8 @@ mod trait_system_tests {
         }
     }
 
-    // Evidence: SPAN-A1, SPAN-A3, ARC-A1, SYM-A2, INC-A2, INC-A3.
     #[test]
+    #[sage::test(crates.sage_ir.types.spans.offset_reuse)]
     fn moving_associated_item_reuses_method_signature_and_body() {
         use sage_ir::ty::TraitItemDef;
         use salsa::Setter as _;
@@ -2777,6 +2813,8 @@ mod trait_system_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.symbols.associated_identity)]
+    #[sage::test(crates.sage_ir.types.binder.owner_parameters)]
     fn trait_items_have_stable_symbols_and_owner_identity() {
         use sage_ir::local_syms::LocalAssociatedOwner;
         use sage_ir::local_syms::associated::local_associated_items;
@@ -2885,19 +2923,21 @@ mod trait_solver_boundary_tests {
     use super::*;
     use sage_ir::check::infer::egraph::VersionedEGraph;
     use sage_ir::check::infer::unify::{UnifyError, try_unify};
-    use sage_ir::check::infer::version::{Universe, Version};
+    use sage_ir::check::infer::version::{InferDomain, Universe, Version};
     use sage_ir::check::solve::{
-        AppliedCertainty, Assumption, Atom, CanonicalVarRole, Goal, GoalOutput, GoalResult,
-        QueryResultData, SolverGoal, apply_query_response, canonicalize_goal, extract_query_result,
+        AppliedCertainty, ApplyResponseError, Assumption, Atom, CallerCanonicalVar,
+        CanonicalVarRole, Goal, GoalOutput, GoalQuery, GoalResult, QueryResult, QueryResultData,
+        SolverGoal, SubstEntry, apply_query_response, canonicalize_goal, extract_query_result,
         extract_query_result_with_output, instantiate_query,
     };
     use sage_ir::generic_param::{AlphaEquivParam, GenericParam, GenericParamKind};
     use sage_ir::scope::ScopeSymbol;
     use sage_ir::symbol::{SymbolData, TraitSymbol};
     use sage_ir::ty::{
-        AliasTy, IntTy, NamedAliasTy, OpaqueAliasTy, ProjectionTy, TraitItemDef, TraitRef, Ty,
+        AliasTy, FloatTy, IntTy, NamedAliasTy, OpaqueAliasTy, ProjectionTy, TraitItemDef, TraitRef,
+        Ty,
     };
-    use sage_stash::StashCopy;
+    use sage_stash::{StashCopy, Stashed};
 
     fn crate_from_root_items<'db>(
         db: &'db dyn Db,
@@ -2918,6 +2958,7 @@ mod trait_solver_boundary_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.inference.canonical_boundary)]
     fn canonical_equality_round_trips_transactionally() {
         with_test_crate("trait Marker {}", |db, root| {
             let krate = crate_from_root_items(db, root);
@@ -2970,7 +3011,273 @@ mod trait_solver_boundary_tests {
     }
 
     #[test]
+    fn canonical_domains_distinguish_query_keys_and_reinstantiate() {
+        with_test_crate("trait Marker {}", |db, root| {
+            let krate = crate_from_root_items(db, root);
+
+            let canonical = |domain| {
+                let mut stash = Stash::new();
+                let mut egraph = VersionedEGraph::new();
+                let input_index = egraph.alloc_var_in_domain(Version::ROOT, Universe(1), domain);
+                let input = stash.alloc(Ty::InferVar(input_index));
+                let assumptions = stash.alloc_slice::<Assumption>(&[]);
+                canonicalize_goal(
+                    db,
+                    &stash,
+                    &egraph,
+                    Version::ROOT,
+                    krate,
+                    Universe(1),
+                    true,
+                    assumptions,
+                    Goal::Atom(Atom::Equals(input, input)),
+                )
+            };
+
+            let integer = canonical(InferDomain::Integer);
+            let float = canonical(InferDomain::Float);
+            let integer_query = GoalQuery::new(db, integer.data.clone());
+            let float_query = GoalQuery::new(db, float.data.clone());
+            assert_ne!(integer_query, float_query);
+
+            for (canonical, expected) in
+                [(integer, InferDomain::Integer), (float, InferDomain::Float)]
+            {
+                let proof = instantiate_query(&canonical.data);
+                let input = proof.inputs[0].ty;
+                assert_eq!(
+                    proof
+                        .egraph
+                        .effective_domain(proof.version, &proof.stash, input),
+                    Some(expected)
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn response_local_domain_round_trips_to_the_caller() {
+        with_test_crate("trait Marker {}", |db, root| {
+            let krate = crate_from_root_items(db, root);
+            let mut caller_stash = Stash::new();
+            let mut caller_egraph = VersionedEGraph::new();
+            let assumptions = caller_stash.alloc_slice::<Assumption>(&[]);
+            let canonical = canonicalize_goal(
+                db,
+                &caller_stash,
+                &caller_egraph,
+                Version::ROOT,
+                krate,
+                Universe::ROOT,
+                true,
+                assumptions,
+                Goal::Maybe,
+            );
+            let mut proof = instantiate_query(&canonical.data);
+            let response_index = proof.egraph.alloc_var_in_domain(
+                proof.version,
+                Universe::ROOT,
+                InferDomain::Integer,
+            );
+            let response_ty = proof.stash.alloc(Ty::InferVar(response_index));
+            let response = extract_query_result(
+                db,
+                &proof,
+                GoalResult::Yes {
+                    modulo: Goal::Atom(Atom::Equals(response_ty, response_ty)),
+                },
+            );
+            let [response_var] = response.stash()[response.root().bound_vars] else {
+                panic!("expected one response-local variable")
+            };
+            assert_eq!(response_var.domain, InferDomain::Integer);
+
+            let applied = apply_query_response(
+                db,
+                &mut caller_stash,
+                &mut caller_egraph,
+                Version::ROOT,
+                &canonical.data,
+                &canonical.mapping,
+                &response,
+            )
+            .unwrap();
+            let AppliedCertainty::Yes {
+                output: GoalOutput::Proven,
+                modulo: Goal::Atom(Atom::Equals(left, right)),
+            } = applied.certainty
+            else {
+                panic!("expected an equality residual")
+            };
+            assert_eq!(left, right);
+            assert_eq!(
+                caller_egraph.effective_domain(Version::ROOT, &caller_stash, left),
+                Some(InferDomain::Integer)
+            );
+        });
+    }
+
+    #[test]
+    fn proof_narrowing_of_input_domain_round_trips_to_the_caller() {
+        with_test_crate("trait Marker {}", |db, root| {
+            let krate = crate_from_root_items(db, root);
+            let mut caller_stash = Stash::new();
+            let mut caller_egraph = VersionedEGraph::new();
+            let input_index = caller_egraph.alloc_var(Version::ROOT, Universe(1));
+            let input = caller_stash.alloc(Ty::InferVar(input_index));
+            let assumptions = caller_stash.alloc_slice::<Assumption>(&[]);
+            let canonical = canonicalize_goal(
+                db,
+                &caller_stash,
+                &caller_egraph,
+                Version::ROOT,
+                krate,
+                Universe(1),
+                true,
+                assumptions,
+                Goal::Atom(Atom::Equals(input, input)),
+            );
+            let mut proof = instantiate_query(&canonical.data);
+            let narrowed_index =
+                proof
+                    .egraph
+                    .alloc_var_in_domain(proof.version, Universe(1), InferDomain::Integer);
+            let narrowed = proof.stash.alloc(Ty::InferVar(narrowed_index));
+            try_unify(
+                &mut proof.egraph,
+                &mut proof.stash,
+                proof.version,
+                proof.inputs[0].ty,
+                narrowed,
+            )
+            .unwrap();
+            let modulo = Goal::true_(&mut proof.stash);
+            let response = extract_query_result(db, &proof, GoalResult::Yes { modulo });
+            let [response_var] = response.stash()[response.root().bound_vars] else {
+                panic!("expected one narrowed response variable")
+            };
+            assert_eq!(response_var.domain, InferDomain::Integer);
+            let QueryResultData::Yes { subst, .. } = response.root().value else {
+                panic!("expected a definite response")
+            };
+            let [entry] = response.stash()[subst] else {
+                panic!("expected the narrowed input substitution")
+            };
+            assert_eq!(entry.key, proof.inputs[0].param);
+
+            apply_query_response(
+                db,
+                &mut caller_stash,
+                &mut caller_egraph,
+                Version::ROOT,
+                &canonical.data,
+                &canonical.mapping,
+                &response,
+            )
+            .unwrap();
+            assert_eq!(
+                caller_egraph.effective_domain(Version::ROOT, &caller_stash, input),
+                Some(InferDomain::Integer)
+            );
+        });
+    }
+
+    #[test]
+    fn incompatible_domain_response_is_rejected_atomically() {
+        with_test_crate("trait Marker {}", |db, root| {
+            let krate = crate_from_root_items(db, root);
+            let mut caller_stash = Stash::new();
+            let mut caller_egraph = VersionedEGraph::new();
+            let preceding_index = caller_egraph.alloc_var(Version::ROOT, Universe(1));
+            let preceding = caller_stash.alloc(Ty::InferVar(preceding_index));
+            let input_index =
+                caller_egraph.alloc_var_in_domain(Version::ROOT, Universe(1), InferDomain::Integer);
+            let input = caller_stash.alloc(Ty::InferVar(input_index));
+            let elements = caller_stash.alloc_slice(&[preceding, input]);
+            let pair = caller_stash.alloc(Ty::Tuple(elements));
+            let assumptions = caller_stash.alloc_slice::<Assumption>(&[]);
+            let canonical = canonicalize_goal(
+                db,
+                &caller_stash,
+                &caller_egraph,
+                Version::ROOT,
+                krate,
+                Universe(1),
+                true,
+                assumptions,
+                Goal::Atom(Atom::Equals(pair, pair)),
+            );
+            let (query_stash, query_data) = canonical.data.open();
+            let canonical_vars = &query_stash[query_data.canonical_vars];
+            let key_for = |index| {
+                canonical_vars
+                    .iter()
+                    .zip(&canonical.mapping.inputs)
+                    .find_map(|(info, caller)| {
+                        (*caller == CallerCanonicalVar::Existential(index)).then_some(info.param)
+                    })
+                    .expect("caller input must have a canonical key")
+            };
+
+            let mut response_stash = Stash::new();
+            let boolean = response_stash.alloc(Ty::Bool);
+            let float = response_stash.alloc(Ty::Float(FloatTy::F32));
+            let subst = response_stash.alloc_slice(&[
+                SubstEntry {
+                    key: key_for(preceding_index),
+                    value: boolean,
+                },
+                SubstEntry {
+                    key: key_for(input_index),
+                    value: float,
+                },
+            ]);
+            let modulo = Goal::true_(&mut response_stash);
+            let bound_vars = response_stash.alloc_slice(&[]);
+            let response = Stashed::new(
+                response_stash,
+                QueryResult {
+                    bound_vars,
+                    value: QueryResultData::Yes {
+                        output: GoalOutput::Proven,
+                        subst,
+                        modulo,
+                    },
+                },
+            );
+            let revision = caller_egraph.semantic_revision(Version::ROOT);
+
+            assert!(matches!(
+                apply_query_response(
+                    db,
+                    &mut caller_stash,
+                    &mut caller_egraph,
+                    Version::ROOT,
+                    &canonical.data,
+                    &canonical.mapping,
+                    &response,
+                ),
+                Err(ApplyResponseError::Unification(
+                    UnifyError::DomainConflict { .. }
+                ))
+            ));
+            assert_eq!(caller_egraph.find(Version::ROOT, preceding), preceding);
+            assert_eq!(
+                caller_egraph.effective_domain(Version::ROOT, &caller_stash, preceding),
+                Some(InferDomain::Any)
+            );
+            assert_eq!(caller_egraph.find(Version::ROOT, input), input);
+            assert_eq!(
+                caller_egraph.effective_domain(Version::ROOT, &caller_stash, input),
+                Some(InferDomain::Integer)
+            );
+            assert_eq!(caller_egraph.semantic_revision(Version::ROOT), revision);
+        });
+    }
+
+    #[test]
     #[should_panic(expected = "solver operation returned an incompatible output kind")]
+    #[sage::test(crates.sage_ir.solver.canonical_outputs)]
     fn canonical_response_rejects_an_output_for_the_wrong_operation() {
         with_test_crate("trait Marker {}", |db, root| {
             let krate = crate_from_root_items(db, root);
@@ -3001,6 +3308,7 @@ mod trait_solver_boundary_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.types.aliases.identity)]
     fn alias_variants_copy_fold_and_display_without_erasing_identity() {
         use rustc_hash::FxHashMap;
         use sage_ir::display::TyDisplay;
@@ -3221,6 +3529,7 @@ mod trait_solver_boundary_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.types.aliases.identity)]
     fn aliases_round_trip_through_canonical_query_and_response_stashes() {
         with_test_crate("trait Marker {}\ntype Named<T> = T;", |db, root| {
             let krate = crate_from_root_items(db, root);
@@ -3439,6 +3748,7 @@ mod trait_solver_proof_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.solver.canonical_outputs)]
     fn local_associated_type_normalization_produces_a_type_output() {
         with_test_crate(
             "trait Iterable { type Item; }\n\
@@ -3716,6 +4026,7 @@ mod trait_solver_proof_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.solver.alternative_isolation)]
     fn incompatible_normalization_outputs_are_ambiguous_but_identical_outputs_merge() {
         let check = |second_value: &str, expect_yes: bool| {
             let source = format!(
@@ -3798,6 +4109,7 @@ mod trait_solver_proof_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.inference.canonical_boundary)]
     fn response_local_type_output_round_trips_with_sharing() {
         with_test_crate(
             "trait Iterable { type Item; }\n\
@@ -4227,11 +4539,35 @@ mod trait_solver_proof_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.modules.expand.completeness)]
     fn unresolved_item_macro_prevents_ground_no() {
-        with_test_crate(
-            "missing!();\ntrait Marker {}",
-            assert_ground_bool_marker_is_maybe,
-        );
+        with_test_crate("missing!();\ntrait Marker {}", |db, root| {
+            let (marker, krate) = trait_and_crate(db, root, "Marker");
+            let mut stash = Stash::new();
+            let egraph = VersionedEGraph::new();
+            let self_ty = stash.alloc(Ty::Bool);
+            let args = stash.alloc_slice(&[]);
+            let assumptions = stash.alloc_slice::<Assumption>(&[]);
+            let canonical = canonicalize_goal(
+                db,
+                &stash,
+                &egraph,
+                Version::ROOT,
+                krate,
+                Universe::ROOT,
+                true,
+                assumptions,
+                Goal::Atom(Atom::TraitImpl {
+                    self_ty,
+                    trait_ref: TraitRef {
+                        trait_sym: marker,
+                        args,
+                    },
+                }),
+            );
+            let result = GoalQuery::new(db, canonical.data).prove(db);
+            assert!(matches!(result.root().value, QueryResultData::Maybe { .. }));
+        });
     }
 
     #[test]
@@ -4243,10 +4579,37 @@ mod trait_solver_proof_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.modules.expand.completeness)]
     fn malformed_item_macro_output_prevents_ground_no_without_panicking() {
         with_test_crate(
             "macro_rules! bad { () => { impl } }\nbad!();\ntrait Marker {}",
-            assert_ground_bool_marker_is_maybe,
+            |db, root| {
+                let (marker, krate) = trait_and_crate(db, root, "Marker");
+                let mut stash = Stash::new();
+                let egraph = VersionedEGraph::new();
+                let self_ty = stash.alloc(Ty::Bool);
+                let args = stash.alloc_slice(&[]);
+                let assumptions = stash.alloc_slice::<Assumption>(&[]);
+                let canonical = canonicalize_goal(
+                    db,
+                    &stash,
+                    &egraph,
+                    Version::ROOT,
+                    krate,
+                    Universe::ROOT,
+                    true,
+                    assumptions,
+                    Goal::Atom(Atom::TraitImpl {
+                        self_ty,
+                        trait_ref: TraitRef {
+                            trait_sym: marker,
+                            args,
+                        },
+                    }),
+                );
+                let result = GoalQuery::new(db, canonical.data).prove(db);
+                assert!(matches!(result.root().value, QueryResultData::Maybe { .. }));
+            },
         );
     }
 
@@ -4801,4 +5164,11 @@ mod trait_obligation_tests {
         )
         .check_ok();
     }
+}
+
+// Source anchors for architectural modules and distributed representations.
+mod sage_model {
+    /// Architectural crate anchor.
+    #[sage::item(crate)]
+    mod crate_model {}
 }

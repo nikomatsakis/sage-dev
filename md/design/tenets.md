@@ -56,13 +56,12 @@ associated-value interfaces may be separate keyed queries so a consumer does
 not load facts it did not request. Bodies and checking temporaries are not
 interfaces.
 
-<a id="ten-a1"></a>
-> **TEN-A1 — Interfaces are the cross-item semantic boundary.** A symbol's
+> **Interfaces are the cross-item semantic boundary.** A symbol's
 > checked signature is its primary interface; field, member, and other
 > language-required interfaces may be separate keyed products. Bodies and
 > checking temporaries are not interfaces. A caller may depend on a callee's
 > interface, but never on its body. See
-> [D15](./decisions.md#d15-cross-item-dependencies-stop-at-semantic-interfaces).
+> [Cross-item dependencies stop at semantic interfaces](../rfds/architectural-foundations/README.md#cross-item-dependencies-stop-at-semantic-interfaces).
 >
 > **Required verification:** Query traces for signatures and callers require
 > only the relevant interface products and forbid callee-body and
@@ -75,12 +74,11 @@ stores them in a `Binder`. All other queries (`fields`, `body`) open
 that binder and bring the same param symbols into scope via
 `ribs.add_generic_params`. No re-minting, no identity confusion.
 
-<a id="ten-a2"></a>
-> **TEN-A2 — A declaration has one set of generic-parameter identities.** The
+> **A declaration has one set of generic-parameter identities.** The
 > signature boundary creates the symbols once; every detail query opens the
 > binder and reuses those identities rather than recreating equivalent-looking
 > parameters. See
-> [D5](./decisions.md#d5-symbols-form-the-uniform-semantic-identity-family).
+> [Symbols form the uniform semantic identity family](../rfds/architectural-foundations/README.md#symbols-form-the-uniform-semantic-identity-family).
 >
 > **Required verification:** Identity tests compare generic parameters reached
 > through signatures, fields, predicates, and bodies, including after a warm
@@ -116,12 +114,11 @@ fingerprints (content hashes of the output stash) for change detection.
 Equal rooted semantic output has the same fingerprint regardless of allocation
 history, allowing Salsa to stop downstream propagation after recomputation.
 
-<a id="ten-a3"></a>
-> **TEN-A3 — Semantic outputs own their storage and have deterministic
+> **Semantic outputs own their storage and have deterministic
 > identity.** Checking reads source storage without mutating it, builds the
 > result in a fresh stash, and returns a self-contained `Stashed<T>` whose
 > fingerprint reflects semantic content rather than process allocation. See
-> [D2](./decisions.md#d2-stash-for-type-level-interning).
+> [Stash for type-level interning](../rfds/architectural-foundations/README.md#stash-for-type-level-interning).
 >
 > **Required verification:** Storage-isolation tests forbid source mutation or
 > cross-stash pointers, deterministic rebuild tests compare fingerprints, and
@@ -146,8 +143,7 @@ if let Some(entry) = cx.resolver.ribs.lookup(first.name, ns) {
 Module-level resolution walks direct expanded module symbols for local modules
 and queries `TcxDb::module_children` for external crates.
 
-<a id="ten-a4"></a>
-> **TEN-A4 — Lexical scope has priority over module fallback.** Resolution
+> **Lexical scope has priority over module fallback.** Resolution
 > consults namespace-aware lexical ribs before traversing local or external
 > module membership, so a nearer binding shadows a module-level name without
 > changing the module index.
@@ -173,12 +169,11 @@ semantically uses only generics, parameters, return type, and predicates. A
 coarse CST or module dependency may currently cause it to reexecute, but an
 equal checked signature is backdated before downstream interface consumers.
 
-<a id="ten-a5"></a>
-> **TEN-A5 — Incremental reuse is judged at semantic boundaries.** Coarse
+> **Incremental reuse is judged at semantic boundaries.** Coarse
 > upstream invalidation may reexecute a query, but an equal symbol, signature,
 > or other public semantic product is backdated before unrelated downstream
 > consumers are invalidated. See
-> [D1](./decisions.md#d1-salsa-for-incremental-computation).
+> [Salsa for incremental computation](../rfds/architectural-foundations/README.md#salsa-for-incremental-computation).
 >
 > **Required verification:** Persistent-database edit tests distinguish
 > execution from downstream propagation for relevant, interface-preserving,
@@ -196,13 +191,12 @@ schema. The comparison path never applies paired normalization, erases a
 difference, strips unsupported content, reorders output, or attempts semantic
 equivalence. Rich diffs may explain a mismatch after exact comparison fails;
 they cannot turn it into a pass. See [Oracle Test
-Harness](./oracle-test-harness.md#thin-adapters-and-exact-comparison).
+Harness](crates/sage_oracle_harness/oracle-guide.md#thin-adapters-and-exact-comparison).
 
-<a id="ten-a6"></a>
-> **TEN-A6 — Conformance is exact shared-form identity.** Sage and rustc each
+> **Conformance is exact shared-form identity.** Sage and rustc each
 > adapt independently to the shared oracle schema; the comparator performs no
 > semantic reconciliation, filtering, or paired normalization. See
-> [D4](./decisions.md#d4-oracle-test-harness).
+> [Oracle test harness](../rfds/architectural-foundations/README.md#oracle-test-harness).
 >
 > **Required verification:** Harness tests demonstrate exact success, expose a
 > one-field mismatch, and fail if either adapter or comparator attempts to
@@ -221,10 +215,9 @@ Small constructed values remain appropriate for unit-testing representation
 code, and narrowly scoped test doubles may inject failures at operating-system
 or external-service boundaries. Neither establishes that Sage computed a
 semantic result correctly. See
-[D19](./decisions.md#d19-semantic-evidence-starts-from-source).
+[Semantic evidence starts from source](../rfds/architectural-foundations/README.md#semantic-evidence-starts-from-source).
 
-<a id="ten-a7"></a>
-> **TEN-A7 — Semantic integration evidence starts from source.** A semantic
+> **Semantic integration evidence starts from source.** A semantic
 > anchor is established by running real Rust source through the production
 > layers named by the claim. Reviewed snapshots and traces are outputs of that
 > run, not alternate semantic inputs. Constructed values and test doubles can
@@ -245,23 +238,63 @@ semantic result correctly. See
 - `Ty*` — typed-tree nodes: `TyExpr`, `TyStmt`, `TyPat`, `TyBody`
 - `*Sig` — signature payloads: `FnSig`, `StructSig`, `StructFields`
 
-## Current status
+## Anchor tenets
 
-These tenets span several phases, so their claim-specific evidence lives in
-the focused chapters rather than being duplicated here:
+These are writing guidelines, not additional specification rules. The
+[anchor-content specification](meta/anchors.md#anchor-content) defines the
+machine-checked boundaries; the
+[boundary migration record](../rfds/sage-contracts/implementation.md#anchor-content-boundaries)
+records their implementation and corpus audit.
 
-- [TEN-A1](#ten-a1) and [TEN-A2](#ten-a2): [Signature
-  Checking](./pipeline/signature-checking.md), [Body Checking and Typed-IR
-  Elaboration](./pipeline/body-checking.md), and [Symbols](./infrastructure/symbols.md);
-- [TEN-A3](#ten-a3): [Stash](./stash.md);
-- [TEN-A4](#ten-a4): [Name Resolution](./subsystems/name-resolution.md);
-- [TEN-A5](#ten-a5): [Incrementality and Query
-  Boundaries](./infrastructure/incrementality.md); and
-- [TEN-A6](#ten-a6): [Oracle Test Harness](./oracle-test-harness.md); and
-- [TEN-A7](#ten-a7): [Validation and Inspection](./validation/README.md) and
-  [Semantic Inspector](./validation/semantic-inspector.md).
+**Give each anchor one independently testable guarantee.** A useful claim
+identifies the relevant situation or precondition, the required outcome, and
+any failure behavior. A reviewer should be able to explain what observation
+would contradict it. Name the behavior being guaranteed rather than its
+position in the document.
 
-The principal current gap is [TEN-A5](#ten-a5): several coarse same-file and
-module dependencies cause reexecution before an equal semantic result can be
-backdated. The incrementality chapter distinguishes that extra execution from
-downstream propagation and records the current edit evidence.
+**Use as much prose as the guarantee needs.** One claim may need several
+paragraphs, a list of cases, or an example. Blank lines improve readability;
+they should not determine which qualifications are reviewed. Keep the
+conditions and exceptions needed to understand a guarantee inside its anchor's
+content, including qualifications expressed in lists or examples.
+
+**Split requirements that can change independently.** For example, a paragraph
+about reviewing all tests can easily accumulate unrelated details about the
+review file. Prefer three claims:
+
+- `complete_test_set`: one review considers the claim and all its associated
+  tests together; different tests may establish different parts of the claim.
+- `source_representation`: saved source snapshots use arrays of lines so a Git
+  diff exposes changes to the reviewed text.
+- `review_scope`: the review assesses whether the tests establish the claim;
+  implementation excerpts provide context without becoming approval inputs.
+
+A change to snapshot formatting should not require reconsidering what counts
+as adequate test coverage. Conversely, do not split a precondition from its
+outcome merely to make paragraphs shorter: the resulting fragments may no
+longer make complete claims.
+
+**Make the end of a claim intentional.** Under the anchor boundary rules,
+content continues until the next anchor, a section heading, or the end of its
+document or containing `.sage` prose block. Use `<!-- end anchor -->` when
+explanation following a claim should sit outside its review input without
+starting another section. Check the extracted content when reviewing an edit;
+nearby prose can qualify a rule even when its author intended only commentary.
+
+**Write for both readers and test authors.** Prefer concrete behavior over
+phrases such as “works correctly.” Examples clarify the contract, while tests
+make the claimed distinction observable. Keep motivation here or in an RFD;
+put the guarantee beside the entity responsible for it. An explicit TODO or
+N/A association makes incomplete coverage visible, but does not make an
+ambiguous claim easier to verify.
+
+## Implementation and test evidence
+
+The generated [anchor pages](anchor/index.html) report implementation entries,
+annotated tests, explicit TODO/N/A gaps, and saved claim/test reviews. These
+associations do not themselves establish that a test ran.
+
+The [earlier coverage snapshot](../rfds/implementation-sequencing/coverage-history.md#design-tenets)
+preserves the former capability descriptions, edit experiments, and limitations
+as historical evidence. Current coverage comes from the generated entries;
+implementation plans and decision rationale belong in the relevant RFDs.

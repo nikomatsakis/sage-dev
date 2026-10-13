@@ -21,7 +21,7 @@ whiteboard.
 This RFD specifies the positive, inductive MVP and records the design used to
 implement it. It is not the destination contract for candidate discovery,
 scheduling, incremental progress, or recursive proof semantics. Those tenets
-live in [Trait Solver Design](../../design/trait-solver.md); planned changes are
+live in [Trait Solver Design](../../design/crates/sage_ir/solver-guide.md); planned changes are
 split across the
 [Candidate Discovery](../trait-impl-candidate-discovery/README.md),
 [Cycle Semantics](../trait-solver-cycle-semantics/README.md),
@@ -146,7 +146,7 @@ unit-like `Proven`. The MVP implementation omits that uniform output from its
 response representation. The destination generalization is introduced with
 normalization: solver operations carry goal-specific outputs, and input-only
 `Normalize(alias)` returns a type. This later design is specified by
-[Trait Solver Design](../../design/trait-solver.md#knowledge-returned-by-the-solver)
+[Trait Solver Design](../../design/crates/sage_ir/solver-guide.md#knowledge-returned-by-the-solver)
 and the [Associated Type Normalization RFD](../associated-type-normalization/README.md).
 `Equals` is goal-only: hypothetical equality environments need a scoped egraph
 model and are deferred, so `Assumption` heads are statically trait-only.
@@ -432,7 +432,7 @@ incomplete frame disappears, the whiteboard removes the key, requests producer
 cancellation, joins its nested work, and drops its proof context; a later
 lookup starts a new frame rather than waiting on the cancelled one. Completion
 takes and wakes every remaining subscriber. See the
-[whiteboard implementation sketch](./impl-sketches/whiteboard.md).
+[whiteboard implementation sketch](impl-sketches/whiteboard.md).
 
 For an atomic request at depth `D`:
 
@@ -568,7 +568,7 @@ After all alternatives complete:
 
 Only `Yes { subst: [], modulo: All([]) }` may return before all alternatives
 finish. Even an empty-hint `Maybe` must wait because an unconditional `Yes` may
-still arrive. See the [solving implementation sketch](./impl-sketches/solving.md).
+still arrive. See the [solving implementation sketch](impl-sketches/solving.md).
 
 ### Directional subsumption
 

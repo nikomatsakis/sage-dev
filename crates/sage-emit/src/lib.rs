@@ -1,3 +1,5 @@
+#![feature(register_tool)]
+#![register_tool(sage)]
 use sage_ir::Db;
 use sage_ir::cst::Mutability;
 use sage_ir::cst::expr::{BinaryOp as SageBinaryOp, Literal as SageLiteral};
@@ -13,6 +15,9 @@ use sage_stash::Stash;
 
 use rust_ref::*;
 
+#[sage::item(crate::emission::Emitter::emit_module)]
+// {anchor}`crates.sage_oracle_harness.crate.fixed_projection`
+// {anchor}`crates.sage_oracle_harness.crate.deterministic_emission`
 pub fn emit_module<'db>(db: &'db dyn Db, module: ModSymbol<'db>) -> Crate<NormalizedDef> {
     let mut emitter = Emitter::new(db);
     emitter.pre_register_mod(module);
@@ -20,6 +25,7 @@ pub fn emit_module<'db>(db: &'db dyn Db, module: ModSymbol<'db>) -> Crate<Normal
     Crate { root }
 }
 
+#[sage::item(crate::emission::Emitter)]
 struct Emitter<'db> {
     db: &'db dyn Db,
     local_def_counter: u32,
@@ -907,4 +913,14 @@ fn reference_def_kind(kind: sage_ir::symbol::SymExtKind) -> Option<DefKind> {
         SymExtKind::Static => DefKind::Static,
         SymExtKind::MacroDef | SymExtKind::Use | SymExtKind::Other => return None,
     })
+}
+
+// Source anchors for architectural modules and distributed representations.
+mod sage_model {
+    /// Architectural crate anchor.
+    #[sage::item(crate)]
+    mod crate_model {}
+    /// Architectural module anchor.
+    #[sage::item(crate::emission)]
+    mod emission_model {}
 }

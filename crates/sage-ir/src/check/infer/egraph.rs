@@ -5,13 +5,14 @@ use crate::generic_param::GenericParam;
 use crate::ty::{InferVarIndex, Ty};
 
 use super::bound::Bound;
-use super::version::{Universe, VarInfo, Version, VersionTree};
+use super::version::{InferDomain, Universe, VarInfo, Version, VersionTree};
 
 /// Per-version mutable inference state (a sparse diff from its ancestry).
 #[derive(Debug, Default)]
 struct VersionState<'db> {
     parents: FxHashMap<Ptr<Ty<'db>>, Ptr<Ty<'db>>>,
     bounds: FxHashMap<Ptr<Ty<'db>>, Bound<'db>>,
+    domains: FxHashMap<Ptr<Ty<'db>>, InferDomain>,
     universe_ceilings: FxHashMap<InferVarIndex, Universe>,
     dependents: FxHashMap<Ptr<Ty<'db>>, FxHashSet<Ptr<Ty<'db>>>>,
     worklist: Vec<Ptr<Ty<'db>>>,
@@ -63,7 +64,16 @@ impl<'db> VersionedEGraph<'db> {
     // -----------------------------------------------------------------------
 
     pub fn alloc_var(&mut self, version: Version, universe: Universe) -> InferVarIndex {
-        let index = self.versions.alloc_var(version, universe);
+        self.alloc_var_in_domain(version, universe, InferDomain::Any)
+    }
+
+    pub fn alloc_var_in_domain(
+        &mut self,
+        version: Version,
+        universe: Universe,
+        domain: InferDomain,
+    ) -> InferVarIndex {
+        let index = self.versions.alloc_var_in_domain(version, universe, domain);
         self.states[version.0 as usize]
             .universe_ceilings
             .insert(index, universe);
@@ -85,6 +95,95 @@ impl<'db> VersionedEGraph<'db> {
             }
         }
         info.creation_universe
+    }
+
+    /// Return the restriction on the unresolved equality class containing `ty`.
+    ///
+    /// `ty` is first resolved to its representative in `version`, so every
+    /// member of a class observes the same nearest versioned refinement (or the
+    /// representative variable's initial domain when none has been recorded).
+    /// A class already unified with a rigid type is resolved and returns
+    /// `None`; the unifier checks domain membership before performing that
+    /// union. Callers use the result to validate later equalities and to carry
+    /// unresolved restrictions across solver boundaries.
+    pub fn effective_domain(
+        &self,
+        version: Version,
+        stash: &Stash,
+        ty: Ptr<Ty<'db>>,
+    ) -> Option<InferDomain> {
+        let root = self.find(version, ty);
+        let index = match stash[root] {
+            Ty::InferVar(index) => index,
+            Ty::Bool
+            | Ty::Char
+            | Ty::Int(_)
+            | Ty::Uint(_)
+            | Ty::Float(_)
+            | Ty::Str
+            | Ty::Adt(_, _)
+            | Ty::Alias(_)
+            | Ty::Ref(_, _, _)
+            | Ty::Tuple(_)
+            | Ty::Slice(_)
+            | Ty::Array(_, _)
+            | Ty::FnPtr(_, _)
+            | Ty::Param(_)
+            | Ty::Never
+            | Ty::Error(_) => return None,
+        };
+        let info = self.versions.get_variable(version, index);
+        for ancestor in self.versions.ancestors(version) {
+            if let Some(domain) = self.states[ancestor.0 as usize].domains.get(&root) {
+                return Some(*domain);
+            }
+        }
+        Some(info.initial_domain)
+    }
+
+    /// Record a validated narrowing on the unresolved class represented by `ty`.
+    pub(super) fn set_domain_in(
+        &mut self,
+        version: Version,
+        stash: &Stash,
+        ty: Ptr<Ty<'db>>,
+        domain: InferDomain,
+    ) -> bool {
+        self.assert_mutable(version);
+        let root = self.find(version, ty);
+        let index = match stash[root] {
+            Ty::InferVar(index) => index,
+            Ty::Bool
+            | Ty::Char
+            | Ty::Int(_)
+            | Ty::Uint(_)
+            | Ty::Float(_)
+            | Ty::Str
+            | Ty::Adt(_, _)
+            | Ty::Alias(_)
+            | Ty::Ref(_, _, _)
+            | Ty::Tuple(_)
+            | Ty::Slice(_)
+            | Ty::Array(_, _)
+            | Ty::FnPtr(_, _)
+            | Ty::Param(_)
+            | Ty::Never
+            | Ty::Error(_) => panic!("set_domain_in called on a resolved class"),
+        };
+        let previous = self
+            .effective_domain(version, stash, root)
+            .expect("inference class must have a domain");
+        assert_eq!(
+            previous.intersect(domain),
+            Some(domain),
+            "domain refinement must only narrow"
+        );
+        if previous == domain {
+            return false;
+        }
+        self.states[version.0 as usize].domains.insert(root, domain);
+        self.mark_semantic_change(version, Some(index));
+        true
     }
 
     pub fn lower_universe(
@@ -161,6 +260,7 @@ impl<'db> VersionedEGraph<'db> {
         let parent_state = &mut self.states[parent.0 as usize];
         parent_state.parents.extend(child_state.parents);
         parent_state.bounds.extend(child_state.bounds);
+        parent_state.domains.extend(child_state.domains);
         parent_state
             .universe_ceilings
             .extend(child_state.universe_ceilings);
@@ -244,7 +344,7 @@ impl<'db> VersionedEGraph<'db> {
     }
 
     /// Union two classes. Concrete/structured representatives are preferred.
-    pub fn union(
+    pub(super) fn union(
         &mut self,
         version: Version,
         stash: &Stash,
@@ -322,7 +422,7 @@ impl<'db> VersionedEGraph<'db> {
     }
 
     /// Set a bound inside an already-transactional leaf version.
-    pub(crate) fn set_bound_in(
+    pub(super) fn set_bound_in(
         &mut self,
         version: Version,
         stash: &Stash,

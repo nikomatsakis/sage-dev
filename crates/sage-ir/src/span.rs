@@ -10,6 +10,7 @@ use crate::symbol::MacroDefSymbol;
 /// `LocalMacroInvocationSym::parse_output` as its tracked identity boundary;
 /// derive output carries an explicit `DeriveExpansion` identity.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[sage::item(crate::types::ParseSource)]
 pub enum ParseSource<'db> {
     /// A real source file on disk.
     SourceFile(SourceFile),
@@ -67,6 +68,7 @@ impl<'db> sage_reflect::Reflect<'db> for ParseSource<'db> {
 /// Byte offset range within a source (file or macro expansion), together
 /// with the source identity. Stored on items.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update, sage_reflect::Reflect)]
+#[sage::item(crate::types::Span)]
 pub struct AbsoluteSpan<'db> {
     pub source: ParseSource<'db>,
     pub start: u32,
@@ -76,6 +78,7 @@ pub struct AbsoluteSpan<'db> {
 impl StashDirect for AbsoluteSpan<'_> {}
 
 impl<'db> AbsoluteSpan<'db> {
+    // {anchor}`crates.sage_ir.types.spans.relative_composition`
     pub fn resolve(&self, relative: RelativeSpan) -> AbsoluteSpan<'db> {
         AbsoluteSpan {
             source: self.source,
@@ -97,6 +100,8 @@ impl<'db> AbsoluteSpan<'db> {
 /// Stored on body nodes (expressions, statements, patterns)
 /// and signature types (paths, type refs, params, etc.).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update, sage_reflect::Reflect)]
+#[sage::item(crate::types::RelativeSpan)]
+// {anchor}`crates.sage_ir.types.spans.offset_reuse`
 pub struct RelativeSpan {
     pub start: u32,
     pub end: u32,

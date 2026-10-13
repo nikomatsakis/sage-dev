@@ -4,6 +4,7 @@ use crate::check::solve::{Assumption, CanonicalMapping, Goal, GoalQueryData};
 use crate::scope::LocalCrateSymbol;
 use crate::span::RelativeSpan;
 use crate::ty::{AliasTy, CheckedParameterEnv, InferVarIndex, Ty};
+use crate::tytree::ExprSlot;
 use sage_stash::Ptr;
 
 /// Why a body-checking obligation was introduced.
@@ -12,6 +13,7 @@ pub enum ObligationReason {
     Explicit,
     FunctionCall,
     AdtWellFormedness,
+    BinaryOperator,
 }
 
 impl ObligationReason {
@@ -20,6 +22,7 @@ impl ObligationReason {
             Self::Explicit => "required trait bound",
             Self::FunctionCall => "bound required by this function use",
             Self::AdtWellFormedness => "bound required by this type use",
+            Self::BinaryOperator => "required by this binary operator",
         }
     }
 }
@@ -28,6 +31,16 @@ impl ObligationReason {
 pub struct ObligationProvenance {
     pub span: RelativeSpan,
     pub reason: ObligationReason,
+}
+
+/// A transient expression which becomes an error node if its obligation fails.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ObligationRecovery<'db> {
+    pub slot: ExprSlot,
+    pub span: RelativeSpan,
+    /// Existing errors in these types also invalidate the pending expression
+    /// without producing another diagnostic.
+    pub watched_types: Vec<Ptr<Ty<'db>>>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -55,9 +68,26 @@ pub(crate) struct Obligation<'db> {
     pub canonical_goal: Stashed<GoalQueryData<'db>>,
     pub mapping: CanonicalMapping<'db>,
     pub provenance: Vec<ObligationProvenance>,
+    pub recoveries: Vec<ObligationRecovery<'db>>,
     pub state: ObligationState,
     pub stalled_on: Vec<InferVarIndex>,
     pub last_attempted_revision: Option<u64>,
+}
+
+impl Obligation<'_> {
+    /// Whether two pending proof requests may share scheduling and recovery.
+    ///
+    /// Recovery scope is part of the local identity even though it is absent
+    /// from the canonical solver goal. Otherwise an error in one expression
+    /// could recover another expression that happens to require the same
+    /// proof.
+    pub fn same_dedup_key(&self, other: &Self) -> bool {
+        matches!(self.goal, ObligationGoal::Prove(_))
+            && matches!(other.goal, ObligationGoal::Prove(_))
+            && self.recoveries == other.recoveries
+            && self.canonical_goal == other.canonical_goal
+            && self.mapping == other.mapping
+    }
 }
 
 #[derive(Default)]

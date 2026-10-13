@@ -8,6 +8,7 @@ use crate::ty::BinderExt;
 use crate::ty::{Binder, StructFields, StructSig};
 
 #[salsa::tracked(debug)]
+#[sage::item(crate::symbols::LocalStructSym)]
 pub struct LocalStructSym<'db> {
     pub name: Name<'db>,
     pub scope: ScopeSymbol<'db>,
@@ -43,6 +44,9 @@ impl<'db> LocalStructSym<'db> {
     /// each, and returns the checked parameter environment under their binder.
     // ANCHOR: example_struct_sig
     #[salsa::tracked]
+    #[sage::item(crate::symbols::LocalStructSym::signature)]
+    // {anchor}`crates.sage_ir.checking.identity_minting`
+    // {anchor}`crates.sage_ir.checking.signature.owner_binder`
     pub fn sig(self, db: &'db dyn crate::Db) -> Stashed<Binder<'db, StructSig<'db>>> {
         use crate::check::Check;
         use crate::cst::generics::CheckGenerics;
@@ -75,6 +79,8 @@ impl<'db> LocalStructSym<'db> {
     /// each field's type from the CST with those params in scope.
     // ANCHOR: example_struct_fields
     #[salsa::tracked]
+    #[sage::item(crate::symbols::LocalStructSym::value)]
+    // {anchor}`crates.sage_ir.checking.signature.narrow_detail`
     pub fn fields(self, db: &'db dyn crate::Db) -> Stashed<StructFields<'db>> {
         use crate::check::Check;
         use crate::resolve::Resolver;

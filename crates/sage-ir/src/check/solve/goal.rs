@@ -1,6 +1,7 @@
 use rustc_hash::FxHashSet;
 use sage_stash::{AllocStashData, Ptr, Slice, Stash, Stashed};
 
+use crate::check::infer::version::InferDomain;
 use crate::generic_param::{AlphaEquivParam, GenericParam, GenericParamKind};
 use crate::scope::LocalCrateSymbol;
 use crate::ty::{AliasTy, Binder, TraitRef, Ty, WherePredicate};
@@ -24,6 +25,7 @@ pub struct CanonicalVarInfo<'db> {
     pub kind: GenericParamKind,
     pub role: CanonicalVarRole,
     pub relative_universe: u32,
+    pub domain: InferDomain,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
@@ -153,6 +155,7 @@ pub struct InternedGoalQuery<'db> {
     pub data: Stashed<GoalQueryData<'db>>,
 }
 
+#[sage::item(crate::types::Goal)]
 pub type GoalQuery<'db> = InternedGoalQuery<'db>;
 
 pub(crate) fn validate_goal_query<'db>(
@@ -165,8 +168,17 @@ pub(crate) fn validate_goal_query<'db>(
         if !visible.insert(info.param) {
             return Err("duplicate canonical variable");
         }
-        if info.role == CanonicalVarRole::ExistentialInput && info.kind != GenericParamKind::Type {
-            return Err("non-type existential input");
+        match info.role {
+            CanonicalVarRole::RigidPlaceholder => {
+                if info.domain != InferDomain::Any {
+                    return Err("rigid canonical input has an inference domain");
+                }
+            }
+            CanonicalVarRole::ExistentialInput => {
+                if info.kind != GenericParamKind::Type {
+                    return Err("non-type existential input");
+                }
+            }
         }
         if info.relative_universe > data.canonical_universe {
             return Err("canonical input is newer than the query universe");
@@ -378,6 +390,7 @@ impl<'db> InternedGoalQuery<'db> {
     }
 
     #[salsa::tracked]
+    #[sage::item(crate::solver::Solver::solve)]
     pub fn solve(self, db: &'db dyn crate::Db) -> Stashed<super::QueryResult<'db>> {
         super::solve_query(db, self.data(db))
     }

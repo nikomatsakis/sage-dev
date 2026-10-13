@@ -1,3 +1,5 @@
+#![feature(register_tool)]
+#![register_tool(sage)]
 #[cfg(test)]
 mod tests {
     use sage_stash::*;
@@ -27,6 +29,14 @@ mod tests {
     struct Tag {
         val: u16,
     }
+
+    #[repr(align(64))]
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+    struct OverAligned(u64);
+
+    #[repr(align(128))]
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+    struct OverAlignedZst;
 
     // -- Basic alloc -------------------------------------------------------
 
@@ -156,6 +166,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(debug_assertions, should_panic(expected = "stash identity mismatch"))]
+    #[sage::test(crates.sage_stash.storage.handle_ownership)]
     fn cross_stash_ptr_same_type_panics_in_debug() {
         let mut stash1 = Stash::new();
         let mut stash2 = Stash::new();
@@ -166,6 +177,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(debug_assertions, should_panic(expected = "stash identity mismatch"))]
+    #[sage::test(crates.sage_stash.storage.handle_ownership)]
     fn cross_stash_slice_panics_in_debug() {
         let mut stash1 = Stash::new();
         let mut stash2 = Stash::new();
@@ -210,6 +222,58 @@ mod tests {
         let b = stash.alloc(Big(0xDEAD_BEEF_CAFE_BABE));
         assert_eq!(stash[s], Small(1));
         assert_eq!(stash[b], Big(0xDEAD_BEEF_CAFE_BABE));
+    }
+
+    #[test]
+    fn stash_remains_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<Stash>();
+    }
+
+    #[test]
+    fn over_aligned_scalar_slice_and_zst_have_aligned_addresses() {
+        let mut stash = Stash::new();
+        let _prefix = stash.alloc(Color { r: 1, g: 2, b: 3 });
+        let scalar = stash.alloc(OverAligned(10));
+        let slice = stash.alloc_slice(&[OverAligned(20), OverAligned(30)]);
+        let zst = stash.alloc(OverAlignedZst);
+
+        assert_eq!((&stash[scalar] as *const OverAligned as usize) % 64, 0);
+        assert_eq!(stash[slice].as_ptr() as usize % 64, 0);
+        assert_eq!((&stash[zst] as *const OverAlignedZst as usize) % 128, 0);
+        assert_eq!(stash[scalar], OverAligned(10));
+        assert_eq!(stash[slice], [OverAligned(20), OverAligned(30)]);
+    }
+
+    #[test]
+    fn over_aligned_entries_survive_growth_clone_and_hash_cons_lookup() {
+        let mut stash = Stash::new();
+        let value = stash.alloc(OverAligned(0xCAFE_BABE));
+        for index in 0..4_096_u64 {
+            stash.alloc(index);
+        }
+        let duplicate = stash.alloc(OverAligned(0xCAFE_BABE));
+
+        assert_eq!(value, duplicate);
+        assert_eq!((&stash[value] as *const OverAligned as usize) % 64, 0);
+        assert_eq!(stash[value], OverAligned(0xCAFE_BABE));
+
+        let cloned = stash.clone();
+        assert_eq!((&cloned[value] as *const OverAligned as usize) % 64, 0);
+        assert_eq!(cloned[value], OverAligned(0xCAFE_BABE));
+    }
+
+    #[test]
+    fn over_aligned_values_copy_between_stashes() {
+        let mut source = Stash::new();
+        let values = source.alloc_slice(&[OverAligned(1), OverAligned(2)]);
+        let stashed = Stashed::new(source, values);
+
+        let mut target = Stash::new();
+        let copied = stashed.copy_into(&mut target);
+
+        assert_eq!(target[copied], [OverAligned(1), OverAligned(2)]);
+        assert_eq!(target[copied].as_ptr() as usize % 64, 0);
     }
 
     // -- Stashed tests -------------------------------------------
@@ -365,6 +429,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_stash.storage.typed_interning)]
     fn hash_cons_slice_dedup() {
         let mut stash = Stash::new();
         let s1 = stash.alloc_slice(&[Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]);
@@ -381,6 +446,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_stash.storage.typed_interning)]
     fn hash_cons_compound_type() {
         #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
         struct Pair {
@@ -399,6 +465,7 @@ mod tests {
     // -- Collision tests -----
 
     #[test]
+    #[sage::test(crates.sage_stash.storage.typed_interning)]
     fn hash_cons_collision_stores_both() {
         #[derive(Copy, Clone, Debug, PartialEq)]
         struct Collider(u32);
@@ -455,6 +522,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_stash.storage.rooted_equality)]
     fn stashed_hash_consistent_with_eq() {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::Hash;
@@ -478,6 +546,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_stash.storage.rooted_equality)]
     fn stashed_ord_consistent_with_eq() {
         use std::cmp::Ordering;
 
@@ -493,6 +562,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_stash.storage.rooted_equality)]
     fn stashed_eq_compound_dag() {
         #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
         struct Node {
@@ -531,6 +601,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_stash.storage.rooted_equality)]
     fn fingerprint_deterministic() {
         let mut s1 = Stash::new();
         let r1 = s1.alloc(Point { x: 42, y: 99 });
@@ -557,6 +628,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_stash.storage.handle_ownership)]
     fn copy_into_compound() {
         #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
         struct Pair {
@@ -578,6 +650,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_stash.storage.handle_ownership)]
     fn copy_into_with_slice() {
         let mut src = Stash::new();
         let pts = src.alloc_slice(&[Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]);

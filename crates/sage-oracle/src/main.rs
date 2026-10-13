@@ -1,3 +1,5 @@
+#![feature(register_tool)]
+#![register_tool(sage)]
 #![feature(rustc_private)]
 
 use std::path::Path;

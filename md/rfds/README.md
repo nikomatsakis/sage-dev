@@ -2,32 +2,40 @@
 
 RFDs are a way of planning out larger changes. They aren't required but they can be useful.
 
-The basic idea is that you open a PR adding an RFD based on the [RFD template](./TEMPLATE/README.md) into the `rfds` directory. Each RFD is itself a subdirectory like `rfds/my-rfd/README.md` with a companion `implementation.md` for tracking steps. Be sure to add it to the SUMMARY.md file. RFDs can have subchapters or other accompanying material.
+Open a branch and PR containing both an RFD based on the
+[RFD template](TEMPLATE/README.md) and the corresponding changes to the
+[Design specification](../design/README.md). The RFD records motivation, goals,
+alternatives, and the implementation plan. The Design diff states the proposed
+normative behavior in specification paragraphs and `.sage` declarations. This
+workflow is itself specified by [the book specification](../design/meta/book.md#meta.book.rfd_changes).
+
+Each RFD is a subdirectory like `rfds/my-rfd/README.md` with a companion
+`implementation.md` for tracking steps. Add it to `SUMMARY.md`. RFDs can have
+subchapters or other accompanying material.
 
 An unsettled proposal is listed under *Draft* in `SUMMARY.md`. Acceptance moves
 it to *Accepted* and makes its implementation plan eligible to begin. Draft
 RFDs may record alternatives and proof obligations, but destination design
 pages must distinguish their planned mechanisms from built behavior.
 
-Large RFDs should identify their load-bearing, non-obvious requirements as
-**design anchors** where those requirements are explained. An anchor has a
-stable RFD-scoped identifier such as `SI-A4`, a short normative statement, and
-the verification required to establish it. The surrounding prose explains the
-design; the anchor states what implementation and review must preserve. Link
-implementation steps and eventual tests back to the anchor rather than
-duplicating its rule in several places. Design anchors are different from
-`ezanchor` source excerpts: a design anchor states a requirement, while an
-`ezanchor` shows the code which eventually implements it.
+Identify independently testable requirements as named **specification anchors**
+in the Design chapters changed by the branch. Link the RFD's rationale and
+implementation steps to those anchors. Include a high-level overview of the
+needed changes, with direct links to the affected Design pages and anchors, so
+a reviewer can move from the proposal to each normative change. The book and
+anchor system are subject
+to the same process: changes to how specifications are named, rendered, or
+validated change their own Design rules. See the
+[authoring contract](../contributing/maintaining-the-docs.md#writing-a-rule) for
+the syntax and current tooling limitations.
 
 If the PR is accepted, the RFD will be merged in. At that point you open implementation PRs based on the RFD until it is completed. Each implementation PR should update the RFD's `implementation.md` to reflect its status.
 
-Before marking the RFD complete, account for every design anchor. Promote its
-living destination rule and required verification into the relevant
-architecture chapter, retaining the identifier when it remains meaningful, or
-record why an accepted design revision retired it. Link the chapter's Current
-Status evidence to the implementation which established the anchor. Promote
-any genuinely cross-cutting choice into a `D<n>` entry in [Architecture
-Decisions](../design/decisions.md); leave feature-local rationale in the RFD.
+Before marking the RFD complete, account for every affected specification
+anchor through the generated inventory. Record genuinely cross-cutting choices
+and feature-local rationale in the RFD itself. If preserving reasoning that
+predates an RFD, label the record retrospective; do not invent a past proposal
+or acceptance date.
 
 Finally, move it from *Accepted* to *Completed* in SUMMARY.md (the path stays
 the same).

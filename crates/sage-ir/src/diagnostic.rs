@@ -55,6 +55,7 @@ pub struct Label<'db> {
 
 /// A single diagnostic emitted by sage.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, sage_reflect::Reflect)]
+#[sage::item(crate::types::Diagnostic)]
 pub struct Diagnostic<'db> {
     pub severity: Severity,
     pub span: Span<'db>,
@@ -120,6 +121,7 @@ impl<'db> Diagnostic<'db> {
 /// every `Ty::Error(e)` and `Res::Error(e)` was preceded by a user-visible
 /// diagnostic message.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, sage_reflect::Reflect)]
+#[sage::item(crate::types::ErrorReported)]
 pub struct ErrorReported(());
 
 impl sage_stash::StashDirect for ErrorReported {}

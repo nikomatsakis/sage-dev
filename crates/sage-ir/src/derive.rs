@@ -12,6 +12,8 @@ use crate::symbol::MacroDefSymbol;
 /// are deliberately not identity fields: moving an item must not remint all
 /// symbols produced by its derive.
 #[salsa::interned(debug)]
+#[sage::item(crate::types::DeriveExpansion)]
+// {anchor}`crates.sage_ir.types.spans.generated_identity`
 pub struct DeriveExpansion<'db> {
     pub derive_name: Name<'db>,
     pub source_item: LocalModItemSym<'db>,

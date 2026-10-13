@@ -1,3 +1,5 @@
+#![feature(register_tool)]
+#![register_tool(sage)]
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{DeriveInput, GenericParam, Lifetime, parse_macro_input};
@@ -310,4 +312,11 @@ fn generate_stash_copy_struct_fields(fields: &syn::Fields) -> proc_macro2::Token
         }
         syn::Fields::Unit => quote! { Self },
     }
+}
+
+// Source anchors for architectural modules and distributed representations.
+mod sage_model {
+    /// Architectural crate anchor.
+    #[sage::item(crate)]
+    mod crate_model {}
 }

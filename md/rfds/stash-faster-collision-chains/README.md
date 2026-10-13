@@ -3,7 +3,7 @@
 **Status:** Proposed
 
 **Depends on:**
-- [Hash-consed stash](./stash-hash-consing.md) — current hash-consing implementation
+- [Hash-consed stash](../stash-hash-consing/README.md) — current hash-consing implementation
 
 ## Background
 

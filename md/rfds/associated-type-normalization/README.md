@@ -653,4 +653,4 @@ proof; it is not necessarily a unique semantic call target in generic code.
 
 ## Implementation
 
-See [Implementation plan and status](./implementation.md).
+See [Implementation plan and status](implementation.md).

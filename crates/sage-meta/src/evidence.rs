@@ -1,0 +1,510 @@
+//! Source-declared implementation evidence for specification anchors.
+//!
+//! Comments identify source associations, never an execution or a proof. Rust's
+//! token parser identifies literal ranges so marker-looking strings cannot
+//! accidentally become implementation entries.
+
+use std::collections::BTreeMap;
+
+use proc_macro2::{TokenStream, TokenTree};
+use syn::spanned::Spanned;
+use syn::visit::Visit;
+
+use crate::{Diagnostic, Span};
+
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceStatus {
+    Ordinary,
+    Todo,
+    NotApplicable,
+}
+
+/// Determine placeholder status from the enclosing module, excluding the crate
+/// name itself. Special modules may nest, but conflicting classifications cannot.
+// {anchor}`meta.anchors.placeholder_status`
+pub fn placeholder_status(module: &str) -> Result<EvidenceStatus, String> {
+    let mut todo = false;
+    let mut not_applicable = false;
+    for component in module.split("::").skip(1) {
+        match component.trim_start_matches("r#") {
+            "todo" => todo = true,
+            "not_applicable" => not_applicable = true,
+            _ => {}
+        }
+    }
+    match (todo, not_applicable) {
+        (true, true) => Err(format!(
+            "module {module} is nested under both todo and not_applicable"
+        )),
+        (true, false) => Ok(EvidenceStatus::Todo),
+        (false, true) => Ok(EvidenceStatus::NotApplicable),
+        (false, false) => Ok(EvidenceStatus::Ordinary),
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct ImplementationSite {
+    pub file: String,
+    pub crate_name: String,
+    pub target: String,
+    pub module: String,
+    /// Inherited textual conditions, not an assertion that this source is active.
+    pub cfg: Vec<String>,
+    pub status: EvidenceStatus,
+    pub explanation: Option<String>,
+    pub line: usize,
+    pub end_line: usize,
+    /// Complete excerpt, including the opening and (for regions) closing lines.
+    pub span: Span,
+    pub annotation_span: Span,
+    pub excerpt: String,
+    pub region: bool,
+}
+
+pub(crate) struct SourceContext<'a> {
+    pub file: &'a str,
+    pub crate_name: &'a str,
+    pub target: &'a str,
+    pub module: &'a str,
+    pub cfg: &'a [String],
+}
+
+/// Index one Cargo-owned source snapshot, using its inherited module context.
+// {anchor}`meta.anchors.implementation_references`
+pub(crate) fn index_source(
+    source: &str,
+    syntax: &syn::File,
+    context: SourceContext<'_>,
+    entries: &mut BTreeMap<String, Vec<ImplementationSite>>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let comments = line_comments(source);
+    let lines = Lines::new(source);
+    let mut scopes = Scopes {
+        source,
+        lines: &lines,
+        scopes: vec![Scope {
+            span: Span {
+                start: 0,
+                end: source.len(),
+            },
+            module: context.module.to_owned(),
+            cfg: context.cfg.to_vec(),
+        }],
+        module: context.module.to_owned(),
+        cfg: context.cfg.to_vec(),
+    };
+    scopes.visit_file(syntax);
+    let mut pending = Vec::<(String, ImplementationSite)>::new();
+    let mut open = Vec::<usize>::new();
+    for comment in &comments {
+        let text = comment.text(source).trim();
+        if text == ">>" && comment.standalone(source) {
+            // {anchor}`meta.anchors.region_balance`
+            if let Some(index) = open.pop() {
+                let site = &mut pending[index].1;
+                site.end_line = lines.number(comment.span.start);
+                site.span.end = lines.end(site.end_line);
+            } else {
+                diagnostics.push(Diagnostic {
+                    file: context.file.to_owned(),
+                    span: comment.span.clone(),
+                    message: "implementation region closer has no opening marker".into(),
+                });
+            }
+            continue;
+        }
+        if !text.starts_with("{anchor}") {
+            continue;
+        }
+        let Some((name, region)) = marker(text) else {
+            diagnostics.push(Diagnostic {
+                file: context.file.to_owned(),
+                span: comment.span.clone(),
+                message: "malformed implementation reference; expected // {anchor}`full.name` optionally followed immediately by <<".into(),
+            });
+            continue;
+        };
+        let scope = scopes
+            .scopes
+            .iter()
+            .rev()
+            .filter(|scope| {
+                scope.span.start <= comment.span.start && comment.span.end <= scope.span.end
+            })
+            .min_by_key(|scope| scope.span.end - scope.span.start)
+            .expect("file scope contains every comment");
+        let status = match placeholder_status(&scope.module) {
+            Ok(status) => status,
+            Err(message) => {
+                diagnostics.push(Diagnostic {
+                    file: context.file.to_owned(),
+                    span: comment.span.clone(),
+                    message,
+                });
+                // Keep parsing region balance even when the enclosing status is
+                // invalid; the diagnostic prevents this index being accepted.
+                EvidenceStatus::Ordinary
+            }
+        };
+        let line = lines.number(comment.span.start);
+        // {anchor}`meta.anchors.point_excerpts`
+        let end_line = if region {
+            line
+        } else {
+            (line + 5).min(lines.count())
+        };
+        let site = ImplementationSite {
+            file: context.file.to_owned(),
+            crate_name: context.crate_name.to_owned(),
+            target: context.target.to_owned(),
+            module: scope.module.clone(),
+            cfg: scope.cfg.clone(),
+            status,
+            explanation: None,
+            line,
+            end_line,
+            span: Span {
+                start: lines.start(line),
+                end: lines.end(end_line),
+            },
+            annotation_span: comment.span.clone(),
+            excerpt: String::new(),
+            region,
+        };
+        // {anchor}`meta.anchors.region_excerpts`
+        if region {
+            open.push(pending.len());
+        }
+        pending.push((name.to_owned(), site));
+    }
+    for index in open {
+        let site = &pending[index].1;
+        diagnostics.push(Diagnostic {
+            file: context.file.to_owned(),
+            span: site.annotation_span.clone(),
+            message: "implementation region opener has no closing // >> delimiter".into(),
+        });
+    }
+    for (name, mut site) in pending {
+        let mut explanation_span = site.span.clone();
+        if !site.region {
+            // The fixed preview may show a neighboring entry; its explanation
+            // still belongs to that other reference, not to this point.
+            if let Some(next) = comments.iter().find(|comment| {
+                comment.span.start > site.annotation_span.start
+                    && (comment.text(source).trim().starts_with("{anchor}")
+                        || comment.text(source).trim() == ">>")
+            }) {
+                explanation_span.end = explanation_span.end.min(next.span.start);
+            }
+        }
+        site.explanation = explanation(source, &comments, &explanation_span);
+        site.excerpt = source[site.span.start..site.span.end].to_owned();
+        entries.entry(name).or_default().push(site);
+    }
+}
+
+fn marker(text: &str) -> Option<(&str, bool)> {
+    let rest = text.strip_prefix("{anchor}`")?;
+    let (name, tail) = rest.split_once('`')?;
+    if !crate::spec::valid_anchor_name(name) {
+        return None;
+    }
+    match tail {
+        "" => Some((name, false)),
+        "<<" => Some((name, true)),
+        _ => None,
+    }
+}
+
+/// Preserve source comments accompanying an annotated test, including TODO/N/A
+/// rationale. Marker text and delimiter comments are not themselves explanations.
+pub fn test_explanation(source: &str) -> Option<String> {
+    explanation(
+        source,
+        &line_comments(source),
+        &Span {
+            start: 0,
+            end: source.len(),
+        },
+    )
+}
+
+fn explanation(source: &str, comments: &[Comment], span: &Span) -> Option<String> {
+    let text = comments
+        .iter()
+        .filter(|comment| span.start <= comment.span.start && comment.span.end <= span.end)
+        .map(|comment| comment.text(source).trim())
+        .filter(|text| !text.is_empty() && *text != ">>" && !text.starts_with("{anchor}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    (!text.is_empty()).then_some(text)
+}
+
+struct Scope {
+    span: Span,
+    module: String,
+    cfg: Vec<String>,
+}
+
+struct Scopes<'a> {
+    source: &'a str,
+    lines: &'a Lines,
+    scopes: Vec<Scope>,
+    module: String,
+    cfg: Vec<String>,
+}
+
+impl<'ast> Visit<'ast> for Scopes<'_> {
+    fn visit_file(&mut self, file: &'ast syn::File) {
+        self.cfg
+            .extend(conditions(&file.attrs, self.source, self.lines));
+        self.scopes[0].cfg = self.cfg.clone();
+        syn::visit::visit_file(self, file);
+    }
+
+    fn visit_item(&mut self, item: &'ast syn::Item) {
+        if let syn::Item::Mod(module) = item {
+            self.visit_item_mod(module);
+            return;
+        }
+        let attrs = match item {
+            syn::Item::Const(item) => &item.attrs,
+            syn::Item::Enum(item) => &item.attrs,
+            syn::Item::ExternCrate(item) => &item.attrs,
+            syn::Item::Fn(item) => &item.attrs,
+            syn::Item::ForeignMod(item) => &item.attrs,
+            syn::Item::Impl(item) => &item.attrs,
+            syn::Item::Macro(item) => &item.attrs,
+            syn::Item::Static(item) => &item.attrs,
+            syn::Item::Struct(item) => &item.attrs,
+            syn::Item::Trait(item) => &item.attrs,
+            syn::Item::TraitAlias(item) => &item.attrs,
+            syn::Item::Type(item) => &item.attrs,
+            syn::Item::Union(item) => &item.attrs,
+            syn::Item::Use(item) => &item.attrs,
+            _ => {
+                syn::visit::visit_item(self, item);
+                return;
+            }
+        };
+        let previous_cfg = self.cfg.len();
+        self.cfg.extend(conditions(attrs, self.source, self.lines));
+        self.scopes.push(Scope {
+            span: self.lines.span(self.source, item.span()),
+            module: self.module.clone(),
+            cfg: self.cfg.clone(),
+        });
+        syn::visit::visit_item(self, item);
+        self.cfg.truncate(previous_cfg);
+    }
+
+    fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
+        let previous_cfg = self.cfg.len();
+        self.cfg
+            .extend(conditions(&item.attrs, self.source, self.lines));
+        self.scopes.push(Scope {
+            span: self.lines.span(self.source, item.span()),
+            module: self.module.clone(),
+            cfg: self.cfg.clone(),
+        });
+        syn::visit::visit_impl_item_fn(self, item);
+        self.cfg.truncate(previous_cfg);
+    }
+
+    fn visit_trait_item_fn(&mut self, item: &'ast syn::TraitItemFn) {
+        let previous_cfg = self.cfg.len();
+        self.cfg
+            .extend(conditions(&item.attrs, self.source, self.lines));
+        self.scopes.push(Scope {
+            span: self.lines.span(self.source, item.span()),
+            module: self.module.clone(),
+            cfg: self.cfg.clone(),
+        });
+        syn::visit::visit_trait_item_fn(self, item);
+        self.cfg.truncate(previous_cfg);
+    }
+
+    fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
+        let Some((brace, contents)) = &module.content else {
+            return;
+        };
+        let previous_module = self.module.clone();
+        let previous_cfg = self.cfg.len();
+        self.module.push_str("::");
+        self.module
+            .push_str(module.ident.to_string().trim_start_matches("r#"));
+        self.cfg
+            .extend(conditions(&module.attrs, self.source, self.lines));
+        self.scopes.push(Scope {
+            span: self.lines.span(self.source, brace.span.join()),
+            module: self.module.clone(),
+            cfg: self.cfg.clone(),
+        });
+        for item in contents {
+            self.visit_item(item);
+        }
+        self.module = previous_module;
+        self.cfg.truncate(previous_cfg);
+    }
+}
+
+fn conditions(attrs: &[syn::Attribute], source: &str, lines: &Lines) -> Vec<String> {
+    attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("cfg") || attr.path().is_ident("cfg_attr"))
+        .map(|attr| {
+            let span = lines.span(source, attr.span());
+            source[span.start..span.end].to_owned()
+        })
+        .collect()
+}
+
+struct Comment {
+    span: Span,
+}
+
+impl Comment {
+    fn text<'a>(&self, source: &'a str) -> &'a str {
+        &source[self.span.start + 2..self.span.end]
+    }
+
+    fn standalone(&self, source: &str) -> bool {
+        let start = source[..self.span.start].rfind('\n').map_or(0, |n| n + 1);
+        source[start..self.span.start].trim().is_empty()
+    }
+}
+
+/// Tokenization delegates all literal forms (raw/byte/C strings and character
+/// literals included) to Rust's token parser. The remaining scanner recognizes
+/// nested block comments and ordinary line comments, skipping both doc forms.
+fn line_comments(source: &str) -> Vec<Comment> {
+    let lines = Lines::new(source);
+    // syn accepts Unix shebangs, which are not Rust tokens. Preserve line and
+    // column positions while hiding that first line from the token parser.
+    let without_shebang = source
+        .strip_prefix("#!")
+        .filter(|rest| !rest.trim_start().starts_with('['))
+        .map(|_| {
+            let end = source.find('\n').unwrap_or(source.len());
+            format!(
+                "{}{}",
+                " ".repeat(source[..end].chars().count()),
+                &source[end..]
+            )
+        });
+    let tokens = without_shebang
+        .as_deref()
+        .unwrap_or(source)
+        .parse::<TokenStream>()
+        .expect("indexed source has already been parsed as Rust");
+    let mut literals = Vec::new();
+    literal_spans(tokens, source, &lines, &mut literals);
+    literals.sort_by_key(|span| span.start);
+    let mut literals = literals.into_iter().peekable();
+    let bytes = source.as_bytes();
+    let mut comments = Vec::new();
+    let mut at = if without_shebang.is_some() {
+        source.find('\n').unwrap_or(source.len())
+    } else {
+        0
+    };
+    while at < bytes.len() {
+        while literals.peek().is_some_and(|span| span.end <= at) {
+            literals.next();
+        }
+        if let Some(literal) = literals.peek()
+            && literal.start <= at
+        {
+            at = literal.end;
+            continue;
+        }
+        if bytes[at..].starts_with(b"/*") {
+            at += 2;
+            let mut depth = 1;
+            while depth > 0 && at < bytes.len() {
+                if bytes[at..].starts_with(b"/*") {
+                    depth += 1;
+                    at += 2;
+                } else if bytes[at..].starts_with(b"*/") {
+                    depth -= 1;
+                    at += 2;
+                } else {
+                    at += 1;
+                }
+            }
+        } else if bytes[at..].starts_with(b"//") {
+            let end = source[at..].find('\n').map_or(bytes.len(), |n| at + n);
+            if !bytes[at..].starts_with(b"///") && !bytes[at..].starts_with(b"//!") {
+                comments.push(Comment {
+                    span: Span { start: at, end },
+                });
+            }
+            at = end;
+        } else {
+            at += 1;
+        }
+    }
+    comments
+}
+
+fn literal_spans(tokens: TokenStream, source: &str, lines: &Lines, spans: &mut Vec<Span>) {
+    for token in tokens {
+        match token {
+            TokenTree::Literal(literal) => spans.push(lines.span(source, literal.span())),
+            TokenTree::Group(group) => literal_spans(group.stream(), source, lines, spans),
+            _ => {}
+        }
+    }
+}
+
+struct Lines {
+    starts: Vec<usize>,
+    len: usize,
+}
+
+impl Lines {
+    fn new(source: &str) -> Self {
+        let mut starts = vec![0];
+        starts.extend(
+            source
+                .match_indices('\n')
+                .filter_map(|(at, _)| (at + 1 < source.len()).then_some(at + 1)),
+        );
+        Self {
+            starts,
+            len: source.len(),
+        }
+    }
+    fn count(&self) -> usize {
+        self.starts.len()
+    }
+    fn number(&self, offset: usize) -> usize {
+        self.starts.partition_point(|&start| start <= offset)
+    }
+    fn start(&self, line: usize) -> usize {
+        self.starts.get(line - 1).copied().unwrap_or(self.len)
+    }
+    fn end(&self, line: usize) -> usize {
+        self.starts.get(line).copied().unwrap_or(self.len)
+    }
+    fn offset(&self, source: &str, position: proc_macro2::LineColumn) -> usize {
+        let start = self.start(position.line);
+        start
+            + source[start..]
+                .chars()
+                .take(position.column)
+                .map(char::len_utf8)
+                .sum::<usize>()
+    }
+    fn span(&self, source: &str, span: proc_macro2::Span) -> Span {
+        Span {
+            start: self.offset(source, span.start()),
+            end: self.offset(source, span.end()),
+        }
+    }
+}

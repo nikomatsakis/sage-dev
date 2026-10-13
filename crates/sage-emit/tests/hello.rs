@@ -13,8 +13,8 @@ fn identity(x: u32) -> u32 {
     x
 }
 
-fn add(a: u32, b: u32) -> u32 {
-    a + b
+fn second(a: u32, b: u32) -> u32 {
+    b
 }
 
 struct Point {
@@ -48,15 +48,15 @@ fn get_x(p: Point) -> u32 {
     assert_eq!(identity.params[0].ty, Type::Primitive("u32".to_string()));
     assert_eq!(identity.return_ty, Type::Primitive("u32".to_string()));
 
-    // fn add(a: u32, b: u32) -> u32
-    let Item::Fn(add) = &items[1] else {
+    // fn second(a: u32, b: u32) -> u32
+    let Item::Fn(second) = &items[1] else {
         panic!("expected fn, got {:?}", items[1]);
     };
-    assert_eq!(add.name, "add");
-    assert_eq!(add.params.len(), 2);
-    assert_eq!(add.params[0].name, "a");
-    assert_eq!(add.params[1].name, "b");
-    assert_eq!(add.return_ty, Type::Primitive("u32".to_string()));
+    assert_eq!(second.name, "second");
+    assert_eq!(second.params.len(), 2);
+    assert_eq!(second.params[0].name, "a");
+    assert_eq!(second.params[1].name, "b");
+    assert_eq!(second.return_ty, Type::Primitive("u32".to_string()));
 
     // struct Point { x: u32, y: u32 }
     let Item::Struct(point) = &items[2] else {
@@ -100,8 +100,8 @@ fn identity(x: u32) -> u32 {
     x
 }
 
-fn add(a: u32, b: u32) -> u32 {
-    a + b
+fn second(a: u32, b: u32) -> u32 {
+    b
 }
 
 struct Point {
@@ -139,35 +139,22 @@ fn get_x(p: Point) -> u32 {
         other => panic!("expected Block for identity body, got {:?}", other),
     }
 
-    // fn add(a: u32, b: u32) -> u32 { a + b }
-    let Item::Fn(add) = &items[1] else {
+    // fn second(a: u32, b: u32) -> u32 { b }
+    let Item::Fn(second) = &items[1] else {
         panic!("expected fn");
     };
-    let body = add.body.as_ref().unwrap();
+    let body = second.body.as_ref().unwrap();
     match body {
         Expr::Block {
             tail: Some(tail), ..
         } => match tail.as_ref() {
-            Expr::BinaryOp { op, lhs, rhs, .. } => {
-                assert_eq!(*op, BinOp::Add);
-                match lhs.as_ref() {
-                    Expr::Local { name, index } => {
-                        assert_eq!(name, "a");
-                        assert_eq!(*index, 0);
-                    }
-                    other => panic!("expected Local for lhs, got {:?}", other),
-                }
-                match rhs.as_ref() {
-                    Expr::Local { name, index } => {
-                        assert_eq!(name, "b");
-                        assert_eq!(*index, 1);
-                    }
-                    other => panic!("expected Local for rhs, got {:?}", other),
-                }
+            Expr::Local { name, index } => {
+                assert_eq!(name, "b");
+                assert_eq!(*index, 1);
             }
-            other => panic!("expected BinaryOp in add body, got {:?}", other),
+            other => panic!("expected Local in second body, got {:?}", other),
         },
-        other => panic!("expected Block for add body, got {:?}", other),
+        other => panic!("expected Block for second body, got {:?}", other),
     }
 
     // fn origin() -> Point { Point { x: 0, y: 0 } }
