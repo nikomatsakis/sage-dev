@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SAGE · Anchor index sketch</title>
+<style>body { margin: 0; } #sage-anchor-sketch { min-height: 100vh; }</style>
+</head>
+<body>
+<!-- Review prototype: rule text is a snapshot; statuses are illustrative.
+     Self-contained export of the conversation sketch, with no external assets. -->
+<div id="sage-anchor-sketch">
+  <style>
+    #sage-anchor-sketch {
+      color-scheme: light dark;
+      --sage-bg: light-dark(#ffffff, #181c23);
+      --sage-panel: light-dark(#f5f7fa, #20262e);
+      --sage-text: light-dark(#243042, #e1e8f0);
+      --sage-muted: light-dark(#58697b, #acbac9);
+      --sage-line: light-dark(#dce3eb, #3b4756);
+      --sage-link: light-dark(#2357a4, #9ac3ff);
+      --sage-selected: light-dark(#e8f0fc, #2b3b52);
+      --sage-done-bg: light-dark(#e8f3ed, #183a30);
+      --sage-done-text: light-dark(#245c3c, #9ce0b4);
+      --sage-todo-bg: light-dark(#fff2d9, #48371b);
+      --sage-todo-text: light-dark(#79520d, #f5d58b);
+      color: var(--sage-text); background: var(--sage-bg);
+      font: 14px/1.55 system-ui, sans-serif;
+    }
+    #sage-anchor-sketch * { box-sizing: border-box; }
+    #sage-anchor-sketch [hidden] { display: none !important; }
+    #sage-anchor-sketch button, #sage-anchor-sketch input { font: inherit; }
+    #sage-anchor-sketch button, #sage-anchor-sketch a { -webkit-tap-highlight-color: transparent; }
+    #sage-anchor-sketch a { color: var(--sage-link); text-decoration: none; }
+    #sage-anchor-sketch a:hover { text-decoration: underline; }
+    #sage-anchor-sketch button { color: var(--sage-text); background: var(--sage-bg); border: 1px solid var(--sage-line); border-radius: 5px; padding: 6px 10px; }
+    #sage-anchor-sketch button:hover { background: var(--sage-selected); }
+    #sage-anchor-sketch :focus-visible { outline: 2px solid var(--sage-link); outline-offset: 3px; }
+    #sage-anchor-sketch code { font: 12px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
+    #sage-anchor-sketch header { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 18px 25px; border-bottom: 1px solid var(--sage-line); padding-right: 100px; }
+    #sage-anchor-sketch .sage-wordmark { font-weight: 650; letter-spacing: .12em; }
+    #sage-anchor-sketch .sage-muted { color: var(--sage-muted); }
+    #sage-anchor-sketch .sage-shell { display: grid; grid-template-columns: 175px minmax(0, 1fr); min-height: 640px; }
+    #sage-anchor-sketch aside { padding: 23px 14px; background: var(--sage-panel); border-right: 1px solid var(--sage-line); }
+    #sage-anchor-sketch .sage-nav-label { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--sage-muted); margin: 0 9px 9px; }
+    #sage-anchor-sketch aside a { display: block; border-radius: 4px; padding: 8px 10px; color: var(--sage-text); margin: 2px 0; }
+    #sage-anchor-sketch aside a[aria-current="page"] { background: var(--sage-selected); color: var(--sage-link); }
+    #sage-anchor-sketch main { padding: 25px 28px 35px; min-width: 0; }
+    #sage-anchor-sketch h1 { font-size: 25px; letter-spacing: -.025em; font-weight: 550; margin: 4px 0 10px; overflow-wrap: anywhere; }
+    #sage-anchor-sketch h2 { font-size: 17px; font-weight: 550; margin: 23px 0 10px; }
+    #sage-anchor-sketch p { margin: 8px 0 14px; }
+    #sage-anchor-sketch .sage-eyebrow { font-size: 12px; color: var(--sage-muted); }
+    #sage-anchor-sketch .sage-caption { color: var(--sage-muted); font-size: 12px; }
+    #sage-anchor-sketch .sage-demo { padding: 8px 12px; background: var(--sage-panel); border-left: 3px solid var(--sage-line); margin-bottom: 20px; font-size: 12px; color: var(--sage-muted); }
+    #sage-anchor-sketch .sage-tools { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 16px 0; }
+    #sage-anchor-sketch .sage-tools label { flex: 1 1 230px; }
+    #sage-anchor-sketch input { width: 100%; padding: 8px 11px; border-radius: 5px; border: 1px solid var(--sage-line); background: var(--sage-bg); color: var(--sage-text); }
+    #sage-anchor-sketch .sage-scroll { overflow-x: auto; }
+    #sage-anchor-sketch table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    #sage-anchor-sketch th { text-align: left; color: var(--sage-muted); font-size: 12px; font-weight: 500; padding: 9px 8px; }
+    #sage-anchor-sketch th:first-child { width: 51%; }
+    #sage-anchor-sketch td { padding: 10px 8px; vertical-align: middle; border-top: 1px solid var(--sage-line); }
+    #sage-anchor-sketch .sage-group { background: var(--sage-panel); }
+    #sage-anchor-sketch .sage-group button { border: 0; background: transparent; padding: 2px 0; text-align: left; font-weight: 550; }
+    #sage-anchor-sketch .sage-indent { padding-left: calc(8px + var(--sage-depth) * 15px); }
+    #sage-anchor-sketch .sage-label { display: flex; align-items: flex-start; gap: 6px; }
+    #sage-anchor-sketch .sage-arrow { display: inline-block; width: 16px; flex: 0 0 16px; text-align: center; }
+    #sage-anchor-sketch .sage-rule-toggle { border: 0; padding: 0; width: 20px; min-width: 20px; height: 23px; background: transparent; }
+    #sage-anchor-sketch .sage-count { display: inline-block; color: var(--sage-muted); font-size: 11px; white-space: nowrap; margin: 2px 7px 2px 0; }
+    #sage-anchor-sketch .sage-badge { display: inline-block; white-space: nowrap; border-radius: 4px; font-size: 11px; line-height: 1.6; padding: 2px 6px; margin: 2px 4px 2px 0; background: var(--sage-panel); color: var(--sage-muted); }
+    #sage-anchor-sketch .sage-badge[data-status="Implemented"] { background: var(--sage-done-bg); color: var(--sage-done-text); }
+    #sage-anchor-sketch .sage-badge[data-status="TODO"] { background: var(--sage-todo-bg); color: var(--sage-todo-text); }
+    #sage-anchor-sketch .sage-rule-text td { border-top: 0; padding: 0 17px 15px 54px; }
+    #sage-anchor-sketch .sage-rule-text p { margin: 4px 0 9px; }
+    #sage-anchor-sketch .sage-rule-text a { font-size: 12px; }
+    #sage-anchor-sketch .sage-connections { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 25px; }
+    #sage-anchor-sketch .sage-connection { border-top: 1px solid var(--sage-line); padding: 12px 0; }
+    #sage-anchor-sketch .sage-definition { border-left: 3px solid var(--sage-link); padding-left: 16px; margin: 20px 0; }
+    #sage-anchor-sketch pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--sage-panel); padding: 14px; border-radius: 5px; }
+    #sage-anchor-sketch details { margin-top: 10px; }
+    #sage-anchor-sketch summary { color: var(--sage-link); }
+    #sage-anchor-sketch .sage-context-rule { padding: 14px 0; border-top: 1px solid var(--sage-line); }
+    #sage-anchor-sketch .sage-context-rule[data-selected="true"] { background: var(--sage-selected); padding: 14px; border-radius: 5px; }
+    #sage-anchor-sketch .sage-empty { text-align: center; padding: 30px; color: var(--sage-muted); }
+    @media (max-width: 740px) {
+      #sage-anchor-sketch .sage-shell { grid-template-columns: 1fr; }
+      #sage-anchor-sketch aside { border-right: 0; border-bottom: 1px solid var(--sage-line); padding: 10px 17px; }
+      #sage-anchor-sketch aside nav { display: flex; flex-wrap: wrap; }
+      #sage-anchor-sketch .sage-nav-label { display: none; }
+      #sage-anchor-sketch main { padding: 18px; }
+      #sage-anchor-sketch .sage-connections { grid-template-columns: 1fr; gap: 0; }
+    }
+    @media (max-width: 440px) {
+      #sage-anchor-sketch header { padding-left: 18px; }
+      #sage-anchor-sketch main { padding: 15px 10px; }
+      #sage-anchor-sketch td, #sage-anchor-sketch th { padding-left: 4px; padding-right: 4px; }
+      #sage-anchor-sketch .sage-indent { padding-left: calc(4px + var(--sage-depth) * 5px); }
+      #sage-anchor-sketch .sage-rule-text td { padding-left: 25px; }
+    }
+    @media (pointer: coarse) {
+      #sage-anchor-sketch button, #sage-anchor-sketch aside a, #sage-anchor-sketch summary { min-height: 44px; }
+      #sage-anchor-sketch .sage-rule-toggle { min-width: 36px; }
+    }
+  </style>
+  <header><span class="sage-wordmark">SAGE</span><span class="sage-muted">/ Design</span></header>
+  <div class="sage-shell">
+    <aside aria-label="Book chapters"><div class="sage-nav-label">Design</div><nav>
+      <a href="#index" data-route="index" aria-current="page">Anchor index</a>
+      <a href="#chapter/meta.book" data-route="chapter/meta.book">Specification Book</a>
+      <a href="#chapter/meta.spec" data-route="chapter/meta.spec">Anchor mechanics</a>
+    </nav></aside>
+    <main>
+      <div class="sage-demo">Interaction sketch · real rule text, illustrative status data · no recorded test results</div>
+      <section id="sage-index-view">
+        <div class="sage-eyebrow">Design / Specification</div>
+        <h1>Anchor index</h1>
+        <div class="sage-tools">
+          <label><input id="sage-search" type="search" aria-label="Find an anchor" placeholder="Find a rule by name or text…"></label>
+          <button type="button" id="sage-expand">Expand groups</button>
+          <button type="button" id="sage-collapse">Collapse groups</button>
+        </div>
+        <div class="sage-caption" id="sage-result-count" aria-live="polite"></div>
+        <div class="sage-scroll">
+          <table aria-label="Specification anchors and declared coverage">
+            <thead><tr><th scope="col">Anchor</th><th scope="col">Implementation</th><th scope="col">Tests</th></tr></thead>
+            <tbody id="sage-rows"></tbody>
+          </table>
+        </div>
+      </section>
+      <section id="sage-detail-view" hidden aria-label="Anchor page"></section>
+      <section id="sage-chapter-view" hidden aria-label="Definition context"></section>
+    </main>
+  </div>
+  <script type="application/json" id="sage-sketch-data">[
+  {
+    "name": "meta.book.self_description",
+    "group": "meta.book",
+    "file": "md/design/meta/book.md",
+    "text": "The specification-book system is itself specified by anchors in Design. Its rules participate in the same naming, reference validation, implementation and test coverage, status reporting, index, and anchor-page generation as all other rules. A rule about the validator or renderer receives no exemption from those requirements; unfinished work uses explicit TODO entries.",
+    "impl": [
+      "TODO"
+    ],
+    "tests": [
+      "TODO"
+    ],
+    "stub": "#[test]\n#[sage::test(meta.book.self_description)]\nfn book_rules_use_the_same_validation() {\n    // TODO: Run the book's own rules through ordinary coverage and rendering,\n    // and show that deleting their implementation/test links fails.\n}"
+  },
+  {
+    "name": "meta.book.chapter_names",
+    "group": "meta.book",
+    "file": "md/design/meta/book.md",
+    "text": "An anchor's full name combines its chapter namespace with the local name written at its definition. The namespace is derived from the chapter source path relative to Design, removing the extension and joining path components with dots. For example, local `point_excerpts` in `design/meta/spec.md` names `meta.spec.point_excerpts`. The same derivation applies to `.sage` chapters. Section headings, chapter titles, and sidebar ordering do not change these names; only the source path and local name contribute. Ambiguous namespace derivations or duplicate full names are errors.",
+    "impl": [
+      "Implemented",
+      "TODO"
+    ],
+    "tests": [
+      "TODO"
+    ],
+    "stub": "#[test]\n#[sage::test(meta.book.chapter_names)]\nfn names_derive_from_chapter_paths() {\n    // TODO: Qualify local names in .md/.sage chapters, reject namespace\n    // collisions, and ignore display-title/sidebar-order changes.\n}"
+  },
+  {
+    "name": "meta.book.sage_chapters",
+    "group": "meta.book",
+    "file": "md/design/meta/book.md",
+    "text": "`.sage` sources reside within the book's configured source directory and each is rendered as a Design chapter. Design contains a Crates chapter listing the modeled crates. Each crate has an overview chapter showing its purpose, dependencies, and modules, with its remaining `.sage` source chapters nested beneath it. These chapters present the `design/crates/` source tree using the architecture browser specified below. Each source has one chapter in the shared inventory; rendering does not create a second canonical copy. Rendering requires no hand-maintained Markdown copies of `.sage` sources and the built book works without a running Sage server.",
+    "impl": [
+      "TODO"
+    ],
+    "tests": [
+      "TODO"
+    ],
+    "stub": "#[test]\n#[sage::test(meta.book.sage_chapters)]\nfn sage_sources_render_as_book_chapters() {\n    // TODO: Render .sage chapters with shared search, declaration links,\n    // and Rust context, independent of how the Crates chapter is inserted.\n}"
+  },
+  {
+    "name": "meta.book.index_rows",
+    "group": "meta.book",
+    "file": "md/design/meta/book.md",
+    "text": "The Design section includes an automatically generated index of every active anchor. Each anchor has a main row containing its full name and separate implementation and test statuses, plus a disclosure control for a second row containing its rendered specification text. Hiding the text preserves the main row. The linked name opens that anchor's own page, independently of expanding or collapsing the text.",
+    "impl": [
+      "TODO"
+    ],
+    "tests": [
+      "TODO"
+    ],
+    "stub": "#[test]\n#[sage::test(meta.book.index_rows)]\nfn anchor_index_rows_show_rules_and_status() {\n    // TODO: Render every rule with separate implementation/test statuses and\n    // independently operable text disclosure and anchor-page links.\n}"
+  },
+  {
+    "name": "meta.book.index_groups",
+    "group": "meta.book",
+    "file": "md/design/meta/book.md",
+    "text": "The anchor index groups entries hierarchically by their name prefixes, such as `meta` and `meta.book`. Each group can reveal or hide all its descendants, and reports implementation and test status counts for that subtree. Grouping and counts are derived from the same active anchors displayed in the index.",
+    "impl": [
+      "TODO"
+    ],
+    "tests": [
+      "TODO"
+    ],
+    "stub": "#[test]\n#[sage::test(meta.book.index_groups)]\nfn anchor_index_prefix_groups() {\n    // TODO: Expand/collapse each prefix subtree and verify counts against its\n    // actual descendant anchors and their implementation/test entries.\n}"
+  },
+  {
+    "name": "meta.book.index_status",
+    "group": "meta.book",
+    "file": "md/design/meta/book.md",
+    "text": "Implementation and test status are computed independently from their declared entries: ordinary entries display **Implemented**, `todo` entries display **TODO**, and `not_applicable` entries display **N/A**. Mixed statuses remain visible, including outstanding TODOs when another entry is implemented. An absent implementation or test entry is a validation error, not an implicit TODO or N/A. These labels describe declared coverage; recorded run results remain separate evidence.",
+    "impl": [
+      "TODO"
+    ],
+    "tests": [
+      "TODO"
+    ],
+    "stub": "#[test]\n#[sage::test(meta.book.index_status)]\nfn anchor_index_preserves_mixed_statuses() {\n    // TODO: Display implemented/TODO/N/A entries independently, expose mixed\n    // statuses, and reject missing entries rather than inventing a status.\n}"
+  },
+  {
+    "name": "meta.spec.test_coverage",
+    "group": "meta.spec",
+    "file": "md/design/validation/architecture-language.md",
+    "text": "Every specification anchor must have at least one annotated Rust test. An anchor without a test is an error, independently of its implementation coverage. A placeholder test counts as an entry with its explicit status; an implementation placeholder alone cannot satisfy the test requirement.",
+    "impl": [
+      "Implemented"
+    ],
+    "tests": [
+      "Implemented"
+    ],
+    "stub": ""
+  },
+  {
+    "name": "meta.spec.test_references",
+    "group": "meta.spec",
+    "file": "md/design/validation/architecture-language.md",
+    "text": "Every `#[sage::test(...)]` reference must resolve to an existing specification anchor and be attached to a Rust test. Dangling and misplaced references are errors.",
+    "impl": [
+      "Implemented"
+    ],
+    "tests": [
+      "Implemented"
+    ],
+    "stub": ""
+  },
+  {
+    "name": "meta.spec.evidence_status",
+    "group": "meta.spec",
+    "file": "md/design/validation/architecture-language.md",
+    "text": "An implementation or test entry establishes a declared association, not proof that the rule is satisfied. Source inventories retain cfg conditions without claiming that a site was compiled or a test executed. Anchor pages distinguish test source, recorded run results, and other evidence such as traces. A passing structural check or a passing dummy test must not present a TODO or Not applicable entry as established behavioral evidence.",
+    "impl": [
+      "N/A"
+    ],
+    "tests": [
+      "TODO"
+    ],
+    "stub": ""
+  }
+]</script>
+  <script>
+    (() => {
+      const root = document.getElementById('sage-anchor-sketch');
+      const rows = root.querySelector('#sage-rows');
+      const search = root.querySelector('#sage-search');
+      const rules = JSON.parse(root.querySelector('#sage-sketch-data').textContent);
+      const byName = new Map(rules.map(rule => [rule.name, rule]));
+      const groups = ['meta', 'meta.book', 'meta.spec'];
+      const state = { query: '', closed: ['meta.spec'], expanded: ['meta.book.self_description'], route: 'index' };
+      const escape = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+      const prose = value => escape(value).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      const statuses = ['Implemented', 'TODO', 'N/A'];
+      const badge = status => `<span class="sage-badge" data-status="${status}">${status}</span>`;
+      const badges = values => values.map(badge).join('');
+      const routeLink = (route, label) => `<a href="#${escape(route)}" data-route="${escape(route)}">${label}</a>`;
+      const matchingRules = () => rules.filter(rule => `${rule.name} ${rule.text}`.toLowerCase().includes(state.query.toLowerCase()));
+      const inGroup = (rule, group) => rule.name.startsWith(group + '.');
+      function countMarkup(entries, side) {
+        return statuses.map(status => {
+          const count = entries.filter(rule => rule[side].includes(status)).length;
+          return count ? `<span class="sage-count">${count} ${status}</span>` : '';
+        }).join('');
+      }
+      function renderRows() {
+        const matches = matchingRules();
+        const queryActive = state.query.length > 0;
+        const closed = group => !queryActive && state.closed.includes(group);
+        let html = '';
+        for (const group of groups) {
+          const entries = matches.filter(rule => inGroup(rule, group));
+          if (!entries.length || (group !== 'meta' && closed('meta'))) continue;
+          const depth = group.split('.').length - 1;
+          html += `<tr class="sage-group"><td class="sage-indent" style="--sage-depth:${depth}"><button type="button" data-group="${group}" aria-expanded="${!closed(group)}" aria-label="${closed(group)?'Expand':'Collapse'} ${group}" ${queryActive?'disabled':''}><span class="sage-arrow" aria-hidden="true">${closed(group)?'▸':'▾'}</span> <code>${group}</code> <span class="sage-count">${entries.length} rules</span></button></td><td>${countMarkup(entries,'impl')}</td><td>${countMarkup(entries,'tests')}</td></tr>`;
+          if (group === 'meta' || closed(group)) continue;
+          for (const rule of entries) {
+            const open = state.expanded.includes(rule.name);
+            const textId = 'sage-text-' + rule.name.replaceAll('.', '-');
+            html += `<tr><td class="sage-indent" style="--sage-depth:2"><div class="sage-label"><button type="button" class="sage-rule-toggle" data-rule="${rule.name}" aria-expanded="${open}" aria-controls="${textId}" aria-label="${open?'Hide':'Show'} text for ${rule.name}"><span aria-hidden="true">${open?'▾':'▸'}</span></button>${routeLink('anchor/'+rule.name, '<code>'+escape(rule.name)+'</code>')}</div></td><td>${badges(rule.impl)}</td><td>${badges(rule.tests)}</td></tr>`;
+            html += `<tr class="sage-rule-text" id="${textId}" ${open?'':'hidden'}><td colspan="3"><p>${prose(rule.text)}</p>${routeLink('chapter/'+rule.group+'/'+rule.name, 'Definition context')} · ${routeLink('anchor/'+rule.name,'Implementation &amp; tests →')}</td></tr>`;
+          }
+        }
+        rows.innerHTML = html || '<tr><td colspan="3" class="sage-empty">No matching rules.</td></tr>';
+        root.querySelector('#sage-result-count').textContent = `${matches.length} of ${rules.length} sample rules · group counts count rules per status; mixed rules appear in both`;
+        root.querySelector('#sage-expand').disabled = queryActive;
+        root.querySelector('#sage-collapse').disabled = queryActive;
+      }
+      function connectionMarkup(rule, side) {
+        return rule[side].map(status => {
+          const explanation = status === 'TODO' ? 'Pending work. A placeholder retains this status even if its empty test passes.' : status === 'N/A' ? 'Example not_applicable entry. Its rationale stays visible for review.' : 'Example ordinary entry. This badge records an association, not a successful test run.';
+          return `<div class="sage-connection">${badge(status)}<p>${explanation}</p>${status === 'TODO' && rule.stub ? `<details><summary>View existing TODO test source</summary><div class="sage-caption">crates/sage-meta/tests/spec_plan.rs · mod todo</div><pre><code>${escape(rule.stub)}</code></pre></details>` : '<span class="sage-caption">Illustrative association; no implementation excerpt or run is asserted by this sketch.</span>'}</div>`;
+        }).join('');
+      }
+      function renderRoute() {
+        const [view, key, selected] = state.route.split('/');
+        root.querySelector('#sage-index-view').hidden = view !== 'index';
+        root.querySelector('#sage-detail-view').hidden = view !== 'anchor';
+        root.querySelector('#sage-chapter-view').hidden = view !== 'chapter';
+        root.querySelectorAll('aside a').forEach(link => {
+          if (link.dataset.route === (view === 'anchor' ? 'index' : view === 'chapter' ? `chapter/${key}` : 'index')) link.setAttribute('aria-current','page');
+          else link.removeAttribute('aria-current');
+        });
+        if (view === 'anchor') {
+          const rule = byName.get(key);
+          root.querySelector('#sage-detail-view').innerHTML = `${routeLink('index','← Anchor index')}<h1>${escape(rule.name)}</h1><div>${badges(rule.impl)} <span class="sage-caption">implementation</span> &nbsp; ${badges(rule.tests)} <span class="sage-caption">tests</span></div><div class="sage-definition">${prose(rule.text)}</div>${routeLink('chapter/'+rule.group+'/'+rule.name,'View in chapter →')}<div class="sage-caption">${escape(rule.file)}</div><div class="sage-connections"><section><h2>Implementation</h2>${connectionMarkup(rule,'impl')}</section><section><h2>Tests / evidence</h2>${connectionMarkup(rule,'tests')}<p class="sage-caption">No recorded runs in this sketch.</p></section></div>`;
+        } else if (view === 'chapter') {
+          const chapterRules = rules.filter(rule => rule.group === key);
+          root.querySelector('#sage-chapter-view').innerHTML = `${routeLink('index','← Anchor index')}<div class="sage-eyebrow">Design / Chapter excerpt</div><h1>${key==='meta.book'?'Specification Book':'Anchor mechanics'}</h1><p class="sage-caption">Selected paragraphs from ${escape(chapterRules[0].file)}</p>${chapterRules.map(rule => `<section class="sage-context-rule" data-selected="${rule.name===selected}">${routeLink('anchor/'+rule.name,'<code>'+escape(rule.name)+'</code>')}<p>${prose(rule.text)}</p></section>`).join('')}`;
+        } else renderRows();
+      }
+      function validRoute(route) {
+        const [view, key] = route.split('/');
+        return route === 'index' || (view === 'anchor' && byName.has(key)) || (view === 'chapter' && ['meta.book','meta.spec'].includes(key));
+      }
+      function navigate(route) {
+        const previous = state.route;
+        state.route = validRoute(route) ? route : 'index';
+        renderRoute();
+        let target;
+        if (state.route.startsWith('chapter/')) {
+          target = root.querySelector('#sage-chapter-view [data-selected="true"] a') || root.querySelector('#sage-chapter-view a');
+        } else if (state.route.startsWith('anchor/')) {
+          target = root.querySelector('#sage-detail-view a');
+        } else {
+          const oldName = previous.startsWith('anchor/') ? previous.split('/')[1] : previous.split('/')[2];
+          target = [...rows.querySelectorAll('[data-route]')].find(link => link.dataset.route === 'anchor/' + oldName) || search;
+        }
+        target?.focus({preventScroll:true});
+        target?.scrollIntoView({block:'nearest'});
+      }
+      function save() {
+        window.openai?.setWidgetState?.({modelContent:{selectedAnchor:state.route.startsWith('anchor/')?state.route.slice(7):null},privateContent:{...state}})?.catch(() => {});
+      }
+      function restore(saved) {
+        const data = saved?.privateContent;
+        if (!data) return;
+        if (typeof data.query === 'string') state.query = data.query;
+        if (Array.isArray(data.closed)) state.closed = data.closed.filter(value => groups.includes(value));
+        if (Array.isArray(data.expanded)) state.expanded = data.expanded.filter(value => byName.has(value));
+        if (typeof data.route === 'string' && validRoute(data.route)) state.route = data.route;
+        search.value = state.query;
+      }
+      root.addEventListener('click', event => {
+        const link = event.target.closest('[data-route]');
+        if (link) {
+          event.preventDefault();
+          navigate(link.dataset.route);
+          if (location.hash !== '#' + state.route) location.hash = state.route;
+          save(); return;
+        }
+        const group = event.target.closest('[data-group]');
+        if (group && !group.disabled) {
+          state.closed = state.closed.includes(group.dataset.group) ? state.closed.filter(value=>value!==group.dataset.group) : [...state.closed, group.dataset.group];
+          renderRows();
+          root.querySelector(`[data-group="${group.dataset.group}"]`)?.focus();
+          save();
+        }
+        const rule = event.target.closest('[data-rule]');
+        if (rule) {
+          state.expanded = state.expanded.includes(rule.dataset.rule) ? state.expanded.filter(value=>value!==rule.dataset.rule) : [...state.expanded, rule.dataset.rule];
+          renderRows();
+          root.querySelector(`[data-rule="${rule.dataset.rule}"]`)?.focus();
+          save();
+        }
+      });
+      search.addEventListener('input', () => {state.query = search.value; renderRows(); save();});
+      root.querySelector('#sage-expand').addEventListener('click', () => {state.closed=[]; renderRows(); save();});
+      root.querySelector('#sage-collapse').addEventListener('click', () => {state.closed=[...groups]; renderRows(); save();});
+      window.addEventListener('hashchange', () => {const route=location.hash.slice(1); if(route!==state.route) {navigate(route); save();}});
+      window.addEventListener('openai:set_globals', event => {restore(event.detail?.globals?.widgetState); renderRoute();});
+      restore(window.openai?.widgetState);
+      const initialRoute = location.hash.slice(1);
+      if (validRoute(initialRoute)) state.route = initialRoute;
+      renderRoute();
+    })();
+  </script>
+</div>
+
+</body>
+</html>

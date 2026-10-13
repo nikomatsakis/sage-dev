@@ -151,6 +151,7 @@ pub struct ContractSession {
 }
 
 impl ContractSession {
+    // {anchor}`meta.contracts.validated_session`
     pub fn new(model: Arc<ContractModel>, roots: impl IntoIterator<Item = String>) -> Self {
         let roots: BTreeSet<_> = roots.into_iter().collect();
         let gaps = roots
@@ -230,6 +231,7 @@ impl ContractSession {
     fn check_request(&mut self, invocation: &Invocation) {
         if let Some(caller) = self.active.last().cloned() {
             if let Some(contract) = self.model.operations.get(&caller.operation) {
+                // {anchor}`meta.envelopes.permissions`
                 let permissions: Vec<_> = contract
                     .invokes
                     .iter()
@@ -389,6 +391,7 @@ impl ContractSession {
         &self.violations
     }
 
+    // {anchor}`meta.contracts.observation_coverage`
     pub fn finish(mut self) -> ContractReport {
         if !self.active.is_empty() {
             self.record_gap(format!(

@@ -1,6 +1,13 @@
 # Design
 
-This section is a reference and guide to Sage's architecture. Start with the
+This section is the canonical specification of Sage, including the book and
+anchor system used to describe it. Markdown and `.sage` chapters express its
+rules; generated indexes and anchor pages connect them to implementation and
+tests. The [book specification](./meta/book.md) defines this structure and its
+current implementation status. Introductory material outside Design explains how to
+use Sage, while RFDs record goals, rationale, and plans.
+
+Start with the
 [tenets](./tenets.md), then use the [architecture overview](./architecture.md)
 to see the whole compilation pipeline and the concepts shared across it.
 
@@ -27,15 +34,13 @@ cross-cutting implementation slices.
 
 ## Reading design anchors
 
-New specification paragraphs have meaningful names such as
+Specification paragraphs have meaningful names such as
 `meta.calls.declared`, introduced by the custom Markdown role
 <code>{anchor}&#96;meta.calls.declared&#96;</code>. Each paragraph states one testable rule.
 Rust tests link to those names with `#[sage::test(meta.calls.declared)]`, and
 `sage-meta check` requires a test for every named specification paragraph.
-The [architectural pseudocode chapter](./validation/architecture-language.md)
-is the first converted specification. Existing numbered anchors such as
-`EXP-A1` retain their destination rule and **Required verification** until
-their chapters are converted.
+The [anchor mechanics](./validation/architecture-language.md#specification-tests-and-workspace-checks)
+and [contract rules](./meta/contracts.md) specify the checks and their evidence.
 
 An anchor does not by itself claim that Sage already satisfies the rule. The
 chapter's **Current Status** section links the evidence which exists today and
@@ -43,10 +48,10 @@ names the remaining gap. Cross-cutting choices and rationale use `D<n>` entries
 in [Architecture Decisions](./decisions.md); chapter anchors express the local,
 auditable consequences of those choices.
 
-When an RFD completes, its destination anchors and verification requirements
-are promoted into these chapters. The architecture guide is therefore the
-living reference; the RFD remains the historical design and implementation
-record.
+An RFD branch changes these chapters alongside its rationale and plan. The
+Design diff states the proposed rules, and implementation updates their
+evidence and status. The normative rules are reviewed with the proposal; they
+do not wait for RFD completion to appear here.
 
 This organization was shaped in part by Kari Wilhelm's ideas for **Anchor
 Driven Development**: identify the small, load-bearing claims from which the
@@ -55,5 +60,12 @@ inspectable evidence. Those ideas helped guide the restructuring of this book.
 Many thanks to Kari for articulating the approach.
 
 The [architectural pseudocode](./validation/architecture-language.md) provides
-a complementary method-oriented review surface in `sage-src/`, parsed and
-checked by `sage-meta`.
+a method-oriented specification, currently stored in `sage-src/` and parsed
+and checked by `sage-meta`. The planned book structure embeds those `.sage`
+files as Design chapters under their owning crates. The
+[display specification](./meta/book.md#displaying-sage-files) defines their
+searchable declaration views, dependency links, Rust source pane, and delivery
+modes. Chapter-derived names,
+generated anchor pages, and the grouped index are destination behavior; the
+current checker still uses explicit full names and scans Markdown throughout
+`md/`.

@@ -213,6 +213,18 @@ fn forbidden_requests_fail_even_when_leaf_is_cached() {
                     .any(|line| line.starts_with("execute Leaf::read"))
             );
         }
+        // Expose observed data so the workspace test can assert the contract
+        // and cache behavior directly in its annotated body.
+        println!(
+            "SAGE_CONTRACT_EVIDENCE:{}",
+            serde_json::to_string(&serde_json::json!({
+                "prewarmed": prewarm,
+                "model": ContractModel::new(&documents()).unwrap(),
+                "contracts": report,
+                "query_events": observer.lock().unwrap().lines,
+            }))
+            .unwrap()
+        );
     }
 }
 

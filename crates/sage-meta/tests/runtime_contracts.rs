@@ -71,6 +71,57 @@ fn reports_direct_and_ancestor_violation_with_complete_path_and_rule() {
 }
 
 #[test]
+#[sage::test(meta.calls.forbidden)]
+fn immediate_permission_does_not_override_an_active_ancestor_prohibition() {
+    let model = model(
+        r#"
+        class Root { """Suspended query."""
+            fn run() -> u32 { """Forbids the leaf.""" envelope {
+                forbid transitive crate::Leaf::read;
+            } }
+        }
+        class Helper { """Internal reexecution."""
+            fn work() -> u32 { """May request the leaf.""" envelope {
+                invokes crate::Leaf::read();
+            } }
+        }
+        class Leaf { """Value."""
+            fn read() -> u32 { """Read.""" envelope {} }
+        }
+    "#,
+    );
+    let mut checked = session(model, &["Root::run"]);
+    let root = checked.enter("demo::Root::run", None);
+    // Internal reexecution installs Helper beneath the suspended Root without
+    // inventing a Root -> Helper source call. Helper's own request is permitted.
+    let helper = checked.enter_validation("demo::Helper::work", None);
+    let leaf = checked.enter("demo::Leaf::read", None);
+    checked.exit(leaf);
+    checked.exit(helper);
+    checked.exit(root);
+    let report = checked.finish();
+    assert!(!report.calls_conform);
+    assert_eq!(report.violations.len(), 1);
+    assert_eq!(
+        report.violations[0].kind,
+        ViolationKind::ForbiddenTransitive
+    );
+    assert_eq!(
+        report.violations[0].rule.as_ref().unwrap().operation,
+        "demo::Root::run"
+    );
+    assert_eq!(
+        report.violations[0]
+            .path
+            .iter()
+            .map(|frame| frame.operation.as_str())
+            .collect::<Vec<_>>(),
+        ["demo::Root::run", "demo::Helper::work", "demo::Leaf::read"]
+    );
+}
+
+#[test]
+#[sage::test(meta.contracts.validated_session)]
 fn repeated_roots_are_independent_and_models_are_shared_immutably() {
     let model = model(FORBIDDEN);
     let mut first = session(model.clone(), &["Root::run", "Leaf::read"]);
@@ -92,6 +143,8 @@ fn repeated_roots_are_independent_and_models_are_shared_immutably() {
 
 #[test]
 #[sage::test(meta.calls.declared)]
+#[sage::test(meta.contracts.cache_invocations)]
+#[sage::test(meta.envelopes.receiver_calls)]
 fn same_operation_entry_is_recursion_and_needs_permission() {
     let leaf = r#"class Tree { """Tree.""" fn walk() -> u32 { """Walk.""" envelope {} } }"#;
     let mut denied = session(model(leaf), &["Tree::walk"]);
@@ -117,6 +170,8 @@ fn same_operation_entry_is_recursion_and_needs_permission() {
 }
 
 #[test]
+#[sage::test(meta.contracts.observation_coverage)]
+#[sage::test(meta.envelopes.receiver_calls)]
 fn self_permission_rejects_different_and_unknown_receivers() {
     let model = model(
         r#"
@@ -143,6 +198,7 @@ fn self_permission_rejects_different_and_unknown_receivers() {
 }
 
 #[test]
+#[sage::test(meta.envelopes.class_calls)]
 fn a_class_wide_permission_does_not_require_receiver_identity() {
     let mut session = session(
         model(
@@ -194,6 +250,7 @@ fn interface_dispatch_retains_both_frames_and_receiver_check() {
 }
 
 #[test]
+#[sage::test(meta.envelopes.class_calls)]
 fn overrides_inherit_prohibitions_and_calls_dispatch_to_known_implementations() {
     let mut session = session(
         model(
@@ -257,6 +314,7 @@ fn inherited_self_prohibition_compares_the_ancestor_receiver() {
 }
 
 #[test]
+#[sage::test(meta.contracts.cache_invocations)]
 fn internal_reexecution_establishes_context_without_fabricating_a_call() {
     let mut session = session(
         model(
@@ -351,6 +409,7 @@ fn internal_reexecution_checks_inherited_self_prohibitions_conservatively() {
 }
 
 #[test]
+#[sage::test(meta.contracts.observation_coverage)]
 fn unknown_boundaries_roots_and_unbalanced_exits_cannot_pass() {
     let mut session = session(model(FORBIDDEN), &["Root::run", "Missing::run"]);
     let root = session.enter("demo::Helper::work", None);
@@ -394,6 +453,7 @@ fn unknown_boundaries_roots_and_unbalanced_exits_cannot_pass() {
 }
 
 #[test]
+#[sage::test(meta.contracts.observation_coverage)]
 fn observation_gaps_and_effect_coverage_are_explicit() {
     let model = model(
         r#"
@@ -425,6 +485,7 @@ fn observation_gaps_and_effect_coverage_are_explicit() {
 }
 
 #[test]
+#[sage::test(meta.contracts.validated_session)]
 fn invalid_static_model_never_becomes_a_runtime_contract() {
     let document = parse(
         "demo/crate.sage",

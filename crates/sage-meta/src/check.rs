@@ -6,6 +6,7 @@ use std::fmt;
 use std::path::Path;
 
 use crate::correspondence::{CorrespondenceIndex, RustSite};
+use crate::review::{self, Decision};
 use crate::spec::SpecIndex;
 use crate::{Diagnostic, Span};
 
@@ -62,12 +63,24 @@ pub struct SpecificationCheck {
     pub load_error: Option<String>,
 }
 
+#[derive(Debug, serde::Serialize)]
+pub struct ReviewCheck {
+    pub valid: bool,
+    pub approved: usize,
+    pub todo: usize,
+    pub not_applicable: usize,
+    pub diagnostics: Vec<Diagnostic>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub load_error: Option<String>,
+}
+
 /// A report is successful only when every build-time validation stage ran and passed.
 #[derive(Debug, serde::Serialize)]
 pub struct CheckReport {
     pub model: ModelCheck,
     pub correspondence: Option<CorrespondenceCheck>,
     pub specification: Option<SpecificationCheck>,
+    pub review: Option<ReviewCheck>,
     /// Prepared while validating, so formatting does not depend on later source edits.
     #[serde(skip)]
     rendered_errors: Vec<String>,
@@ -78,6 +91,7 @@ impl CheckReport {
         self.model.valid
             && self.correspondence.as_ref().is_some_and(|r| r.valid)
             && self.specification.as_ref().is_some_and(|r| r.valid)
+            && self.review.as_ref().is_some_and(|r| r.valid)
     }
 
     /// Turn diagnostics and load failures into a failing command or test result.
@@ -162,6 +176,16 @@ impl fmt::Display for CheckReport {
             }
             diagnostics(f, "specification", &report.diagnostics, &report.load_error)?;
         }
+        if let Some(report) = &self.review {
+            if report.valid {
+                writeln!(
+                    f,
+                    "Checked review snapshots: {} approved, {} TODO, {} N/A.",
+                    report.approved, report.todo, report.not_applicable
+                )?;
+            }
+            diagnostics(f, "review", &report.diagnostics, &report.load_error)?;
+        }
         writeln!(
             f,
             "Build-time checks do not execute tests or observe runtime calls."
@@ -198,6 +222,7 @@ fn check_roots(model_root: &Path, rust_root: Option<&Path>) -> CheckReport {
         },
         correspondence: None,
         specification: None,
+        review: None,
         rendered_errors: Vec::new(),
     };
     let documents = match crate::workspace::load_documents(model_root) {
@@ -343,6 +368,14 @@ fn check_roots(model_root: &Path, rust_root: Option<&Path>) -> CheckReport {
                     tests: index.tests.get(name).cloned().unwrap_or_default(),
                 })
                 .collect();
+            if specification.valid {
+                check_reviews(
+                    &mut report,
+                    &spec,
+                    &index,
+                    index.workspace_root().unwrap_or(rust_root),
+                );
+            }
         }
         Err(error) => {
             report.rendered_errors.push(format!(
@@ -354,6 +387,81 @@ fn check_roots(model_root: &Path, rust_root: Option<&Path>) -> CheckReport {
     }
     report.specification = Some(specification);
     report
+}
+
+// {anchor}`meta.reviews.gate`
+fn check_reviews(
+    report: &mut CheckReport,
+    spec: &SpecIndex,
+    rust: &CorrespondenceIndex,
+    workspace: &Path,
+) {
+    let mut stage = ReviewCheck {
+        valid: false,
+        approved: 0,
+        todo: 0,
+        not_applicable: 0,
+        diagnostics: Vec::new(),
+        load_error: None,
+    };
+    let inputs = review::inventory(spec, rust);
+    let checklist = review::load(&workspace.join(review::CHECKLIST_FILE));
+    match inputs.and_then(|inputs| checklist.map(|checklist| (inputs, checklist))) {
+        Ok((inputs, checklist)) => {
+            let issues = review::validate(&inputs, &checklist);
+            for record in checklist.reviews.iter().filter(|record| {
+                inputs.get(&record.anchor) == Some(&record.input)
+                    && !issues.iter().any(|issue| {
+                        issue
+                            .anchor
+                            .as_ref()
+                            .is_none_or(|anchor| anchor == &record.anchor)
+                    })
+            }) {
+                match record.decision {
+                    Decision::Approved => stage.approved += 1,
+                    Decision::Todo => stage.todo += 1,
+                    Decision::NotApplicable => stage.not_applicable += 1,
+                    Decision::Pending | Decision::NeedsWork => {}
+                }
+            }
+            for issue in issues {
+                let anchor = issue
+                    .anchor
+                    .as_ref()
+                    .and_then(|name| spec.anchors.get(name));
+                let diagnostic = Diagnostic {
+                    file: anchor.map_or_else(
+                        || review::CHECKLIST_FILE.into(),
+                        |anchor| format!("md/{}", anchor.file),
+                    ),
+                    span: anchor.map_or(Span { start: 0, end: 0 }, |anchor| anchor.span.clone()),
+                    message: issue.message,
+                };
+                let source = anchor.and_then(|anchor| spec.sources.get(&anchor.file));
+                report.rendered_errors.push(render_diagnostic(
+                    &diagnostic,
+                    &diagnostic.file,
+                    source.map(String::as_str),
+                ));
+                stage.diagnostics.push(diagnostic);
+            }
+            stage.valid = stage.diagnostics.is_empty();
+        }
+        Err(error) => {
+            stage.load_error = Some(error.to_string());
+            report.rendered_errors.push(format!(
+                "error: could not load specification review snapshots from {}\n  = {error}",
+                workspace.join(review::CHECKLIST_FILE).display()
+            ));
+        }
+    }
+    if !stage.valid {
+        if let Some(error) = report.rendered_errors.last_mut() {
+            error.push_str(&format!("\n  = help: run the {} skill to review changed claims and tests; start with `cargo run -p sage-meta -- review prepare`, then record the completed review with `cargo run -p sage-meta -- review record <file>`", review::REVIEW_SKILL));
+        }
+    }
+    report.review = Some(stage);
 }
 
 fn render_file_diagnostic(diagnostic: &Diagnostic, workspace: Option<&Path>) -> String {

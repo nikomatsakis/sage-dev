@@ -6,6 +6,7 @@ pub mod check;
 pub mod contracts;
 pub mod correspondence;
 mod parser;
+pub mod review;
 #[cfg(feature = "salsa")]
 pub mod salsa_contracts;
 pub mod spec;

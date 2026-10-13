@@ -447,8 +447,11 @@ Specification paragraphs use meaningful, stable names with
 <code>{anchor}&#96;meta.calls.declared&#96;</code> markers. Inert
 `#[sage::test(meta.calls.declared)]` attributes connect tests to those rules.
 Every declared rule has a test and every test reference resolves; source
-coverage does not establish execution or assertion quality. Fine-grained
-paragraphs replace numbered callouts as rules and their tests are migrated.
+coverage does not establish execution or assertion quality. Each fine-grained
+paragraph states an independently testable rule.
+[D22](#d22-the-design-book-is-the-canonical-specification) locates the normative
+specification in the Design chapter tree, with equally authoritative Markdown
+and `.sage` chapter sources, Rust implementation references, and rule pages.
 
 Rust declares correspondence with inert `#[sage::item(...)]` tool attributes.
 Every modeled crate/module, named declaration, and declared method has a
@@ -462,3 +465,42 @@ unmapped boundaries remain explicit gaps. Source anchors, model consistency,
 and observed conformance are separate claims; none establishes exhaustive Rust
 semantics. The living contract and current limitations are in
 [Architectural Pseudocode](./validation/architecture-language.md).
+
+<a id="d22-markdown-and-sage-share-canonical-specification-rules"></a>
+
+## D22: The Design book is the canonical specification
+
+The mdBook Design chapter tree is the normative specification. Markdown and
+`.sage` are equally authoritative source formats inside the book source
+directory, `md/`. `.sage` chapters live in directories identifying their modeled
+crates, with `crate.sage` manifests. This gives prose and architectural models
+one navigable authority instead of separate corpora whose relationship must
+be inferred. Crates content from `design/crates/<crate>/*.sage` follows the
+[display specification](./meta/book.md#displaying-sage-files): structured
+declarations, search, dependency navigation, Rust source access, and consistent
+book, export, and local-server delivery. Every
+modeled entity has a direct link usable elsewhere in the book or model. Entity
+links use model identities independently of paragraph anchor names; making an
+entity linkable does not automatically declare a specification rule.
+
+An anchor's identity combines the full chapter source path relative to Design and
+the rule's local name; headings do not affect identity. Moving a chapter renames
+its anchors: update references
+and redirect old URLs. Moving a model source does not change its compiler model
+item identities. A generated hierarchical index exposes anchor text and status;
+each anchor also has a page linking its definition, context, implementation,
+and tests or recorded evidence.
+
+Every rule has implementation and test entries, with explicit `todo` and
+`not_applicable` accounting displayed as **TODO** and **N/A**. The book and
+anchor system describe themselves
+using the same anchors and coverage requirements, without privileged exemptions.
+Declared associations remain distinct from observed results. The shared
+`sage-meta` check validates them in CI and workspace tests; plain `cargo build`
+need not run it.
+
+RFDs explain a change and its implementation plan on the same branch as the
+normative Design changes. They do not hold a competing specification that must
+be promoted upon completion. The living contract and current limitations are
+in [The Design Book](./meta/book.md); source-reference and coverage details are
+in [Architectural Pseudocode](./validation/architecture-language.md#specification-tests-and-workspace-checks).

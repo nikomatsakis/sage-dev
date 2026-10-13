@@ -12,3 +12,6 @@ salsa = { version = "0.26.1", path = "../../../../../vendor/salsa" }
 
 [patch.crates-io]
 salsa = { path = "../../../../../vendor/salsa" }
+
+[dev-dependencies]
+serde_json = "=1.0.150"

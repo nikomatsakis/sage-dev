@@ -354,6 +354,7 @@ impl CorrespondenceIndex {
 
     /// Bidirectional source coverage. Module anchors count as source locations,
     /// while `RustSite::executable` reports the separate body-mapping coverage.
+    // {anchor}`meta.contracts.correspondence`
     pub fn validate(&self, documents: &[Document]) -> Vec<Diagnostic> {
         #[derive(Clone, Copy)]
         enum Unit {

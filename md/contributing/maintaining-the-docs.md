@@ -9,7 +9,15 @@ follow-up.
 
 The rest of this page is written in the imperative, addressed to that agent.
 
-## How the pieces relate — the Architecture section and RFDs
+## How the pieces relate — the Design specification and RFDs
+
+The book's **Design** tree is the canonical specification. Its Markdown and
+`.sage` chapters state the normative rules, including the rules for this
+documentation system itself. Introductory material explains how to use Sage
+and is non-normative. Generated anchor indexes and pages provide views of the
+specification and its implementation and test connections. The
+[book specification](../design/meta/book.md) defines these responsibilities;
+this page explains how authors maintain them.
 
 Sage keeps four complementary views of the system:
 
@@ -20,8 +28,9 @@ Sage keeps four complementary views of the system:
 - **The build-out roadmap describes cross-cutting implementation slices.** A
   slice has an acceptance target, scope, ordering, dependencies, affected
   architecture, and a high-level implementation plan.
-- **RFDs describe a change and its detailed checkpoints.** They record why a
-  design was chosen and how that scoped change lands.
+- **RFDs describe a change and its detailed checkpoints.** They record goals,
+  alternatives, rationale, and how that scoped change lands. The same branch
+  edits the Design specification to state the proposed normative behavior.
 - **The known-deviations register tracks confirmed contradictions.** It names
   places where the current implementation violates an accepted design anchor,
   while the affected architecture chapter states the same fact locally.
@@ -32,16 +41,19 @@ Sage keeps four complementary views of the system:
 | Answers | *how should this work, what works now, and how can I inspect it?* | *what coherent outcome are we building next?* | *why this change, and how does it land?* | *where does the code knowingly violate the accepted design?* |
 | Lifespan | living, kept current | living, kept current | historical once completed | living until closure evidence establishes the anchor |
 
-An **RFD** proposes and discusses a change. That change is often architectural — an RFD
-can describe how the architecture itself should evolve, not only an implementation plan and
-its steps. The **Architecture & Design** section records the destination those changes
-converge on, as a single present-and-intended picture, so the current design never has to
+An **RFD** proposes and discusses a change. Its branch includes the substantive
+Design diff: the specification paragraphs and `.sage` declarations being added
+or revised. Give the RFD a high-level overview of the needed changes, linking
+each directly to the affected Design pages and anchors, then connect its
+implementation steps to those rules. The Design diff is reviewed with the rationale, so the current design never has to
 be reconstructed by replaying every RFD.
 
-Two practical consequences:
+Practical consequences:
 
-- **An RFD can carry architectural design, not just implementation steps.** Don't force
-  architectural reasoning out of an RFD; that is a normal part of proposing a change.
+- **Keep architectural reasoning in the RFD and normative rules in Design.**
+  The RFD can explain architecture in detail, including rejected alternatives,
+  while referencing the proposed Design anchors instead of defining a second
+  authoritative copy of their requirements.
 - **Keep the destination and local status current.** When an RFD changes an
   architectural contract or lands observable behavior, update the relevant
   architecture chapter. Keep destination design in the main text and current
@@ -58,7 +70,7 @@ When one of these happens, update the matching page(s) before you consider the w
 | Trigger | Update these pages |
 |---|---|
 | We settle (or revise) how part of the system *should* be designed | The main text of the relevant [architecture](../design/README.md) page |
-| We're planning a change (including an architectural one) | Open an **RFD** (`md/rfds/<name>/`) per the [RFD process](../rfds/README.md) to describe and discuss it; track steps in its `implementation.md`. When it lands an architectural change, reflect the end-state in the [architecture](../design/README.md) page |
+| We're planning a change (including an architectural one) | Open an **RFD** (`md/rfds/<name>/`) per the [RFD process](../rfds/README.md) and edit the relevant [Design](../design/README.md) rules on the same branch; link those anchors from the rationale and `implementation.md` |
 | A draft RFD is added | List it under *Draft* in [`SUMMARY.md`](../SUMMARY.md); mark unsettled mechanisms as planned in any destination page |
 | An RFD's implementation step lands | Tick the step in that RFD's `implementation.md`. Update architecture status or roadmap progress only if the step changes those facts |
 | An RFD is accepted (merged, in progress) | Move it to *Accepted* in [`SUMMARY.md`](../SUMMARY.md) and [`accepted.md`](../rfds/accepted.md); link it from any roadmap slice it implements |
@@ -79,14 +91,17 @@ When a change touches more than one row, update all of them in the same change.
   describe unimplemented destination design. Put statements about what exists
   today, current limitations, and related slices in a final **Current Status**
   section.
-- **Write specification rules as independently testable paragraphs.** Prefer
-  fine-grained rules with meaningful, stable names over numbered callouts.
-  Prefix a rule with a custom MyST-style marker such as
+- **Write one independently falsifiable claim per named paragraph.** Give
+  each claim a meaningful, stable name and identify what observation would
+  establish or contradict it. Split constraints that can fail independently,
+  even when they are adjacent, concern the same subject, or share a test
+  function. An umbrella anchor does not replace the individual claims and
+  their meaningful test assertions.
+  Prefix the claim with a custom MyST-style marker such as
   <code>{anchor}&#96;meta.calls.declared&#96;</code>, followed by its prose in the same
-  paragraph. Put no blank line between the marker and prose. Split rules that
-  can fail independently; keep closely related clauses together when one test
-  can explain their guarantee. Ordinary headings and explanatory paragraphs
-  need no specification marker.
+  paragraph. Put no blank line between the marker and prose. Keep examples,
+  rationale, and explanatory prose outside the named paragraph and unanchored;
+  ordinary headings do not need specification markers.
 - **Connect each specification anchor to a test.** Annotate Rust tests with
   `#[sage::test(meta.calls.declared)]`, using the anchor's exact name. Every
   named specification rule requires at least one test; every annotation must
@@ -99,11 +114,59 @@ When a change touches more than one row, update all of them in the same change.
   across cfg alternatives, so a mapping does not establish that the test ran
   or that its assertions are adequate. Review the assertions and run the tests.
   Fenced and inline examples are not declarations.
-- **Migrate existing anchors deliberately.** Older anchors such as `EXP-A1`
-  remain valid links and retain their Current Status evidence until their
-  paragraphs and tests are migrated together. Keep an old HTML anchor as an
-  alias when replacing a public link. The named-rule syntax is rendered by
-  `sage-meta`'s mdBook preprocessor; it does not require full MyST support.
+- **Refresh review decisions when claims or tests change.** The committed
+  `review-checklist.json` stores the claim and complete annotated test set
+  reviewed together. The [review specification](../design/meta/reviews.md)
+  defines the inputs and freshness check. Use the repository's
+  `sage-review-checklist` skill at
+  `.agents/skills/sage-review-checklist/SKILL.md` to review pending entries and
+  record decisions; do not refresh snapshots without reviewing them. CI and
+  workspace tests reject absent, stale, or unsuccessful decisions. A reviewed
+  TODO or N/A entry remains a visible gap, not proof of the behavior.
+- **Use the canonical anchor plan for new specification work.** Define rules
+  in the book's Design tree; Markdown and `.sage` chapters have equal
+  authority there. Each rule has one definition, an anchor page, and independent
+  implementation and test entries. The [book specification](../design/meta/book.md)
+  defines chapter-derived namespaces, the generated index, and the RFD workflow.
+  The
+  [specification](../design/validation/architecture-language.md#specification-tests-and-workspace-checks)
+  defines Rust point comments, optional `<<` / `>>` regions, and `todo` /
+  `not_applicable` module conventions. These are destination rules: consult
+  [anchor status](../design/validation/architecture-language.md#specification-anchor-status)
+  before claiming the checker or browser supports them. During specification
+  review, explicit no-op tests in `mod todo` may account for unimplemented
+  rules; identify them as placeholders in Current Status and replace them as
+  behavior lands. Their success does not verify the specification.
+- **Distinguish the destination authoring model from the current loader.**
+  The destination derives an anchor's namespace from the complete chapter
+  source path relative to `design/`, removing the extension and joining path
+  components with dots. Headings and chapter titles do not participate. It
+  embeds `.sage` chapters under their owning crate in that tree. Until that migration lands, write the full anchor name in Markdown,
+  keep `.sage` files in `sage-src/`, and account for the checker's current scan
+  of Markdown throughout `md/`. A chapter-relative marker is not yet supported.
+- **Plan Crates content around the shared explorer.** The planned Crates
+  section uses `design/crates/<crate>/*.sage` sources, with `crate.sage`
+  establishing each modeled crate. Follow the book's self-contained
+  [display specification](../design/meta/book.md#displaying-sage-files):
+  organized declarations, search, dependency navigation, a revealable Rust
+  source pane, direct entity links, and defined delivery modes.
+  Keep the current source layout until the migration stage lands.
+- **Link model entities independently of specification rules.** Every modeled
+  entity needs a direct link that other book or model content can reference,
+  including types, classes, contexts, explicit methods, and crate/module
+  entries. The [entity-link contract](../design/meta/book.md#meta.book.entity_links)
+  uses model identities independently of chapter-derived rule names. Merely
+  making an entity linkable does not declare a specification paragraph. Exact
+  cross-reference syntax is still open; do not assume a new directive exists.
+- **Use TODO for unfinished coverage.** Render entries in `todo` modules as
+  **TODO** in the index and anchor pages; use **N/A** for `not_applicable`.
+  Keep implementation and test statuses separate, and do not present a
+  passing placeholder test as evidence of the rule's behavior.
+- **Preserve links when rule names change.** Update specification, Rust, and
+  test references together. Keep a redirect or context alias for a published
+  URL; compatibility links do not create another rule or satisfy a stale
+  source reference. The named-rule syntax uses `sage-meta`'s mdBook
+  preprocessor and does not require full MyST support.
 - **Keep an anchor's requirement separate from its present evidence.** The
   anchor says what must be verified even when the destination is not yet
   implemented. The chapter's **Current Status** section says whether it is
@@ -122,13 +185,9 @@ When a change touches more than one row, update all of them in the same change.
   [Architecture decisions](../design/decisions.md) records a cross-cutting
   choice and its rationale. Anchors should link an applicable decision rather
   than duplicating its rationale; feature-local choices remain in their RFD.
-- **Promote completed RFD anchors without losing provenance.** When an RFD
-  lands, move its destination rules and required verification into the
-  relevant architecture chapters, retaining stable anchor codes when they
-  remain meaningful. The completed RFD records history; the architecture
-  chapter becomes authoritative for the living design and evidence. When
-  adopting named specification paragraphs, preserve historical links and
-  update the test annotations with the rule.
+- **Keep rules in Design from the proposal onward.** Review their normative
+  text in the RFD branch's Design diff. Implementation updates evidence and
+  status there; the RFD keeps rationale and implementation checkpoints.
 - **Ground built claims in the code.** For anything described as existing, tie statements to
   actual modules/files and keep references accurate. Planned design is grounded in the
   design discussion instead, and is labelled as planned.
@@ -136,7 +195,7 @@ When a change touches more than one row, update all of them in the same change.
   focused test, readable snapshot, query trace, edit experiment, exact oracle
   result, inspector command, or code anchor. “The test suite passes” is not
   sufficient evidence for a specific architectural guarantee.
-- **Include implementation excerpts with ezanchor.** Put matching
+- **Include explanatory excerpts with ezanchor.** Put matching
   `// ANCHOR: name` and `// ANCHOR_END: name` comments around the smallest
   useful source region in one of the `scan-dirs` configured in `book.toml`,
   then reference it with an ezanchor block:
@@ -148,7 +207,9 @@ When a change touches more than one row, update all of them in the same change.
   ````
 
   This emits both the excerpt and its GitHub source link. Do not
-  hand-copy Rust implementation snippets into walkthroughs.
+  hand-copy Rust implementation snippets into walkthroughs. These region
+  labels remain independent of canonical specification references; an ezanchor
+  label alone does not declare that the region implements a specification rule.
 - **Diagrams use Mermaid** in fenced ` ```mermaid ` blocks.
 - **Style** (inherited from the RFD process): no promotional or dramatic language; be factual
   and brief; lead with concrete concepts, then generalize; include examples.
@@ -158,8 +219,10 @@ When a change touches more than one row, update all of them in the same change.
 When a change affects an architecture claim or worked example:
 
 - update each affected specification paragraph and its annotated tests;
+- run the `sage-review-checklist` skill when the claim or complete test input
+  differs from its saved review, then include the resulting checklist changes;
 - run `cargo run -p sage-meta -- check` to validate model, Rust, and
-  documentation/test correspondence;
+  documentation/test correspondence and current review decisions;
 - add a new `D<n>` only for a genuinely cross-cutting decision, and link its
   chapter-level consequences;
 - update the chapter's Current Status claim, limitation, and roadmap link;

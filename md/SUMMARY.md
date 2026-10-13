@@ -9,6 +9,9 @@
 # Architecture & Design
 
 - [Overview](./design/README.md)
+  - [Specification Book](./design/meta/book.md)
+    - [Architectural Contracts](./design/meta/contracts.md)
+    - [Reviewing Specification Tests](./design/meta/reviews.md)
   - [Tenets](./design/tenets.md)
   - [Architecture](./design/architecture.md)
   - [Rust Compilation Pipeline](./design/pipeline/README.md)

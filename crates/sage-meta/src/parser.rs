@@ -182,8 +182,10 @@ impl Parser<'_> {
             Ok(None)
         }
     }
+    // {anchor}`meta.types.type_expressions`
     fn type_expr(&mut self) -> Result<TypeExpr, Diagnostic> {
         let start = self.span().start;
+        // {anchor}`meta.types.tuples`
         let kind = if self.eat("(") {
             let items = self.type_list(")")?;
             TypeExprKind::Tuple(items)
@@ -211,14 +213,17 @@ impl Parser<'_> {
             if self.eat(end) {
                 break;
             }
+            // {anchor}`meta.types.member_commas`
             self.expect(",")?;
         }
         Ok(items)
     }
+    // {anchor}`meta.types.struct_fields`
     fn value_fields(&mut self) -> Result<Vec<ValueField>, Diagnostic> {
         let mut fields = Vec::new();
         while !self.eat("}") {
             let span = self.span();
+            // {anchor}`meta.types.field_prose`
             let description = self.optional_prose()?;
             let name = self.word()?;
             self.expect(":")?;
@@ -232,6 +237,7 @@ impl Parser<'_> {
             if self.eat("}") {
                 break;
             }
+            // {anchor}`meta.types.member_commas`
             self.expect(",")?;
         }
         Ok(fields)
@@ -240,6 +246,7 @@ impl Parser<'_> {
         let span = self.span();
         let keyword = self.word()?;
         let name = self.word()?;
+        // {anchor}`meta.types.generic_parameters`
         let mut parameters = Vec::new();
         if self.eat("<") {
             parameters.push(self.word()?);
@@ -249,6 +256,7 @@ impl Parser<'_> {
             self.expect(">")?;
         }
         // Keep the compact opaque spelling for existing leaf descriptions.
+        // {anchor}`meta.types.opaque_representation`
         if keyword == "type" && !self.at("{") {
             let description = Some(self.prose()?);
             self.expect(";")?;
@@ -261,22 +269,26 @@ impl Parser<'_> {
             });
         }
         self.expect("{")?;
+        // {anchor}`meta.types.declaration_prose`
         let description = if keyword == "type" {
             Some(self.prose()?)
         } else {
             self.optional_prose()?
         };
         let shape = match keyword.as_str() {
+            // {anchor}`meta.types.opaque_representation`
             "type" => {
                 self.expect("}")?;
                 TypeShape::Opaque
             }
             "struct" => TypeShape::Struct(self.value_fields()?),
+            // {anchor}`meta.types.enum_variants`
             "enum" => {
                 let mut variants = Vec::new();
                 while !self.eat("}") {
                     let span = self.span();
                     let name = self.word()?;
+                    // {anchor}`meta.types.variant_prose`
                     let (description, fields) = if self.eat("(") {
                         (
                             self.optional_prose()?,
@@ -299,6 +311,7 @@ impl Parser<'_> {
                     if self.eat("}") {
                         break;
                     }
+                    // {anchor}`meta.types.member_commas`
                     self.expect(",")?;
                 }
                 TypeShape::Enum(variants)
@@ -359,6 +372,7 @@ impl Parser<'_> {
                 ClassKind::Class
             };
             let name = self.word()?;
+            // {anchor}`meta.classes.single_inheritance`
             let base = if self.eat("extends") {
                 Some(self.path()?)
             } else {
@@ -370,6 +384,7 @@ impl Parser<'_> {
             let mut methods = Vec::new();
             while !self.eat("}") {
                 let span = self.span();
+                // {anchor}`meta.fields.kinds`
                 let field_kind = if self.eat("identity") {
                     Some(FieldKind::Identity)
                 } else if self.eat("input") {
@@ -413,6 +428,7 @@ impl Parser<'_> {
     fn method(&mut self) -> Result<Method, Diagnostic> {
         let span = self.span();
         let is_override = self.eat("override");
+        // {anchor}`meta.methods.kinds`
         let kind = if self.eat("query") {
             MethodKind::Query
         } else {
@@ -425,7 +441,9 @@ impl Parser<'_> {
         self.expect("->")?;
         let result = self.type_expr()?;
         self.expect("{")?;
+        // {anchor}`meta.methods.prose`
         let description = self.prose()?;
+        // {anchor}`meta.envelopes.leaf`
         let envelope = if self.eat("abstract") {
             self.expect(";")?;
             None

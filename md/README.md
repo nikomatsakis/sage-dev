@@ -71,8 +71,11 @@ revision model.
 
 Compiler architecture can also be reviewed in `sage-src/`. Run
 `cargo run -p sage-meta -- check` to check declared method dependencies, their
-Rust annotations, and named specification paragraphs' test coverage. The same
+Rust annotations, named specification paragraphs' test coverage, and saved
+reviews of those claim/test relationships in `review-checklist.json`. The same
 library check runs during workspace tests and CI. Add `--json` for a structured report;
-see [Architectural Pseudocode](./design/validation/architecture-language.md)
+see [Reviewing Specification Tests](./design/meta/reviews.md) for preparing and
+recording reviews with the repository skill, and
+[Architectural Pseudocode](./design/validation/architecture-language.md)
 for the language and its current coverage. Generate an interactive explorer with
 `cargo run -p sage-meta -- browse`, then open `target/sage-browser.html`.

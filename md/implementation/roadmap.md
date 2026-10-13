@@ -605,16 +605,23 @@ operations, checks their declared permissions, and supplies a browser walkthroug
 from the same evidence. Every model correspondence unit has a crate-correct
 Rust `#[sage::item]` anchor; marker modules cover abstract concepts. Unexpected
 calls fail checked tests rather than becoming silent gaps or automatically
-permitted model changes. Named Markdown specification paragraphs connect those
-rules to Rust tests; the shared `sage-meta` library checks these correspondences
-in CI and normal workspace test runs.
+permitted model changes. The book's Design chapter tree supplies the normative
+specification through Markdown and `.sage` sources under `md/`, with
+chapter-derived anchor names and required Rust implementation and test entries.
+A hierarchical index shows rule text and status, including pending or
+inapplicable work; each rule has a page linking context, implementation, and
+tests or recorded evidence. The book and anchor system obey their own rules.
+The shared `sage-meta` library checks these correspondences in CI and normal
+workspace test runs.
 
 **Scope and dependencies:** Builds on the review language above and the
 Semantic Inspector's production provider and Salsa events. A source-index
 prototype must establish reliable query provenance, including tracked methods,
 generated code, and source/build compatibility first. Correspondence and runtime
-checking do not depend on ACP or MCP. Agent integration follows shared,
-scriptable model and trace tools.
+checking do not depend on ACP or MCP. Canonical anchor pages and book integration
+build on the existing specification-test index and standalone browser, and can
+advance independently of full runtime enforcement. Agent integration follows
+shared, scriptable model and trace tools.
 
 **High-level plan:** Prove source-to-query matching; register inert tool
 attributes and build a bidirectional index; migrate source links and remove
@@ -622,6 +629,19 @@ attributes and build a bidirectional index; migrate source links and remove
 events, separate ordinary-function instrumentation, and async execution;
 enforce a caller/callee fixture and expand coverage; replay traces in the browser;
 then expose MCP tools and ACP-backed design/explanation workflows.
+
+The anchor extension proceeds through specification and workflow review, a
+shared Design chapter inventory with a `.sage` pilot, source relocation and
+strict coverage, a hierarchical index and anchor pages, and integrated book
+explorer navigation. Crates content from `design/crates/<crate>/*.sage` implements
+the [browser display rules](../design/meta/book.md#displaying-sage-files), with
+[direct links to every modeled entity](../design/meta/book.md#meta.book.entity_links).
+Book, export, and local-server views share the validated model and renderer.
+Entity links use model identities distinct from specification rule names. Anchor names follow full chapter source paths,
+independently of headings; moves migrate references and redirect old URLs
+without changing compiler model item identities. The detailed checkpoints remain in the
+[canonical anchor extension plan](../rfds/sage-contracts/implementation.md#canonical-anchor-system).
+Validation stays in the existing check and test entry points.
 
 **Progress: Accepted, first infrastructure implemented.** The Rust correspondence
 index covers crate/module headers, declarations, and declared methods; the
@@ -631,10 +651,24 @@ coverage, executable-declaration coverage, and named specification/test
 coverage. The shared `sage_meta::check` entry point is called by the CLI and a
 workspace integration test; the CI runner executes
 `cargo run -p sage-meta -- check`. The architectural-language chapter introduces
-fine-grained named rules and inert `#[sage::test(...)]` links. Other numbered book anchors retain their
-existing evidence until deliberately migrated. An immutable resolved contract
+fine-grained named rules and inert `#[sage::test(...)]` links. An immutable
+resolved contract
 engine and isolated real Salsa fixture check expected traversals and forbidden
 requests, including cached requests and internal reexecution.
+
+The [review checklist](../design/meta/reviews.md) snapshots each claim and its
+complete annotated test set. The shared check rejects missing, stale, or
+unsuccessful reviews; the review skill delegates semantic assessment and
+records explicit reasoning. Reviewed TODO/N/A tests remain visible placeholders.
+
+The expanded book and anchor contract is documented for review in
+[The Design Book](../design/meta/book.md) and the architectural-language chapter.
+Design-scoped inventory, chapter-derived names, generated Crates content under
+`md/` with comprehensive entity links, Rust point/region references and their
+placeholder classification, generated
+index and pages, and integrated explorer navigation remain planned. The current
+checker still uses explicit anchor names and the model remains under
+`sage-src/`; specification placeholders do not establish the planned behaviors.
 
 See [Sage Contracts and Walkthroughs](../rfds/sage-contracts/README.md) and its
 [staged implementation plan](../rfds/sage-contracts/implementation.md). Full

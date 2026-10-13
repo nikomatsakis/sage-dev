@@ -114,6 +114,7 @@ impl SalsaObserver {
 
     /// Consume the raw callback, including cache hits. Diagnostics accumulate and
     /// prevent a passing report; this method does not panic for malformed events.
+    // {anchor}`meta.contracts.cache_invocations`
     pub fn event(&mut self, event: &salsa::Event) {
         let (key, kind, outcome) = match event.kind {
             EventKind::WillRequest { database_key } => {

@@ -12,30 +12,40 @@
 
 <!-- Cover the most important changes. Lead with a concrete example, then generalize. -->
 
+## Specification changes
+
+<!--
+    Give a high-level overview of the needed changes, linking each change
+    directly to the affected Design pages and named anchors on this branch.
+    A short list or table should let reviewers navigate to each normative
+    change without reconstructing the plan from implementation details.
+    The Design diff is the normative proposal; this RFD explains its
+    goals, reasoning, alternatives, and implementation plan. Include changes to
+    .sage chapters when the modeled compiler architecture changes.
+
+    State how existing behavior changes and which affected rules need TODO or
+    not-applicable implementation/test entries. Do not duplicate normative
+    paragraphs here or wait until implementation completion to write them.
+
+    Consult the authoring contract for current loader limitations: full anchor
+    names and the external sage-src directory are still used during migration.
+-->
+
 ## Detailed plans
 
 <!--
     Cover your detailed plans here.
 
-    For a large RFD, embed stable RFD-scoped design anchors beside the
-    load-bearing requirements, for example:
-
-    > **XY-A1 — The server owns semantic availability.**
-    >
-    > **Required verification:** A contract test covers each origin and kind.
-
-    Use anchors for non-obvious rules which implementation could easily drift
-    from, not for every design statement. Link implementation steps and later
-    evidence back to these identifiers. Completion promotes each living anchor
-    and its required verification into the relevant Architecture & Design
-    chapter; a retired anchor requires an explicit accepted design revision.
+    Refer to the independently testable specification rules in the branch's
+    Design diff. Explain why those rules meet the goals, what alternatives were
+    considered, and how the implementation can establish them. Link steps and
+    evidence back to the Design anchors.
 
     Identify any genuinely cross-cutting choice which should become a D<n>
     Architecture Decision when accepted. Keep feature-local rationale here.
 
-    Include proposed user-facing documentation as additional files in this directory
-    (e.g., proposed-reference.md) when the change affects docs. This forces concrete
-    thinking and gives reviewers something tangible to react to.
+    Edit affected user-facing introductory material on the same branch. It
+    explains usage and remains non-normative; requirements belong in Design.
 -->
 
 ## Frequently asked questions

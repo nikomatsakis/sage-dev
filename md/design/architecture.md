@@ -166,7 +166,10 @@ The [architectural pseudocode](./validation/architecture-language.md) in
 Its initial model summarizes the central demand graph. `sage-meta` is the
 shared build and validation layer for Markdown specifications, `.sage` models,
 and Rust: it checks source correspondences and named rules' test references and
-provides the runtime contract engine. Its public check runs in CI and workspace
+provides the runtime contract engine. The committed
+[review checklist](./meta/reviews.md) records reviews of claims and their
+associated test bodies; the shared checker rejects missing or stale decisions.
+Its public check runs in CI and workspace
 Cargo tests. Model consistency, source coverage, and observed runtime
 conformance remain separate claims.
 

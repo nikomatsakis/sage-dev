@@ -4,9 +4,12 @@
 browser have migrated to inert Rust attributes. A shared checking engine and
 isolated real Salsa fixture establish the first runtime infrastructure. The
 shared workspace check also validates named Markdown specification rules and
-their test references, and runs in CI and Cargo tests. Broad compiler
-enforcement, walkthrough replay, and agent integration remain staged
-work; see [Implementation plan and status](./implementation.md).
+their test references, and runs in CI and Cargo tests. The accepted extension
+makes the book's Design chapter tree authoritative, using both Markdown and
+`.sage` sources, connects rules to Rust implementation excerpts, and gives every
+rule an anchor page. That extension, broad compiler enforcement, walkthrough
+replay, and agent integration remain
+staged work; see [Implementation plan and status](./implementation.md).
 
 ## Motivation
 
@@ -20,6 +23,26 @@ annotations for best-effort source navigation. This change replaces that mapping
 with Rust-declared correspondence and connects observed Salsa requests to the
 architectural contract. Complete implementation coverage remains distinct from
 source coverage and from successful observations of a limited fixture.
+
+## Specification changes at a glance
+
+The pending book and anchor extension needs the following changes. These links
+lead directly to the normative Design diff; the RFD explains the rollout and
+tradeoffs rather than introducing another copy of the rules.
+
+| Needed change | Design contract |
+|---|---|
+| Make the Design chapter tree authoritative and apply the same rules to the book system itself | [Authority](../../design/meta/book.md#meta.book.authority), [self-description](../../design/meta/book.md#meta.book.self_description) |
+| Present searchable, interlinked Crates content from `design/crates/<crate>/*.sage` with specified browsing, source panes, and navigation | [Displaying Sage files](../../design/meta/book.md#displaying-sage-files), [browser delivery](../../design/meta/book.md#meta.book.browser_delivery), [crate ownership](../../design/meta/book.md#meta.book.crate_ownership) |
+| Give every modeled entity a direct link that prose and other model content can reference, using model identities independently of specification rule names | [Entity links](../../design/meta/book.md#meta.book.entity_links) |
+| Derive names from the complete chapter source path relative to Design plus local rule names, independently of headings | [Chapter names](../../design/meta/book.md#meta.book.chapter_names), [moves and redirects](../../design/meta/book.md#meta.book.anchor_moves) |
+| Require implementation and test entries with explicit TODO and N/A accounting, and extract Rust points or regions | [Implementation coverage](../../design/validation/architecture-language.md#meta.spec.implementation_coverage), [test coverage](../../design/validation/architecture-language.md#meta.spec.test_coverage), [placeholder status](../../design/validation/architecture-language.md#meta.spec.placeholder_status) |
+| Generate the grouped text/status index and linked rule pages | [Index rows](../../design/meta/book.md#meta.book.index_rows), [grouping](../../design/meta/book.md#meta.book.index_groups), [status labels](../../design/meta/book.md#meta.book.index_status), [anchor pages](../../design/validation/architecture-language.md#meta.spec.anchor_pages) |
+| Review RFD rationale and the normative Design edits together, then preserve direct links through the book and explorer | [RFD changes](../../design/meta/book.md#meta.book.rfd_changes), [explorer navigation](../../design/validation/architecture-language.md#meta.spec.explorer_navigation) |
+
+The [HTML interaction sketch](./anchor-index-sketch.html) illustrates the
+proposed index and anchor-page navigation using example data. It is a review
+artifact, not implemented book generation or evidence of coverage.
 
 ## Correspondence is declared in Rust
 
@@ -73,13 +96,10 @@ incompatible executable kinds are errors. Abstract mapping does not grant
 permission to skip validation of the target's existence or crate ownership.
 
 <a id="sc-a1"></a>
-> **SC-A1 — Correspondence is bidirectional and crate-correct.** Every Sage
-> correspondence unit has one or more Rust anchors; every Rust annotation
-> resolves to a compatible Sage unit in its containing modeled crate.
->
-> **Required verification:** Missing anchors, dangling annotations, wrong-crate
-> annotations, incompatible operation kinds, multiple sites, abstract markers,
-> Cargo library/binary roots, and generated declarations have focused fixtures.
+
+Source correspondence is specified by
+[`meta.contracts.correspondence`](../../design/meta/contracts.md#meta.contracts.correspondence),
+including bidirectional coverage and Cargo ownership.
 
 Start with a source index that understands annotation sites rather than
 guessing Rust targets from names. Record declaration range, annotation range,
@@ -99,7 +119,8 @@ support exists only to make the migration reviewable.
 `sage-meta` owns the build-time correspondence checks among Markdown
 specifications, `.sage` declarations, and Rust. A public
 `check(workspace_root)` returns a report containing model consistency, source
-correspondence, and specification-test coverage; `ensure_valid()` rejects
+correspondence, specification-test coverage, and current review decisions;
+`ensure_valid()` rejects
 errors. The default CLI `check` command, CI runner, and workspace Cargo
 integration test use this same library entry point. `check_model(model_root)`
 selects a model directory and performs the full check in its containing
@@ -119,10 +140,88 @@ The inventory includes cfg alternatives without claiming those tests executed
 or their assertions are sufficient. A small mdBook preprocessor renders these markers with the same
 parser; full MyST support is unnecessary.
 
-The first migration covers the architectural-language chapter and its existing
-language/runtime tests. Existing numbered rules elsewhere in the book retain
-their links and evidence. This extends source correspondence without weakening
-the distinct runtime coverage requirement.
+The architectural-language chapter and its existing language/runtime tests use
+these named rules. The [contract rules](../../design/meta/contracts.md) connect
+correspondence and runtime guarantees to their implementation and tests.
+Source correspondence and runtime coverage remain separate requirements.
+
+## Incremental review checklist
+
+Annotation coverage cannot determine whether a test meaningfully checks the
+paragraph it names. A committed `review-checklist.json` makes that judgment an
+explicit review step while allowing unchanged claim-and-test inputs to reuse
+a completed decision. The [review specification](../../design/meta/reviews.md)
+defines the extracted text, complete test-set input, stale decisions, and CI
+gate; the [implementation checkpoint](./implementation.md#review-checklist)
+tracks the work.
+
+The repository skill prepares only pending work, assigns related claims to
+review subagents, and records reasoned decisions after checking every assigned
+claim. The test body should make its scenario, expectation, and assertion
+visible. This keeps the cached review useful without trying to infer a Rust
+call graph for all test helpers. Explicit helper inputs can be added later
+when a meaningful check cannot be made visible in the test body.
+
+The checklist records the actual source text rather than only hashes, so the
+Git diff shows exactly what was approved. Preparing work cannot refresh an old
+approval, and recording rechecks inputs to avoid accepting a review against
+changed sources. Reviewed TODO and N/A entries preserve explicit planning
+status; the gate requires their accounting without pretending that a dummy
+test establishes behavior. Running tests and checking runtime conformance
+remain separate.
+
+## Canonical rules and anchor pages
+
+The mdBook Design chapter tree is the normative specification. Markdown and
+`.sage` are equally authoritative chapter source formats within the book source
+directory (`md/`); `.sage` chapters live under a directory identifying their
+modeled crate, with a `crate.sage` manifest. The Crates section presents
+searchable, interlinked content from `design/crates/<crate>/*.sage` following the
+[browser specification](../../design/meta/book.md#displaying-sage-files).
+[Browser delivery](../../design/meta/book.md#meta.book.browser_delivery) shares
+that behavior across book generation, standalone export, and local serving.
+The full chapter source path relative to Design supplies an anchor's namespace,
+combined with its local rule name. Headings contribute nothing to that name.
+A chapter move therefore renames its anchors and requires reference migration
+and redirects for old URLs. It does not change compiler model item identities.
+
+Every modeled entity has a direct link usable from elsewhere in the book or
+model: types, classes, contexts, explicit methods, and modeled crates and
+modules. These links resolve through model entity identities, independently of
+paragraph anchor names. Providing a link does not automatically declare a
+specification rule or impose paragraph-rule coverage on that entity. The
+[entity-link contract](../../design/meta/book.md#meta.book.entity_links) fixes
+that behavior; exact cross-reference syntax remains open.
+
+The book generates a hierarchical index of rule text and status, as well as a
+page for each rule connecting its definition, context, Rust implementation,
+and tests or recorded evidence. Unfinished entries display **TODO**; inapplicable
+entries display **N/A**. The existing Rust-to-Sage item mapping remains
+a separate relationship. The rationale is recorded in
+[D22](../../design/decisions.md#d22-the-design-book-is-the-canonical-specification).
+
+The living specification is [The Design Book](../../design/meta/book.md), with
+point and region references, coverage, placeholder accounting, and navigation
+specified in
+[Architectural Pseudocode](../../design/validation/architecture-language.md#specification-tests-and-workspace-checks).
+Existing mdBook explanatory excerpt delimiters remain independent. The anchor
+system specifies itself using these same rules and coverage requirements;
+it has no privileged exceptions. Shared CLI, CI, and workspace-test validation
+remain the entry points, without a `cargo build` hook.
+
+This RFD records rationale and rollout checkpoints on the same branch as the
+normative Design edits. The specification does not wait for implementation or
+RFD completion to become authoritative, and completion does not promote a
+second specification from the RFD. Implementation status and explicit
+placeholders show what remains unbuilt.
+
+The [rollout checkpoints](./implementation.md#canonical-anchor-system) start
+with specification review and a book-inventory pilot, followed by source
+relocation, coverage, pages, and navigation. Exact `.sage` definition/reference
+syntax, cross-reference spelling, source-path/name normalization, conflicting
+nested placeholder statuses, and ingestion of executed-test or trace evidence
+remain design decisions. The
+source index must distinguish declared associations from observed results.
 
 ## Runtime model and crate boundaries
 
@@ -168,13 +267,9 @@ test entry points once the covered compiler slice is complete. Release policy
 and overhead measurement are separate from the inert-annotation rollout.
 
 <a id="sc-a2"></a>
-> **SC-A2 — A checking session uses one validated runtime contract.** All
-> events in the session refer to the same loaded model. Enabled enforcement
-> cannot continue with missing or invalid contracts.
->
-> **Required verification:** Cached loads, parallel first use, explicit model
-> roots, missing/invalid files, source/build mismatch rejection, and a subsequent
-> session seeing model edits.
+
+The session contract and its verification cases are specified by
+[`meta.contracts.validated_session`](../../design/meta/contracts.md#meta.contracts.validated_session).
 
 ## Operation entry, recursion, and Salsa
 
@@ -232,14 +327,10 @@ result exposes no new internal execution; historical dependency evidence
 requires explicit retention, not an invented trace.
 
 <a id="sc-a3"></a>
-> **SC-A3 — Architectural invocations are preserved across caching.** Every
-> annotated source call is checked, including cache hits and same-operation
-> recursion. Its Salsa request is correlated once; internal validation and
-> reexecution remain distinguishable and cannot inherit the wrong operation.
->
-> **Required verification:** Cold, reused, validated, invalidated/reexecuted,
-> recursive, cancelled, and panicking runs; calls through generated query APIs;
-> and an unannotated query beneath an annotated caller.
+
+Invocation preservation across caching is specified by
+[`meta.contracts.cache_invocations`](../../design/meta/contracts.md#meta.contracts.cache_invocations),
+including the required lifecycle and traversal evidence.
 
 Check immediate callers against permitted dispatch and all active ancestors
 against transitive prohibitions. Carry invocation IDs, operation IDs, receiver
@@ -261,14 +352,10 @@ are separate results. Marker coverage does not establish executable coverage.
 Observed passing tests establish only the operations and scenarios they cover.
 
 <a id="sc-a4"></a>
-> **SC-A4 — Incomplete observation cannot count as conformance.** Unmapped
-> requests, unsupported receiver checks, and uninstrumented effect categories
-> remain visible gaps. Strict acceptance requires the declared scope to be
-> completely checked, not merely an absence of reported violations.
->
-> **Required verification:** Inject each gap into a passing scenario and prove
-> the result becomes incomplete or fails, including cached requests and async
-> boundaries. Diagnostics identify the test, model rule, and observed call path.
+
+The acceptance boundary is specified by
+[`meta.contracts.observation_coverage`](../../design/meta/contracts.md#meta.contracts.observation_coverage):
+reported gaps cannot be treated as proof of conformance.
 
 Initial enforcement covers operation calls and transitive prohibitions.
 `reads` and `creates` require their own input/access/construction hooks and

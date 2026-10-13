@@ -1,3 +1,6 @@
+#![feature(register_tool)]
+#![register_tool(sage)]
+
 use sage_meta::correspondence::{CorrespondenceIndex, LookupError, RustItemKind, RustSource};
 use sage_meta::{Document, parse};
 
@@ -40,6 +43,7 @@ struct ActualValue;
 "#;
 
 #[test]
+#[sage::test(meta.contracts.correspondence)]
 fn maps_independently_named_rust_declarations_and_checks_both_directions() {
     let index = index(VALID);
     assert!(
@@ -60,6 +64,32 @@ fn maps_independently_named_rust_declarations_and_checks_both_directions() {
 }
 
 #[test]
+#[sage::test(meta.contracts.correspondence)]
+fn module_headers_require_correspondence_in_addition_to_the_crate_header() {
+    let documents = [
+        parse(
+            "demo/crate.sage",
+            r#"crate demo { """Fixture.""" module syntax; }"#,
+        )
+        .unwrap(),
+        parse("demo/syntax.sage", "module crate::syntax;").unwrap(),
+    ];
+    let source = "#[sage::item(crate)] mod root {}\n#[sage::item(crate::syntax)] mod parser {}";
+    let complete = index(source);
+    assert!(complete.validate(&documents).is_empty());
+    assert_eq!(
+        complete.entries["demo::syntax"][0].rust_path,
+        "demo::parser"
+    );
+    let missing = index(&source.replace("#[sage::item(crate::syntax)]", ""));
+    let diagnostics = missing.validate(&documents);
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert!(diagnostics[0].message.contains("demo::syntax"));
+    assert!(diagnostics[0].message.contains("has no Rust"));
+}
+
+#[test]
+#[sage::test(meta.contracts.correspondence)]
 fn deletion_dangling_targets_wrong_crates_and_wrong_kinds_fail() {
     for (source, expected) in [
         (
@@ -95,6 +125,7 @@ fn deletion_dangling_targets_wrong_crates_and_wrong_kinds_fail() {
 }
 
 #[test]
+#[sage::test(meta.contracts.correspondence)]
 fn markers_are_source_coverage_not_executable_coverage() {
     let source = r#"
         #[sage::item(crate)]
@@ -117,6 +148,7 @@ fn markers_are_source_coverage_not_executable_coverage() {
 }
 
 #[test]
+#[sage::test(meta.contracts.correspondence)]
 fn conditional_mappings_cannot_silently_pass_reverse_validation() {
     for attribute in [
         "#[cfg_attr(test, sage::item(foreign::Missing))]",
@@ -137,6 +169,7 @@ fn conditional_mappings_cannot_silently_pass_reverse_validation() {
 }
 
 #[test]
+#[sage::test(meta.contracts.correspondence)]
 fn multiple_cfg_sites_preserve_conditions_without_claiming_active_build_coverage() {
     let index = index(
         r#"#[cfg(feature = "a")]
@@ -184,6 +217,7 @@ fn shared_line_and_multiple_operation_annotations_are_ambiguous() {
 }
 
 #[test]
+#[sage::test(meta.contracts.correspondence)]
 fn known_symbol_generator_is_parsed_but_arbitrary_macro_tokens_are_not_anchors() {
     let index = index(
         r#"define_kind_symbols! {
@@ -205,6 +239,7 @@ fn known_symbol_generator_is_parsed_but_arbitrary_macro_tokens_are_not_anchors()
 }
 
 #[test]
+#[sage::test(meta.contracts.validated_session)]
 fn source_snapshot_mismatch_is_rejected() {
     let index = index(VALID);
     assert!(index.verify_source("src/lib.rs", VALID).is_ok());
@@ -219,6 +254,7 @@ fn source_snapshot_mismatch_is_rejected() {
 }
 
 #[test]
+#[sage::test(meta.contracts.correspondence)]
 fn cargo_owner_covers_both_library_and_binary_and_explicit_nested_module_paths() {
     let fixture = std::env::temp_dir().join(format!(
         "sage-correspondence-targets-{}",
@@ -313,6 +349,7 @@ fn outer() {
 }
 
 #[test]
+#[sage::test(meta.contracts.correspondence)]
 fn annotations_on_unsupported_nodes_cannot_silently_disappear() {
     let index = index(
         r#"struct Container { #[sage::item(crate::Value)] field: u32 }
@@ -339,6 +376,7 @@ fn unicode_source_offsets_are_valid_utf8_and_retain_the_annotation() {
 }
 
 #[test]
+#[sage::test(meta.contracts.correspondence)]
 fn generated_declarations_reject_hidden_or_misspelled_correspondences() {
     for (attribute, expected) in [
         (
@@ -394,6 +432,7 @@ fn generated_declarations_reject_hidden_or_misspelled_correspondences() {
 }
 
 #[test]
+#[sage::test(meta.contracts.correspondence)]
 fn known_generator_accepts_unconditional_mapping_and_unrelated_cfg_attr() {
     let index = index(
         r#"define_kind_symbols! {
@@ -444,6 +483,7 @@ fn test_annotations_preserve_multiple_rules_source_spans_and_cfg() {
 }
 
 #[test]
+#[sage::test(meta.spec.test_references)]
 fn test_annotations_reject_malformed_names_and_unsupported_placements() {
     for argument in [
         "",

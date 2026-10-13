@@ -2,13 +2,14 @@
 
 **Accepted; first infrastructure implemented.** Correspondence migration is
 complete for the current corpus. Default `check --json` reports model,
-Rust-correspondence, and specification-test checks separately, with source
+Rust-correspondence, specification-test, and saved-review checks separately, with source
 coverage independent from executable declarations. A public library check is
 shared by CLI, CI, and a workspace Cargo test. The isolated Salsa fixture
-and explicit-event tests establish the initial runtime checker; broad compiler
-acceptance, automatic session initialization, async propagation, browser replay,
-and agent transports are still pending. Checked boxes describe completed work,
-not blanket completion of their containing stage.
+and explicit-event tests establish the initial runtime checker. The canonical
+rule index, Rust implementation references, and anchor pages are now planned
+alongside broad compiler acceptance, automatic session initialization, async
+propagation, browser replay, and agent transports. Checked boxes describe
+completed work, not blanket completion of their containing stage.
 
 Evidence lives in `crates/sage-meta/tests/correspondence.rs`, `cli.rs`,
 `runtime_contracts.rs`, and `contracts.rs` plus its isolated fixture and reviewed
@@ -20,22 +21,133 @@ Evidence lives in `crates/sage-meta/tests/correspondence.rs`, `cli.rs`,
       `ensure_valid()` rejects model, correspondence, or specification errors.
       Keep full checking of a selected model directory through `check_model`;
       retain model-only loading/validation and the legacy positional CLI.
-- [x] Make `cargo run -p sage-meta -- check` run all three checks by default,
+- [x] Make `cargo run -p sage-meta -- check` run the shared checks by default,
       invoke it in the CI runner, and call the library from a Cargo integration
       test with a manifest-relative workspace path.
 - [x] Parse named specification paragraphs and inert `#[sage::test(...)]`
       references. Reject malformed/duplicate anchors, uncovered rules, and
       dangling or misplaced references; exclude Markdown code examples.
-- [x] Render named paragraphs in mdBook using the same parser. Migrate the
+- [x] Render named paragraphs in mdBook using the same parser. Cover the
       architectural-language chapter's class, model-path, and runtime-call
-      rules with focused language/runtime tests, preserving the `meta-a1` link.
+      rules with focused language/runtime tests.
 
 **Evidence boundary:** Eligible evidence consists of non-ignored `#[test]`
 functions in Cargo targets with tests and the standard harness enabled. These
 checks inventory declarations across cfg alternatives without evaluating cfg. A passing report establishes the reference graph, not that every
 annotated test executed or that its assertions are sufficient. Runtime
-conformance remains a separate checked session. Other numbered book anchors
-have not been automatically migrated.
+conformance remains a separate checked session.
+
+## Review checklist
+
+The [review specification](../../design/meta/reviews.md) makes semantic test
+review a committed, incrementally checked artifact. This extends the shared
+check before the broader book migration; it uses the existing Markdown and
+Rust test inventories.
+
+- [x] Extract each anchor's paragraph and complete test set, preserving test
+      source, Cargo identity, configuration conditions, and placeholder status.
+      Test paragraph boundaries and whole-function extraction.
+- [x] Compare saved claim/test inputs and schema/policy versions; test changed
+      claims, test additions/removals, changed bodies and metadata, and movement
+      that changes only source offsets.
+- [x] Provide `review prepare` without mutating saved reviews and `review
+      record` with fresh-input validation and atomic rejection of invalid
+      submissions. Preserve unrelated current reviews and prune retired ones.
+- [x] Include current review decisions in the shared check, CI, and workspace
+      Cargo test. Exercise missing, malformed, stale, unsuccessful, and
+      placeholder-incompatible decisions.
+- [x] Add the repository review skill, delegate the initial claim/test review,
+      and record its reasoned decisions alongside the supporting changes. Keep
+      TODO/N/A decisions distinct from approved behavioral evidence.
+
+**Current evidence:** `crates/sage-meta/tests/review.rs` exercises extraction,
+freshness, placeholder decisions, read-only preparation, rejected submissions,
+and preservation of unrelated reviews through the library and CLI. The initial
+delegated review recorded 50 approved claims and 35 explicit TODO entries in
+`review-checklist.json`; the shared check accepts all 85 current snapshots.
+
+**Evidence boundary:** The cached judgment concerns what the snapshotted test
+bodies visibly check. Helper bodies are not inputs, and the checklist does not
+record that a test ran. Source-level association, agent review, test execution,
+and runtime conformance remain separate evidence.
+
+## Canonical anchor system
+
+The destination is specified in [The Design Book](../../design/meta/book.md)
+and the anchor mechanics in
+[Architectural Pseudocode](../../design/validation/architecture-language.md#specification-tests-and-workspace-checks).
+These checkpoints extend the existing check and browser; they do not replace
+the runtime-conformance stages below. The RFD explains the change and stages
+work while the Design chapter edits on the same branch state the normative
+rules. Completion does not require promoting specification text out of the RFD.
+
+- [ ] **Review the specification and authoring workflow.** Review the book and
+      anchor-system rules together, retain coverage for existing guarantees,
+      and account for pending implementation and tests through explicit
+      `todo` or `not_applicable` entries. Apply the same rules to the anchor
+      system itself, with no privileged exemptions. Keep current limitations
+      separate from the destination.
+- [ ] **Build the shared book inventory and pilot one `.sage` chapter.** Use
+      the Design chapter tree as the normative inventory, with Markdown and
+      `.sage` sources under the book source directory. Specify path and local
+      name normalization, then derive namespaces from the complete chapter
+      source path relative to Design, excluding headings. Pilot searchable,
+      interlinked Crates content from `design/crates/<crate>/*.sage` under the
+      [browser structure contract](../../design/meta/book.md#meta.book.browser_structure),
+      reusing the resolved model and renderer. Resolve `.sage`
+      definition/reference syntax and crate-directory/`crate.sage` ownership
+      before bulk migration. Test duplicate names, reference resolution,
+      precise context, and matching model information in served and generated
+      explorer views. Inventory direct links for every modeled entity under
+      the [entity-link contract](../../design/meta/book.md#meta.book.entity_links),
+      independently of named specification rules.
+- [ ] **Relocate model sources and enforce correspondence coverage.** Move
+      `.sage` chapters into `md/design/crates/<crate>/` while preserving
+      compiler model item identities. Migrate existing
+      anchors to chapter-derived names, update references, and redirect old
+      URLs. Index point and balanced region markers in real Rust comments;
+      record excerpts, enclosing modules, and ordinary, `todo`, or
+      `not_applicable` status independently for implementation and tests.
+      Resolve conflicting nested special modules explicitly. Require both
+      entries for every rule and reject dangling references or malformed
+      regions. Exercise the shared check, CLI, and workspace test, without
+      adding a `cargo build` hook.
+- [ ] **Generate the rule index and anchor pages.** Render a hierarchical index
+      of anchor text and status. Display unfinished entries as **TODO** and
+      inapplicable entries as **N/A**. Each anchor page shows its definition, context,
+      implementation excerpts, tests, and separately labeled placeholders or
+      recorded evidence. Point excerpts offer surrounding source via
+      **See more…**; regions preserve explicit boundaries. Link specification
+      badges to the pages. Define evidence ingestion before claiming that a
+      listed test ran or that a trace established a rule.
+- [ ] **Integrate book and explorer navigation.** Generate the standalone
+      explorer snapshot during the book build. Verify the specified
+      [structure](../../design/meta/book.md#meta.book.browser_structure),
+      [search](../../design/meta/book.md#meta.book.browser_search),
+      [dependency navigation](../../design/meta/book.md#meta.book.browser_dependencies),
+      [Rust source pane](../../design/meta/book.md#meta.book.browser_rust_source),
+      and [delivery modes](../../design/meta/book.md#meta.book.browser_delivery)
+      across the book, standalone export, and local server. Define
+      cross-reference syntax for direct
+      entity links; cover all top-level declaration kinds, explicit methods,
+      and crate/module entries, including equal local names under different
+      owners. Test unique routes, incoming links from elsewhere in the book,
+      and preservation of model entity identities after chapter relocation.
+      Verify [selection URLs](../../design/validation/architecture-language.md#meta.spec.explorer_navigation):
+      direct links, redirects, and browser navigation restore the selected
+      entity or rule in its book context.
+      Verify the generated book works without a running `sage-meta serve`.
+
+**Current boundary:** The present checker inventories Markdown definitions and
+Rust test references using explicit full names; it does not enforce the Design
+chapter scope, derive chapter namespaces, or relocate the current `sage-src/`
+model. The shared book inventory, generated Crates content and comprehensive
+entity links, implementation references, implementation placeholder
+classification, index, pages, and integrated navigation are planned. The
+review checklist classifies test placeholders and distinguishes reviewed
+TODO/N/A decisions from behavioral approval. Cross-reference syntax has not
+yet been selected. Placeholder tests introduced during
+specification review account for pending work; they do not establish the unimplemented behavior.
 
 ## Stage 0: Prove source-index matching against Salsa
 
@@ -97,7 +209,7 @@ input grammar, and rejects unsupported annotation placements. It does not claim
 that an inventoried cfg site was compiled. The CLI emits distinct model and
 correspondence results and source/executable coverage in JSON.
 
-**Exit:** Positive and negative fixtures establish [SC-A1](./README.md#sc-a1).
+**Exit:** Positive and negative fixtures establish [`meta.contracts.correspondence`](../../design/meta/contracts.md#meta.contracts.correspondence).
 Inert annotations do not imply runtime checking. No existing `#[rust]`
 mapping is removed yet.
 
@@ -140,7 +252,7 @@ Annotation-only compiler builds remain behaviorally unchanged.
       the `sage-meta` library, with no compiler dependency.
 - [ ] Keep serving dependencies optional for runtime library consumers.
 - [ ] Implement immutable session loading, model discovery, caching, digest,
-      and actionable initialization failures ([SC-A2](./README.md#sc-a2)).
+      and actionable initialization failures ([`meta.contracts.validated_session`](../../design/meta/contracts.md#meta.contracts.validated_session)).
       Load the Rust index alongside contracts, require source/build compatibility,
       and keep session bootstrap outside recursive enforcement.
 - [x] Implement checking over explicit entry/exit events: direct permissions,
@@ -202,7 +314,7 @@ single-threaded; unsupported threading, receiver projection, ordinary-function
 boundaries, and unobserved effects remain visible gaps. It is not general async
 compiler enforcement.
 
-**Exit:** [SC-A3](./README.md#sc-a3) passes against real Salsa behavior without
+**Exit:** [`meta.contracts.cache_invocations`](../../design/meta/contracts.md#meta.contracts.cache_invocations) passes against real Salsa behavior without
 double-counted invocations or TLS state leaking between operations.
 
 ## Stage 5: Enforce one real compiler slice, then expand
@@ -232,7 +344,7 @@ ordinary-function boundaries are not fully observed, while an independent query
 assertion excludes callee-body requests. This does not complete the first body
 acceptance target or justify general compiler enforcement.
 
-**Exit:** The first real source fixture demonstrates [SC-A4](./README.md#sc-a4).
+**Exit:** The first real source fixture demonstrates [`meta.contracts.observation_coverage`](../../design/meta/contracts.md#meta.contracts.observation_coverage).
 Tests enforce invariants automatically without a browser or an agent. Broader
 runtime coverage is a visible follow-on, not a prerequisite for this milestone.
 
@@ -281,8 +393,10 @@ API. Static implementation call analysis remains a separate later milestone.
 
 ## Completion checklist
 
-- [ ] Promote SC-A1–SC-A4 and their verification into the architecture chapter,
-      retaining limitations for observation coverage and unchecked effects.
+- [ ] Verify that the Design chapters and their evidence reflect the completed
+      scope, retaining observation-coverage and unchecked-effect limitations.
+      Check the [contract rules](../../design/meta/contracts.md) against their
+      recorded evidence and remaining gaps.
 - [x] Extend D21 on acceptance; preserve the distinction between model
       consistency, source correspondence, and runtime conformance.
 - [x] Update architecture Current Status, roadmap, and RFD indexes as stages

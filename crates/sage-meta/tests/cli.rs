@@ -25,6 +25,8 @@ impl Fixture {
         )
         .unwrap();
         std::fs::write(root.join("src/lib.rs"), "#[sage::item(crate)] mod r#abstract {} #[sage::item(crate::Value)] struct Implementation;").unwrap();
+        let checklist = sage_meta::review::prepare(&root).unwrap();
+        sage_meta::review::record(&root, &checklist).unwrap();
         Self(root)
     }
     fn run(&self, args: &[&str]) -> std::process::Output {
@@ -57,6 +59,7 @@ fn correspondence_command_reports_source_and_executable_coverage_separately() {
     assert_eq!(report["correspondence"]["executable_declarations"], 0);
     assert_eq!(report["specification"]["valid"], true);
     assert_eq!(report["specification"]["tests_executed"], false);
+    assert_eq!(report["review"]["valid"], true);
     assert_eq!(
         report["correspondence"]["runtime_conformance_checked"],
         false
@@ -115,6 +118,11 @@ fn specification_failures_fail_the_cli_and_library() {
         "\n#[test] #[sage::test(demo.documented)] fn verifies_documented_behavior() {}\n",
     );
     std::fs::write(&source, rust).unwrap();
+    let mut reviewed = sage_meta::review::prepare(&fixture.0).unwrap();
+    reviewed.reviews[0].decision = sage_meta::review::Decision::Approved;
+    reviewed.reviews[0].reason = "Synthetic approval for testing CLI stage composition.".into();
+    reviewed.reviews[0].reviewer = "CLI test fixture".into();
+    sage_meta::review::record(&fixture.0, &reviewed).unwrap();
     sage_meta::check(&fixture.0).ensure_valid().unwrap();
     assert!(fixture.run(&["check"]).status.success());
 

@@ -12,7 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .is_some_and(|arg| arg == "--help" || arg == "-h")
     {
         println!(
-            "sage-meta [sage-src directory]\nsage-meta check [--json] [sage-src directory]\nsage-meta browse [sage-src directory] [output.html]\nsage-meta serve <port> [sage-src directory]\n\nCheck the model, Rust correspondence, and specification test coverage, or export an interactive explorer."
+            "sage-meta [sage-src directory]\nsage-meta check [--json] [sage-src directory]\nsage-meta review prepare\nsage-meta review record <file>\nsage-meta browse [sage-src directory] [output.html]\nsage-meta serve <port> [sage-src directory]\n\nCheck the model, Rust correspondence, specification tests, and review snapshots, or export an interactive explorer."
         );
         return Ok(());
     }
@@ -21,6 +21,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if args.first().is_some_and(|arg| arg == "check") {
         return check(&args[1..]);
+    }
+    if args.first().is_some_and(|arg| arg == "review") {
+        return review(&args[1..]);
     }
     let serve = args.first().is_some_and(|arg| arg == "serve");
     let browse = args.first().is_some_and(|arg| arg == "browse");
@@ -90,6 +93,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Validated {} .sage documents (declared model only).",
         documents.len()
     );
+    Ok(())
+}
+
+fn review(args: &[std::ffi::OsString]) -> Result<(), Box<dyn std::error::Error>> {
+    match args {
+        [command] if command == "prepare" => {
+            let pending = sage_meta::review::prepare(Path::new("."))?;
+            println!("{}", serde_json::to_string_pretty(&pending)?);
+        }
+        [command, path] if command == "record" => {
+            let reviewed = sage_meta::review::load(Path::new(path))?;
+            sage_meta::review::record(Path::new("."), &reviewed)?;
+            println!(
+                "Recorded reviewed snapshots in {}.",
+                sage_meta::review::CHECKLIST_FILE
+            );
+        }
+        _ => return Err("usage: sage-meta review prepare | sage-meta review record <file>".into()),
+    }
     Ok(())
 }
 

@@ -508,6 +508,7 @@ version = "0.0.0"
 dependencies = [
  "sage-meta",
  "salsa",
+ "serde_json",
 ]
 
 [[package]]

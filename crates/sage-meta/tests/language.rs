@@ -218,6 +218,12 @@ fn inherited_prohibitions_constrain_overrides() {
 }
 
 #[test]
+#[sage::test(meta.types.struct_fields)]
+#[sage::test(meta.types.enum_variants)]
+#[sage::test(meta.types.opaque_representation)]
+#[sage::test(meta.types.declaration_prose)]
+#[sage::test(meta.types.field_prose)]
+#[sage::test(meta.types.variant_prose)]
 fn parses_structs_enums_and_opaque_generics() {
     use sage_meta::{TypeExprKind, TypeShape, VariantFields};
     let source = r#"crate demo { """Types.""" }
@@ -230,7 +236,7 @@ fn parses_structs_enums_and_opaque_generics() {
         enum Ty {
             """Semantic types without storage wrappers."""
             Never """No values.""",
-            Tuple("""Ordered components.""" Vec<Ty>),
+            Tuple("""Ordered components.""" Vec<Ty>, bool),
             Ref { """Reference.""" referent: Ty, mutable: bool },
         }
         struct Signature { value: Binder<Pair<Ty>>, pair: (Ty, Ty), unit: () }
@@ -242,12 +248,29 @@ fn parses_structs_enums_and_opaque_generics() {
     };
     assert_eq!(binder.parameters, ["T"]);
     assert_eq!(binder.shape, TypeShape::Opaque);
+    assert_eq!(
+        binder.description.as_deref(),
+        Some("Bound value; representation intentionally opaque.")
+    );
     let Declaration::Type(pair) = &doc.declarations[1] else {
         panic!()
     };
     let TypeShape::Struct(fields) = &pair.shape else {
         panic!()
     };
+    assert_eq!(pair.description.as_deref(), Some("Two related values."));
+    assert_eq!(pair.parameters, ["T"]);
+    assert_eq!(
+        fields
+            .iter()
+            .map(|field| field.name.as_str())
+            .collect::<Vec<_>>(),
+        ["first", "rest"]
+    );
+    assert!(
+        matches!(&fields[0].ty.kind, TypeExprKind::Named { path, arguments }
+        if path.root == "T" && arguments.is_empty())
+    );
     assert_eq!(fields[0].description.as_deref(), Some("The first value."));
     let Declaration::Type(ty) = &doc.declarations[2] else {
         panic!()
@@ -255,13 +278,52 @@ fn parses_structs_enums_and_opaque_generics() {
     let TypeShape::Enum(variants) = &ty.shape else {
         panic!()
     };
+    assert_eq!(
+        ty.description.as_deref(),
+        Some("Semantic types without storage wrappers.")
+    );
+    assert_eq!(
+        variants
+            .iter()
+            .map(|variant| variant.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Never", "Tuple", "Ref"]
+    );
+    assert_eq!(variants[0].fields, VariantFields::Unit);
     assert_eq!(variants[0].description.as_deref(), Some("No values."));
-    assert!(matches!(&variants[1].fields, VariantFields::Tuple(types) if types.len() == 1));
+    let VariantFields::Tuple(types) = &variants[1].fields else {
+        panic!("expected tuple payload")
+    };
+    assert_eq!(types.len(), 2);
+    assert!(
+        matches!(&types[0].kind, TypeExprKind::Named { path, arguments }
+        if path.root == "Vec" && arguments.len() == 1
+        && matches!(&arguments[0].kind, TypeExprKind::Named { path, arguments }
+            if path.root == "Ty" && arguments.is_empty()))
+    );
+    assert!(
+        matches!(&types[1].kind, TypeExprKind::Named { path, arguments }
+        if path.root == "bool" && arguments.is_empty())
+    );
     assert_eq!(
         variants[1].description.as_deref(),
         Some("Ordered components.")
     );
-    assert!(matches!(&variants[2].fields, VariantFields::Named(fields) if fields.len() == 2));
+    let VariantFields::Named(fields) = &variants[2].fields else {
+        panic!("expected named payload")
+    };
+    assert_eq!(fields.len(), 2);
+    assert_eq!(fields[0].name, "referent");
+    assert!(
+        matches!(&fields[0].ty.kind, TypeExprKind::Named { path, arguments }
+        if path.root == "Ty" && arguments.is_empty())
+    );
+    assert_eq!(fields[1].name, "mutable");
+    assert!(
+        matches!(&fields[1].ty.kind, TypeExprKind::Named { path, arguments }
+        if path.root == "bool" && arguments.is_empty())
+    );
+    assert_eq!(variants[2].description.as_deref(), Some("Reference."));
     let Declaration::Type(signature) = &doc.declarations[3] else {
         panic!()
     };
@@ -276,6 +338,8 @@ fn parses_structs_enums_and_opaque_generics() {
 }
 
 #[test]
+#[sage::test(meta.types.argument_arity)]
+#[sage::test(meta.types.unique_parameters)]
 fn checks_arity_scope_and_duplicate_members_in_value_types() {
     let errors = check(
         r#"
@@ -359,6 +423,7 @@ fn checks_nested_arguments_in_fields_results_and_overrides() {
 }
 
 #[test]
+#[sage::test(meta.types.qualified_names)]
 fn generic_types_resolve_across_crates_with_dependency_checks() {
     let library = parse(
         "lib/crate.sage",
@@ -388,6 +453,9 @@ fn generic_types_resolve_across_crates_with_dependency_checks() {
 }
 
 #[test]
+#[sage::test(meta.types.opaque_representation)]
+#[sage::test(meta.types.generic_parameters)]
+#[sage::test(meta.types.member_commas)]
 fn rejects_malformed_value_declarations() {
     for body in [
         "struct Bad { x: Vec<Value }",

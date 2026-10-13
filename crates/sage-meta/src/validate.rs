@@ -72,6 +72,7 @@ pub(crate) fn resolve_contracts(
                             })?;
                             let rule = CallPermission {
                                 targets,
+                                // {anchor}`meta.envelopes.receiver_calls`
                                 same_receiver: path.root == "self",
                                 rule: ContractRule {
                                     file: base.document.file.clone(),
@@ -80,6 +81,7 @@ pub(crate) fn resolve_contracts(
                                 },
                             };
                             if is_permission {
+                                // {anchor}`meta.envelopes.direct_calls`
                                 operation.invokes.push(rule);
                             } else {
                                 operation.prohibits.push(rule);
@@ -341,6 +343,7 @@ impl Model<'_> {
             return Err(format!("unknown method {class}::{name}"));
         };
         let mut targets = BTreeSet::from([declared]);
+        // {anchor}`meta.envelopes.class_calls`
         for descendant in self.classes.keys() {
             if self.ancestors(descendant).contains(&class)
                 && let Some(target) = self.method(descendant, &name)
@@ -369,6 +372,7 @@ impl Model<'_> {
                         if self.ancestors(&target).contains(key) {
                             report(&mut errors, &base.span, "inheritance cycle".into());
                         }
+                        // {anchor}`meta.contexts.inheritance`
                         if (entry.class.kind == ClassKind::Context)
                             != (self.classes[&target].class.kind == ClassKind::Context)
                         {
@@ -396,6 +400,7 @@ impl Model<'_> {
                         format!("duplicate member {}", field.name),
                     );
                 }
+                // {anchor}`meta.fields.context_state`
                 if field.kind == FieldKind::State && entry.class.kind != ClassKind::Context {
                     report(
                         &mut errors,
@@ -492,6 +497,7 @@ impl Model<'_> {
                             Err(message) => report(&mut errors, &path.span, message),
                         },
                         Effect::Reads(path) => {
+                            // {anchor}`meta.envelopes.reads`
                             let valid = path.root == "self"
                                 && path.segments.len() == 1
                                 && self.ancestors(key).iter().any(|ancestor| {
@@ -508,6 +514,7 @@ impl Model<'_> {
                             }
                         }
                         Effect::Creates { name, context } => {
+                            // {anchor}`meta.envelopes.creates`
                             if !contexts.insert(name) {
                                 report(
                                     &mut errors,
@@ -599,6 +606,7 @@ impl Model<'_> {
 
 impl Model<'_> {
     /// A structural canonical spelling, independent of source ranges and path spelling.
+    // {anchor}`meta.types.recursive_values`
     fn resolve_type(
         &self,
         namespace: &str,
@@ -614,8 +622,11 @@ impl Model<'_> {
                 Ok(format!("({})", items.join(",")))
             }
             TypeExprKind::Named { path, arguments } => {
+                // {anchor}`meta.types.name_resolution`
+                // {anchor}`meta.types.qualified_names`
                 let (key, arity) = if path.root == "crate" || path.root.starts_with('$') {
                     let key = self.resolve_path(namespace, path)?;
+                    // {anchor}`meta.types.unknown_names`
                     let arity = *self
                         .types
                         .get(&key)
@@ -624,20 +635,24 @@ impl Model<'_> {
                 } else if path.root == "self" || !path.segments.is_empty() {
                     return Err("type names must be local names or crate-qualified paths".into());
                 } else if parameters.contains(&path.root) {
+                    // {anchor}`meta.types.generic_parameters`
                     (format!("parameter::{}", path.root), 0)
                 } else {
                     let local = format!("{namespace}::{}", path.root);
                     if let Some(arity) = self.types.get(&local) {
                         (local, *arity)
                     } else {
+                        // {anchor}`meta.types.prelude`
                         let arity = match path.root.as_str() {
                             "Vec" | "Option" => 1,
                             "bool" | "u32" | "u64" | "String" => 0,
+                            // {anchor}`meta.types.unknown_names`
                             _ => return Err(format!("unknown type {}", path.root)),
                         };
                         (format!("builtin::{}", path.root), arity)
                     }
                 };
+                // {anchor}`meta.types.argument_arity`
                 if arguments.len() != arity {
                     return Err(format!(
                         "type {key} expects {arity} type arguments, found {}",
@@ -664,6 +679,7 @@ impl Model<'_> {
             };
             let mut parameters = BTreeSet::new();
             for parameter in &declaration.parameters {
+                // {anchor}`meta.types.unique_parameters`
                 if !parameters.insert(parameter) {
                     report(
                         errors,
@@ -682,6 +698,7 @@ impl Model<'_> {
             let check_fields = |errors: &mut Vec<Diagnostic>, fields: &[ValueField]| {
                 let mut names = BTreeSet::new();
                 for field in fields {
+                    // {anchor}`meta.types.unique_fields`
                     if !names.insert(&field.name) {
                         report(
                             errors,
@@ -702,6 +719,7 @@ impl Model<'_> {
                 TypeShape::Enum(variants) => {
                     let mut names = BTreeSet::new();
                     for variant in variants {
+                        // {anchor}`meta.types.unique_variants`
                         if !names.insert(&variant.name) {
                             report(
                                 errors,
