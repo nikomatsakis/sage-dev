@@ -1,5 +1,8 @@
+#![feature(rustc_private)]
 #![feature(register_tool)]
 #![register_tool(sage)]
+pub mod compile;
+
 use expect_test::Expect;
 pub use expect_test::expect;
 use sage_ir::Db;

@@ -1,3 +1,4 @@
+#![feature(rustc_private)]
 use sage_ir::cst::expr::Literal;
 use sage_ir::ty::{FloatTy, IntTy, Ty, UintTy};
 use sage_ir::tytree::{TyExprData, TyStmtKind};

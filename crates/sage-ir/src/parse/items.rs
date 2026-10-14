@@ -1,3 +1,5 @@
+// {anchor}`crates.sage_test_harness.compile_tests.fixtures`
+// {anchor}`crates.sage_test_harness.compile_tests.checking_scope`
 use sage_stash::{Ptr, Stash, Stashed};
 
 use crate::cst::consts::{ConstCst, ConstCstData};
@@ -446,6 +448,10 @@ impl<'a, 'db> Parser<'a, 'db> {
         node: tree_sitter::Node<'a>,
         pending_attrs: &[tree_sitter::Node<'a>],
     ) -> LocalModItemSym<'db> {
+        if !self.associated_body_supported(node) {
+            return self.error_item(node, pending_attrs);
+        }
+
         let mut stash = Stash::new();
         let start = item_start(node, pending_attrs);
         let name = node_name(self.db, node, self.text);
@@ -492,6 +498,38 @@ impl<'a, 'db> Parser<'a, 'db> {
         LocalModItemSym::Trait(LocalTraitSym::new(self.db, name, self.scope, cst, abs_span))
     }
 
+    fn associated_body_supported(&self, node: tree_sitter::Node<'a>) -> bool {
+        let Some(body) = node.child_by_field_name("body") else {
+            return true;
+        };
+        let mut attrs = Vec::new();
+        for child in body.children(&mut body.walk()) {
+            match child.kind() {
+                "attribute_item" => attrs.push(child),
+                "line_comment" | "block_comment" | "{" | "}" => {}
+                _ => {
+                    if self.cfg_enabled(&attrs)
+                        && (!attrs
+                            .iter()
+                            .all(|attr| self.associated_attr_supported(*attr))
+                            || !matches!(
+                                child.kind(),
+                                "function_item"
+                                    | "function_signature_item"
+                                    | "associated_type"
+                                    | "type_item"
+                                    | "const_item"
+                            ))
+                    {
+                        return false;
+                    }
+                    attrs.clear();
+                }
+            }
+        }
+        attrs.is_empty()
+    }
+
     fn parse_associated_items(
         &self,
         stash: &mut Stash,
@@ -505,7 +543,20 @@ impl<'a, 'db> Parser<'a, 'db> {
 
         let mut items = Vec::new();
         let mut cursor = body.walk();
+        let mut pending_attrs = Vec::new();
         for child in body.children(&mut cursor) {
+            if child.kind() == "attribute_item" {
+                pending_attrs.push(child);
+                continue;
+            }
+            if matches!(child.kind(), "line_comment" | "block_comment") {
+                continue;
+            }
+            if !self.cfg_enabled(&pending_attrs) {
+                pending_attrs.clear();
+                continue;
+            }
+            pending_attrs.clear();
             let placement = relative_span(child, item_start);
             let child_start = child.start_byte() as u32;
             match child.kind() {
@@ -548,6 +599,10 @@ impl<'a, 'db> Parser<'a, 'db> {
         node: tree_sitter::Node<'a>,
         pending_attrs: &[tree_sitter::Node<'a>],
     ) -> LocalModItemSym<'db> {
+        if !self.associated_body_supported(node) {
+            return self.error_item(node, pending_attrs);
+        }
+
         let mut stash = Stash::new();
         let start = item_start(node, pending_attrs);
         let attrs = self.parse_attr_nodes(&mut stash, pending_attrs, start);
@@ -628,7 +683,12 @@ impl<'a, 'db> Parser<'a, 'db> {
         let abs_span = absolute_span(self.source, node, start);
 
         let mut attr_stash = Stash::new();
-        let outer_attrs = self.parse_attr_nodes(&mut attr_stash, pending_attrs, start);
+        let module_attrs: Vec<_> = pending_attrs
+            .iter()
+            .copied()
+            .filter(|attr| self.module_path(*attr).is_none())
+            .collect();
+        let outer_attrs = self.parse_attr_nodes(&mut attr_stash, &module_attrs, start);
         let attrs_cst = Stashed::new(attr_stash, outer_attrs);
 
         if let Some(body) = node.child_by_field_name("body") {
@@ -638,7 +698,12 @@ impl<'a, 'db> Parser<'a, 'db> {
                 name,
                 self.scope.local_crate(self.db).edition(self.db),
                 Some(self.scope),
-                ModBodySource::Inline,
+                ModBodySource::Inline {
+                    directory: pending_attrs
+                        .iter()
+                        .find_map(|attr| self.module_path(*attr))
+                        .map(str::to_owned),
+                },
                 attrs_cst,
                 abs_span,
             );
@@ -656,14 +721,26 @@ impl<'a, 'db> Parser<'a, 'db> {
             LocalModItemSym::Mod(mod_sym)
         } else {
             // File-backed mod — file resolution deferred to `unexpanded_items`.
-            let file = self.resolve_mod_file(name);
+            let explicit_path = pending_attrs
+                .iter()
+                .find_map(|attr| self.module_path(*attr));
+            let file = explicit_path
+                .and_then(|path| {
+                    let parent = self.module_directory(true)?;
+                    self.db
+                        .source_file(&crate::source::normalize_path(&format!("{parent}{path}")))
+                })
+                .or_else(|| {
+                    if explicit_path.is_none() {
+                        self.resolve_mod_file(name)
+                    } else {
+                        None
+                    }
+                });
             let body_source = match file {
                 Some(f) => ModBodySource::File(f),
                 None => {
-                    panic!(
-                        "cannot resolve `mod {};` — no source file found",
-                        name.text(self.db)
-                    );
+                    return self.error_item(node, pending_attrs);
                 }
             };
 
@@ -680,15 +757,42 @@ impl<'a, 'db> Parser<'a, 'db> {
         }
     }
 
-    fn resolve_mod_file(&self, name: Name<'db>) -> Option<crate::source::SourceFile> {
-        // Determine parent dir from current source file
-        let parent_file = match self.source {
-            crate::span::ParseSource::SourceFile(f) => f,
-            _ => return None,
+    fn module_directory(&self, explicit: bool) -> Option<String> {
+        let crate::span::ParseSource::SourceFile(file) = self.source else {
+            return None;
         };
-        let parent_path = parent_file.path(self.db);
+        let mut module = self.scope.module(self.db);
+        let mut inline = Vec::new();
+        loop {
+            match module.body_source(self.db) {
+                ModBodySource::Inline { directory } => {
+                    inline.push(
+                        directory
+                            .clone()
+                            .unwrap_or_else(|| module.name(self.db).text(self.db).clone()),
+                    );
+                    module = module.parent(self.db)?.module(self.db);
+                }
+                ModBodySource::File(_) => break,
+            }
+        }
+        let path = file.path(self.db);
+        let mut directory = if explicit && inline.is_empty() {
+            path.rsplit_once('/')
+                .map_or(String::new(), |(parent, _)| format!("{parent}/"))
+        } else {
+            parent_dir_for(path)
+        };
+        for name in inline.into_iter().rev() {
+            directory.push_str(&name);
+            directory.push('/');
+        }
+        Some(directory)
+    }
+
+    fn resolve_mod_file(&self, name: Name<'db>) -> Option<crate::source::SourceFile> {
         let mod_name = name.text(self.db);
-        let parent_dir = parent_dir_for(parent_path);
+        let parent_dir = self.module_directory(false)?;
 
         let candidates = [
             format!("{parent_dir}{mod_name}.rs"),
@@ -696,7 +800,10 @@ impl<'a, 'db> Parser<'a, 'db> {
         ];
 
         for candidate in &candidates {
-            if let Some(file) = self.db.source_file(candidate) {
+            if let Some(file) = self
+                .db
+                .source_file(&crate::source::normalize_path(candidate))
+            {
                 return Some(file);
             }
         }

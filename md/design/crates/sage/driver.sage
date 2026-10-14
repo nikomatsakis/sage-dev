@@ -1,8 +1,8 @@
 module crate::driver;
 
-// Sources: src/driver.rs and src/inspector.rs.
+// Source: src/inspector.rs; workspace hosting lives in sage_host.
 context AnalysisHost {
-    """Persistent Salsa database, sources, and external metadata provider."""
+    """Inspector adapter over the shared sage_host workspace and metadata provider."""
     fn inspect() -> $sage_ir::types::Body {
         """Load or update source inputs, resolve the selected semantic demand, and compute only the requested product. Body demand is one supported choice; signatures and module outlines stop earlier."""
         envelope {

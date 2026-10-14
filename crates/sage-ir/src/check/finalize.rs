@@ -15,6 +15,8 @@ use super::infer::version::Version;
 /// Resolve every inference edge and rebuild the completed body in a fresh,
 /// append-only stash.
 // ANCHOR: finalize_typed_body_into_fresh_stash
+// {anchor}`crates.sage_stash.storage.handle_ownership`
+// {anchor}`crates.sage_stash.storage.immutable_entries`
 pub(super) fn finalize_typed_body<'db>(
     source: &Stash,
     egraph: &VersionedEGraph<'db>,

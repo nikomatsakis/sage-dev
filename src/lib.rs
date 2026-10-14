@@ -7,9 +7,9 @@ extern crate rustc_driver;
 extern crate rustc_interface;
 extern crate rustc_middle;
 
-pub mod driver;
+pub use sage_host::driver;
 pub mod inspector;
-pub mod metadata;
+pub use sage_host::metadata;
 
 pub use sage_rustc_bridge::{RustcTcxDb, SageServer, serve_tcx_requests};
 

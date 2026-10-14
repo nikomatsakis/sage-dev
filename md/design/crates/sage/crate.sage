@@ -3,6 +3,7 @@ crate sage {
     """Command-line compiler host and persistent analysis database; loads sources and external metadata and serves semantic inspection.
     Dependencies below describe workspace crates, including development dependencies; third-party libraries remain outside this model.
     """
+    depends $sage_host;
     depends $sage_ir;
     depends $sage_inspector;
     depends $sage_reflect;

@@ -152,13 +152,13 @@ replace them. Remove an old chapter only after accounting for its numbered and
 unnumbered requirements and preserving useful rationale and links.
 
 
-## Proposed inline compilation tests
+## Inline compilation tests
 
-The draft [Inline Compilation Tests](../rfds/inline-compile-tests/README.md)
-RFD proposes keeping source fixtures, annotations, and expectations directly
+The [Inline Compilation Tests](../rfds/inline-compile-tests/README.md)
+RFD explains keeping source fixtures, annotations, and expectations directly
 inside an ordinary `#[sage::test(...)]` Rust test. The
 [Design specification](../design/crates/sage_test_harness/compile-tests.md)
-describes the planned API; it is not yet an available runner.
+describes the API and observation contracts.
 
 For these tests, ERROR/WARN markers and compiler conditions express intended
 behavior. Adding or changing one is an assertion change that requires a

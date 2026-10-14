@@ -1,0 +1,13 @@
+[package]
+name = "sage-host"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+sage-inspector = { version = "0.1.0", path = "../sage-inspector" }
+sage-ir = { version = "0.1.0", path = "../sage-ir" }
+sage-rustc-bridge = { version = "0.1.0", path = "../sage-rustc-bridge" }
+sage-stash = { version = "0.1.0", path = "../sage-stash" }
+salsa = "0.26.1"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "1.0.149"

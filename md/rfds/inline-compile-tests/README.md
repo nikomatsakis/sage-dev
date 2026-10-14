@@ -1,6 +1,6 @@
 # Inline Compilation Tests
 
-**Status: Draft — documentation and design only.**
+**Status: Implemented (v1).**
 
 ## Summary
 
@@ -78,8 +78,7 @@ future point-demand tests, which will make their narrower entry point explicit.
 
 Real metadata support must not require successful rustc compilation of the
 fixture: negative tests must still reach Sage. This follows the separation
-between dependency facts and local semantic work. Reusing the production host
-may require extracting a shared setup layer; adding a dependency cycle from
+between dependency facts and local semantic work. The `sage-host` crate extracts the shared production setup and trace projection; adding a dependency cycle from
 `sage-test-harness` back to its consumers is not an acceptable shortcut.
 
 ### Keep annotations local and observations readable
@@ -162,9 +161,8 @@ This guarantee follows from control flow: preparation returns all validated,
 rendered results or fails, and only a successful return reaches expectation
 comparison. A comment at the implementation boundary should explain this
 ordering. Reviewing that separation can establish the guarantee without a
-dedicated test that injects failures into every preparation stage. Any test
-N/A association must explain this structural justification; it does not count
-as an approved executable test or an automated implementation review.
+dedicated test that injects failures into every preparation stage. An annotated no-op test records this implementation-only justification for
+review; its passing result is not executable evidence of the guarantee.
 
 This is a validation barrier, not a promise to roll back every file write if an
 I/O error occurs, nor a transaction across all Cargo tests. Independent tests
@@ -216,20 +214,21 @@ unchanged.
 - **A new snapshot library:** unnecessary for v1; existing `expect-test` already
   provides call-site expectations and the established update workflow.
 
-## Remaining implementation decisions
+## Implementation decisions
 
-Before writing the runner, settle the shared production-host adapter placement
-without introducing a crate dependency cycle, the exact type/query snapshot
-format, and the source-expression provenance mechanism for equal spans and
-macro-generated expressions. These are implementation choices constrained by
+The production host lives in `sage-host`, with the CLI reexporting its public
+modules. Source expressions are enumerated from CST and matched to completed
+typed nodes by span and kind; missing or ambiguous correspondence fails an
+observation. The snapshot formatter freezes type names and diagnostic source
+data before ending query capture, then formats without semantic reads.
+Future extensions to provenance, especially macro-generated expressions, must
+retain that explicit failure behavior. These are implementation choices constrained by
 the linked claims, not permission to omit whole-crate checks or substitute
 hand-built semantic answers. If provenance requires changing another Design
 contract, propose that change before implementing it.
 
-This draft adds no Rust placeholders and no review approvals. The new anchors
-will be reported as lacking implementation/test associations by the shared
-coverage checker until the first implementation step accounts for them.
-Existing reviewed claims remain unchanged.
+Generated anchors track implementation and reviewed evidence. The shared host
+extraction also updates the owning crate models and refreshes affected reviews.
 
 ## Implementation
 
