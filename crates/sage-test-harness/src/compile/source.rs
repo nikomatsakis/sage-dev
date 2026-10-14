@@ -1,3 +1,4 @@
+// {anchor}`crates.sage_test_harness.compile_tests.resolved_symbols`
 // {anchor}`crates.sage_test_harness.compile_tests.starting_expressions`
 use sage_ir::cst::expr::{ExprCst, ExprCstKind as C, StmtCstKind};
 use sage_ir::span::RelativeSpan;

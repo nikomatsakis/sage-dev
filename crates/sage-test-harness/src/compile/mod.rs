@@ -1,7 +1,9 @@
 //! Inline source fixtures using the production host. Preparation cannot update snapshots.
+// {anchor}`crates.sage_test_harness.compile_tests.grouped_observations`
 mod annotations;
 mod observe;
 mod source;
+mod symbols;
 mod types;
 
 use annotations::{Kind, Marker};
@@ -105,7 +107,11 @@ impl CompileTest {
         for (path, source) in &files {
             markers.extend(annotations::parse(path, source)?);
         }
-        if markers.iter().any(|marker| marker.kind == Kind::Type) != self.observations.is_some() {
+        if markers
+            .iter()
+            .any(|marker| matches!(marker.kind, Kind::Type | Kind::Symbol))
+            != self.observations.is_some()
+        {
             return Err(
                 "observation markers require exactly one observations expectation, and vice versa"
                     .into(),

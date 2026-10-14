@@ -1,8 +1,10 @@
+// {anchor}`crates.sage_test_harness.compile_tests.resolved_symbols`
 use std::collections::BTreeSet;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Kind {
     Type,
+    Symbol,
     Error,
     Warning,
 }
@@ -59,6 +61,7 @@ pub(super) fn parse(file: &str, source: &str) -> Result<Vec<Marker>, String> {
         // {anchor}`crates.sage_test_harness.compile_tests.compiler_conditions`
         let (kind, active) = match words.as_slice() {
             ["ty"] => (Kind::Type, true),
+            ["sym"] => (Kind::Symbol, true),
             ["ERROR"] | ["ERROR", "if", "SAGE"] => (Kind::Error, true),
             ["WARN"] | ["WARN", "if", "SAGE"] => (Kind::Warning, true),
             ["ERROR", "if", "rustc"] => (Kind::Error, false),

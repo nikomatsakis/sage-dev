@@ -44,39 +44,68 @@ pub(super) fn collect(
     }
     let events = db.take_inspection_log();
     match_diagnostics(markers, &diagnostics)?;
+    // {anchor}`crates.sage_test_harness.compile_tests.grouped_observations`
+    // {anchor}`crates.sage_test_harness.compile_tests.resolved_symbols`
     let targets: BTreeSet<_> = markers
         .iter()
-        .filter(|m| m.kind == Kind::Type)
+        .filter(|m| matches!(m.kind, Kind::Type | Kind::Symbol))
         .map(|m| (m.file.clone(), m.line))
         .collect();
     let mut sorted_types: Vec<_> = checked.types.iter().collect();
     sorted_types.sort_by_key(|row| (&row.file, row.end, std::cmp::Reverse(row.start)));
     let mut observations = String::new();
     for (file, line) in targets {
-        let mut found = false;
+        let wants = |kind| {
+            markers
+                .iter()
+                .any(|m| m.file == file && m.line == line && m.kind == kind)
+        };
+        let types = wants(Kind::Type);
+        let symbols = wants(Kind::Symbol);
+        let mut found_type = false;
+        let mut found_symbol = false;
         for row in sorted_types
             .iter()
             .copied()
             .filter(|row| row.file == file && row.line == line)
         {
-            found = true;
-            if !row.valid || !row.ty.complete() {
+            let symbol = symbols && row.kind == "path";
+            if !types && !symbol {
+                continue;
+            }
+            if !row.valid || (types && !row.ty.complete()) {
                 return Err(format!(
                     "{file}:{line}: missing, ambiguous, or unresolved type observation for {}",
                     row.source
                 ));
             }
             observations.push_str(&format!(
-                "{}: {} `{}`\n  type: {}\n",
+                "{}: {} `{}`\n",
                 row.file,
                 row.kind,
-                compact(&row.source),
-                row.ty
+                compact(&row.source)
             ));
+            if symbol {
+                let identity = row
+                    .symbol
+                    .as_ref()
+                    .map_err(|error| format!("{file}:{line}: {error} for {}", row.source))?;
+                observations.push_str(&format!("  symbol: {identity}\n"));
+                found_symbol = true;
+            }
+            if types {
+                observations.push_str(&format!("  type: {}\n", row.ty));
+                found_type = true;
+            }
         }
-        if !found {
+        if types && !found_type {
             return Err(format!(
                 "{file}:{line}: no expression with a completed type starts on this line"
+            ));
+        }
+        if symbols && !found_symbol {
+            return Err(format!(
+                "{file}:{line}: no path expression starts on this line"
             ));
         }
     }
@@ -110,6 +139,7 @@ struct TypeRow {
     kind: String,
     source: String,
     ty: FrozenType,
+    symbol: Result<String, String>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 struct Checked {
@@ -173,7 +203,14 @@ fn walk_symbol<'db>(db: &'db dyn Db, symbol: Symbol<'db>, checked: &mut Checked)
                     .extend(result.diagnostics.iter().map(|d| d.snapshot(db)));
                 let (stash, body) = result.body.open_deref();
                 let mut typed = Vec::new();
-                walk_expr(db, stash, body.root, function.span(db), &mut typed);
+                walk_expr(
+                    db,
+                    stash,
+                    body.root,
+                    function.span(db),
+                    &stash[body.locals],
+                    &mut typed,
+                );
                 let mut source = Vec::new();
                 super::source::walk(source_stash, source_stash[cst.body.unwrap()], &mut source);
                 for expression in source {
@@ -224,6 +261,7 @@ fn walk_symbol<'db>(db: &'db dyn Db, symbol: Symbol<'db>, checked: &mut Checked)
                             kind: expression.kind.into(),
                             source: text[span.start as usize..span.end as usize].into(),
                             ty: FrozenType::Missing,
+                            symbol: Err("missing semantic correspondence".into()),
                         });
                     }
                 }
@@ -317,13 +355,18 @@ fn walk_expr<'db>(
     stash: &Stash,
     expression: Ptr<TyExpr<'db>>,
     base: sage_ir::span::AbsoluteSpan<'db>,
+    locals: &[sage_ir::tytree::LocalVar<'db>],
     rows: &mut Vec<TypeRow>,
 ) {
     let expr = stash[expression];
     let mut children = Vec::new();
+    let mut symbol = Err("missing path resolution".into());
     let kind = match expr.data {
         E::Literal(_) => "literal",
-        E::Path(_) => "path",
+        E::Path(res) => {
+            symbol = super::symbols::resolution(db, res, locals);
+            "path"
+        }
         E::Block(statements, tail) => {
             for statement in &stash[statements] {
                 match statement.kind {
@@ -449,11 +492,14 @@ fn walk_expr<'db>(
             "range"
         }
         E::MacroCall(_, _) => "macro",
-        E::Error(_) => "error",
+        E::Error(_) => {
+            symbol = Ok("<unresolved>".into());
+            "error"
+        }
         E::Missing | E::Unresolved(_) => "unresolved",
     };
     for child in children {
-        walk_expr(db, stash, child, base, rows);
+        walk_expr(db, stash, child, base, locals, rows);
     }
     let span = base.resolve(expr.span);
     let ParseSource::SourceFile(file) = span.source else {
@@ -478,6 +524,7 @@ fn walk_expr<'db>(
         kind: kind.into(),
         source: source.into(),
         ty: FrozenType::read(db, stash, expr.ty),
+        symbol,
     });
 }
 // >>
@@ -529,7 +576,7 @@ fn compact(source: &str) -> String {
 fn match_diagnostics(markers: &[Marker], diagnostics: &[DiagnosticSnapshot]) -> Result<(), String> {
     let markers: Vec<_> = markers
         .iter()
-        .filter(|m| m.active && m.kind != Kind::Type)
+        .filter(|m| m.active && matches!(m.kind, Kind::Error | Kind::Warning))
         .collect();
     let edges: Vec<Vec<_>> = markers
         .iter()
@@ -541,7 +588,7 @@ fn match_diagnostics(markers: &[Marker], diagnostics: &[DiagnosticSnapshot]) -> 
                     let severity = match marker.kind {
                         Kind::Error => Severity::Error,
                         Kind::Warning => Severity::Warning,
-                        Kind::Type => unreachable!(),
+                        Kind::Type | Kind::Symbol => unreachable!(),
                     };
                     (diag.severity == severity
                         && diag.primary.iter().any(|location| {

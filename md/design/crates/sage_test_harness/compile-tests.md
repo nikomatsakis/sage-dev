@@ -177,6 +177,7 @@ The initial directive vocabulary is:
 
 ```text
 //# ty
+//# sym
 //# ERROR
 //# WARN
 //# ERROR if SAGE
@@ -185,7 +186,7 @@ The initial directive vocabulary is:
 //# WARN if rustc
 ```
 
-Type observations select a source line, not a column or character range.
+Type and symbol observations select a source line, not a column or character range.
 Indentation before `//#` does not affect selection. Neither observation markers nor
 diagnostic markers have slugs. Compiler conditions use the exact names `SAGE` and
 `rustc`. They are selectors, not arbitrary condition expressions.
@@ -204,15 +205,51 @@ comment makes its target the current line. Otherwise its target is the most
 recent preceding nonempty line that is not an annotation-only line. Blank
 lines and consecutive annotation-only lines are skipped; ordinary comments
 are not skipped. Absence of a target is an annotation error. The same rule
-applies to `ty`, ERROR, and WARN; there is no caret or range syntax.
+applies to `ty`, `sym`, ERROR, and WARN; there is no caret or range syntax.
 
 {anchor}`annotation_validation`
 Unknown or malformed directives, invalid compiler conditions, missing or unused
 observation expectations, and invalid selections fail the test. A fixture containing
-any `//# ty` marker requires one combined `observations: expect![...]` expectation;
+any `//# ty` or `//# sym` marker requires one combined `observations: expect![...]` expectation;
 a `observations` expectation without observation markers is rejected. Annotation validation
 is independent of snapshot blessing, and no directive is silently ignored
 because it is misspelled or cannot be resolved.
+
+## Combined observations
+
+{anchor}`grouped_observations`
+`observations: expect![...]` holds one snapshot for all `ty` and `sym` markers.
+An expression selected by both markers has one header, then indented `symbol:`
+and `type:` fields in that fixed order. Only requested fields are printed.
+Duplicate markers are idempotent and marker order does not change output.
+Ordering follows the type observation source-tree postorder rule. Diagnostics
+and query snapshots remain separate.
+
+{anchor}`resolved_symbols`
+`//# sym` observes explicit path expressions starting on the target line,
+including local variable uses and qualified paths. It reports the definition
+selected by completed checking, not the spelling of an import alias. Local
+item identities include their kind and a `crate::`-qualified name. Local
+bindings use their name and a one-based occurrence among same-named bindings
+in declaration order within the body; unrelated declarations do not renumber
+them. External definitions use the metadata definition path. No allocation IDs
+or source coordinates appear. An actual resolution error is `<unresolved>`;
+missing or unsupported semantic correspondence fails the observation. A target
+line containing no path expression fails rather than producing an empty result.
+Associated local item identities are not yet supported and fail explicitly.
+V1 symbol selection excludes method names, field names, type syntax, patterns,
+and implicit calls introduced by elaboration. These can gain selectors later.
+Names are frozen before ending query capture, as with types.
+
+For example, selecting both markers on `module::value()` produces:
+
+```text
+src/lib.rs: path `module::value`
+  symbol: fn crate::module::value
+  type: fn() -> u16
+src/lib.rs: call `module::value()`
+  type: u16
+```
 
 ## Type observations
 
