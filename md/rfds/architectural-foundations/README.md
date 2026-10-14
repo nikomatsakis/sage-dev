@@ -396,7 +396,14 @@ independence remains [Oracle test harness](#oracle-test-harness).
 
 When a semantic behavior can be produced by a Rust program, integration and
 acceptance evidence starts from a checked-in Cargo project and traverses the
-production layers named by the claim. Snapshots, query traces, and rendered
+production layers named by the claim. A checked-in inline fixture may define
+that project through source strings and explicit options, materialized into
+an isolated Cargo project with deterministic configuration. Its expected
+observations remain outputs; they cannot supply semantic facts to compilation.
+The draft [inline compilation test RFD](../inline-compile-tests/README.md)
+proposes this authoring form.
+
+Snapshots, query traces, and rendered
 review packets are observations of that execution. They are never loaded as
 precomputed semantic answers which replace parsing, expansion, resolution,
 checking, inspection, or transport.
