@@ -73,11 +73,11 @@ Compiler architecture can also be reviewed in the searchable [Crates](design/cra
 chapters, rendered from `md/design/crates/`. Run
 `cargo run -p sage-meta -- check` to check declared method dependencies, their
 Rust correspondences, named rules' implementation and test coverage, and saved
-reviews of those claim/test relationships in `review-checklist.json`. The same
+reviews of implementation completeness and test adequacy in `review-checklist.json`. The same
 library check runs during workspace tests and CI. The generated
 [Anchors](design/anchor/README.md) chapter links each claim to its source, code,
 tests, and review status. Add `--json` for a structured report;
-see [Reviewing Specification Tests](design/meta/reviews.md) for preparing and
+see [Reviewing Implementations and Tests](design/meta/reviews.md) for preparing and
 recording reviews with the repository skill, and
 [Architectural Pseudocode](design/meta/language.md)
 for the language and its current coverage. Generate an interactive explorer with

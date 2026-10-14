@@ -97,11 +97,12 @@ standard enabled test harness. Ignored tests do not supply coverage. Source
 inventory retains cfg conditions without claiming that those conditions held
 or the test executed. Test adequacy review and test execution are separate.
 
-Use `.agents/skills/sage-review-checklist/SKILL.md` when the claim or its complete
+Use `.agents/skills/sage-review-checklist/SKILL.md` when the claim, associated implementation files, or complete
 test set changes. Reviewers inspect the exact inputs, including TODO/N/A
 explanations. Record reviewed decisions through `sage-meta review record`;
-do not rewrite snapshots merely to make CI pass. Unchanged claim/test inputs
-retain their saved review even if source line numbers move.
+do not rewrite snapshots merely to make CI pass. Approvals cover implementation completeness and test adequacy. Implementation
+file edits conservatively require fresh review; consult the review specification
+for the exact snapshot boundary.
 
 ## Navigation and generated content
 

@@ -172,7 +172,7 @@ impl AnchorPages<'_> {
                 text.push_str(&source_link(url, &site.file, site.line, site.end_line));
                 text.push_str("</section>\n\n");
             }
-            text.push_str("## Tests and review\n\n<p>Indexed test declarations and their review; no test run is implied.</p>\n\n");
+            text.push_str("## Tests and review\n\n<p>Indexed tests and the implementation-completeness and test-adequacy review; no test run is implied.</p>\n\n");
             if let Some(input) = self.inputs.get(name) {
                 if input.tests.is_empty() {
                     text.push_str("<p class=\"anchor-missing\">Missing test association — validation error.</p>\n\n");

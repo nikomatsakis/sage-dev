@@ -412,6 +412,7 @@ fn parse_anchors(source: &SpecSource) -> (Vec<SpecAnchor>, Vec<Diagnostic>, Vec<
 }
 
 // {anchor}`meta.anchors.content.blocks`
+// {anchor}`meta.reviews.claim_text`
 fn finish_anchor(
     source: &str,
     end: usize,
@@ -984,6 +985,7 @@ impl SpecIndex {
             .collect())
     }
 
+    // {anchor}`meta.book.crates_landing`
     pub fn render_chapter(&self, file: &str, source: &str) -> Result<String, Vec<Diagnostic>> {
         let replacements = self.chapter_replacements(file, source)?;
         let mut output = String::new();

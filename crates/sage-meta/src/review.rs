@@ -1,7 +1,7 @@
-//! Persisted reviews of specification text against its complete annotated test set.
+//! Persisted reviews of specification implementations and their annotated tests.
 //!
-//! These snapshots cache a review of what tests express. They do not cache test
-//! execution or establish that unrecorded helpers and implementations conform.
+//! Snapshots cache source judgments, not test execution or conformance of
+//! dependencies outside the associated implementation files and test bodies.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -14,7 +14,7 @@ use crate::spec::SpecIndex;
 
 pub const CHECKLIST_FILE: &str = "review-checklist.json";
 pub const SCHEMA_VERSION: u32 = 1;
-pub const POLICY_VERSION: u32 = 1;
+pub const POLICY_VERSION: u32 = 2;
 pub const REVIEW_SKILL: &str = ".agents/skills/sage-review-checklist/SKILL.md";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,6 +51,25 @@ pub struct ReviewInput {
     /// Original Markdown, split on newlines for readable Git diffs.
     pub claim: Vec<String>,
     pub tests: Vec<ReviewTest>,
+    /// Defaults allow old test-only snapshots to load for policy migration.
+    #[serde(default)]
+    pub implementations: Vec<ReviewImplementation>,
+    #[serde(default)]
+    pub implementation_sources: BTreeMap<String, Vec<String>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewImplementation {
+    pub crate_name: String,
+    pub target: String,
+    pub module: String,
+    pub file: String,
+    pub cfg: Vec<String>,
+    pub excerpt: Vec<String>,
+    pub region: bool,
+    pub status: TestStatus,
+    pub explanation: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -128,12 +147,38 @@ pub fn inventory(
         // Repeated annotations on one declaration do not create another test.
         tests.sort();
         tests.dedup();
+        let mut implementations = Vec::new();
+        let mut implementation_sources = BTreeMap::new();
+        for site in rust.implementations.get(name).into_iter().flatten() {
+            let source = rust
+                .files
+                .get(&site.file)
+                .ok_or_else(|| format!("missing implementation source in {}", site.file))?;
+            implementation_sources
+                .entry(site.file.clone())
+                .or_insert_with(|| source_lines(source));
+            implementations.push(ReviewImplementation {
+                crate_name: site.crate_name.clone(),
+                target: site.target.clone(),
+                module: site.module.clone(),
+                file: site.file.clone(),
+                cfg: site.cfg.clone(),
+                excerpt: source_lines(&site.excerpt),
+                region: site.region,
+                status: site.status,
+                explanation: site.explanation.clone(),
+            });
+        }
+        implementations.sort();
+        implementations.dedup();
         inputs.insert(
             name.clone(),
             ReviewInput {
                 // {anchor}`meta.reviews.claim_text`
                 claim: source_lines(&anchor.content),
                 tests,
+                implementations,
+                implementation_sources,
             },
         );
     }
@@ -172,31 +217,31 @@ fn decision_error(review: &ReviewRecord) -> Option<&'static str> {
     if review.reason.trim().is_empty() || review.reviewer.trim().is_empty() {
         return Some("a completed review needs a reason and reviewer");
     }
+    if review.input.implementations.is_empty() {
+        return Some("a review must include at least one implementation association");
+    }
+    let statuses = review
+        .input
+        .tests
+        .iter()
+        .map(|test| test.status)
+        .chain(review.input.implementations.iter().map(|site| site.status));
     match review.decision {
         Decision::Pending => Some("review is pending"),
-        Decision::NeedsWork => Some("review found test coverage that needs work"),
-        Decision::Approved => review
-            .input
-            .tests
-            .iter()
-            .any(|test| test.status != TestStatus::Ordinary)
-            .then_some("approval cannot present TODO or N/A tests as behavioral evidence"),
-        Decision::Todo => (!review
-            .input
-            .tests
-            .iter()
-            .any(|test| test.status == TestStatus::Todo))
-        .then_some("a TODO decision requires an explicit todo test"),
-        Decision::NotApplicable => review
-            .input
-            .tests
-            .iter()
-            .any(|test| test.status != TestStatus::NotApplicable)
-            .then_some("an N/A decision requires all associated tests to be not_applicable"),
+        Decision::NeedsWork => Some("review found implementation or tests that need work"),
+        Decision::Approved => statuses.clone()
+            .any(|status| status != TestStatus::Ordinary)
+            .then_some("approval cannot present TODO or N/A implementations or tests as behavioral evidence"),
+        Decision::Todo => (!statuses.clone().any(|status| status == TestStatus::Todo))
+            .then_some("a TODO decision requires an explicit todo implementation or test"),
+        Decision::NotApplicable => statuses.clone()
+            .any(|status| status != TestStatus::NotApplicable)
+            .then_some("an N/A decision requires all implementations and tests to be not_applicable"),
     }
 }
 
 /// Check freshness and decisions without executing tests or modifying snapshots.
+// {anchor}`meta.reviews.gate`
 pub fn validate(
     current: &BTreeMap<String, ReviewInput>,
     checklist: &ReviewChecklist,
@@ -233,7 +278,9 @@ pub fn validate(
             // {anchor}`meta.reviews.staleness`
             Some(review) if &review.input != input => report(
                 Some(anchor),
-                format!("stale review for {anchor}: claim or complete test set changed"),
+                format!(
+                    "stale review for {anchor}: claim, implementation, or complete test set changed"
+                ),
             ),
             Some(review) => {
                 if let Some(message) = decision_error(review) {
@@ -330,7 +377,7 @@ pub fn record(workspace: &Path, reviewed: &ReviewChecklist) -> Result<(), Box<dy
     for review in &reviewed.reviews {
         if current.get(&review.anchor) != Some(&review.input) {
             return Err(format!(
-                "cannot record {}: reviewed claim or tests no longer match current source",
+                "cannot record {}: reviewed claim, implementation, or tests no longer match current source",
                 review.anchor
             )
             .into());

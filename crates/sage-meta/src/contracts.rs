@@ -229,6 +229,9 @@ impl ContractSession {
     }
 
     // {anchor}`meta.language.calls.declared`
+    // {anchor}`meta.language.envelopes.class_calls`
+    // {anchor}`meta.language.envelopes.receiver_calls`
+    // {anchor}`meta.language.envelopes.direct_calls`
     fn check_request(&mut self, invocation: &Invocation) {
         if let Some(caller) = self.active.last().cloned() {
             if let Some(contract) = self.model.operations.get(&caller.operation) {
