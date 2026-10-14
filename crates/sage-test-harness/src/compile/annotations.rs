@@ -125,6 +125,9 @@ mod tests {
         assert!(markers.is_empty());
         for bad in [
             "//# ty",
+            "//# sym",
+            "fn f() {} //# sym[slug]",
+            "fn f() {} //# sym if SAGE",
             "fn f() {} //# ERROR[SAGE]",
             "fn f() {} //# ERROR if sage",
             "fn f() {} //# ty[slug]",

@@ -237,6 +237,73 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_test_harness.compile_tests.annotation_validation)]
+    #[sage::test(crates.sage_test_harness.compile_tests.resolved_symbols)]
+    fn symbol_selections_require_paths_and_expectations() {
+        let mut test = CompileTest::default();
+        test.source("fn f(value: u16) -> u16 { value } //# sym");
+        assert!(
+            test.prepare()
+                .unwrap_err()
+                .contains("observations expectation")
+        );
+        let mut test = CompileTest::default();
+        test.source("fn f() -> u16 { 22 } //# sym");
+        test.observations(expect![""]);
+        assert!(test.prepare().unwrap_err().contains("no path expression"));
+    }
+
+    #[test]
+    #[sage::test(crates.sage_test_harness.compile_tests.resolved_symbols)]
+    fn unresolved_paths_still_require_error_markers() {
+        let mut test = CompileTest::default();
+        test.source("fn f() -> u16 {\n missing //# sym\n}");
+        test.observations(expect![""]);
+        assert!(
+            test.prepare()
+                .unwrap_err()
+                .contains("0 markers, 1 diagnostics")
+        );
+        let mut test = CompileTest::default();
+        test.source("fn f() -> u16 {\n missing //# sym\n //# ERROR\n}");
+        test.observations(expect![""]);
+        test.diagnostics(expect![""]);
+        let output = test.prepare().unwrap();
+        assert_eq!(
+            output.observations,
+            "src/lib.rs: path `missing`\n  symbol: <unresolved>\n"
+        );
+        assert!(output.diagnostics.contains("error:"));
+    }
+
+    #[test]
+    #[sage::test(crates.sage_test_harness.compile_tests.resolved_symbols)]
+    fn unsupported_associated_identity_is_not_unresolved() {
+        use sage_ir::local_syms::{
+            LocalAssociatedOwner, LocalModItemSym, associated::local_associated_items,
+        };
+        use sage_ir::symbol::{SymbolData, TraitSymbol};
+        use sage_ir::tytree::PathResolution;
+        crate::with_test_crate("trait Has { fn answer(); }", |db, root| {
+            let [symbol] = root.expanded_module_items(db) else {
+                panic!("one trait expected")
+            };
+            let SymbolData::TraitSymbol(TraitSymbol::Local(owner)) = symbol.data(db) else {
+                panic!("local trait expected")
+            };
+            let [LocalModItemSym::Function(function)] =
+                local_associated_items(db, LocalAssociatedOwner::Trait(owner))
+            else {
+                panic!("one associated function expected")
+            };
+            let error =
+                super::symbols::resolution(db, PathResolution::Def((*function).into()), &[])
+                    .unwrap_err();
+            assert_eq!(error, "unsupported symbol identity");
+        });
+    }
+
+    #[test]
     #[sage::test(crates.sage_test_harness.compile_tests.edition)]
     fn unknown_edition_fails_setup() {
         let mut test = CompileTest::default();
