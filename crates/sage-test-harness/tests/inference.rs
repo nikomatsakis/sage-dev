@@ -19,13 +19,19 @@ fn return_context_constrains_numeric_literals_through_generic_calls() {
                 id(1.0) //# ty
             }
         "#},
-        types: expect![[r#"
-            src/lib.rs: path `id`: fn(u16) -> u16
-            src/lib.rs: literal `22`: u16
-            src/lib.rs: call `id(22)`: u16
-            src/lib.rs: path `id`: fn(f32) -> f32
-            src/lib.rs: literal `1.0`: f32
-            src/lib.rs: call `id(1.0)`: f32
+        observations: expect![[r#"
+            src/lib.rs: path `id`
+              type: fn(u16) -> u16
+            src/lib.rs: literal `22`
+              type: u16
+            src/lib.rs: call `id(22)`
+              type: u16
+            src/lib.rs: path `id`
+              type: fn(f32) -> f32
+            src/lib.rs: literal `1.0`
+              type: f32
+            src/lib.rs: call `id(1.0)`
+              type: f32
         "#]],
     }
 }
@@ -39,12 +45,17 @@ fn distinct_numeric_classes_take_independent_contextual_types() {
                 (1, 2, 3.0, 4.0) //# ty
             }
         "#},
-        types: expect![[r#"
-            src/lib.rs: literal `1`: u8
-            src/lib.rs: literal `2`: u64
-            src/lib.rs: literal `3.0`: f32
-            src/lib.rs: literal `4.0`: f64
-            src/lib.rs: tuple `(1, 2, 3.0, 4.0)`: (u8, u64, f32, f64)
+        observations: expect![[r#"
+            src/lib.rs: literal `1`
+              type: u8
+            src/lib.rs: literal `2`
+              type: u64
+            src/lib.rs: literal `3.0`
+              type: f32
+            src/lib.rs: literal `4.0`
+              type: f64
+            src/lib.rs: tuple `(1, 2, 3.0, 4.0)`
+              type: (u8, u64, f32, f64)
         "#]],
     }
 }
@@ -114,11 +125,15 @@ fn unconstrained_numeric_literals_report_errors_instead_of_defaulting() {
             fn float() { let value = 1.0; } //# ERROR
             //# ty
         "#},
-        types: expect![[r#"
-            src/lib.rs: literal `22`: <error>
-            src/lib.rs: block `{ let value = 22; }`: ()
-            src/lib.rs: literal `1.0`: <error>
-            src/lib.rs: block `{ let value = 1.0; }`: ()
+        observations: expect![[r#"
+            src/lib.rs: literal `22`
+              type: <error>
+            src/lib.rs: block `{ let value = 22; }`
+              type: ()
+            src/lib.rs: literal `1.0`
+              type: <error>
+            src/lib.rs: block `{ let value = 1.0; }`
+              type: ()
         "#]],
         diagnostics: expect![[r#"
             error: could not infer an integer type
@@ -146,12 +161,17 @@ fn top_level_never_coercion_preserves_source_and_result_types() {
                 loop {} //# ty
             }
         "#},
-        types: expect![[r#"
-            src/lib.rs: block `{}`: ()
-            src/lib.rs: loop `loop {}`: !
-            src/lib.rs: coercion `loop {}`: u32
-            src/lib.rs: block `{}`: ()
-            src/lib.rs: loop `loop {}`: !
+        observations: expect![[r#"
+            src/lib.rs: block `{}`
+              type: ()
+            src/lib.rs: loop `loop {}`
+              type: !
+            src/lib.rs: coercion `loop {}`
+              type: u32
+            src/lib.rs: block `{}`
+              type: ()
+            src/lib.rs: loop `loop {}`
+              type: !
         "#]],
     }
 }
@@ -194,23 +214,39 @@ fn generic_never_coercions_follow_other_arguments_in_either_order() {
                 single(loop {}); //# ty
             }
         "#},
-        types: expect![[r#"
-            src/lib.rs: path `pair`: fn(bool, bool) -> ()
-            src/lib.rs: block `{}`: ()
-            src/lib.rs: loop `loop {}`: !
-            src/lib.rs: coercion `loop {}`: bool
-            src/lib.rs: literal `true`: bool
-            src/lib.rs: call `pair(loop {}, true)`: ()
-            src/lib.rs: path `pair`: fn(bool, bool) -> ()
-            src/lib.rs: literal `true`: bool
-            src/lib.rs: block `{}`: ()
-            src/lib.rs: loop `loop {}`: !
-            src/lib.rs: coercion `loop {}`: bool
-            src/lib.rs: call `pair(true, loop {})`: ()
-            src/lib.rs: path `single`: fn(!) -> ()
-            src/lib.rs: block `{}`: ()
-            src/lib.rs: loop `loop {}`: !
-            src/lib.rs: call `single(loop {})`: ()
+        observations: expect![[r#"
+            src/lib.rs: path `pair`
+              type: fn(bool, bool) -> ()
+            src/lib.rs: block `{}`
+              type: ()
+            src/lib.rs: loop `loop {}`
+              type: !
+            src/lib.rs: coercion `loop {}`
+              type: bool
+            src/lib.rs: literal `true`
+              type: bool
+            src/lib.rs: call `pair(loop {}, true)`
+              type: ()
+            src/lib.rs: path `pair`
+              type: fn(bool, bool) -> ()
+            src/lib.rs: literal `true`
+              type: bool
+            src/lib.rs: block `{}`
+              type: ()
+            src/lib.rs: loop `loop {}`
+              type: !
+            src/lib.rs: coercion `loop {}`
+              type: bool
+            src/lib.rs: call `pair(true, loop {})`
+              type: ()
+            src/lib.rs: path `single`
+              type: fn(!) -> ()
+            src/lib.rs: block `{}`
+              type: ()
+            src/lib.rs: loop `loop {}`
+              type: !
+            src/lib.rs: call `single(loop {})`
+              type: ()
         "#]],
     }
 }
@@ -234,8 +270,9 @@ fn later_numeric_constraint_selects_an_impl_through_a_where_clause() {
                 return;
             }
         "#},
-        types: expect![[r#"
-            src/lib.rs: literal `22`: u8
+        observations: expect![[r#"
+            src/lib.rs: literal `22`
+              type: u8
         "#]],
     }
 }

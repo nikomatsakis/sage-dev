@@ -51,7 +51,7 @@ pub(super) fn collect(
         .collect();
     let mut sorted_types: Vec<_> = checked.types.iter().collect();
     sorted_types.sort_by_key(|row| (&row.file, row.end, std::cmp::Reverse(row.start)));
-    let mut types = String::new();
+    let mut observations = String::new();
     for (file, line) in targets {
         let mut found = false;
         for row in sorted_types
@@ -66,8 +66,8 @@ pub(super) fn collect(
                     row.source
                 ));
             }
-            types.push_str(&format!(
-                "{}: {} `{}`: {}\n",
+            observations.push_str(&format!(
+                "{}: {} `{}`\n  type: {}\n",
                 row.file,
                 row.kind,
                 compact(&row.source),
@@ -89,7 +89,7 @@ pub(super) fn collect(
         String::new()
     };
     Ok(Output {
-        types,
+        observations,
         diagnostics: diagnostics
             .iter()
             .map(DiagnosticSnapshot::render)

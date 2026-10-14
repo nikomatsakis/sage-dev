@@ -34,7 +34,7 @@ macro_rules! compile_test {
 pub struct CompileTest {
     files: Option<Vec<(String, String)>>,
     edition: Option<String>,
-    types: Option<Expect>,
+    observations: Option<Expect>,
     diagnostics: Option<Expect>,
     queries: Option<Expect>,
 }
@@ -66,7 +66,7 @@ impl CompileTest {
             "duplicate edition"
         );
     }
-    expectation_field!(types);
+    expectation_field!(observations);
     expectation_field!(diagnostics);
     expectation_field!(queries);
 
@@ -80,8 +80,8 @@ impl CompileTest {
         let output = self
             .prepare()
             .unwrap_or_else(|error| panic!("compile_test: {error}"));
-        if let Some(expect) = self.types {
-            expect.assert_eq(&output.types);
+        if let Some(expect) = self.observations {
+            expect.assert_eq(&output.observations);
         }
         if let Some(expect) = self.diagnostics {
             expect.assert_eq(&output.diagnostics);
@@ -105,9 +105,10 @@ impl CompileTest {
         for (path, source) in &files {
             markers.extend(annotations::parse(path, source)?);
         }
-        if markers.iter().any(|marker| marker.kind == Kind::Type) != self.types.is_some() {
+        if markers.iter().any(|marker| marker.kind == Kind::Type) != self.observations.is_some() {
             return Err(
-                "type markers require exactly one types expectation, and vice versa".into(),
+                "observation markers require exactly one observations expectation, and vice versa"
+                    .into(),
             );
         }
         // {anchor}`crates.sage_test_harness.compile_tests.project_isolation`
@@ -139,7 +140,7 @@ impl CompileTest {
 
 #[derive(Debug)]
 struct Output {
-    types: String,
+    observations: String,
     diagnostics: String,
     queries: String,
 }
@@ -210,14 +211,22 @@ mod tests {
     fn expectations_and_source_selections_must_agree() {
         let mut test = CompileTest::default();
         test.source("fn f() { 22; } //# ty");
-        assert!(test.prepare().unwrap_err().contains("types expectation"));
+        assert!(
+            test.prepare()
+                .unwrap_err()
+                .contains("observations expectation")
+        );
         let mut test = CompileTest::default();
         test.source("fn f() {}");
-        test.types(expect![""]);
-        assert!(test.prepare().unwrap_err().contains("types expectation"));
+        test.observations(expect![""]);
+        assert!(
+            test.prepare()
+                .unwrap_err()
+                .contains("observations expectation")
+        );
         let mut test = CompileTest::default();
         test.source("fn f() {\n}\n//# ty");
-        test.types(expect![""]);
+        test.observations(expect![""]);
         assert!(test.prepare().unwrap_err().contains("no expression"));
     }
 
@@ -239,7 +248,7 @@ mod tests {
         assert!(error.contains("0 markers, 1 diagnostics"), "{error}");
         let mut selected = CompileTest::default();
         selected.source("fn good() {} //# ty\nfn bad() -> u16 { true }");
-        selected.types(expect![""]);
+        selected.observations(expect![""]);
         let error = selected.prepare().unwrap_err();
         assert!(error.contains("0 markers, 1 diagnostics"), "{error}");
     }

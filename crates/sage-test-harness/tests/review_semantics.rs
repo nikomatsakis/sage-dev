@@ -36,10 +36,13 @@ fn distinct_same_named_types_keep_their_identity() {
                 (a, b) //# ty
             }
         "#},
-        types: expect_test::expect![[r#"
-            src/lib.rs: path `a`: a::Value
-            src/lib.rs: path `b`: b::Value
-            src/lib.rs: tuple `(a, b)`: (a::Value, b::Value)
+        observations: expect_test::expect![[r#"
+            src/lib.rs: path `a`
+              type: a::Value
+            src/lib.rs: path `b`
+              type: b::Value
+            src/lib.rs: tuple `(a, b)`
+              type: (a::Value, b::Value)
         "#]],
     }
 }
@@ -109,8 +112,9 @@ fn path_attribute_inside_inline_module_uses_its_module_directory() {
             "src/lib.rs": "mod outer { #[path = \"renamed.rs\"] mod inner; }",
             "src/outer/renamed.rs": "fn value() -> u16 {\n22 //# ty\n}",
         },
-        types: expect_test::expect![[r#"
-            src/outer/renamed.rs: literal `22`: u16
+        observations: expect_test::expect![[r#"
+            src/outer/renamed.rs: literal `22`
+              type: u16
         "#]],
     }
 }
