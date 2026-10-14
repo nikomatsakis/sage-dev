@@ -26,7 +26,7 @@
     - [The .sage Language](./design/meta/language.md)
     - [Anchors and Evidence](./design/meta/anchors.md)
     - [Architectural Contracts](./design/meta/contracts.md)
-    - [Reviewing Specification Tests](./design/meta/reviews.md)
+    - [Reviewing Implementations and Tests](./design/meta/reviews.md)
     - [Validation Practices](./design/meta/validation.md)
   - [Tenets](./design/tenets.md)
   - [Anchors](./design/anchor/README.md)

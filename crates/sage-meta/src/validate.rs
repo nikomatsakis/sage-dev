@@ -24,6 +24,11 @@ pub fn validate(documents: &[Document]) -> Vec<Diagnostic> {
 
 /// Resolve runtime contracts with exactly the same ownership, inheritance, and
 /// virtual target rules used by static model validation.
+// {anchor}`meta.language.methods.kinds`
+// {anchor}`meta.language.envelopes.leaf`
+// {anchor}`meta.language.calls.declared`
+// {anchor}`meta.language.calls.forbidden`
+// {anchor}`meta.language.envelopes.permissions`
 pub(crate) fn resolve_contracts(
     documents: &[Document],
 ) -> Result<BTreeMap<String, crate::contracts::OperationContract>, Vec<Diagnostic>> {
@@ -116,6 +121,7 @@ pub(crate) fn resolve_contracts(
     Ok(operations)
 }
 
+// {anchor}`meta.book.crate_ownership`
 fn build_model(documents: &[Document]) -> Model<'_> {
     let mut model = Model {
         classes: BTreeMap::new(),
@@ -615,6 +621,7 @@ impl Model<'_> {
 impl Model<'_> {
     /// A structural canonical spelling, independent of source ranges and path spelling.
     // {anchor}`meta.language.types.recursive_values`
+    // {anchor}`meta.language.types.tuples`
     fn resolve_type(
         &self,
         namespace: &str,

@@ -495,3 +495,24 @@ API. Static implementation call analysis remains a separate later milestone.
       land. Link claim-specific tests and walkthrough evidence.
 - [ ] Build the book and run relevant Rust, macro, compiler, browser, and tool
       integration checks for each implementation stage.
+
+
+## Implementation completeness reviews
+
+The [review contract](../../design/meta/reviews.md) now asks reviewers to judge
+implementation completeness and test adequacy together. Policy version 2
+invalidates earlier test-only approvals; it does not reinterpret them as code
+reviews. Explicit TODO entries still acknowledge incomplete work.
+
+Implementation point markers provide short navigation previews, so caching only
+those excerpts would miss edits to most of the implementation. The review input
+therefore includes complete associated files and association metadata. This
+conservative boundary increases checklist size and review churn for unrelated
+edits in the same file, while keeping the source inspected by reviewers visible
+in saved inputs. Essential implementation logic in other files needs its own
+association; arbitrary transitive dependencies are not automatically captured.
+
+The review skill directs reviewers to add and run regression tests for suspected
+bugs, record reproduced failures, and consult the user when reproduction or test
+construction is unsuccessful. Tests added during review require fresh input
+preparation before the decision is recorded.

@@ -83,6 +83,7 @@ fn open_owner<'db>(
 #[salsa::tracked(debug)]
 #[sage::item(crate::symbols::LocalFnSym)]
 // {anchor}`crates.sage_ir.symbols.local_identity`
+// {anchor}`crates.sage_ir.symbols.associated_identity`
 pub struct LocalFnSym<'db> {
     pub name: Name<'db>,
     pub scope: ScopeSymbol<'db>,

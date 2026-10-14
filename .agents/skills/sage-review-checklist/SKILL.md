@@ -1,15 +1,15 @@
 ---
 name: sage-review-checklist
-description: Review new or changed Sage specification claims against their annotated Rust tests and record decisions in review-checklist.json when sage-meta check reports missing or stale reviews.
+description: Review Sage implementation completeness and test adequacy against specification claims and record decisions when sage-meta check reports missing or stale reviews.
 ---
 
-# Review Sage specification tests
+# Review Sage implementations and tests
 
-Review the exact claim and complete associated test set before recording a
-decision. The saved conclusion concerns whether those test bodies visibly
-check the claim; it does not prove implementation conformance or replace test
-execution. Follow `md/design/meta/reviews.md` for the extraction and freshness
-contract.
+Review the exact claim, associated implementation code, and complete associated
+test set before recording a decision. Judge whether the anchor is fully and
+correctly implemented and whether the tests demonstrate its functionality.
+Source review does not replace test execution. Follow
+`md/design/meta/reviews.md` for the snapshot and freshness contract.
 
 ## Prepare the work
 
@@ -19,77 +19,87 @@ From the repository root, run:
 cargo run -p sage-meta -- review prepare > /tmp/sage-review.json
 ```
 
-The output contains current inputs for anchors needing review. Preparation
-does not update `review-checklist.json`. If structural validation prevents
-preparation, fix the reported source problems within the authorized task
-before reviewing. Do not delete annotations, weaken claims, or reclassify
+Preparation emits current inputs for anchors needing review without updating
+`review-checklist.json`. Fix structural validation errors within the authorized
+scope before reviewing. Do not delete annotations, weaken claims, or reclassify
 ordinary tests as placeholders merely to make the gate pass.
 
-Dispatch review subagents with small, related groups of anchors. Give each
-subagent the exact input records and repository access, and request one result
-per assigned anchor. Assign every emitted anchor explicitly, including TODO
-and N/A entries. Reviewers may inspect helpers and implementation context, but
-must not modify code or edit the shared checklist as part of their review.
+Dispatch review subagents with small, related groups of anchors. Give each the
+exact input records and repository access; request one result per anchor.
+Assign every emitted anchor explicitly, including TODO and N/A entries.
+Give reviewers separate test-file ownership or isolated worktrees when
+reproduction tests might overlap. Reviewers may add regression tests and
+implementation associations, but must not change production behavior or edit
+the shared checklist as part of review. Coordinate shared-file changes through
+the parent agent.
 
 ## Evaluate each anchor
 
-For each record, the reviewer should:
-
-1. Identify the independently testable assertions in the claim. Consider all
-   associated tests together; different tests may cover different assertions.
-2. Read the actual supplied test bodies. Identify the scenario, expected
-   outcome, and assertions that exercise the claim. A test name, annotation,
-   explanatory comment, or passing result alone is insufficient.
-3. Describe a plausible violation and whether these assertions would detect
-   it. Report assertions or important cases that lack evidence.
-4. Require the meaningful check to be clear from the body of the annotated
-   test itself. Fixture construction, parsing, and setup helpers are fine;
-   `verify_everything()` that hides the scenario and assertions is not. Read
-   helpers when needed for understanding, but their contents are not cached
-   review inputs. If the test body is insufficient, request restructuring.
-5. Run focused tests when useful, distinguishing observed results from source
-   inspection. Do not infer a run from a saved review or test annotation.
-6. Return the anchor, decision, reviewer identity, and claim-specific reasoning
-   citing the relevant test names and assertions. Include concrete follow-up
-   work for an unsuccessful review.
+1. Identify every requirement in the complete claim. Read all associated
+   implementation entries and their snapshotted source files. Trace each
+   requirement to actual behavior; check missing cases, edge cases, and
+   contradictions. An association or passing test does not establish
+   implementation completeness. Follow relevant helpers and dependencies. Add
+   associations for essential implementation code in other files so later edits
+   invalidate approval; a five-line point preview is only navigation context.
+2. Read the supplied test bodies as a set. Identify the scenario, expected
+   outcome, and assertions demonstrating each requirement. Different tests may
+   cover different parts. Names, annotations, comments, and passing results
+   alone are insufficient. Meaningful checks must be visible in the annotated
+   bodies; setup helpers are fine, but opaque `verify_everything()` calls are not.
+3. Investigate potential bugs by adding an anchor-associated regression test
+   asserting the specified behavior and running it against the implementation.
+   Use an existing test target where practical. Preserve the test and report a
+   reproduced behavioral failure as `needs_work`, citing its name, exact
+   command, expected behavior, and observed failure. Compilation, tooling, or
+   environment failures do not count as reproducing the suspected bug. Do not
+   weaken the claim or test expectation to obtain a passing result.
+4. If the concern cannot be reproduced with a test, or you cannot work out how
+   to write the test, consult the user: explain the suspected violation, what
+   was attempted, and what remains uncertain. Subagents report this to the
+   coordinator for consultation. Leave that review unresolved; a passing attempt
+   alone does not resolve the concern. Continue independent reviews meanwhile.
+5. Distinguish source inspection from tests actually run. Return the anchor,
+   decision, reviewer identity, and claim-specific reasoning covering both
+   implementation completeness (with code locations) and test adequacy (with
+   test names and assertions). Include reproduction results and follow-up work
+   for unsuccessful reviews.
 
 Use these decisions:
 
-- `approved`: all associated tests are ordinary and their bodies collectively
-  express an adequate check of the claim.
-- `todo`: at least one associated test is in a `todo` module. Explain the
-  unfinished behavior and account for any ordinary or N/A tests as well. This
-  accepts the explicitly recorded gap, not the behavior as implemented.
-- `not_applicable`: every associated test is in a `not_applicable` module and
-  the recorded explanation justifies why executable evidence does not apply.
-- `needs_work`: the evidence is inadequate or contradictory, or a placeholder
-  explanation is not justified. State the smallest useful follow-up.
+- `approved`: all implementation and test entries are ordinary, the implementation
+  fully satisfies the claim, and the tests collectively demonstrate it.
+- `todo`: at least one implementation or test entry is in a `todo` module.
+  Explain the unfinished behavior and account for all entries on both sides.
+  This accepts the explicitly recorded gap, not the behavior as implemented.
+- `not_applicable`: every implementation and test entry is in a
+  `not_applicable` module and the explanations justify inapplicability.
+- `needs_work`: implementation or tests are incomplete, a bug is reproduced,
+  or a placeholder explanation is unjustified. State the smallest useful follow-up.
 
-Never promote TODO or N/A entries to `approved`. Do not reuse one generic
-approval rationale across unrelated claims. If review cannot finish, leave
-the entry pending and report it as unfinished.
+Never promote TODO or N/A entries to `approved`. Do not reuse generic approval
+reasoning across unrelated claims. If review cannot finish, leave it pending
+and report it as unfinished.
 
 ## Reconcile and record
 
-The coordinator checks that every assigned anchor has a result, reconciles
-conflicting findings, and reviews each decision's reasoning. Preserve every
-input snapshot exactly. Populate only `decision`, `reason`, and `reviewer` on
-completed records and write them to a separate JSON submission, preserving
-the generated schema and policy versions. A submission may contain a subset
-of completed anchors; omit unfinished entries instead of approving them.
+The coordinator checks every assigned result and reconciles conflicts. Preserve
+input snapshots exactly. If reviewers added tests or associations, prepare again
+and review the fresh affected records before recording; never transplant a
+verdict onto changed inputs without checking them. Populate only `decision`,
+`reason`, and `reviewer` on completed records, and write a separate JSON
+submission preserving schema and policy versions. Omit unfinished entries.
 
 ```bash
 cargo run -p sage-meta -- review record /tmp/sage-reviewed.json
 cargo run -p sage-meta -- check
 ```
 
-Recording reloads the current sources and rejects stale inputs. If it rejects
-a source change, prepare and review the changed input again; do not copy the
-new source into an old approval. Recording a `needs_work` finding is useful
-but does not pass the gate. Resolve it through actual claim/test changes and
-another review, or report the remaining blocker accurately.
+Recording reloads sources and rejects stale inputs. After rejection, prepare
+and review again; do not copy new source into an old approval. A recorded
+`needs_work` finding fails the gate. Resolve it through actual implementation
+or test changes and another review, or report the remaining blocker accurately.
 
-Inspect the `review-checklist.json` diff, run relevant tests independently,
-and report the decisions and any remaining gaps. Keep the updated checklist
-with the claim/test changes for the user's normal commit workflow; do not
-automatically commit or publish it.
+Inspect the checklist diff, run relevant tests independently, and report
+outcomes and remaining gaps. Keep the checklist with the implementation/test
+changes for the user's normal commit workflow; do not automatically publish it.

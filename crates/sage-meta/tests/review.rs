@@ -183,7 +183,7 @@ fn later_blocks_invalidate_reviews_but_content_beyond_a_boundary_does_not() {
 
 #[test]
 #[sage::test(meta.reviews.source_representation)]
-fn persisted_source_line_arrays_reconstruct_claim_and_annotated_test() {
+fn persisted_source_line_arrays_reconstruct_claim_implementation_and_test() {
     let fixture = Fixture::new();
     let claim =
         "The **result** is four.  \n\nFor example:\n\n```rust\n    assert_eq!(2 + 2, 4);\n```";
@@ -206,38 +206,40 @@ fn persisted_source_line_arrays_reconstruct_claim_and_annotated_test() {
         assert_eq!(strings.join("\n"), original);
     }
     let loaded = review::load(&fixture.0.join(review::CHECKLIST_FILE)).unwrap();
+    assert_eq!(
+        loaded.reviews[0].input.implementation_sources["src/lib.rs"].join("\n"),
+        std::fs::read_to_string(fixture.0.join("src/lib.rs")).unwrap()
+    );
     assert_eq!(loaded.reviews[0].input.claim.join("\n"), claim);
     assert_eq!(loaded.reviews[0].input.tests[0].source.join("\n"), function);
 }
 
 #[test]
 #[sage::test(meta.reviews.review_scope)]
-fn implementation_only_edits_preserve_the_approval_input_and_review() {
+fn implementation_edits_including_outside_the_preview_invalidate_review() {
     let fixture = Fixture::new();
-    let implementation = "// {anchor}`demo.rule`<<\nfn implementation() -> u32 { 2 + 2 }\n// >>";
+    let implementation = "// {anchor}`demo.rule`<<\nfn implementation() -> u32 { helper() }\n// >>\nfn helper() -> u32 { 2 + 2 }";
     fixture.rust(&format!("{implementation}\n{TEST}"));
     let reviewed = fixture.approve();
     let saved = fixture.saved();
-    let input = serde_json::to_value(&reviewed.reviews[0].input).unwrap();
-    let fields = input.as_object().unwrap();
-    assert_eq!(fields.len(), 2);
-    assert!(fields.contains_key("claim"));
-    assert!(fields.contains_key("tests"));
+    let input = &reviewed.reviews[0].input;
+    assert!(input.implementations.iter().any(|site| site.region));
     assert!(
-        !serde_json::to_string(&input)
-            .unwrap()
-            .contains("fn implementation")
+        input.implementation_sources["src/lib.rs"]
+            .join("\n")
+            .contains("fn helper()")
     );
 
-    fixture.rust(&format!("{}\n{TEST}", implementation.replace("2 + 2", "4")));
-    let spec = sage_meta::spec::SpecIndex::load_workspace(&fixture.0).unwrap();
-    let rust = sage_meta::correspondence::CorrespondenceIndex::load(&fixture.0).unwrap();
-    assert_eq!(
-        review::inventory(&spec, &rust).unwrap()["demo.rule"],
-        reviewed.reviews[0].input
+    fixture.rust(&format!("{}\n{TEST}", implementation.replace("2 + 2", "5")));
+    let pending = review::prepare(&fixture.0).unwrap();
+    assert_eq!(pending.reviews.len(), 1);
+    assert_eq!(pending.reviews[0].input.tests, input.tests);
+    assert_ne!(
+        pending.reviews[0].input.implementation_sources,
+        input.implementation_sources
     );
-    assert!(review::prepare(&fixture.0).unwrap().reviews.is_empty());
-    assert!(sage_meta::check(&fixture.0).is_valid());
+    assert!(!sage_meta::check(&fixture.0).is_valid());
+    assert!(review::record(&fixture.0, &reviewed).is_err());
     assert_eq!(fixture.saved(), saved);
 }
 
@@ -273,12 +275,16 @@ fn adding_or_removing_an_associated_test_invalidates_the_collective_review() {
     let pending = review::prepare(&fixture.0).unwrap();
     assert_eq!(pending.reviews.len(), 1, "the review is grouped by claim");
     assert_eq!(pending.reviews[0].input.tests.len(), 2);
-    fixture.approve();
+    let approved = fixture.approve();
     fixture.rust(&format!("{extra}\n{TEST}"));
-    assert!(review::prepare(&fixture.0).unwrap().reviews.is_empty());
-    assert!(
-        sage_meta::check(&fixture.0).is_valid(),
+    let reordered = review::prepare(&fixture.0).unwrap();
+    assert_eq!(
+        reordered.reviews[0].input.tests, approved.reviews[0].input.tests,
         "source order must not change the sorted test set"
+    );
+    assert!(
+        !sage_meta::check(&fixture.0).is_valid(),
+        "reordering inside an implementation file changes its snapshot"
     );
     fixture.rust(TEST);
     assert!(!sage_meta::check(&fixture.0).is_valid());
@@ -293,11 +299,10 @@ fn adding_or_removing_an_associated_test_invalidates_the_collective_review() {
 
 #[test]
 #[sage::test(meta.reviews.staleness)]
-fn claim_body_and_cfg_changes_require_review_but_line_movement_does_not() {
+fn source_and_cfg_changes_require_review_but_claim_movement_does_not() {
     let fixture = Fixture::new();
     fixture.approve();
     fixture.claim(&format!("# A new heading\n\n{CLAIM}"));
-    fixture.rust(&format!("\n\n{TEST}"));
     assert!(sage_meta::check(&fixture.0).is_valid());
     assert!(review::prepare(&fixture.0).unwrap().reviews.is_empty());
 
@@ -495,7 +500,9 @@ fn placeholder_decisions_require_matching_explicit_test_status() {
     review::record(&fixture.0, &mixed).unwrap();
     assert_eq!(sage_meta::check(&fixture.0).review.unwrap().todo, 1);
 
-    fixture.rust(&format!("mod not_applicable {{ {TEST} }}"));
+    std::fs::write(fixture.0.join("src/lib.rs"), format!(
+        "#[sage::item(crate)] mod model {{}}\nmod not_applicable {{\n// {{anchor}}`demo.rule`\n{TEST}\n}}"
+    )).unwrap();
     let mut na = review::prepare(&fixture.0).unwrap();
     assert_eq!(
         na.reviews[0].input.tests[0].status,
@@ -608,4 +615,125 @@ fn cli_preparation_and_recording_preserve_the_reviewed_snapshot() {
             .status
             .success()
     );
+}
+
+#[test]
+#[sage::test(meta.reviews.review_scope)]
+#[sage::test(meta.reviews.decisions)]
+fn implementation_placeholders_prevent_approval_even_with_ordinary_tests() {
+    let fixture = Fixture::new();
+    for status in ["todo", "not_applicable"] {
+        std::fs::write(fixture.0.join("src/lib.rs"), format!(
+            "#[sage::item(crate)] mod model {{}}\nmod {status} {{\n// {{anchor}}`demo.rule`\n// Explicit implementation gap.\n}}\n{TEST}"
+        )).unwrap();
+        let mut packet = review::prepare(&fixture.0).unwrap();
+        let record = &mut packet.reviews[0];
+        assert_eq!(record.input.tests[0].status, TestStatus::Ordinary);
+        assert_eq!(
+            record.input.implementations[0].explanation.as_deref(),
+            Some("Explicit implementation gap.")
+        );
+        record.reviewer = "fixture".into();
+        record.reason = "Implementation gap with an ordinary test.".into();
+        record.decision = Decision::Approved;
+        assert!(review::record(&fixture.0, &packet).is_err());
+        packet.reviews[0].decision = Decision::NotApplicable;
+        assert!(review::record(&fixture.0, &packet).is_err());
+        packet.reviews[0].decision = Decision::Todo;
+        assert_eq!(
+            review::record(&fixture.0, &packet).is_ok(),
+            status == "todo"
+        );
+    }
+}
+
+#[test]
+#[sage::test(meta.reviews.staleness)]
+#[sage::test(meta.reviews.preparation)]
+fn test_only_policy_reviews_load_but_require_fresh_review() {
+    let fixture = Fixture::new();
+    let approved = fixture.approve();
+    let mut legacy = serde_json::to_value(approved).unwrap();
+    legacy["policy_version"] = 1.into();
+    let input = legacy["reviews"][0]["input"].as_object_mut().unwrap();
+    input.remove("implementations");
+    input.remove("implementation_sources");
+    std::fs::write(
+        fixture.0.join(review::CHECKLIST_FILE),
+        serde_json::to_string(&legacy).unwrap(),
+    )
+    .unwrap();
+    let saved = fixture.saved();
+    assert!(review::load(&fixture.0.join(review::CHECKLIST_FILE)).is_ok());
+    assert!(!sage_meta::check(&fixture.0).is_valid());
+    let pending = review::prepare(&fixture.0).unwrap();
+    assert_eq!(pending.reviews.len(), 1);
+    assert_eq!(pending.reviews[0].decision, Decision::Pending);
+    assert_eq!(pending.policy_version, review::POLICY_VERSION);
+    assert!(!pending.reviews[0].input.implementations.is_empty());
+    assert_eq!(fixture.saved(), saved);
+}
+
+#[test]
+#[sage::test(meta.reviews.review_scope)]
+#[sage::test(meta.reviews.staleness)]
+fn implementation_associations_and_inherited_cfg_are_review_inputs() {
+    let fixture = Fixture::new();
+    let root = format!("#[sage::item(crate)] mod model {{}}\n#[cfg(unix)] mod behavior;\n{TEST}");
+    std::fs::write(fixture.0.join("src/lib.rs"), &root).unwrap();
+    let behavior = "// {anchor}`demo.rule`<<\npub fn result() -> u32 { 4 }\n// >>\n";
+    std::fs::write(fixture.0.join("src/behavior.rs"), behavior).unwrap();
+    let approved = fixture.approve();
+    let input = &approved.reviews[0].input;
+    assert_eq!(input.implementation_sources.len(), 1);
+    assert_eq!(
+        input.implementation_sources["src/behavior.rs"].join("\n"),
+        behavior
+    );
+    let site = &input.implementations[0];
+    assert_eq!(site.crate_name, "demo");
+    assert_eq!(site.target, "lib:demo");
+    assert_eq!(site.module, "demo::behavior");
+    assert_eq!(site.cfg, ["#[cfg(unix)]"]);
+    assert!(site.region);
+    assert_eq!(site.excerpt.join("\n"), behavior);
+
+    // Parent cfg is outside the associated file; association metadata captures it.
+    std::fs::write(
+        fixture.0.join("src/lib.rs"),
+        root.replace("unix", "windows"),
+    )
+    .unwrap();
+    let changed = review::prepare(&fixture.0).unwrap();
+    assert_eq!(
+        changed.reviews[0].input.implementation_sources,
+        input.implementation_sources
+    );
+    assert_eq!(changed.reviews[0].input.tests, input.tests);
+    assert_ne!(
+        changed.reviews[0].input.implementations,
+        input.implementations
+    );
+    assert!(review::record(&fixture.0, &approved).is_err());
+
+    std::fs::write(fixture.0.join("src/lib.rs"), &root).unwrap();
+    assert!(review::prepare(&fixture.0).unwrap().reviews.is_empty());
+    std::fs::write(
+        fixture.0.join("src/behavior.rs"),
+        format!("{behavior}// {{anchor}}`demo.rule`\n"),
+    )
+    .unwrap();
+    let added = review::prepare(&fixture.0).unwrap();
+    assert_eq!(added.reviews[0].input.implementations.len(), 2);
+    assert!(!sage_meta::check(&fixture.0).is_valid());
+    fixture.approve();
+    std::fs::write(fixture.0.join("src/behavior.rs"), behavior).unwrap();
+    assert_eq!(
+        review::prepare(&fixture.0).unwrap().reviews[0]
+            .input
+            .implementations
+            .len(),
+        1
+    );
+    assert!(!sage_meta::check(&fixture.0).is_valid());
 }

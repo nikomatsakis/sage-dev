@@ -27,6 +27,7 @@ pub fn book_source_root(workspace: &Path) -> Result<PathBuf, Box<dyn std::error:
 
 /// Find the nearest enclosing modeled crate for a source file. The source and
 /// document paths must use the same root, as they do in the shared book loader.
+// {anchor}`meta.book.crate_ownership`
 pub fn crate_source_owner<'a>(documents: &'a [Document], source: &Path) -> Option<&'a str> {
     documents
         .iter()
@@ -44,6 +45,7 @@ pub fn crate_source_owner<'a>(documents: &'a [Document], source: &Path) -> Optio
 
 /// Stable namespace shared by source correspondence and browser navigation.
 /// The model validator separately diagnoses invalid headers and file placement.
+// {anchor}`meta.contracts.correspondence`
 pub fn document_namespace(documents: &[Document], document: &Document) -> Option<String> {
     match &document.header {
         crate::Header::Crate { name, .. } => Some(name.clone()),

@@ -91,7 +91,7 @@ pub struct CheckReport {
     /// Anchor definitions and their Rust implementation and test associations.
     /// Absent if static model validation failed or the Rust source index could not load.
     pub specification: Option<SpecificationCheck>,
-    /// Freshness and decisions of saved claim-and-test reviews, without executing tests.
+    /// Freshness and decisions of saved implementation-and-test reviews, without executing tests.
     /// Absent when specification validation or an earlier prerequisite failed.
     pub review: Option<ReviewCheck>,
     /// Formatted diagnostics and load failures, including source excerpts when available.
@@ -504,7 +504,7 @@ fn check_reviews(
     }
     if !stage.valid {
         if let Some(error) = report.rendered_errors.last_mut() {
-            error.push_str(&format!("\n  = help: run the {} skill to review changed claims and tests; start with `cargo run -p sage-meta -- review prepare`, then record the completed review with `cargo run -p sage-meta -- review record <file>`", review::REVIEW_SKILL));
+            error.push_str(&format!("\n  = help: run the {} skill to review changed claims, implementations, and tests; start with `cargo run -p sage-meta -- review prepare`, then record the completed review with `cargo run -p sage-meta -- review record <file>`", review::REVIEW_SKILL));
         }
     }
     report.review = Some(stage);

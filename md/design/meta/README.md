@@ -12,5 +12,5 @@ process as the compiler specification.
   implementation excerpts and tests.
 - [Architectural contracts](contracts.md) connects modeled operations to
   observed execution.
-- [Reviewing specification tests](reviews.md) defines the committed review
+- [Reviewing implementations and tests](reviews.md) defines the committed review
   checklist and its freshness checks.

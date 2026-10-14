@@ -359,6 +359,7 @@ impl CorrespondenceIndex {
     /// Bidirectional source coverage. Module anchors count as source locations,
     /// while `RustSite::executable` reports the separate body-mapping coverage.
     // {anchor}`meta.contracts.correspondence`
+    // {anchor}`meta.book.crate_ownership`
     pub fn validate(&self, documents: &[Document]) -> Vec<Diagnostic> {
         #[derive(Clone, Copy)]
         enum Unit {
@@ -802,6 +803,7 @@ impl CorrespondenceIndex {
                 });
         }
     }
+    // {anchor}`meta.anchors.test_references`
     fn record_tests(&mut self, attrs: &[syn::Attribute], site: &RustSite, context: &Context) {
         for attribute in attrs.iter().filter(|attribute| {
             attribute.path().segments.len() == 2
