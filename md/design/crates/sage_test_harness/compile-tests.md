@@ -1,10 +1,8 @@
 # Inline Compilation Tests
 
-**Draft destination specification.** The [Inline Compilation Tests
-RFD](../../../rfds/inline-compile-tests/README.md) proposes this framework.
-The examples describe the proposed API, not an available macro. Rust
-implementation/test associations and reviewed evidence are deferred to the
-implementation phase; this documentation draft does not establish coverage.
+The [Inline Compilation Tests RFD](../../../rfds/inline-compile-tests/README.md)
+records the design rationale. `sage_test_harness::compile_test!` is the inline
+runner; implementation and test evidence is reported by the generated anchors.
 
 `compile_test!` puts Rust fixtures, source annotations, and expected observations
 inside ordinary Cargo tests. The runner produces semantic observations through
@@ -13,9 +11,13 @@ and the independent [oracle comparisons](../sage_oracle_harness/oracle-guide.md)
 
 ## Authoring a test
 
-The proposed anonymous form uses a fixed root `src/lib.rs`:
+The anonymous form uses a fixed root `src/lib.rs`:
 
 ```rust,ignore
+use sage_test_harness::compile_test;
+use expect_test::expect;
+use indoc::indoc;
+
 #[test]
 #[sage::test(crates.sage_ir.inference.numeric_domains)]
 fn literal_type() {
@@ -34,9 +36,11 @@ fn literal_type() {
 }
 ```
 
-The type snapshot above illustrates the intended information; exact punctuation
-and expression-kind labels remain a rendering choice to settle before
-implementation. Type snapshots include filenames but omit line numbers,
+Tests using the embedded rustc metadata provider need `#![feature(rustc_private)]`
+at the top of their Rust test crate, using the repository's pinned nightly.
+`#[sage::test(...)]` additionally uses the existing registered `sage` tool.
+
+Type snapshots include filenames but omit line numbers,
 columns, and ranges; positions are used internally to select expressions.
 
 For a crate with directories, use explicit relative paths:
@@ -83,7 +87,9 @@ source becomes `src/lib.rs`. A files map must contain `src/lib.rs`, the fixed
 crate root. There is no root-selection option or automatic root detection.
 Paths are relative to the materialized project and imply directories; files become modules only through Rust's module-loading rules.
 Duplicate paths, absolute paths, parent traversal, a missing `src/lib.rs`, and
-file/directory conflicts are fixture errors. Unreferenced files are not
+file/directory conflicts are fixture errors. The generated `Cargo.toml` and
+`Cargo.lock`, `.cargo` configuration, and a root `build.rs` are reserved and
+cannot be supplied as fixture files. Unreferenced files are not
 implicitly compiled; annotations in files outside the selected crate are
 rejected rather than silently left unchecked.
 
@@ -289,7 +295,7 @@ fn call_argument_types() {
             }
         "#},
         types: expect![[r#"
-            src/lib.rs: path `inner`: fn(u16) -> u32 {inner}
+            src/lib.rs: path `inner`: fn(u16) -> u32
             src/lib.rs: literal `22u16`: u16
             src/lib.rs: call `inner(22u16)`: u32
         "#]],
@@ -303,12 +309,12 @@ start on earlier lines, so they are omitted. The literal `33u16` starts on a
 later line and is also omitted. Moving the marker to the line immediately
 after `outer(` would instead observe the path `outer` followed by the complete
 `outer(...)` call, even though that call ends several lines later.
-These expectation literals illustrate the proposed filename-only output.
+These expectation literals illustrate the filename-only output.
 Moving an expression to another line without changing observation order does
 not itself change its type snapshot.
-`fn(u16) -> u32 {inner}` denotes the function item type, not a function pointer.
-Expression membership and ordering are specified here; exact rendering syntax
-remains a draft choice, as in the introductory example.
+Expression descriptions use the single-line rendering rules below. Type
+representations describe the completed types currently exposed by Sage; the
+runner does not manufacture distinctions absent from its typed IR.
 
 {anchor}`completed_types`
 Type observations read final types after body checking completes. They neither
@@ -399,7 +405,9 @@ Query snapshots use stable semantic operation names and identities, retain
 parentage, multiplicity, and available execution/reuse dispositions, and omit
 allocation-dependent IDs and temporary paths. Only siblings explicitly defined
 as unordered may be canonically sorted. Unknown operations remain visibly
-unmapped rather than disappearing. The projection follows the Inspector's
+unmapped rather than disappearing. An unmapped query key keeps its operation
+name and omits allocation-dependent debug arguments; it does not pretend to
+provide a semantic identity for those arguments. The projection follows the Inspector's
 [deterministic trace contract](../sage_inspector/inspection.sage) instead of
 inventing an unrelated raw-debug-string golden format.
 

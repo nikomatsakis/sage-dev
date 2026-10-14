@@ -1,3 +1,4 @@
+// {anchor}`crates.sage_test_harness.compile_tests.fixtures`
 //! Core entry point: `run_sage_with` sets up the full sage pipeline
 //! and hands a live `SageContext` to a callback.
 //!
@@ -5,6 +6,10 @@
 //! Salsa work runs on the caller's thread. The two communicate via channels.
 //! No unsafe code — the channel boundary copies all data into owned values.
 
+// {anchor}`crates.sage_test_harness.compile_tests.production_execution`
+// {anchor}`crates.sage_test_harness.compile_tests.project_isolation`
+// {anchor}`crates.sage_test_harness.compile_tests.edition`
+// {anchor}`crates.sage_test_harness.compile_tests.query_capture`
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
@@ -100,7 +105,7 @@ impl SageHost {
             .expect("crate target must have a source directory")
             .to_path_buf();
 
-        let source_files = collect_source_files(&src_dir);
+        let source_files = collect_source_files(&selected.manifest_dir, &src_dir);
         let (mut args, metadata_stub) = build_rustc_args(&ws)?;
         configure_args(&mut args);
         let mut direct_dependencies: Vec<_> = ws.direct_dep_rlibs.keys().cloned().collect();
@@ -140,7 +145,14 @@ impl SageHost {
             }
         }
 
-        let mut db = Database::with_proxy(req_tx);
+        let mut cfgs = target.cfgs.clone();
+        cfgs.extend(
+            target
+                .enabled_features
+                .iter()
+                .map(|feature| format!("feature=\"{feature}\"")),
+        );
+        let mut db = Database::with_proxy_and_cfgs(req_tx, Some(cfgs));
         let root_file_name = target
             .src_path
             .file_name()
@@ -192,6 +204,7 @@ impl SageHost {
         self.db.as_mut().expect("SageHost database was dropped")
     }
 
+    #[sage::item(crate::driver::AnalysisHost::analyze)]
     pub fn with_context<R>(&self, f: impl FnOnce(&SageContext<'_>) -> R) -> R {
         self.db().attach(|db| {
             let (krate, root) = setup_root_module(db, self.root_file, self.target.edition);
@@ -454,27 +467,45 @@ fn build_rustc_args(ws: &WorkspaceInfo) -> Result<(Vec<String>, MetadataStub), S
     Ok((args, stub))
 }
 
-/// Collect all .rs files under a directory, returning (relative_path, contents).
-fn collect_source_files(src_dir: &Path) -> Vec<(String, String)> {
+/// Register package text inputs. Rust module paths may name files with any
+/// suffix; only semantic module demand determines which inputs are Rust source.
+/// Generated build artifacts and repository metadata are not package inputs.
+fn collect_source_files(package_dir: &Path, src_dir: &Path) -> Vec<(String, String)> {
     let mut files = Vec::new();
-    collect_rs_files_recursive(src_dir, src_dir, &mut files);
+    collect_text_files_recursive(src_dir, package_dir, &mut files);
     files.sort_by(|a, b| a.0.cmp(&b.0));
     files
 }
 
-fn collect_rs_files_recursive(base: &Path, dir: &Path, out: &mut Vec<(String, String)>) {
+fn collect_text_files_recursive(base: &Path, dir: &Path, out: &mut Vec<(String, String)>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
-    for entry in entries {
-        let Ok(entry) = entry else { continue };
+    for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir() {
-            collect_rs_files_recursive(base, &path, out);
-        } else if path.extension().is_some_and(|e| e == "rs") {
-            let rel = path.strip_prefix(base).unwrap();
-            let text = std::fs::read_to_string(&path).unwrap();
-            out.push((rel.display().to_string(), text));
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if kind.is_dir() {
+            if !matches!(entry.file_name().to_str(), Some("target" | ".git")) {
+                collect_text_files_recursive(base, &path, out);
+            }
+        } else if kind.is_file()
+            && !matches!(
+                entry.file_name().to_str(),
+                Some("Cargo.toml" | "Cargo.lock")
+            )
+        {
+            let mut common = base;
+            let mut prefix = String::new();
+            while !path.starts_with(common) {
+                common = common.parent().expect("package paths share a root");
+                prefix.push_str("../");
+            }
+            let rel = format!("{}{}", prefix, path.strip_prefix(common).unwrap().display());
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                out.push((rel, text));
+            }
         }
     }
 }
@@ -486,7 +517,7 @@ mod tests {
     #[test]
     fn failed_metadata_provider_replacement_preserves_the_live_host() {
         let project = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("test-projects/semantic-inspector/db-drop-guard");
+            .join("../../test-projects/semantic-inspector/db-drop-guard");
         let mut host = SageHost::try_open(&project, &[]).unwrap();
         let revision = host.salsa_revision();
         let source_paths = host.source_paths();

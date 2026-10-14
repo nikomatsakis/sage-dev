@@ -29,9 +29,9 @@ for exploration. The [oracle harness](sage_oracle_harness/crate.sage) compares
 Sage with independently emitted rustc results. Their command-line usage is
 covered in the [User's Guide](../../guide/README.md).
 
-The proposed [inline compilation tests](sage_test_harness/compile-tests.md)
+The [inline compilation tests](sage_test_harness/compile-tests.md)
 keep source fixtures, type observations, diagnostics, and query expectations
-inside ordinary annotated Cargo tests. This runner is a draft; its
+inside ordinary annotated Cargo tests. Its
 [RFD](../../rfds/inline-compile-tests/README.md) explains the design.
 
 The [specification tooling](sage_meta/crate.sage) checks the correspondence

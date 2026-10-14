@@ -4,6 +4,8 @@
 //! It carries pre-rendered `String` messages and anchored `Span<'db>` locations.
 //! Type display happens at `to_diagnostic()` time (while the stash is live).
 
+// {anchor}`crates.sage_test_harness.compile_tests.diagnostic_locations`
+// {anchor}`crates.sage_test_harness.compile_tests.rendering`
 use crate::local_syms::LocalModItemSym;
 use crate::span::{AbsoluteSpan, RelativeSpan};
 
@@ -221,5 +223,164 @@ fn same_file(a: ParseSource<'_>, b: ParseSource<'_>) -> bool {
         | (ParseSource::Derive(_), ParseSource::BangMacro(_, _))
         | (ParseSource::BangMacro(_, _), ParseSource::SourceFile(_))
         | (ParseSource::BangMacro(_, _), ParseSource::Derive(_)) => false,
+    }
+}
+
+/// Owned diagnostic evidence emitted by a signature query. Salsa retains each
+/// query's emissions once even when multiple clients demand the same signature.
+#[salsa::accumulator]
+#[derive(Clone, Debug)]
+pub struct SignatureDiagnostic(pub DiagnosticSnapshot);
+
+/// Resolved source data: rendering this value performs no semantic queries.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceLocation {
+    pub path: String,
+    pub source: String,
+    pub start: usize,
+    pub end: usize,
+}
+impl SourceLocation {
+    pub fn lines(&self) -> std::ops::RangeInclusive<usize> {
+        let first = self.source.as_bytes()[..self.start]
+            .iter()
+            .filter(|&&b| b == b'\n')
+            .count()
+            + 1;
+        let last_offset = if self.end > self.start {
+            self.end - 1
+        } else {
+            self.start
+        };
+        let last = self.source.as_bytes()[..last_offset]
+            .iter()
+            .filter(|&&b| b == b'\n')
+            .count()
+            + 1;
+        first..=last
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiagnosticSnapshot {
+    pub severity: Severity,
+    pub primary: Vec<SourceLocation>,
+    pub message: String,
+    pub labels: Vec<(Vec<SourceLocation>, String, LabelStyle)>,
+    pub notes: Vec<DiagnosticSnapshot>,
+}
+
+impl DiagnosticSnapshot {
+    /// Prefix logical source paths without touching diagnostic messages or text.
+    pub fn prefix_paths(&mut self, prefix: &str) {
+        for location in self.primary.iter_mut().chain(
+            self.labels
+                .iter_mut()
+                .flat_map(|(locations, _, _)| locations.iter_mut()),
+        ) {
+            location.path = crate::source::normalize_path(&format!("{prefix}{}", location.path));
+        }
+        for note in &mut self.notes {
+            note.prefix_paths(prefix);
+        }
+    }
+    pub fn render(&self) -> String {
+        use annotate_snippets::{AnnotationKind, Group, Level, Renderer, Snippet};
+        let level = match self.severity {
+            Severity::Error => Level::ERROR,
+            Severity::Warning => Level::WARNING,
+        };
+        let mut group = Group::with_title(level.primary_title(&self.message));
+        let mut sources: Vec<_> = self.primary.first().into_iter().collect();
+        for (locations, _, _) in &self.labels {
+            if let Some(location) = locations.first() {
+                if !sources.iter().any(|source| source.path == location.path) {
+                    sources.push(location);
+                }
+            }
+        }
+        for source in sources {
+            let mut snippet = Snippet::source(&source.source)
+                .path(&source.path)
+                .fold(true);
+            if let Some(primary) = self
+                .primary
+                .first()
+                .filter(|primary| primary.path == source.path)
+            {
+                snippet =
+                    snippet.annotation(AnnotationKind::Primary.span(primary.start..primary.end));
+            }
+            for (locations, message, style) in &self.labels {
+                if let Some(location) = locations
+                    .iter()
+                    .find(|location| location.path == source.path)
+                {
+                    let kind = match style {
+                        LabelStyle::Primary => AnnotationKind::Primary,
+                        LabelStyle::Secondary => AnnotationKind::Context,
+                    };
+                    snippet =
+                        snippet.annotation(kind.span(location.start..location.end).label(message));
+                }
+            }
+            group = group.element(snippet);
+        }
+        let mut output = Renderer::plain().render(&[group]).to_string();
+        for note in &self.notes {
+            output.push('\n');
+            output.push_str(&note.render());
+        }
+        output
+    }
+}
+
+impl Diagnostic<'_> {
+    pub fn snapshot(&self, db: &dyn crate::Db) -> DiagnosticSnapshot {
+        fn locations<'db>(
+            db: &'db dyn crate::Db,
+            mut span: AbsoluteSpan<'db>,
+        ) -> Vec<SourceLocation> {
+            let mut locations = Vec::new();
+            loop {
+                span = match span.source {
+                    ParseSource::SourceFile(file) => {
+                        let source = file.text(db).clone();
+                        assert!(
+                            (span.start as usize) <= source.len()
+                                && (span.end as usize) <= source.len(),
+                            "diagnostic span outside source"
+                        );
+                        locations.push(SourceLocation {
+                            path: file.path(db).clone(),
+                            source,
+                            start: span.start as usize,
+                            end: span.end as usize,
+                        });
+                        break;
+                    }
+                    ParseSource::BangMacro(_, invocation) => invocation.span(db),
+                    ParseSource::Derive(expansion) => expansion.source_item(db).absolute_span(db),
+                };
+            }
+            locations
+        }
+        DiagnosticSnapshot {
+            severity: self.severity.clone(),
+            primary: locations(db, self.span.resolve(db)),
+            message: self.message.clone(),
+            labels: self
+                .labels
+                .iter()
+                .map(|label| {
+                    (
+                        locations(db, label.span.resolve(db)),
+                        label.message.clone(),
+                        label.style.clone(),
+                    )
+                })
+                .collect(),
+            notes: self.notes.iter().map(|note| note.snapshot(db)).collect(),
+        }
     }
 }

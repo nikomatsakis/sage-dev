@@ -520,6 +520,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastrand"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -881,6 +887,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "indoc"
+version = "2.0.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a37b2691796cffeb8a8cd305ac66e65841559f147f4e63231d0eafa4db5384d1"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "inotify"
 version = "0.11.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1069,6 +1084,12 @@ dependencies = [
  "clap",
  "escape8259",
 ]
+
+[[package]]
+name = "linux-raw-sys"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
 name = "litemap"
@@ -1546,6 +1567,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustix"
+version = "1.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "891efababe418670775f199f0d233d84843c227a0949a883ce15b37c78d6629d"
+dependencies = [
+ "bitflags",
+ "errno",
+ "libc",
+ "linux-raw-sys",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "rustversion"
 version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1569,6 +1603,7 @@ dependencies = [
  "notify",
  "proc-macro2",
  "rand",
+ "sage-host",
  "sage-inspector",
  "sage-ir",
  "sage-reflect",
@@ -1595,6 +1630,19 @@ dependencies = [
  "sage-stash",
  "sage-test-harness",
  "salsa",
+ "serde_json",
+]
+
+[[package]]
+name = "sage-host"
+version = "0.1.0"
+dependencies = [
+ "sage-inspector",
+ "sage-ir",
+ "sage-rustc-bridge",
+ "sage-stash",
+ "salsa",
+ "serde",
  "serde_json",
 ]
 
@@ -1737,11 +1785,17 @@ name = "sage-test-harness"
 version = "0.1.0"
 dependencies = [
  "expect-test",
+ "indoc",
  "rustc-hash",
+ "sage-host",
  "sage-ir",
  "sage-meta",
  "sage-stash",
  "salsa",
+ "serde_json",
+ "tempfile",
+ "tree-sitter",
+ "tree-sitter-rust",
 ]
 
 [[package]]
@@ -2016,6 +2070,19 @@ name = "target-tuple"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "876fef147edbcbddc8ac5cbbba92c7b86519e314e86638596c09673b2ed01e7f"
+
+[[package]]
+name = "tempfile"
+version = "3.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
+dependencies = [
+ "fastrand",
+ "getrandom 0.4.2",
+ "once_cell",
+ "rustix",
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "termcolor"

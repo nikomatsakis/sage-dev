@@ -1822,7 +1822,7 @@ fn real_command_serves_embedded_assets_and_correlated_request_logs() {
             },
             {
               "arguments": [
-                "local/db_drop_guard/impl-08431cf62f880d5d/value-fn-db"
+                "local/db_drop_guard/impl-644bd3a818f38a46/value-fn-db"
               ],
               "operation": "symbol",
               "request_id": "request-4",
@@ -1832,7 +1832,7 @@ fn real_command_serves_embedded_assets_and_correlated_request_logs() {
             },
             {
               "arguments": [
-                "local/db_drop_guard/impl-08431cf62f880d5d/value-fn-db",
+                "local/db_drop_guard/impl-644bd3a818f38a46/value-fn-db",
                 "signature"
               ],
               "operation": "product",

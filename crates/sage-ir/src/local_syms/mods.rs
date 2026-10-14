@@ -1,3 +1,4 @@
+// {anchor}`crates.sage_test_harness.compile_tests.fixtures`
 use sage_stash::{Slice, StashDirect, Stashed};
 
 use crate::Db;
@@ -42,7 +43,7 @@ pub enum ModBodySource {
     /// File-backed: `mod foo;` — items are parsed from the file.
     File(SourceFile),
     /// Inline: `mod foo { ... }` — items are `specify`'d at parse time.
-    Inline,
+    Inline { directory: Option<String> },
 }
 
 impl StashDirect for LocalModSym<'_> {}
@@ -51,7 +52,7 @@ impl<'db> LocalModSym<'db> {
     pub fn file(self, db: &'db dyn Db) -> Option<SourceFile> {
         match self.body_source(db) {
             ModBodySource::File(f) => Some(*f),
-            ModBodySource::Inline => None,
+            ModBodySource::Inline { .. } => None,
         }
     }
 
@@ -79,7 +80,7 @@ pub fn unexpanded_items<'db>(
                 .into_iter()
                 .collect()
         }
-        ModBodySource::Inline => {
+        ModBodySource::Inline { .. } => {
             panic!("unexpanded_items should be specify'd for inline modules")
         }
     }

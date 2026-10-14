@@ -30,6 +30,7 @@ pub mod well_known;
 /// The salsa database trait for sage-ir.
 #[salsa::db]
 pub trait Db: salsa::Database {
+    fn configuration(&self) -> db::Configuration;
     fn tcx(&self) -> &dyn tcx::TcxDb;
     fn log_query(&self, entry: String);
     fn log_inspection_phase(&self, phase: &'static str, entering: bool);
