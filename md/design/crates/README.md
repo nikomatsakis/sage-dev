@@ -30,7 +30,7 @@ Sage with independently emitted rustc results. Their command-line usage is
 covered in the [User's Guide](../../guide/README.md).
 
 The [inline compilation tests](sage_test_harness/compile-tests.md)
-keep source fixtures, type observations, diagnostics, and query expectations
+keep source fixtures, type and symbol observations, diagnostics, and query expectations
 inside ordinary annotated Cargo tests. Its
 [RFD](../../rfds/inline-compile-tests/README.md) explains the design.
 

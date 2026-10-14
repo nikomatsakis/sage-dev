@@ -1,4 +1,5 @@
 //! Resolve semantic names while capturing queries; format only frozen data later.
+// {anchor}`crates.sage_test_harness.compile_tests.resolved_symbols`
 // {anchor}`crates.sage_test_harness.compile_tests.completed_types`
 // {anchor}`crates.sage_test_harness.compile_tests.rendering`
 // {anchor}`crates.sage_test_harness.compile_tests.query_capture`
@@ -201,12 +202,20 @@ fn qualified_name(db: &dyn Db, symbol: Symbol<'_>) -> Option<String> {
         | SymbolData::IntrinsicTypeSymbol(_)
         | SymbolData::MacroInvocationSymbol(_) => return None,
     };
-    let mut parts = vec![symbol.name(db)?.0.text(db).clone()];
+    Some(qualified_local_name(db, scope, symbol.name(db)?.0.text(db)))
+}
+
+pub(super) fn qualified_local_name(
+    db: &dyn Db,
+    scope: sage_ir::scope::ScopeSymbol<'_>,
+    name: &str,
+) -> String {
+    let mut parts = vec![name.to_owned()];
     let mut module = scope.module(db);
     while let Some(parent) = module.parent(db) {
         parts.push(module.name(db).text(db).clone());
         module = parent.module(db);
     }
     parts.reverse();
-    Some(parts.join("::"))
+    parts.join("::")
 }
