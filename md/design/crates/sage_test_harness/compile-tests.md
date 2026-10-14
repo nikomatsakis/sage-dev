@@ -28,8 +28,9 @@ fn literal_type() {
                 //# ty
             }
         "#},
-        types: expect![[r#"
-            src/lib.rs: literal `22`: u16
+        observations: expect![[r#"
+            src/lib.rs: literal `22`
+              type: u16
         "#]],
         diagnostics: expect![""],
     }
@@ -40,7 +41,7 @@ Tests using the embedded rustc metadata provider need `#![feature(rustc_private)
 at the top of their Rust test crate, using the repository's pinned nightly.
 `#[sage::test(...)]` additionally uses the existing registered `sage` tool.
 
-Type snapshots include filenames but omit line numbers,
+Observation snapshots include filenames but omit line numbers,
 columns, and ranges; positions are used internally to select expressions.
 
 For a crate with directories, use explicit relative paths:
@@ -70,7 +71,7 @@ unblessed: the source marker declares the error before `UPDATE_EXPECT=1` is
 used to capture its presentation. `queries: expect![...]` optionally adds a
 snapshot of the checking run's query log. An omitted diagnostic expectation
 means an empty expected diagnostic output; an omitted query expectation makes
-no query-log assertion. A missing type expectation is an error.
+no query-log assertion. A missing observation expectation is an error when observation markers are present.
 
 ## Cargo integration and fixture inputs
 
@@ -128,7 +129,7 @@ commas. Both accept trailing commas. Field order is immaterial; duplicate or
 unknown field names are rejected. `source` and `files` are mutually exclusive
 and one is required. The crate root is always `src/lib.rs`. Source expressions may
 be ordinary or raw string literals, or expressions such as `indoc!` invocations.
-Both forms may also include `edition`, `types`, `diagnostics`, and `queries`
+Both forms may also include `edition`, `observations`, `diagnostics`, and `queries`
 as illustrated in [Authoring a test](#authoring-a-test).
 
 {anchor}`edition`
@@ -185,7 +186,7 @@ The initial directive vocabulary is:
 ```
 
 Type observations select a source line, not a column or character range.
-Indentation before `//#` does not affect selection. Neither type markers nor
+Indentation before `//#` does not affect selection. Neither observation markers nor
 diagnostic markers have slugs. Compiler conditions use the exact names `SAGE` and
 `rustc`. They are selectors, not arbitrary condition expressions.
 
@@ -207,9 +208,9 @@ applies to `ty`, ERROR, and WARN; there is no caret or range syntax.
 
 {anchor}`annotation_validation`
 Unknown or malformed directives, invalid compiler conditions, missing or unused
-type expectations, and invalid selections fail the test. A fixture containing
-any `//# ty` marker requires one combined `types: expect![...]` expectation;
-a `types` expectation without type markers is rejected. Annotation validation
+observation expectations, and invalid selections fail the test. A fixture containing
+any `//# ty` marker requires one combined `observations: expect![...]` expectation;
+a `observations` expectation without observation markers is rejected. Annotation validation
 is independent of snapshot blessing, and no directive is silently ignored
 because it is misspelled or cannot be resolved.
 
@@ -241,7 +242,7 @@ A target line with no expression starting on it, or lacking a reliable
 source-to-semantic correspondence, fails explicitly. V1 observes expressions;
 binding declarations and other semantic entities require future selectors.
 
-For example, an inline marker targets the code on its own line. The `types`
+For example, an inline marker targets the code on its own line. The `observations`
 expectation contains the complete ordered observation:
 
 ```rust,ignore
@@ -256,12 +257,17 @@ fn tuple_types() {
                 (1u16, (true, 2u8)) //# ty
             }
         "#},
-        types: expect![[r#"
-            src/lib.rs: literal `1u16`: u16
-            src/lib.rs: literal `true`: bool
-            src/lib.rs: literal `2u8`: u8
-            src/lib.rs: tuple `(true, 2u8)`: (bool, u8)
-            src/lib.rs: tuple `(1u16, (true, 2u8))`: (u16, (bool, u8))
+        observations: expect![[r#"
+            src/lib.rs: literal `1u16`
+              type: u16
+            src/lib.rs: literal `true`
+              type: bool
+            src/lib.rs: literal `2u8`
+              type: u8
+            src/lib.rs: tuple `(true, 2u8)`
+              type: (bool, u8)
+            src/lib.rs: tuple `(1u16, (true, 2u8))`
+              type: (u16, (bool, u8))
         "#]],
         diagnostics: expect![""],
     }
@@ -294,10 +300,13 @@ fn call_argument_types() {
                 )
             }
         "#},
-        types: expect![[r#"
-            src/lib.rs: path `inner`: fn(u16) -> u32
-            src/lib.rs: literal `22u16`: u16
-            src/lib.rs: call `inner(22u16)`: u32
+        observations: expect![[r#"
+            src/lib.rs: path `inner`
+              type: fn(u16) -> u32
+            src/lib.rs: literal `22u16`
+              type: u16
+            src/lib.rs: call `inner(22u16)`
+              type: u32
         "#]],
         diagnostics: expect![""],
     }
@@ -416,11 +425,11 @@ inventing an unrelated raw-debug-string golden format.
 {anchor}`blessing_gate`
 Before any expectation in one test invocation is compared in updating mode,
 the runner completes fixture validation, compilation, annotation validation,
-type collection, exhaustive diagnostic matching, requested query projection,
+observation collection, exhaustive diagnostic matching, requested query projection,
 and rendering of every requested output. All resulting snapshot strings are
 prepared before any updating expectation assertion runs. A failure in any of those
 steps prevents all snapshot writes for that invocation. After they succeed,
-`UPDATE_EXPECT=1` may update type, diagnostic, and requested query representations.
+`UPDATE_EXPECT=1` may update observation, diagnostic, and requested query representations.
 It never adds source markers, changes compiler conditions, or accepts an
 unmatched diagnostic. Other independent Cargo tests may update their own
 expectations; this is not a workspace-wide filesystem transaction.

@@ -233,3 +233,12 @@ extraction also updates the owning crate models and refreshes affected reviews.
 ## Implementation
 
 See [Implementation plan and status](implementation.md).
+
+## Follow-up: combined semantic observations
+
+Rename `types:` to `observations:` and render each expression as a header with
+an indented `type:` field. This prepares one snapshot to hold additional
+semantic facts without repeating source descriptions or maintaining parallel
+snapshots. Existing type selection and ordering remain unchanged. The
+[inline test specification](../../design/crates/sage_test_harness/compile-tests.md)
+and its examples describe the observation format.

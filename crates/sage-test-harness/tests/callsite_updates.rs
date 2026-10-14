@@ -48,7 +48,7 @@ use expect_test::expect;
 fn inline_source() {
     compile_test! {
         source: "fn answer() -> u16 {\n    22 //# ty\n}",
-        types: expect![[r#""#]],
+        observations: expect![[r#""#]],
         diagnostics: expect![""],
     }
 }
@@ -79,7 +79,7 @@ fn inline_source() {
     run(true);
     let blessed = std::fs::read_to_string(&path).unwrap();
     assert!(
-        blessed.contains("src/lib.rs: literal `22`: u16"),
+        blessed.contains("src/lib.rs: literal `22`") && blessed.contains("type: u16"),
         "{blessed}"
     );
     assert!(blessed.contains("22 //# ty"));

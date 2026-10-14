@@ -21,10 +21,13 @@ fn call_argument_types() {
                 )
             }
         "#},
-        types: expect![[r#"
-            src/lib.rs: path `inner`: fn(u16) -> u32
-            src/lib.rs: literal `22u16`: u16
-            src/lib.rs: call `inner(22u16)`: u32
+        observations: expect![[r#"
+            src/lib.rs: path `inner`
+              type: fn(u16) -> u32
+            src/lib.rs: literal `22u16`
+              type: u16
+            src/lib.rs: call `inner(22u16)`
+              type: u32
         "#]],
         diagnostics: expect![""],
     }
@@ -54,8 +57,9 @@ fn modules_and_associated_bodies() {
                 }
             "#},
         },
-        types: expect![[r#"
-            src/nested/mod.rs: literal `22`: u16
+        observations: expect![[r#"
+            src/nested/mod.rs: literal `22`
+              type: u16
         "#]],
     }
 }
@@ -115,11 +119,15 @@ fn tuples_and_multiline_descriptions() {
                 )
             }
         "#},
-        types: expect![[r#"
-            src/lib.rs: literal `22`: u16
-            src/lib.rs: literal `true`: bool
-            src/lib.rs: tuple `(22, true)`: (u16, bool)
-            src/lib.rs: tuple `( 22, true, )`: (u16, bool)
+        observations: expect![[r#"
+            src/lib.rs: literal `22`
+              type: u16
+            src/lib.rs: literal `true`
+              type: bool
+            src/lib.rs: tuple `(22, true)`
+              type: (u16, bool)
+            src/lib.rs: tuple `( 22, true, )`
+              type: (u16, bool)
         "#]],
     }
 }
@@ -133,10 +141,13 @@ fn coercion_wrapper_follows_its_source_expression() {
                 return 22; //# ty
             }
         "#},
-        types: expect![[r#"
-            src/lib.rs: literal `22`: u16
-            src/lib.rs: return `return 22`: !
-            src/lib.rs: coercion `return 22`: u16
+        observations: expect![[r#"
+            src/lib.rs: literal `22`
+              type: u16
+            src/lib.rs: return `return 22`
+              type: !
+            src/lib.rs: coercion `return 22`
+              type: u16
         "#]],
     }
 }
@@ -203,9 +214,11 @@ fn implicit_dereferences_do_not_duplicate_source_observations() {
                 pair.value //# ty
             }
         "#},
-        types: expect![[r#"
-            src/lib.rs: path `pair`: &Pair
-            src/lib.rs: field `pair.value`: u16
+        observations: expect![[r#"
+            src/lib.rs: path `pair`
+              type: &Pair
+            src/lib.rs: field `pair.value`
+              type: u16
         "#]],
     }
 }
