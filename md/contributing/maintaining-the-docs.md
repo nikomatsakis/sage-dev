@@ -149,3 +149,27 @@ index and representative source → anchor → source links, including `.sage`
 claims. Keep TODO/N/A visible until substantive implementation and evidence
 replace them. Remove an old chapter only after accounting for its numbered and
 unnumbered requirements and preserving useful rationale and links.
+
+
+## Proposed inline compilation tests
+
+The draft [Inline Compilation Tests](../rfds/inline-compile-tests/README.md)
+RFD proposes keeping source fixtures, annotations, and expectations directly
+inside an ordinary `#[sage::test(...)]` Rust test. The
+[Design specification](../design/crates/sage_test_harness/compile-tests.md)
+describes the planned API; it is not yet an available runner.
+
+For these tests, ERROR/WARN markers and compiler conditions express intended
+behavior. Adding or changing one is an assertion change that requires a
+semantic explanation. Agents must inspect unexpected diagnostics and decide
+whether the implementation or intended test behavior is wrong before changing
+markers. Do not add an ERROR marker merely to make a test pass or to permit
+snapshot blessing. `UPDATE_EXPECT=1` updates observed representations only
+after every annotation and diagnostic match is valid. Review the resulting
+diff and rerun with updating disabled.
+
+The saved anchor review includes the complete annotated function, including
+its inline macro arguments, source, markers, options, and expectations. The
+harness macro's implementation is not part of that snapshot. Keep the relevant
+scenario and assertions visible at the call site so a reviewer can evaluate
+the claim without expanding the harness.
