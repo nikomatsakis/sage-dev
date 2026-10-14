@@ -207,6 +207,13 @@ The generated [anchor pages](../../anchor/crates/sage_ir/inference.html) report 
 annotated tests, explicit TODO/N/A gaps, and saved claim/test reviews. These
 associations do not themselves establish that a test ran.
 
+Source-driven inference scenarios use `compile_test!` in
+`crates/sage-test-harness/tests/inference.rs`. Inline `ty` observations expose
+completed numeric types and explicit coercion wrappers; ERROR markers declare
+expected failures before diagnostic snapshots are updated. These source tests
+complement direct egraph, transaction, and typed-tree tests, which retain access
+to internal invariants that a type snapshot cannot establish.
+
 The [earlier coverage snapshot](../../../rfds/implementation-sequencing/coverage-history.md#type-inference)
 preserves the former capability descriptions, edit experiments, and limitations
 as historical evidence. Current coverage comes from the generated entries;
