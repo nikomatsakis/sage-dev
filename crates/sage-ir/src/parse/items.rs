@@ -799,15 +799,17 @@ impl<'a, 'db> Parser<'a, 'db> {
             format!("{parent_dir}{mod_name}/mod.rs"),
         ];
 
-        for candidate in &candidates {
-            if let Some(file) = self
-                .db
+        let mut files = candidates.iter().filter_map(|candidate| {
+            self.db
                 .source_file(&crate::source::normalize_path(candidate))
-            {
-                return Some(file);
-            }
+        });
+        let file = files.next()?;
+        // Rust's implicit module paths must identify exactly one source file.
+        // An explicit #[path] bypasses this search and remains unambiguous.
+        if files.next().is_some() {
+            return None;
         }
-        None
+        Some(file)
     }
 
     // -----------------------------------------------------------------------

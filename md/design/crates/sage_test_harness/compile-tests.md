@@ -86,7 +86,9 @@ or anchor attribute is required. A failing observation fails that Rust test.
 A fixture provides exactly one anonymous `source` or one `files` map. Anonymous
 source becomes `src/lib.rs`. A files map must contain `src/lib.rs`, the fixed
 crate root. There is no root-selection option or automatic root detection.
-Paths are relative to the materialized project and imply directories; files become modules only through Rust's module-loading rules.
+Paths are relative to the materialized project and imply directories; files become modules only through Rust's module-loading rules. An implicit `mod child;`
+with both `child.rs` and `child/mod.rs` present is rejected as ambiguous;
+an explicit `#[path]` selects its named file.
 Duplicate paths, absolute paths, parent traversal, a missing `src/lib.rs`, and
 file/directory conflicts are fixture errors. The generated `Cargo.toml` and
 `Cargo.lock`, `.cargo` configuration, and a root `build.rs` are reserved and
