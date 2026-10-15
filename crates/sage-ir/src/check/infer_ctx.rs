@@ -2353,19 +2353,22 @@ impl<'check, 'db> InferCtx<'check, 'db> {
 #[derive(Clone)]
 pub struct Scope<'db> {
     pub resolver: Resolver<'db>,
-    pub locals: Vec<Ptr<Ty<'db>>>,
+    // Local IDs belong to the body, not this cloned scope. Nested scopes can
+    // allocate IDs that are absent here, so this table must tolerate gaps.
+    locals: FxHashMap<LocalId, Ptr<Ty<'db>>>,
 }
 
+// {anchor}`crates.sage_ir.resolution.lookup.precedence`
 impl<'db> Scope<'db> {
     pub fn new(resolver: Resolver<'db>) -> Self {
         Self {
             resolver,
-            locals: Vec::new(),
+            locals: FxHashMap::default(),
         }
     }
 
     pub fn local_type(&self, id: u32) -> Ptr<Ty<'db>> {
-        self.locals[id as usize]
+        self.locals[&LocalId(id)]
     }
 
     pub fn add_binding(
@@ -2378,16 +2381,10 @@ impl<'db> Scope<'db> {
         let id = LocalId(local_var_count as u32);
         cx.add_local_var(LocalVar { name, span });
         let var = cx.fresh_ty_var();
-        self.locals.push(var);
+        self.locals.insert(id, var);
         self.resolver
             .ribs
             .add(name, Namespace::Value, Resolution::Local(id));
-        id
-    }
-
-    pub fn push_local(&mut self, ty: Ptr<Ty<'db>>) -> u32 {
-        let id = self.locals.len() as u32;
-        self.locals.push(ty);
         id
     }
 
@@ -2410,7 +2407,7 @@ impl<'db> Scope<'db> {
                     name,
                     span: param_cst.span,
                 });
-                self.locals.push(*param_ty);
+                self.locals.insert(id, *param_ty);
                 self.resolver
                     .ribs
                     .add(name, Namespace::Value, Resolution::Local(id));

@@ -36,6 +36,12 @@ definitive negative conclusion.
 Verification intent: Fixtures cover lexical shadowing, independent
 type/value/macro namespaces, qualified versus unqualified lookup, renamed
 imports, glob cycles, and edition-specific preludes.
+Source-driven fixtures use `//# sym` to distinguish equal-typed definitions,
+including lexical bindings versus module items, explicit imports versus globs,
+and `self`, `super`, and `crate` paths. Combined `//# ty` observations expose
+type-namespace selection; item-macro expansion exercises the independent macro
+namespace. Edition fixtures pin their edition and assert both availability and
+absence of newly introduced prelude names.
 
 ## Entry points and callers
 

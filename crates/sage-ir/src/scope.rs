@@ -1,3 +1,4 @@
+// {anchor}`crates.sage_ir.resolution.lookup.precedence`
 use crate::Db;
 use crate::local_syms::mods::LocalModSym;
 use sage_macros_from_impls::FromImpls;

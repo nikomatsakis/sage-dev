@@ -20,9 +20,11 @@ mod todo {
     #[test]
     #[sage::test(crates.sage_ir.resolution.lookup.precedence)]
     fn resolution_lookup_precedence() {
-        // TODO: Complete the claim-specific verification matrix:
-        // Fixtures cover lexical shadowing, independent type/value/macro namespaces, qualified versus
-        // unqualified lookup, renamed imports, glob cycles, and edition-specific preludes.
+        // TODO: Complete the remaining import/path matrix: repeated import routes to one
+        // definition, enum-variant globs, macro subnamespace distinctions, and Rust 2015
+        // path rules. Source fixtures now cover lexical/nested/sibling shadowing, independent
+        // type/value/bang-macro namespaces, named-versus-glob precedence, renamed imports,
+        // cyclic and ambiguous globs, qualified/absolute paths, and 2018/2021/2024 preludes.
     }
 
     #[test]

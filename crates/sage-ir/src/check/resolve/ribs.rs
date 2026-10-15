@@ -1,3 +1,4 @@
+// {anchor}`crates.sage_ir.resolution.lookup.precedence`
 use crate::generic_param::GenericParam;
 use crate::name::Name;
 use crate::symbol::Symbol;

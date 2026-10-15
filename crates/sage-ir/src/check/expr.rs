@@ -66,6 +66,7 @@ impl<'db> ExprCst<'db> {
                 let ty = res_to_ty(cx, scope, res, span);
                 (TyExprData::Path(res), ty)
             }
+            // {anchor}`crates.sage_ir.resolution.lookup.precedence`
             ExprCstKind::Block(stmts, tail) => {
                 let mut scope = scope.clone();
                 scope.resolver.ribs.push_scope();
