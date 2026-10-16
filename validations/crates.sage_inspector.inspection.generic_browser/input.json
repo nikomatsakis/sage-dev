@@ -1,0 +1,113 @@
+{
+  "prompt": "Review this anchor as its assigned subagent. Enumerate ALL requirements, qualifications, edge cases and scenarios. Inspect all supplied implementation and test fragments and trace each aspect to implementation behavior and actual test assertions or justified TODO/N/A evidence. Passing tests and associations alone are insufficient. Follow helpers and capture every additional source dependency with cargo meta review read ANCHOR PATH [selector] before completing the report. Explain prerequisites for justified TODO tests; do not claim deferred behavior is implemented. Distinguish source inspection from commands actually executed. Write a JSON report containing reviewer, report, and requested_edits. Leave requested_edits empty only when every aspect is accounted for and no edits are needed. Otherwise list concrete changes, including missing tests or justified TODO tests with prerequisite comments. Run cargo meta review record ANCHOR REPORT_FILE to finish. After edits or stale-input rejection, run cargo meta review start ANCHOR and review the fresh inputs. The gate fails until a current report with no requested edits is recorded. Dependency capture is agent-declared.",
+  "coordinator_instructions": [
+    "Review only crates.sage_inspector.inspection.generic_browser. Follow the repository review skill. Independently reassess every claim aspect and its implementation/test evidence. Do not edit production or tests; report suspected issues to coordinator. Capture every additional source dependency using review read. Distinguish source review from commands actually executed. Record your own completed report via cargo meta review record; do not directly edit saved JSON. Existing justified TODO/N/A evidence can remain deferred.\nHistorical report supplied as context, not an approval to reuse mechanically; independently verify current evidence and rationale:\n{\n  \"decision\": \"todo\",\n  \"outcome\": true,\n  \"requested_edits\": [],\n  \"reason\": \"Requirements: symbol presentation, positive product descriptors, render/value/trace nodes drive the UI with no branching on Sage symbol kinds or known product IDs. crates/sage-inspector/src/lib.rs records N/A for Rust because web/src TypeScript owns the renderer. This justifies the absence of a Rust renderer reference without exempting the UI behavior. The associated service_spec TODO requires every protocol-node component, real local/external navigation, a static dispatch audit and no request for omitted products. Those are specific, appropriate prerequisites for completing evidence association/review; the single TODO body makes no behavioral assertion. Keep TODO, including the unreviewed TypeScript scope, rather than marking N/A for the whole anchor. Source inspection only: no behavior tests were executed for this anchor during this review. outcome=true accepts the explicit TODO/N/A accounting; it does not mark unfinished behavior implemented. No immediate edits to that accounting are requested.\",\n  \"reviewer\": \"Codex review_other\"\n}\nCoordinator reports full functional sage-meta suite 321 passing tests and root cargo build passed. This is separately reported execution, not a command you ran. Avoid redundant full suites unless needed to investigate a specific concern. Efficiently compare unchanged evidence to earlier snapshots, but reassess claim-specific rationale independently.\n\nCoordinator baseline comparison at dispatch preparation (reviewer must verify still current):\nimplementation_sources: crates/sage-inspector/src/lib.rs: EXACT BYTE MATCH to historical reviewed source\ntest_sources: crates/sage-meta/tests/service_spec.rs: EXACT BYTE MATCH to historical reviewed source\nFor unchanged legacy anchors, prior report is a completed independent source review. Reassess its claim-specific sufficiency against current claim, metadata and associated test assertions; you need not rediscover all unchanged implementation or rerun tests. For any changed source, inspect the delta and relevant complete behavior. Historical input for exact comparison is /tmp/sage-pre-fragment-validations/crates.sage_inspector.inspection.generic_browser/input.json. If using historical source contents themselves beyond exact comparison, put them in captured coordinator instructions or use review read for their current workspace source.\n\nCoordinator clarification: evaluate the full associated set plus source reasoning; no demand for isolated field-per-test assertions where meaningful integration checks account for claim. If prior rationale relies on helper/surrounding source in historical test_sources/implementation_sources/reads beyond current initial fragments, capture each relied-on dependency via review read (whole file or precise selector). Byte-comparison alone does not persist a freshness dependency.\n\nEfficiency: unchanged legacy evidence already genuinely independently reviewed. Batch evidence reads; inspect only current inputs, deltas, and actually relied-on helpers. Avoid unrelated documentation, repeated broad checks, and rediscovery. Write concise complete claim/evidence/TODO-prerequisite reassessment, distinguish baseline/source/execution, then record promptly.\n"
+  ],
+  "fragments": [
+    {
+      "path": "md/design/crates/sage_inspector/inspection.sage",
+      "selector": {
+        "kind": "claim",
+        "anchor_id": "crates.sage_inspector.inspection.generic_browser"
+      },
+      "contents": [
+        "The browser is a generic protocol interpreter. Symbol",
+        "presentation, positive product descriptors, render nodes, value nodes, and",
+        "trace nodes determine the UI; JavaScript does not branch on Sage symbol kinds",
+        "or known product IDs."
+      ]
+    },
+    {
+      "path": "crates/sage-inspector/src/lib.rs",
+      "selector": {
+        "kind": "whole_file"
+      },
+      "contents": [
+        "#![feature(register_tool)]",
+        "#![register_tool(sage)]",
+        "pub mod actor;",
+        "pub mod protocol;",
+        "pub mod server;",
+        "",
+        "pub use actor::{FileUpdate, InspectionClient, InspectionProvider, ProviderDemand, serve_actor};",
+        "pub use protocol::*;",
+        "pub use server::{ServerOptions, bind, run_server};",
+        "",
+        "// Source anchors for architectural modules and distributed representations.",
+        "mod sage_model {",
+        "    /// Architectural crate anchor.",
+        "    #[sage::item(crate)]",
+        "    mod crate_model {}",
+        "    /// Architectural module anchor.",
+        "    #[sage::item(crate::inspection)]",
+        "    mod inspection_model {}",
+        "    /// Groups protocol Response<T>, errors, and event payloads.",
+        "    #[sage::item(crate::inspection::Response)]",
+        "    mod inspection_response_model {}",
+        "    /// Groups actor and HTTP server operations; no single service type.",
+        "    #[sage::item(crate::inspection::InspectionService)]",
+        "    mod inspection_inspection_service_model {}",
+        "}",
+        "",
+        "mod not_applicable {",
+        "    // {anchor}`crates.sage_inspector.inspection.generic_browser`",
+        "    // Implemented in web/src's TypeScript protocol renderer, not Rust code.",
+        "",
+        "    // {anchor}`crates.sage_inspector.inspection.durable_navigation`",
+        "    // Implemented by the TypeScript browser's URL/navigation state.",
+        "}",
+        ""
+      ]
+    },
+    {
+      "path": "crates/sage-meta/tests/service_spec.rs",
+      "selector": {
+        "kind": "test",
+        "crate_name": "sage_meta",
+        "target": "test:service_spec",
+        "rust_path": "sage_meta::todo::crates_sage_inspector_inspection_generic_browser"
+      },
+      "contents": [
+        "#[test]",
+        "    #[sage::test(crates.sage_inspector.inspection.generic_browser)]",
+        "    fn crates_sage_inspector_inspection_generic_browser() {",
+        "        // TODO: Associate and review the complete evidence for Generic rendering component tests cover",
+        "        // every protocol node without semantic product IDs, source-driven browser tests cover local",
+        "        // and external navigation, and a static audit forbids product- or symbol-kind dispatch in the",
+        "        // client. Omitted products make no request.",
+        "    }"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "crate_name": "sage_inspector",
+      "target": "lib:sage_inspector",
+      "module": "sage_inspector::not_applicable",
+      "file": "crates/sage-inspector/src/lib.rs",
+      "cfg": [],
+      "excerpt": [
+        "    // {anchor}`crates.sage_inspector.inspection.generic_browser`",
+        "    // Implemented in web/src's TypeScript protocol renderer, not Rust code.",
+        "",
+        "    // {anchor}`crates.sage_inspector.inspection.durable_navigation`",
+        "    // Implemented by the TypeScript browser's URL/navigation state.",
+        "}",
+        ""
+      ],
+      "region": false,
+      "status": "not_applicable",
+      "explanation": "Implemented in web/src's TypeScript protocol renderer, not Rust code."
+    }
+  ],
+  "tests": [
+    {
+      "crate_name": "sage_meta",
+      "target": "test:service_spec",
+      "rust_path": "sage_meta::todo::crates_sage_inspector_inspection_generic_browser",
+      "file": "crates/sage-meta/tests/service_spec.rs",
+      "cfg": [],
+      "status": "todo"
+    }
+  ]
+}

@@ -52,23 +52,23 @@ Rust test inventories.
 - [x] Compare saved claim/test inputs and schema/policy versions; test changed
       claims, test additions/removals, changed bodies and metadata, and movement
       that changes only source offsets.
-- [x] Provide `review prepare` without mutating saved reviews and `review
-      record` with fresh-input validation and atomic rejection of invalid
-      submissions. Preserve unrelated current reviews and prune retired ones.
+- [x] Provide `review start` to capture initial inputs and invalidate old reports,
+      `review read` to extend captured context, and `review record` with
+      fresh-input validation and rejection of invalid reports. Preserve unrelated current reviews and flag retired ones for explicit cleanup.
 - [x] Include current review decisions in the shared check, CI, and workspace
       Cargo test. Exercise missing, malformed, stale, unsuccessful, and
-      placeholder-incompatible decisions.
+      incomplete reports and requested edits.
 - [x] Add the repository review skill, delegate the initial claim/test review,
       and record its reasoned decisions alongside the supporting changes. Keep
-      TODO/N/A decisions distinct from approved behavioral evidence.
+      TODO/N/A evidence distinct from implemented behavior.
 
 **Current evidence:** `crates/sage-meta/tests/review.rs` exercises extraction,
-freshness, placeholder decisions, read-only preparation, rejected submissions,
-and preservation of unrelated reviews through the library and CLI. The committed `review-checklist.json` records reviewed claims and explicit
+freshness, placeholder evidence, start invalidation, rejected reports,
+and preservation of unrelated reviews through the library and CLI. The committed `validations/<anchor-id>/` records preserve reviewed claims and explicit
 TODO/N/A entries; generated anchor pages expose their current decisions.
 
 **Evidence boundary:** The cached judgment concerns what the snapshotted test
-bodies visibly check. Helper bodies are not inputs, and the checklist does not
+bodies visibly check. Captured fragments and association metadata are inputs; the validation does not
 record that a test ran. Source-level association, agent review, test execution,
 and runtime conformance remain separate evidence.
 
@@ -516,3 +516,20 @@ The review skill directs reviewers to add and run regression tests for suspected
 bugs, record reproduced failures, and consult the user when reproduction or test
 construction is unsuccessful. Tests added during review require fresh input
 preparation before the decision is recorded.
+
+## Per-anchor validation records
+
+The [review contract](../../design/meta/reviews.md) stores each anchor's review in
+`validations/<anchor-id>/{summary,input,output}.json`. The main agent delegates
+one reviewer per failing anchor. `review start` resets that anchor's directory,
+captures initial context, and leaves the gate failing until `review record`
+saves a complete report with no requested edits. `review read` captures additional
+context before returning it. Recording preserves the input already reviewed.
+
+Uniform fragments identify a whole file, line range, claim, or test function and
+store its exact source text. Identifier-based claim/test selectors avoid review
+churn from unrelated line movement. Freshness compares contents directly; hashes
+are unnecessary. TODO/N/A status belongs to the evidence, while the report's edit
+list states whether further work is needed. Records for removed IDs require
+explicit cleanup. Reviewers declare dependencies; automatic read capture can use
+the same fragment representation.

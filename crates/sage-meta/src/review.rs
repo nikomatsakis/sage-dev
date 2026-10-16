@@ -1,21 +1,19 @@
-//! Persisted reviews of specification implementations and their annotated tests.
-//!
-//! Snapshots cache source judgments, not test execution or conformance of
-//! dependencies outside the associated implementation files and test bodies.
+//! Captured source context and per-anchor validation lifecycle.
 
+use crate::correspondence::CorrespondenceIndex;
+use crate::spec::SpecIndex;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
-
-use crate::correspondence::CorrespondenceIndex;
-use crate::spec::SpecIndex;
-
-pub const CHECKLIST_FILE: &str = "review-checklist.json";
-pub const SCHEMA_VERSION: u32 = 1;
-pub const POLICY_VERSION: u32 = 2;
+pub const CHECKLIST_FILE: &str = "validations";
+pub const SCHEMA_VERSION: u32 = 4;
+pub const POLICY_VERSION: u32 = 4;
 pub const REVIEW_SKILL: &str = ".agents/skills/sage-review-checklist/SKILL.md";
+
+// {anchor}`meta.reviews.review_delegation`
+pub const PROMPT: &str = "Review this anchor as its assigned subagent. Enumerate ALL requirements, qualifications, edge cases and scenarios. Inspect all supplied implementation and test fragments and trace each aspect to implementation behavior and actual test assertions or justified TODO/N/A evidence. Passing tests and associations alone are insufficient. Follow helpers and capture every additional source dependency with cargo meta review read ANCHOR PATH [selector] before completing the report. Explain prerequisites for justified TODO tests; do not claim deferred behavior is implemented. Distinguish source inspection from commands actually executed. Write a JSON report containing reviewer, report, and requested_edits. Leave requested_edits empty only when every aspect is accounted for and no edits are needed. Otherwise list concrete changes, including missing tests or justified TODO tests with prerequisite comments. Run cargo meta review record ANCHOR REPORT_FILE to finish. After edits or stale-input rejection, run cargo meta review start ANCHOR and review the fresh inputs. The gate fails until a current report with no requested edits is recorded. Dependency capture is agent-declared.";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -23,41 +21,83 @@ pub struct ReviewChecklist {
     pub schema_version: u32,
     pub policy_version: u32,
     pub reviews: Vec<ReviewRecord>,
+    #[serde(default)]
+    pub issues: Vec<ReviewIssue>,
 }
-
 impl Default for ReviewChecklist {
     fn default() -> Self {
         Self {
             schema_version: SCHEMA_VERSION,
             policy_version: POLICY_VERSION,
             reviews: Vec::new(),
+            issues: Vec::new(),
         }
     }
 }
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReviewRecord {
     pub anchor: String,
     pub input: ReviewInput,
-    pub decision: Decision,
-    pub reason: String,
-    pub reviewer: String,
+    pub output: Option<ValidationOutput>,
 }
 
+// {anchor}`meta.reviews.input_format`
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReviewInput {
-    /// Original Markdown, split on newlines for readable Git diffs.
-    pub claim: Vec<String>,
-    pub tests: Vec<ReviewTest>,
-    /// Defaults allow old test-only snapshots to load for policy migration.
-    #[serde(default)]
+    pub prompt: String,
+    pub coordinator_instructions: Vec<String>,
+    pub fragments: Vec<InputFragment>,
     pub implementations: Vec<ReviewImplementation>,
-    #[serde(default)]
-    pub implementation_sources: BTreeMap<String, Vec<String>>,
+    pub tests: Vec<ReviewTest>,
 }
 
+// {anchor}`meta.reviews.fragment_format`
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InputFragment {
+    pub path: String,
+    pub selector: Selector,
+    pub contents: Vec<String>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Selector {
+    WholeFile,
+    LineRange {
+        start: usize,
+        end: usize,
+    },
+    Claim {
+        anchor_id: String,
+    },
+    Test {
+        crate_name: String,
+        target: String,
+        rust_path: String,
+    },
+}
+
+// {anchor}`meta.reviews.summary_format`
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Summary {
+    anchor: String,
+    started_at_unix_seconds: u64,
+    recorded_at_unix_seconds: Option<u64>,
+    schema_version: u32,
+    policy_version: u32,
+}
+
+// {anchor}`meta.reviews.output_format`
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ValidationOutput {
+    pub reviewer: String,
+    pub report: String,
+    pub requested_edits: Vec<String>,
+}
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReviewImplementation {
@@ -80,23 +120,12 @@ pub struct ReviewTest {
     pub rust_path: String,
     pub file: String,
     pub cfg: Vec<String>,
-    pub source: Vec<String>,
     pub status: TestStatus,
 }
 
 pub use crate::evidence::EvidenceStatus as TestStatus;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Decision {
-    Pending,
-    Approved,
-    Todo,
-    NotApplicable,
-    NeedsWork,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewIssue {
     pub anchor: Option<String>,
     pub message: String,
@@ -107,56 +136,54 @@ fn source_lines(text: &str) -> Vec<String> {
     text.split('\n').map(str::to_owned).collect()
 }
 
-/// Extract exact, deterministic review inputs without recording any decision.
+fn claim_path(workspace: &Path, file: &str) -> Result<String, Box<dyn Error>> {
+    let docs = if workspace.join("book.toml").is_file() {
+        crate::workspace::book_source_root(workspace)?
+    } else {
+        workspace.join("md")
+    };
+    Ok(docs
+        .join(file)
+        .strip_prefix(workspace)?
+        .to_string_lossy()
+        .replace('\\', "/"))
+}
+
+// {anchor}`meta.reviews.input_fragments`
 // {anchor}`meta.reviews.review_scope`
 pub fn inventory(
     spec: &SpecIndex,
     rust: &CorrespondenceIndex,
 ) -> Result<BTreeMap<String, ReviewInput>, Box<dyn Error>> {
+    let workspace = rust.workspace_root().unwrap_or(Path::new("."));
+    let mut test_identities = BTreeMap::new();
+    for site in rust.tests.values().flatten() {
+        let identity = (&site.file, &site.crate_name, &site.target, &site.rust_path);
+        let span = (site.span.start, site.span.end);
+        if test_identities
+            .insert(identity, span)
+            .is_some_and(|previous| previous != span)
+        {
+            return Err(format!(
+                "ambiguous test selector: {} {} {}",
+                site.file, site.target, site.rust_path
+            )
+            .into());
+        }
+    }
     let mut inputs = BTreeMap::new();
     for (name, anchor) in &spec.anchors {
-        let mut tests = Vec::new();
-        for site in rust.tests.get(name).into_iter().flatten() {
-            // {anchor}`meta.reviews.test_source`
-            let source = rust
-                .files
-                .get(&site.file)
-                .and_then(|source| source.get(site.span.start..site.span.end))
-                .ok_or_else(|| {
-                    format!(
-                        "missing test source for {} in {}",
-                        site.rust_path, site.file
-                    )
-                })?;
-            let owner = site
-                .rust_path
-                .rsplit_once("::")
-                .map_or("", |(owner, _)| owner);
-            let status = crate::evidence::placeholder_status(owner)?;
-            tests.push(ReviewTest {
-                crate_name: site.crate_name.clone(),
-                target: site.target.clone(),
-                rust_path: site.rust_path.clone(),
-                file: site.file.clone(),
-                cfg: site.cfg.clone(),
-                source: source_lines(source),
-                status,
-            });
-        }
-        // {anchor}`meta.reviews.complete_test_set`
-        // Repeated annotations on one declaration do not create another test.
-        tests.sort();
-        tests.dedup();
+        // {anchor}`meta.reviews.claim_text`
+        let mut fragments = vec![InputFragment {
+            path: claim_path(workspace, &anchor.file)?,
+            selector: Selector::Claim {
+                anchor_id: name.clone(),
+            },
+            contents: source_lines(&anchor.content),
+        }];
         let mut implementations = Vec::new();
-        let mut implementation_sources = BTreeMap::new();
+        let mut files = BTreeSet::new();
         for site in rust.implementations.get(name).into_iter().flatten() {
-            let source = rust
-                .files
-                .get(&site.file)
-                .ok_or_else(|| format!("missing implementation source in {}", site.file))?;
-            implementation_sources
-                .entry(site.file.clone())
-                .or_insert_with(|| source_lines(source));
             implementations.push(ReviewImplementation {
                 crate_name: site.crate_name.clone(),
                 target: site.target.clone(),
@@ -168,155 +195,261 @@ pub fn inventory(
                 status: site.status,
                 explanation: site.explanation.clone(),
             });
+            files.insert(site.file.clone());
         }
         implementations.sort();
         implementations.dedup();
+        for file in files {
+            let source = rust
+                .files
+                .get(&file)
+                .ok_or("missing implementation source")?;
+            fragments.push(InputFragment {
+                path: file,
+                selector: Selector::WholeFile,
+                contents: source_lines(source),
+            });
+        }
+        // {anchor}`meta.reviews.test_source`
+        let mut tests = Vec::new();
+        let mut test_fragments = BTreeMap::new();
+        for site in rust.tests.get(name).into_iter().flatten() {
+            let source = rust
+                .files
+                .get(&site.file)
+                .and_then(|source| source.get(site.span.start..site.span.end))
+                .ok_or("missing test source")?;
+            let owner = site
+                .rust_path
+                .rsplit_once("::")
+                .map_or("", |(owner, _)| owner);
+            tests.push(ReviewTest {
+                crate_name: site.crate_name.clone(),
+                target: site.target.clone(),
+                rust_path: site.rust_path.clone(),
+                file: site.file.clone(),
+                cfg: site.cfg.clone(),
+                status: crate::evidence::placeholder_status(owner)?,
+            });
+            let previous = test_fragments.insert(
+                (
+                    site.file.clone(),
+                    site.crate_name.clone(),
+                    site.target.clone(),
+                    site.rust_path.clone(),
+                ),
+                (site.span.start, site.span.end, source_lines(source)),
+            );
+            if previous
+                .is_some_and(|(start, end, _)| start != site.span.start || end != site.span.end)
+            {
+                return Err(format!(
+                    "ambiguous test selector: {} {} {}",
+                    site.file, site.target, site.rust_path
+                )
+                .into());
+            }
+        }
+        // {anchor}`meta.reviews.complete_test_set`
+        tests.sort();
+        tests.dedup();
+        for ((path, crate_name, target, rust_path), (_, _, contents)) in test_fragments {
+            fragments.push(InputFragment {
+                path,
+                selector: Selector::Test {
+                    crate_name,
+                    target,
+                    rust_path,
+                },
+                contents,
+            });
+        }
         inputs.insert(
             name.clone(),
             ReviewInput {
-                // {anchor}`meta.reviews.claim_text`
-                claim: source_lines(&anchor.content),
-                tests,
+                prompt: PROMPT.into(),
+                coordinator_instructions: Vec::new(),
+                fragments,
                 implementations,
-                implementation_sources,
+                tests,
             },
         );
     }
     Ok(inputs)
 }
 
-fn check_format(checklist: &ReviewChecklist) -> Result<(), Box<dyn Error>> {
-    if checklist.schema_version != SCHEMA_VERSION {
+fn workspace_root(workspace: &Path) -> Result<PathBuf, Box<dyn Error>> {
+    let output = std::process::Command::new("cargo")
+        .args(["locate-project", "--workspace", "--message-format", "plain"])
+        .current_dir(workspace)
+        .output()?;
+    if !output.status.success() {
         return Err(format!(
-            "unsupported review schema version {}; expected {SCHEMA_VERSION}",
-            checklist.schema_version
+            "cannot locate workspace: {}",
+            String::from_utf8_lossy(&output.stderr)
         )
         .into());
     }
-    let mut names = BTreeSet::new();
-    for review in &checklist.reviews {
-        if !names.insert(&review.anchor) {
-            return Err(format!("duplicate review for {}", review.anchor).into());
+    let manifest = PathBuf::from(String::from_utf8(output.stdout)?.trim());
+    Ok(manifest
+        .parent()
+        .ok_or("workspace manifest has no parent")?
+        .canonicalize()?)
+}
+
+fn source_path(workspace: &Path, path: &str) -> Result<PathBuf, Box<dyn Error>> {
+    let relative = Path::new(path);
+    if path.is_empty()
+        || relative.is_absolute()
+        || relative
+            .components()
+            .any(|part| !matches!(part, std::path::Component::Normal(_)))
+    {
+        return Err("source reads require a workspace-relative path without traversal".into());
+    }
+    let root = workspace.canonicalize()?;
+    let resolved = root.join(relative).canonicalize()?;
+    if !resolved.starts_with(root) {
+        return Err("source read escapes workspace".into());
+    }
+    Ok(resolved)
+}
+
+fn select(workspace: &Path, path: &str, selector: &Selector) -> Result<String, Box<dyn Error>> {
+    let resolved = source_path(workspace, path)?;
+    match selector {
+        // {anchor}`meta.reviews.selector_whole_file`
+        Selector::WholeFile => Ok(std::fs::read_to_string(resolved)?),
+        // {anchor}`meta.reviews.selector_line_range`
+        Selector::LineRange { start, end } => {
+            let source = std::fs::read_to_string(resolved)?;
+            let lines: Vec<_> = source.split_inclusive('\n').collect();
+            if *start == 0 || end < start || *end > lines.len() {
+                return Err("invalid or out-of-bounds line range".into());
+            }
+            Ok(lines[start - 1..*end].concat())
         }
-    }
-    Ok(())
-}
-
-pub fn load(path: &Path) -> Result<ReviewChecklist, Box<dyn Error>> {
-    let checklist: ReviewChecklist = serde_json::from_slice(&std::fs::read(path)?)?;
-    check_format(&checklist)?;
-    Ok(checklist)
-}
-
-/// Determine whether the recorded review accounts for the visible evidence kind.
-fn decision_error(review: &ReviewRecord) -> Option<&'static str> {
-    // {anchor}`meta.reviews.decisions`
-    if review.input.tests.is_empty() {
-        return Some("a review must include at least one annotated test");
-    }
-    if review.reason.trim().is_empty() || review.reviewer.trim().is_empty() {
-        return Some("a completed review needs a reason and reviewer");
-    }
-    if review.input.implementations.is_empty() {
-        return Some("a review must include at least one implementation association");
-    }
-    let statuses = review
-        .input
-        .tests
-        .iter()
-        .map(|test| test.status)
-        .chain(review.input.implementations.iter().map(|site| site.status));
-    match review.decision {
-        Decision::Pending => Some("review is pending"),
-        Decision::NeedsWork => Some("review found implementation or tests that need work"),
-        Decision::Approved => statuses.clone()
-            .any(|status| status != TestStatus::Ordinary)
-            .then_some("approval cannot present TODO or N/A implementations or tests as behavioral evidence"),
-        Decision::Todo => (!statuses.clone().any(|status| status == TestStatus::Todo))
-            .then_some("a TODO decision requires an explicit todo implementation or test"),
-        Decision::NotApplicable => statuses.clone()
-            .any(|status| status != TestStatus::NotApplicable)
-            .then_some("an N/A decision requires all implementations and tests to be not_applicable"),
-    }
-}
-
-/// Check freshness and decisions without executing tests or modifying snapshots.
-// {anchor}`meta.reviews.gate`
-pub fn validate(
-    current: &BTreeMap<String, ReviewInput>,
-    checklist: &ReviewChecklist,
-) -> Vec<ReviewIssue> {
-    let mut issues = Vec::new();
-    let mut report = |anchor: Option<&str>, message: String| {
-        issues.push(ReviewIssue {
-            anchor: anchor.map(str::to_owned),
-            message: format!("{message}; run the review skill at {REVIEW_SKILL}"),
-        });
-    };
-    if let Err(error) = check_format(checklist) {
-        report(None, error.to_string());
-        return issues;
-    }
-    if checklist.policy_version != POLICY_VERSION {
-        report(
-            None,
-            format!(
-                "review policy version {} is stale; expected {POLICY_VERSION}",
-                checklist.policy_version
-            ),
-        );
-        return issues;
-    }
-    let reviews: BTreeMap<_, _> = checklist
-        .reviews
-        .iter()
-        .map(|review| (review.anchor.as_str(), review))
-        .collect();
-    for (anchor, input) in current {
-        match reviews.get(anchor.as_str()) {
-            None => report(Some(anchor), format!("missing review for {anchor}")),
-            // {anchor}`meta.reviews.staleness`
-            Some(review) if &review.input != input => report(
-                Some(anchor),
-                format!(
-                    "stale review for {anchor}: claim, implementation, or complete test set changed"
-                ),
-            ),
-            Some(review) => {
-                if let Some(message) = decision_error(review) {
-                    report(Some(anchor), format!("{anchor}: {message}"));
+        // {anchor}`meta.reviews.selector_claim`
+        Selector::Claim { anchor_id } => {
+            let spec = SpecIndex::load_workspace(workspace)?;
+            if !spec.diagnostics.is_empty() {
+                return Err("invalid or ambiguous specification inventory".into());
+            }
+            let claim = spec
+                .anchors
+                .get(anchor_id)
+                .ok_or("claim selector no longer resolves")?;
+            if source_path(workspace, &claim_path(workspace, &claim.file)?)? != resolved {
+                return Err("claim selector source path does not match".into());
+            }
+            Ok(claim.content.clone())
+        }
+        // {anchor}`meta.reviews.selector_test`
+        Selector::Test {
+            crate_name,
+            target,
+            rust_path,
+        } => {
+            let rust = CorrespondenceIndex::load(workspace)?;
+            if !rust.diagnostics.is_empty() {
+                return Err("invalid or ambiguous Rust inventory".into());
+            }
+            let mut spans = BTreeSet::new();
+            for site in rust.tests.values().flatten().filter(|s| {
+                &s.crate_name == crate_name && &s.target == target && &s.rust_path == rust_path
+            }) {
+                if source_path(workspace, &site.file)? == resolved {
+                    spans.insert((site.span.start, site.span.end, site.file.clone()));
                 }
             }
+            if spans.len() != 1 {
+                return Err("test selector is missing or ambiguous".into());
+            }
+            let (start, end, file) = spans.into_iter().next().ok_or("missing test selector")?;
+            Ok(rust
+                .files
+                .get(&file)
+                .and_then(|text| text.get(start..end))
+                .ok_or("missing selected test source")?
+                .into())
         }
     }
-    for review in &checklist.reviews {
-        if !current.contains_key(&review.anchor) {
-            report(
-                Some(&review.anchor),
-                format!(
-                    "review for retired anchor {}; record a review packet to prune retired entries",
-                    review.anchor
-                ),
-            );
-        }
-    }
-    issues
 }
 
-fn load_current(
+// {anchor}`meta.reviews.fragment_associations`
+// {anchor}`meta.reviews.fragment_freshness`
+pub fn input_errors(workspace: &Path, saved: &ReviewInput, current: &ReviewInput) -> Vec<String> {
+    let mut errors = Vec::new();
+    if saved.prompt != current.prompt {
+        errors.push("verification prompt changed".into());
+    }
+    if saved.implementations != current.implementations {
+        errors.push("implementation associations or metadata changed".into());
+    }
+    if saved.tests != current.tests {
+        errors.push("test associations or metadata changed".into());
+    }
+    // Initial fragments are an ordered prefix; reads append without changing it.
+    if saved.fragments.len() < current.fragments.len() {
+        errors.push("missing initial source fragments".into());
+    }
+    for (index, expected) in current.fragments.iter().enumerate() {
+        if saved.fragments.get(index) != Some(expected) {
+            errors.push(format!(
+                "initial fragment changed: {} {:?}",
+                expected.path, expected.selector
+            ));
+        }
+    }
+    // Current inventory already resolves and checks every initial fragment.
+    for fragment in saved.fragments.iter().skip(current.fragments.len()) {
+        match select(workspace, &fragment.path, &fragment.selector) {
+            Ok(text) if text == fragment.contents.join("\n") => {}
+            Ok(_) => errors.push(format!(
+                "fragment contents changed: {} {:?}",
+                fragment.path, fragment.selector
+            )),
+            Err(error) => errors.push(format!(
+                "fragment {} {:?}: {error}",
+                fragment.path, fragment.selector
+            )),
+        }
+    }
+    errors
+}
+
+pub fn inputs_match(workspace: &Path, saved: &ReviewInput, current: &ReviewInput) -> bool {
+    input_errors(workspace, saved, current).is_empty()
+}
+
+fn output_error(output: &ValidationOutput) -> Option<&'static str> {
+    if output.reviewer.trim().is_empty() || output.report.trim().is_empty() {
+        return Some("completed output requires a nonblank reviewer and report");
+    }
+    if output
+        .requested_edits
+        .iter()
+        .any(|edit| edit.trim().is_empty())
+    {
+        return Some("requested edits must be concrete, nonblank strings");
+    }
+    None
+}
+
+fn current_inventory(
     workspace: &Path,
 ) -> Result<(PathBuf, BTreeMap<String, ReviewInput>), Box<dyn Error>> {
-    let rust = CorrespondenceIndex::load(workspace)?;
-    let workspace = rust.workspace_root().unwrap_or(workspace);
-    let spec = SpecIndex::load_workspace(workspace)?;
-    let mut errors = rust.diagnostics.clone();
-    errors.extend(spec.validate(&rust.tests));
-    errors.extend(spec.validate_implementations(&rust));
-    errors.extend(spec.validate_implementation_references(&rust));
-    if !errors.is_empty() {
+    let root = workspace_root(workspace)?;
+    let rust = CorrespondenceIndex::load(&root)?;
+    let spec = SpecIndex::load_workspace(&root)?;
+    let mut diagnostics = rust.diagnostics.clone();
+    diagnostics.extend(spec.validate(&rust.tests));
+    diagnostics.extend(spec.validate_implementations(&rust));
+    diagnostics.extend(spec.validate_implementation_references(&rust));
+    if !diagnostics.is_empty() {
         return Err(format!(
-            "cannot prepare reviews from invalid source inventory:\n{}",
-            errors
+            "invalid source inventory:\n{}",
+            diagnostics
                 .iter()
                 .map(ToString::to_string)
                 .collect::<Vec<_>>()
@@ -324,92 +457,276 @@ fn load_current(
         )
         .into());
     }
-    Ok((workspace.to_owned(), inventory(&spec, &rust)?))
+    Ok((root, inventory(&spec, &rust)?))
 }
 
-fn load_existing(workspace: &Path) -> Result<ReviewChecklist, Box<dyn Error>> {
-    let path = workspace.join(CHECKLIST_FILE);
-    match std::fs::read(&path) {
-        Ok(source) => {
-            let checklist: ReviewChecklist = serde_json::from_slice(&source)?;
-            check_format(&checklist)?;
-            Ok(checklist)
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Ok(ReviewChecklist::default())
-        }
-        Err(error) => Err(error.into()),
+fn safe_directory(path: &Path) -> Result<(), Box<dyn Error>> {
+    if !std::fs::symlink_metadata(path)?.file_type().is_dir() {
+        return Err(format!("{} is not a real directory", path.display()).into());
     }
-}
-
-/// Emit only missing, changed, or unsuccessful reviews. Never updates the cache.
-pub fn prepare(workspace: &Path) -> Result<ReviewChecklist, Box<dyn Error>> {
-    // {anchor}`meta.reviews.preparation`
-    let (workspace, current) = load_current(workspace)?;
-    let checklist = load_existing(&workspace)?;
-    let mut packet = ReviewChecklist::default();
-    for (anchor, input) in current {
-        let reusable = checklist.policy_version == POLICY_VERSION
-            && checklist.reviews.iter().any(|review| {
-                review.anchor == anchor && review.input == input && decision_error(review).is_none()
-            });
-        if !reusable {
-            packet.reviews.push(ReviewRecord {
-                anchor,
-                input,
-                decision: Decision::Pending,
-                reason: String::new(),
-                reviewer: String::new(),
-            });
-        }
-    }
-    Ok(packet)
-}
-
-/// Merge completed decisions only if their supplied inputs still match source.
-pub fn record(workspace: &Path, reviewed: &ReviewChecklist) -> Result<(), Box<dyn Error>> {
-    // {anchor}`meta.reviews.recording`
-    check_format(reviewed)?;
-    if reviewed.policy_version != POLICY_VERSION {
-        return Err("cannot record reviews under an outdated policy".into());
-    }
-    let (workspace, current) = load_current(workspace)?;
-    for review in &reviewed.reviews {
-        if current.get(&review.anchor) != Some(&review.input) {
-            return Err(format!(
-                "cannot record {}: reviewed claim, implementation, or tests no longer match current source",
-                review.anchor
-            )
-            .into());
-        }
-        if review.decision == Decision::NeedsWork {
-            if review.reason.trim().is_empty() || review.reviewer.trim().is_empty() {
-                return Err("a needs_work review needs a reason and reviewer".into());
-            }
-        } else if let Some(message) = decision_error(review) {
-            return Err(format!("cannot record {}: {message}", review.anchor).into());
-        }
-    }
-    let existing = load_existing(&workspace)?;
-    // A policy change cannot upgrade earlier decisions that were not resubmitted.
-    let mut merged: BTreeMap<_, _> = existing
-        .reviews
-        .into_iter()
-        .filter(|review| {
-            existing.policy_version == POLICY_VERSION && current.contains_key(&review.anchor)
-        })
-        .map(|review| (review.anchor.clone(), review))
-        .collect();
-    for review in &reviewed.reviews {
-        merged.insert(review.anchor.clone(), review.clone());
-    }
-    let result = ReviewChecklist {
-        reviews: merged.into_values().collect(),
-        ..ReviewChecklist::default()
-    };
-    let source = format!("{}\n", serde_json::to_string_pretty(&result)?);
-    let temporary = workspace.join(format!(".review-checklist-{}.tmp", std::process::id()));
-    std::fs::write(&temporary, source)?;
-    std::fs::rename(&temporary, workspace.join(CHECKLIST_FILE))?;
     Ok(())
+}
+
+// Readers and writers lock the existing directory inode. No checking operation
+// creates files; OS locks are released automatically if a reviewer crashes.
+fn lock_directory(path: &Path) -> Result<std::fs::File, Box<dyn Error>> {
+    safe_directory(path)?;
+    let file = std::fs::File::open(path)?;
+    file.lock()?;
+    Ok(file)
+}
+fn anchor_directory(workspace: &Path, anchor: &str) -> Result<PathBuf, Box<dyn Error>> {
+    if !crate::spec::valid_anchor_name(anchor) {
+        return Err("invalid validation anchor ID".into());
+    }
+    Ok(workspace.join(CHECKLIST_FILE).join(anchor))
+}
+fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, Box<dyn Error>> {
+    if !std::fs::symlink_metadata(path)?.file_type().is_file() {
+        return Err(format!("{} is not a regular file", path.display()).into());
+    }
+    Ok(serde_json::from_slice(&std::fs::read(path)?)?)
+}
+fn write_json(path: &Path, value: &impl Serialize) -> Result<(), Box<dyn Error>> {
+    let temp = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+    std::fs::write(&temp, serde_json::to_vec_pretty(value)?)?;
+    std::fs::rename(temp, path)?;
+    Ok(())
+}
+fn now() -> Result<u64, Box<dyn Error>> {
+    Ok(std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs())
+}
+fn read_summary(directory: &Path, anchor: &str) -> Result<Summary, Box<dyn Error>> {
+    safe_directory(directory)?;
+    let summary: Summary = read_json(&directory.join("summary.json"))?;
+    if summary.anchor != anchor {
+        return Err("summary anchor does not match directory".into());
+    }
+    if summary.schema_version != SCHEMA_VERSION || summary.policy_version != POLICY_VERSION {
+        return Err("unsupported schema/policy; start a fresh review".into());
+    }
+    Ok(summary)
+}
+
+// {anchor}`meta.reviews.validation_layout`
+// {anchor}`meta.reviews.preparation`
+// {anchor}`meta.reviews.review_instructions`
+pub fn start(
+    workspace: &Path,
+    anchor: &str,
+    instructions: Vec<String>,
+) -> Result<ReviewInput, Box<dyn Error>> {
+    if !crate::spec::valid_anchor_name(anchor) {
+        return Err("invalid validation anchor ID".into());
+    }
+    let (root, mut inputs) = current_inventory(workspace)?;
+    let mut input = inputs
+        .remove(anchor)
+        .ok_or("unknown specification anchor")?;
+    input.coordinator_instructions = instructions;
+    let parent = root.join(CHECKLIST_FILE);
+    std::fs::create_dir_all(&parent)?;
+    let _lock = lock_directory(&parent)?;
+    let directory = anchor_directory(&root, anchor)?;
+    if directory.exists() || directory.is_symlink() {
+        safe_directory(&directory)?;
+        // Remove the old report before any new inputs become visible.
+        std::fs::remove_dir_all(&directory)?;
+    }
+    std::fs::create_dir(&directory)?;
+    write_json(&directory.join("input.json"), &input)?;
+    write_json(
+        &directory.join("summary.json"),
+        &Summary {
+            anchor: anchor.into(),
+            started_at_unix_seconds: now()?,
+            recorded_at_unix_seconds: None,
+            schema_version: SCHEMA_VERSION,
+            policy_version: POLICY_VERSION,
+        },
+    )?;
+    Ok(input)
+}
+
+// {anchor}`meta.reviews.recorded_reads`
+pub fn capture_read(
+    workspace: &Path,
+    anchor: &str,
+    path: &str,
+    selector: Selector,
+) -> Result<String, Box<dyn Error>> {
+    let root = workspace_root(workspace)?;
+    let directory = anchor_directory(&root, anchor)?;
+    let _lock = lock_directory(&root.join(CHECKLIST_FILE))?;
+    let summary = read_summary(&directory, anchor)?;
+    if summary.recorded_at_unix_seconds.is_some() || directory.join("output.json").exists() {
+        return Err("review is completed; start a fresh review before reading".into());
+    }
+    let mut input: ReviewInput = read_json(&directory.join("input.json"))?;
+    let content = select(&root, path, &selector)?;
+    input.fragments.push(InputFragment {
+        path: path.into(),
+        selector,
+        contents: source_lines(&content),
+    });
+    write_json(&directory.join("input.json"), &input)?;
+    Ok(content)
+}
+
+// {anchor}`meta.reviews.recording`
+pub fn record(
+    workspace: &Path,
+    anchor: &str,
+    output: &ValidationOutput,
+) -> Result<(), Box<dyn Error>> {
+    if let Some(error) = output_error(output) {
+        return Err(error.into());
+    }
+    let (root, inputs) = current_inventory(workspace)?;
+    let current = inputs.get(anchor).ok_or("unknown specification anchor")?;
+    let directory = anchor_directory(&root, anchor)?;
+    let _lock = lock_directory(&root.join(CHECKLIST_FILE))?;
+    let mut summary = read_summary(&directory, anchor)?;
+    if summary.recorded_at_unix_seconds.is_some() || directory.join("output.json").exists() {
+        return Err("review is completed; start a fresh review before recording".into());
+    }
+    let input: ReviewInput = read_json(&directory.join("input.json"))?;
+    let errors = input_errors(&root, &input, current);
+    if !errors.is_empty() {
+        return Err(format!(
+            "cannot record {anchor}: {}; start a fresh review",
+            errors.join("; ")
+        )
+        .into());
+    }
+    write_json(&directory.join("output.json"), output)?;
+    summary.recorded_at_unix_seconds = Some(now()?);
+    write_json(&directory.join("summary.json"), &summary)?;
+    Ok(())
+}
+
+pub fn load_saved(path: &Path) -> Result<ReviewChecklist, Box<dyn Error>> {
+    let mut checklist = ReviewChecklist::default();
+    if !path.exists() {
+        return Ok(checklist);
+    }
+    let _lock = lock_directory(path)?;
+    let mut entries = std::fs::read_dir(path)?.collect::<Result<Vec<_>, _>>()?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let anchor = entry.file_name().to_string_lossy().into_owned();
+        let loaded = (|| -> Result<ReviewRecord, Box<dyn Error>> {
+            if !crate::spec::valid_anchor_name(&anchor) {
+                return Err("invalid validation directory name".into());
+            }
+            let summary = read_summary(&entry.path(), &anchor)?;
+            let input = read_json(&entry.path().join("input.json"))?;
+            let output = if summary.recorded_at_unix_seconds.is_some() {
+                let output: ValidationOutput = read_json(&entry.path().join("output.json"))?;
+                if let Some(error) = output_error(&output) {
+                    return Err(error.into());
+                }
+                Some(output)
+            } else {
+                None
+            };
+            Ok(ReviewRecord {
+                anchor: anchor.clone(),
+                input,
+                output,
+            })
+        })();
+        match loaded {
+            Ok(record)=>checklist.reviews.push(record),
+            Err(error)=>checklist.issues.push(ReviewIssue {anchor:Some(anchor.clone()),message:format!("invalid validation {anchor}: {error}; invoke {REVIEW_SKILL} and run cargo meta review start {anchor}")}),
+        }
+    }
+    Ok(checklist)
+}
+
+// {anchor}`meta.reviews.decisions`
+// {anchor}`meta.reviews.staleness`
+pub fn acceptable<'a>(
+    workspace: &Path,
+    anchor: &str,
+    input: &ReviewInput,
+    checklist: &'a ReviewChecklist,
+) -> Option<&'a ReviewRecord> {
+    if checklist.schema_version != SCHEMA_VERSION || checklist.policy_version != POLICY_VERSION {
+        return None;
+    }
+    checklist.reviews.iter().find(|record| {
+        record.anchor == anchor
+            && !input.tests.is_empty()
+            && !input.implementations.is_empty()
+            && record.output.as_ref().is_some_and(|output| {
+                output_error(output).is_none() && output.requested_edits.is_empty()
+            })
+            && inputs_match(workspace, &record.input, input)
+    })
+}
+
+// {anchor}`meta.reviews.gate`
+// {anchor}`meta.reviews.record_required`
+// {anchor}`meta.reviews.review_diagnostics`
+pub fn validate(
+    workspace: &Path,
+    current: &BTreeMap<String, ReviewInput>,
+    checklist: &ReviewChecklist,
+) -> Vec<ReviewIssue> {
+    let mut issues = checklist.issues.clone();
+    for anchor in checklist
+        .reviews
+        .iter()
+        .map(|r| Some(&r.anchor))
+        .chain(checklist.issues.iter().map(|i| i.anchor.as_ref()))
+        .flatten()
+    {
+        if !current.contains_key(anchor) {
+            issues.push(ReviewIssue {anchor:Some(anchor.clone()),message:format!("obsolete validation for {anchor}: remove validations/{anchor}/ if retired, or reconcile the renamed anchor and start fresh validation; invoke {REVIEW_SKILL}")});
+        }
+    }
+    for (anchor, input) in current {
+        let mut reasons = Vec::new();
+        match checklist.reviews.iter().find(|r| &r.anchor == anchor) {
+            None => reasons.push("missing or invalid validation".into()),
+            Some(record) => {
+                match &record.output {
+                    None => reasons.push(
+                        "unfinished review: subagent must run cargo meta review record".into(),
+                    ),
+                    Some(output) => {
+                        if let Some(error) = output_error(output) {
+                            reasons.push(error.into());
+                        }
+                        if !output.requested_edits.is_empty() {
+                            reasons.push(format!(
+                                "requested edits: {}",
+                                output.requested_edits.join("; ")
+                            ));
+                        }
+                    }
+                }
+                reasons.extend(input_errors(workspace, &record.input, input));
+            }
+        }
+        if input.tests.is_empty() {
+            reasons.push("missing test association".into());
+        }
+        if input.implementations.is_empty() {
+            reasons.push("missing implementation association".into());
+        }
+        if !reasons.is_empty() {
+            issues.push(ReviewIssue {
+                anchor: Some(anchor.clone()),
+                message: format!(
+                    "review required for {anchor}: {}; invoke {REVIEW_SKILL}",
+                    reasons.join("; ")
+                ),
+            });
+        }
+    }
+    issues
 }

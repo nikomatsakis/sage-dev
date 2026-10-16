@@ -25,6 +25,7 @@ pub enum EvidenceStatus {
 /// Determine placeholder status from the enclosing module, excluding the crate
 /// name itself. Special modules may nest, but conflicting classifications cannot.
 // {anchor}`meta.anchors.placeholder_status`
+// {anchor}`meta.reviews.decisions`
 pub fn placeholder_status(module: &str) -> Result<EvidenceStatus, String> {
     let mut todo = false;
     let mut not_applicable = false;

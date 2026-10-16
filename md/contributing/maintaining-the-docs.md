@@ -99,9 +99,8 @@ or the test executed. Test adequacy review and test execution are separate.
 
 Use `.agents/skills/sage-review-checklist/SKILL.md` when the claim, associated implementation files, or complete
 test set changes. Reviewers inspect the exact inputs, including TODO/N/A
-explanations. Record reviewed decisions through `sage-meta review record`;
-do not rewrite snapshots merely to make CI pass. Approvals cover implementation completeness and test adequacy. Implementation
-file edits conservatively require fresh review; consult the review specification
+explanations. Start each anchor review with `cargo meta review start <anchor>`, capture extra context with `cargo meta review read`, and record its complete report in `validations/<anchor-id>/` through `cargo meta review record <anchor> <report-file>`;
+do not rewrite snapshots merely to make CI pass. Approvals cover implementation completeness and test adequacy. Changes to captured source fragments require fresh review; consult the review specification
 for the exact snapshot boundary.
 
 ## Navigation and generated content
@@ -135,7 +134,7 @@ for explanatory worked examples; it does not establish specification coverage.
 Run the shared check and build the book:
 
 ```sh
-cargo run -p sage-meta -- check
+cargo meta check
 mdbook build
 ```
 

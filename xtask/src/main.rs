@@ -83,6 +83,7 @@ fn ci_lint() -> Result<()> {
     Ok(())
 }
 
+// {anchor}`meta.reviews.gate`
 fn ci_test() -> Result<()> {
     let sh = Shell::new()?;
     let root = project_root();

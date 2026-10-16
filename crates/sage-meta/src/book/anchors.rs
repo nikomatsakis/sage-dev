@@ -22,11 +22,11 @@ pub(super) fn generate(
     let inputs = review::inventory(spec, &rust)?;
     let checklist_path = workspace.join(review::CHECKLIST_FILE);
     let checklist = if checklist_path.exists() {
-        review::load(&checklist_path)?
+        review::load_saved(&checklist_path)?
     } else {
         ReviewChecklist::default()
     };
-    let review_issues = review::validate(&inputs, &checklist);
+    let review_issues = review::validate(workspace, &inputs, &checklist);
     for anchor in spec.anchors.values() {
         spec.role_replacements(&anchor.file, &anchor.content)
             .map_err(|errors| {
@@ -38,6 +38,7 @@ pub(super) fn generate(
             })?;
     }
     let view = AnchorPages {
+        workspace,
         spec,
         rust: &rust,
         inputs: &inputs,
@@ -59,6 +60,7 @@ pub(super) fn generate(
 }
 
 struct AnchorPages<'a> {
+    workspace: &'a Path,
     spec: &'a SpecIndex,
     rust: &'a CorrespondenceIndex,
     inputs: &'a BTreeMap<String, ReviewInput>,
@@ -178,7 +180,21 @@ impl AnchorPages<'_> {
                     text.push_str("<p class=\"anchor-missing\">Missing test association — validation error.</p>\n\n");
                 }
                 for test in &input.tests {
-                    text.push_str(&format!("<section class=\"anchor-evidence\"><p>{} <code>{}</code></p><p><code>{}</code> · {}</p>{}", status_badge(test.status), escape(&test.rust_path), escape(&test.file), escape(&test.target), code(&test.source.join("\n"))));
+                    let source = input
+                        .fragments
+                        .iter()
+                        .find(|fragment| {
+                            fragment.path == test.file
+                                && fragment.selector
+                                    == review::Selector::Test {
+                                        crate_name: test.crate_name.clone(),
+                                        target: test.target.clone(),
+                                        rust_path: test.rust_path.clone(),
+                                    }
+                        })
+                        .map(|fragment| fragment.contents.join("\n"))
+                        .unwrap_or_default();
+                    text.push_str(&format!("<section class=\"anchor-evidence\"><p>{} <code>{}</code></p><p><code>{}</code> · {}</p>{}", status_badge(test.status), escape(&test.rust_path), escape(&test.file), escape(&test.target), code(&source)));
                     if !test.cfg.is_empty() {
                         text.push_str(&format!(
                             "<p>Conditional source: <code>{}</code></p>",
@@ -202,16 +218,38 @@ impl AnchorPages<'_> {
                     text.push_str("</section>\n\n");
                 }
                 let record = self
-                    .checklist
-                    .reviews
-                    .iter()
-                    .find(|record| record.anchor == name);
+                    .inputs
+                    .get(name)
+                    .and_then(|input| {
+                        review::acceptable(self.workspace, name, input, self.checklist)
+                    })
+                    .or_else(|| {
+                        self.checklist
+                            .reviews
+                            .iter()
+                            .find(|record| record.anchor == name)
+                    });
                 match record {
                     Some(record) => {
                         let current = !self.review_issues.iter().any(|issue| {
                             issue.anchor.as_deref().is_none_or(|anchor| anchor == name)
                         });
-                        text.push_str(&format!("<p class=\"anchor-review\">Review: <strong>{:?}</strong>{} · {}.</p><p>{}</p>\n\n", record.decision, if current { "" } else { " (requires review)" }, escape(&record.reviewer), escape(&record.reason)));
+                        if let Some(output) = &record.output {
+                            let status = if output.requested_edits.is_empty() {
+                                "Accepted"
+                            } else {
+                                "Changes requested"
+                            };
+                            text.push_str(&format!("<p class=\"anchor-review\">Review: <strong>{status}</strong>{} · {}.</p><p>{}</p>\n\n", if current { "" } else { " (requires review)" }, escape(&output.reviewer).replace('\n', "<br>"), escape(&output.report).replace('\n', "<br>")));
+                            for edit in &output.requested_edits {
+                                text.push_str(&format!(
+                                    "<p>Requested edit: {}</p>\n",
+                                    escape(edit).replace('\n', "<br>")
+                                ));
+                            }
+                        } else {
+                            text.push_str("<p class=\"anchor-review\">Review: <strong>Unfinished</strong>.</p>\n\n");
+                        }
                     }
                     None => text.push_str("<p class=\"anchor-review\">Review: pending.</p>\n\n"),
                 }

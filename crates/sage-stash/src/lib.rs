@@ -881,7 +881,13 @@ impl Stash {
             match self.intern_map.get(&key) {
                 Some(&entry_idx) => {
                     let entry = &self.entries[entry_idx.get() as usize];
-                    debug_assert_eq!(entry.count, 1);
+                    // Slice entries share this hash bucket. Compare a scalar
+                    // only with entries that contain exactly one value.
+                    if entry.count != 1 {
+                        continue;
+                    }
+                    // SAFETY: The key matches T's type and this entry contains
+                    // one value, initialized with T's alignment by push_raw.
                     let existing = unsafe { self.read_one::<T>(entry.offset) };
                     if *existing == value {
                         return self.make_ptr(entry_idx);

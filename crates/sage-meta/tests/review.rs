@@ -4,12 +4,11 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use sage_meta::review::{self, Decision, ReviewChecklist, TestStatus};
+use sage_meta::review::{self, ReviewInput, Selector, TestStatus, ValidationOutput};
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 const CLAIM: &str = "{anchor}`demo.rule`\nThe result is four.\n";
-const TEST: &str =
-    "#[test]\n#[sage::test(demo.rule)]\nfn verifies_result() {\n    assert_eq!(2 + 2, 4);\n}";
+const TEST: &str = "#[test]\n#[sage::test(demo.rule)]\nfn verifies_result() {\n    // Check the concrete result.\n    assert_eq!(2 + 2, 4);\n}";
 
 struct Fixture(PathBuf);
 
@@ -23,61 +22,69 @@ impl Fixture {
         for path in ["src", "md/design/crates/demo"] {
             std::fs::create_dir_all(root.join(path)).unwrap();
         }
-        std::fs::write(root.join("book.toml"), "[book]\nsrc = 'md'\n").unwrap();
-        std::fs::write(
-            root.join("md/SUMMARY.md"),
-            "- [Design](design/README.md)\n  - [Crates](design/crates/README.md)\n",
-        )
-        .unwrap();
-        std::fs::write(root.join("md/design/crates/README.md"), "# Crates\n").unwrap();
-        std::fs::write(
-            root.join("Cargo.toml"),
-            "[package]\nname = \"demo\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n",
-        )
-        .unwrap();
-        std::fs::write(
-            root.join("md/design/crates/demo/crate.sage"),
-            "crate demo { \"\"\"Review fixture.\"\"\" }",
-        )
-        .unwrap();
         let fixture = Self(root);
-        fixture.claim(CLAIM);
-        fixture.rust(TEST);
+        for (path, content) in [
+            (
+                "Cargo.toml",
+                "[package]\nname = 'demo'\nversion = '0.0.0'\nedition = '2024'\n[workspace]\n",
+            ),
+            ("book.toml", "[book]\nsrc = 'md'\n"),
+            (
+                "md/SUMMARY.md",
+                "- [Design](design/README.md)\n  - [Crates](design/crates/README.md)\n",
+            ),
+            ("md/design/crates/README.md", "# Crates\n"),
+            (
+                "md/design/crates/demo/crate.sage",
+                "crate demo { \"\"\"Review fixture.\"\"\" }",
+            ),
+            ("md/design/README.md", CLAIM),
+            (
+                "src/lib.rs",
+                "#[sage::item(crate)] mod model {}\nmod behavior;\n#[cfg(test)] mod tests;\n",
+            ),
+            (
+                "src/behavior.rs",
+                "// {anchor}`demo.rule`\npub fn result() -> u32 { 4 }\n",
+            ),
+            ("src/tests.rs", TEST),
+        ] {
+            fixture.write(path, content);
+        }
         fixture
     }
 
-    fn claim(&self, text: &str) {
-        std::fs::write(self.0.join("md/design/README.md"), text).unwrap();
+    fn write(&self, path: &str, content: &str) {
+        let path = self.0.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
     }
 
-    fn rust(&self, text: &str) {
-        let spec = sage_meta::spec::SpecIndex::load_workspace(&self.0).unwrap();
-        let implementation = spec
-            .anchors
-            .keys()
-            .map(|name| format!("// {{anchor}}`{name}`\n"))
-            .collect::<String>();
-        std::fs::write(
-            self.0.join("src/lib.rs"),
-            format!("#[sage::item(crate)] mod model {{}}\n{implementation}{text}\n"),
+    fn start(&self) -> ReviewInput {
+        review::start(&self.0, "demo.rule", vec![]).unwrap()
+    }
+
+    fn report() -> ValidationOutput {
+        ValidationOutput { reviewer: "independent fixture reviewer".into(), report: "The implementation returns four and the test asserts the concrete addition result. Source inspection is separate from test execution.".into(), requested_edits: vec![] }
+    }
+
+    fn approve(&self) {
+        self.start();
+        review::record(&self.0, "demo.rule", &Self::report()).unwrap();
+    }
+
+    fn input(&self) -> ReviewInput {
+        serde_json::from_slice(
+            &std::fs::read(self.0.join("validations/demo.rule/input.json")).unwrap(),
         )
-        .unwrap();
+        .unwrap()
     }
 
-    fn approve(&self) -> ReviewChecklist {
-        let mut submission = review::prepare(&self.0).unwrap();
-        for record in &mut submission.reviews {
-            record.decision = Decision::Approved;
-            record.reason =
-                "The body explicitly asserts that adding two and two yields four.".into();
-            record.reviewer = "review test fixture".into();
-        }
-        review::record(&self.0, &submission).unwrap();
-        submission
-    }
-
-    fn saved(&self) -> String {
-        std::fs::read_to_string(self.0.join(review::CHECKLIST_FILE)).unwrap()
+    fn summary(&self) -> serde_json::Value {
+        serde_json::from_slice(
+            &std::fs::read(self.0.join("validations/demo.rule/summary.json")).unwrap(),
+        )
+        .unwrap()
     }
 
     fn run(&self, args: &[&str]) -> std::process::Output {
@@ -96,644 +103,1231 @@ impl Drop for Fixture {
 }
 
 #[test]
-#[sage::test(meta.reviews.claim_text)]
-#[sage::test(meta.reviews.source_representation)]
-fn claim_snapshot_contains_the_complete_content_without_outer_whitespace() {
+#[sage::test(meta.reviews.validation_layout)]
+#[sage::test(meta.reviews.summary_format)]
+#[sage::test(meta.reviews.preparation)]
+#[sage::test(meta.reviews.record_required)]
+#[sage::test(meta.reviews.recorded_reads)]
+#[sage::test(meta.reviews.recording)]
+fn start_invalidates_previous_success_and_record_is_required() {
     let fixture = Fixture::new();
-    fixture.claim(
-        "# Context\n\n{anchor}`demo.rule`  \nThe **result** is four,  \nincluding this second line.\n\nA qualification of the claim.\n\n- Additional list item.\n\n```rust\n    assert_eq!(2 + 2, 4);\n```\n\n| Input | Result |\n| --- | --- |\n| 2 + 2 | 4 |\n\n<!-- end anchor -->\n\nCommentary outside the claim.\n",
-    );
-    let pending = review::prepare(&fixture.0).unwrap();
-    assert_eq!(pending.reviews.len(), 1);
-    assert_eq!(pending.reviews[0].anchor, "demo.rule");
-    assert_eq!(
-        pending.reviews[0].input.claim,
-        [
-            "The **result** is four,  ",
-            "including this second line.",
-            "",
-            "A qualification of the claim.",
-            "",
-            "- Additional list item.",
-            "",
-            "```rust",
-            "    assert_eq!(2 + 2, 4);",
-            "```",
-            "",
-            "| Input | Result |",
-            "| --- | --- |",
-            "| 2 + 2 | 4 |",
-        ]
-    );
-}
-
-#[test]
-#[sage::test(meta.reviews.claim_text)]
-#[sage::test(meta.reviews.staleness)]
-fn later_blocks_invalidate_reviews_but_content_beyond_a_boundary_does_not() {
-    for boundary in [
-        "<!-- end anchor -->",
-        "## Commentary",
-        "Commentary\n----------",
-        "{anchor}`demo.other`\nA separate rule.",
-    ] {
-        let fixture = Fixture::new();
-        let claim = format!(
-            "{CLAIM}\nA later qualification.\n\n- A list case.\n\n```text\nA worked example.\n```\n\n{boundary}\n\nOutside commentary.\n"
-        );
-        fixture.claim(&claim);
-        let has_other = boundary.starts_with("{anchor}");
-        fixture.rust(&if has_other {
-            format!("{TEST}\n#[test] #[sage::test(demo.other)] fn other() {{ assert!(true); }}")
-        } else {
-            TEST.into()
-        });
-        fixture.approve();
-        for original in ["A later qualification", "A list case", "A worked example"] {
-            fixture.claim(&claim.replace(original, "Changed content"));
-            let pending = review::prepare(&fixture.0).unwrap();
-            assert_eq!(pending.reviews.len(), 1, "{boundary}: {original}");
-            assert_eq!(pending.reviews[0].anchor, "demo.rule");
-            assert!(!sage_meta::check(&fixture.0).is_valid());
-        }
-        fixture.claim(&claim.replace("Outside commentary", "Edited outside commentary"));
-        let pending = review::prepare(&fixture.0).unwrap();
-        if has_other {
-            assert_eq!(pending.reviews.len(), 1);
-            assert_eq!(pending.reviews[0].anchor, "demo.other");
-        } else {
-            assert!(pending.reviews.is_empty(), "{boundary}");
-            assert!(sage_meta::check(&fixture.0).is_valid());
-        }
-        fixture.claim(&claim);
-        assert!(review::prepare(&fixture.0).unwrap().reviews.is_empty());
-    }
-
-    let fixture = Fixture::new();
-    fixture.approve();
-    fixture.claim(&format!("{CLAIM}\nA paragraph appended at EOF.\n"));
-    let pending = review::prepare(&fixture.0).unwrap();
-    assert_eq!(pending.reviews.len(), 1);
-    assert_eq!(pending.reviews[0].anchor, "demo.rule");
-    assert_eq!(
-        pending.reviews[0].input.claim,
-        ["The result is four.", "", "A paragraph appended at EOF."]
-    );
-}
-
-#[test]
-#[sage::test(meta.reviews.source_representation)]
-fn persisted_source_line_arrays_reconstruct_claim_implementation_and_test() {
-    let fixture = Fixture::new();
-    let claim =
-        "The **result** is four.  \n\nFor example:\n\n```rust\n    assert_eq!(2 + 2, 4);\n```";
-    let function = "#[test]\n#[sage::test(demo.rule)]\nfn verifies_result() {\n    // **Evidence** preserves spacing.\n\n    assert_eq!(2 + 2, 4);\n}";
-    fixture.claim(&format!("{{anchor}}`demo.rule`\n{claim}\n"));
-    fixture.rust(function);
-    fixture.approve();
-    let json: serde_json::Value = serde_json::from_str(&fixture.saved()).unwrap();
-    let input = &json["reviews"][0]["input"];
-    for (lines, original) in [
-        (&input["claim"], claim),
-        (&input["tests"][0]["source"], function),
-    ] {
-        let lines = lines.as_array().expect("source is saved as an array");
-        let strings = lines
-            .iter()
-            .map(|line| line.as_str().expect("each line is a JSON string"))
-            .collect::<Vec<_>>();
-        assert!(strings.contains(&""), "internal blank lines survive");
-        assert_eq!(strings.join("\n"), original);
-    }
-    let loaded = review::load(&fixture.0.join(review::CHECKLIST_FILE)).unwrap();
-    assert_eq!(
-        loaded.reviews[0].input.implementation_sources["src/lib.rs"].join("\n"),
-        std::fs::read_to_string(fixture.0.join("src/lib.rs")).unwrap()
-    );
-    assert_eq!(loaded.reviews[0].input.claim.join("\n"), claim);
-    assert_eq!(loaded.reviews[0].input.tests[0].source.join("\n"), function);
-}
-
-#[test]
-#[sage::test(meta.reviews.review_scope)]
-fn implementation_edits_including_outside_the_preview_invalidate_review() {
-    let fixture = Fixture::new();
-    let implementation = "// {anchor}`demo.rule`<<\nfn implementation() -> u32 { helper() }\n// >>\nfn helper() -> u32 { 2 + 2 }";
-    fixture.rust(&format!("{implementation}\n{TEST}"));
-    let reviewed = fixture.approve();
-    let saved = fixture.saved();
-    let input = &reviewed.reviews[0].input;
-    assert!(input.implementations.iter().any(|site| site.region));
-    assert!(
-        input.implementation_sources["src/lib.rs"]
-            .join("\n")
-            .contains("fn helper()")
-    );
-
-    fixture.rust(&format!("{}\n{TEST}", implementation.replace("2 + 2", "5")));
-    let pending = review::prepare(&fixture.0).unwrap();
-    assert_eq!(pending.reviews.len(), 1);
-    assert_eq!(pending.reviews[0].input.tests, input.tests);
-    assert_ne!(
-        pending.reviews[0].input.implementation_sources,
-        input.implementation_sources
-    );
     assert!(!sage_meta::check(&fixture.0).is_valid());
-    assert!(review::record(&fixture.0, &reviewed).is_err());
-    assert_eq!(fixture.saved(), saved);
+    fixture.approve();
+    assert!(sage_meta::check(&fixture.0).is_valid());
+    let input = fixture.start();
+    assert_eq!(fixture.input(), input);
+    let summary = fixture.summary();
+    assert_eq!(summary["anchor"], "demo.rule");
+    assert!(summary["started_at_unix_seconds"].as_u64().unwrap() > 0);
+    assert!(summary["recorded_at_unix_seconds"].is_null());
+    assert_eq!(summary["schema_version"], review::SCHEMA_VERSION);
+    assert_eq!(summary["policy_version"], review::POLICY_VERSION);
+    assert!(summary.get("input_sha256").is_none());
+    assert!(!fixture.0.join("validations/demo.rule/output.json").exists());
+    assert!(!sage_meta::check(&fixture.0).is_valid());
+    let saved = review::load_saved(&fixture.0.join("validations")).unwrap();
+    assert_eq!(saved.reviews.len(), 1);
+    assert!(saved.reviews[0].output.is_none());
+    fixture.write("helper.txt", "context\n");
+    review::capture_read(&fixture.0, "demo.rule", "helper.txt", Selector::WholeFile).unwrap();
+    assert!(!sage_meta::check(&fixture.0).is_valid());
+    let bytes = std::fs::read(fixture.0.join("validations/demo.rule/input.json")).unwrap();
+    review::record(&fixture.0, "demo.rule", &Fixture::report()).unwrap();
+    assert_eq!(
+        bytes,
+        std::fs::read(fixture.0.join("validations/demo.rule/input.json")).unwrap()
+    );
+    assert!(
+        fixture.summary()["recorded_at_unix_seconds"]
+            .as_u64()
+            .unwrap()
+            >= summary["started_at_unix_seconds"].as_u64().unwrap()
+    );
+    assert!(sage_meta::check(&fixture.0).is_valid());
+    assert!(review::record(&fixture.0, "demo.rule", &Fixture::report()).is_err());
+    assert!(
+        review::capture_read(&fixture.0, "demo.rule", "helper.txt", Selector::WholeFile).is_err()
+    );
+}
+
+#[test]
+#[sage::test(meta.reviews.input_format)]
+#[sage::test(meta.reviews.input_fragments)]
+#[sage::test(meta.reviews.fragment_format)]
+#[sage::test(meta.reviews.review_instructions)]
+#[sage::test(meta.reviews.review_scope)]
+#[sage::test(meta.reviews.source_representation)]
+#[sage::test(meta.reviews.preparation)]
+fn initial_context_preserves_instructions_and_exact_uniform_fragments() {
+    let fixture = Fixture::new();
+    let instructions = vec![
+        "Check all scenarios.\nKeep this newline.".into(),
+        "Account for TODO rationale.".into(),
+    ];
+    let input = review::start(&fixture.0, "demo.rule", instructions.clone()).unwrap();
+    assert_eq!(input.coordinator_instructions, instructions);
+    assert_eq!(input.prompt, review::PROMPT);
+    assert_eq!(input, fixture.input());
+    let claim = input
+        .fragments
+        .iter()
+        .find(|f| matches!(&f.selector, Selector::Claim { anchor_id } if anchor_id == "demo.rule"))
+        .unwrap();
+    assert_eq!(claim.path, "md/design/README.md");
+    assert_eq!(claim.contents.join("\n"), "The result is four.");
+    let implementation = input
+        .fragments
+        .iter()
+        .find(|f| f.path == "src/behavior.rs" && matches!(f.selector, Selector::WholeFile))
+        .unwrap();
+    assert_eq!(
+        implementation.contents.join("\n"),
+        std::fs::read_to_string(fixture.0.join("src/behavior.rs")).unwrap()
+    );
+    let test = input
+        .fragments
+        .iter()
+        .find(|f| matches!(f.selector, Selector::Test { .. }))
+        .unwrap();
+    assert_eq!(test.path, "src/tests.rs");
+    assert_eq!(test.contents.join("\n"), TEST);
+    assert!(
+        !input
+            .fragments
+            .iter()
+            .any(|f| f.path == "src/tests.rs" && matches!(f.selector, Selector::WholeFile))
+    );
+    assert_eq!(input.implementations.len(), 1);
+    assert_eq!(input.implementations[0].file, "src/behavior.rs");
+    assert_eq!(input.implementations[0].status, TestStatus::Ordinary);
+    assert_eq!(input.tests.len(), 1);
+}
+
+#[test]
+#[sage::test(meta.reviews.claim_text)]
+#[sage::test(meta.reviews.selector_claim)]
+#[sage::test(meta.reviews.staleness)]
+#[sage::test(meta.reviews.source_representation)]
+fn complete_claim_blocks_are_selected_but_unrelated_movement_is_not_stale() {
+    let fixture = Fixture::new();
+    let body = "First **paragraph**.\n\nSecond paragraph.\n\n- list item\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n```rust\nlet x = 4;\n```";
+    let claim =
+        format!("# Heading\n\n{{anchor}}`demo.rule`\n{body}\n\n<!-- end anchor -->\nOutside\n");
+    fixture.write("md/design/README.md", &claim);
+    let input = fixture.start();
+    let fragment = input
+        .fragments
+        .iter()
+        .find(|f| matches!(f.selector, Selector::Claim { .. }))
+        .unwrap();
+    assert_eq!(fragment.contents.join("\n"), body);
+    review::record(&fixture.0, "demo.rule", &Fixture::report()).unwrap();
+    fixture.write(
+        "md/design/README.md",
+        &format!("\n\n{}", claim.replace("Outside", "Changed outside")),
+    );
+    assert!(sage_meta::check(&fixture.0).is_valid());
+    for text in ["Second paragraph", "list item", "| 1 | 2 |", "let x = 4"] {
+        fixture.write("md/design/README.md", &claim.replace(text, "changed"));
+        assert!(!sage_meta::check(&fixture.0).is_valid(), "{text}");
+    }
 }
 
 #[test]
 #[sage::test(meta.reviews.test_source)]
-fn test_snapshot_preserves_attributes_signature_body_comments_and_inherited_cfg() {
+#[sage::test(meta.reviews.selector_test)]
+#[sage::test(meta.reviews.staleness)]
+#[sage::test(meta.reviews.fragment_associations)]
+#[sage::test(meta.reviews.input_format)]
+#[sage::test(meta.reviews.fragment_freshness)]
+fn test_selector_preserves_metadata_and_ignores_unrelated_line_movement() {
     let fixture = Fixture::new();
-    let function = "#[test]\n#[sage::test(demo.rule)]\n#[cfg(unix)]\nfn verifies_result() {\n    // This assertion supplies the evidence.\n    assert_eq!(2 + 2, 4);\n}";
-    fixture.rust(&format!("#[cfg(test)]\nmod checks {{\n{function}\n}}"));
-    let pending = review::prepare(&fixture.0).unwrap();
-    let tests = &pending.reviews[0].input.tests;
-    assert_eq!(tests.len(), 1);
-    assert_eq!(tests[0].source.join("\n"), function);
-    assert_eq!(tests[0].crate_name, "demo");
-    assert_eq!(tests[0].target, "lib:demo");
-    assert_eq!(tests[0].file, "src/lib.rs");
-    assert!(tests[0].rust_path.ends_with("checks::verifies_result"));
-    assert!(tests[0].cfg.iter().any(|cfg| cfg.contains("test")));
-    assert!(tests[0].cfg.iter().any(|cfg| cfg.contains("unix")));
-    assert_eq!(tests[0].status, TestStatus::Ordinary);
+    fixture.write(
+        "src/tests.rs",
+        &format!("#[cfg(unix)]\nmod nested {{\n{TEST}\n}}\n"),
+    );
+    let input = fixture.start();
+    let test = &input.tests[0];
+    assert_eq!(test.crate_name, "demo");
+    assert_eq!(test.target, "lib:demo");
+    assert_eq!(test.rust_path, "demo::tests::nested::verifies_result");
+    assert_eq!(test.file, "src/tests.rs");
+    assert!(test.cfg.iter().any(|cfg| cfg.contains("unix")));
+    assert!(test.cfg.iter().any(|cfg| cfg.contains("test")));
+    assert_eq!(test.status, TestStatus::Ordinary);
+    let selector = Selector::Test {
+        crate_name: test.crate_name.clone(),
+        target: test.target.clone(),
+        rust_path: test.rust_path.clone(),
+    };
+    assert_eq!(
+        review::capture_read(&fixture.0, "demo.rule", "src/tests.rs", selector).unwrap(),
+        TEST
+    );
+    review::record(&fixture.0, "demo.rule", &Fixture::report()).unwrap();
+    fixture.write(
+        "src/tests.rs",
+        &format!("// Unrelated\n\n#[cfg(unix)]\nmod nested {{\n{TEST}\n}}\n"),
+    );
+    assert!(sage_meta::check(&fixture.0).is_valid());
+    fixture.write(
+        "src/tests.rs",
+        &format!("#[cfg(windows)]\nmod nested {{\n{TEST}\n}}\n"),
+    );
+    assert!(!sage_meta::check(&fixture.0).is_valid());
 }
 
 #[test]
 #[sage::test(meta.reviews.complete_test_set)]
-#[sage::test(meta.reviews.staleness)]
-fn adding_or_removing_an_associated_test_invalidates_the_collective_review() {
+#[sage::test(meta.reviews.fragment_associations)]
+#[sage::test(meta.reviews.input_format)]
+#[sage::test(meta.reviews.review_diagnostics)]
+fn added_or_removed_associations_invalidate_unchanged_saved_fragments() {
     let fixture = Fixture::new();
     fixture.approve();
-    let extra =
-        "#[test] #[sage::test(demo.rule)] fn checks_another_case() { assert_eq!(1 + 3, 4); }";
-    fixture.rust(&format!("{TEST}\n{extra}"));
-    assert!(!sage_meta::check(&fixture.0).is_valid());
-    let pending = review::prepare(&fixture.0).unwrap();
-    assert_eq!(pending.reviews.len(), 1, "the review is grouped by claim");
-    assert_eq!(pending.reviews[0].input.tests.len(), 2);
-    let approved = fixture.approve();
-    fixture.rust(&format!("{extra}\n{TEST}"));
-    let reordered = review::prepare(&fixture.0).unwrap();
+    let original = fixture.input();
+    let second = "#[test] #[sage::test(demo.rule)] fn second() { assert_eq!(1 + 3, 4); }";
+    fixture.write("src/tests.rs", &format!("{TEST}\n{second}"));
+    let error = sage_meta::check(&fixture.0)
+        .ensure_valid()
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("demo.rule"), "{error}");
+    assert!(error.contains("test associations"), "{error}");
+    assert!(error.contains("sage-review-checklist/SKILL.md"), "{error}");
+    let current = fixture.start();
+    assert_eq!(current.tests.len(), 2);
+    assert_eq!(current.tests, fixture.start().tests);
     assert_eq!(
-        reordered.reviews[0].input.tests, approved.reviews[0].input.tests,
-        "source order must not change the sorted test set"
-    );
-    assert!(
-        !sage_meta::check(&fixture.0).is_valid(),
-        "reordering inside an implementation file changes its snapshot"
-    );
-    fixture.rust(TEST);
-    assert!(!sage_meta::check(&fixture.0).is_valid());
-    assert_eq!(
-        review::prepare(&fixture.0).unwrap().reviews[0]
-            .input
+        original.tests[0],
+        *current
             .tests
-            .len(),
-        1
-    );
-}
-
-#[test]
-#[sage::test(meta.reviews.staleness)]
-fn source_and_cfg_changes_require_review_but_claim_movement_does_not() {
-    let fixture = Fixture::new();
-    fixture.approve();
-    fixture.claim(&format!("# A new heading\n\n{CLAIM}"));
-    assert!(sage_meta::check(&fixture.0).is_valid());
-    assert!(review::prepare(&fixture.0).unwrap().reviews.is_empty());
-
-    fixture.claim("{anchor}`demo.rule`\nThe result is five.\n");
-    assert!(!sage_meta::check(&fixture.0).is_valid());
-    fixture.claim(CLAIM);
-    fixture.rust(&TEST.replace("2 + 2, 4", "2 + 2, 5"));
-    assert!(!sage_meta::check(&fixture.0).is_valid());
-    fixture.rust(&format!("#[cfg(test)] mod checks {{ {TEST} }}"));
-    assert!(!sage_meta::check(&fixture.0).is_valid());
-    fixture.approve();
-    fixture.rust(&format!("#[cfg(unix)] mod checks {{ {TEST} }}"));
-    assert!(
-        !sage_meta::check(&fixture.0).is_valid(),
-        "only inherited cfg changed"
-    );
-}
-
-#[test]
-#[sage::test(meta.reviews.preparation)]
-fn preparing_changed_claims_is_read_only_and_never_reuses_an_approval() {
-    let fixture = Fixture::new();
-    fixture.approve();
-    let saved = fixture.saved();
-    fixture.claim("{anchor}`demo.rule`\nThe result is five.\n");
-    let pending = review::prepare(&fixture.0).unwrap();
-    assert_eq!(pending.reviews.len(), 1);
-    assert_eq!(pending.reviews[0].input.claim, ["The result is five."]);
-    assert_eq!(pending.reviews[0].decision, Decision::Pending);
-    assert!(pending.reviews[0].reason.is_empty());
-    assert!(pending.reviews[0].reviewer.is_empty());
-    assert_eq!(
-        fixture.saved(),
-        saved,
-        "old reviewed contents survive preparation"
-    );
-    assert!(review::record(&fixture.0, &pending).is_err());
-    assert_eq!(fixture.saved(), saved);
-}
-
-#[test]
-#[sage::test(meta.reviews.recording)]
-#[sage::test(meta.reviews.decisions)]
-fn recording_requires_current_inputs_and_explicit_review_evidence() {
-    let fixture = Fixture::new();
-    let reviewed = fixture.approve();
-    let saved = fixture.saved();
-    fixture.claim("{anchor}`demo.rule`\nThe result is five.\n");
-    assert!(review::record(&fixture.0, &reviewed).is_err());
-    assert_eq!(fixture.saved(), saved);
-    fixture.claim(CLAIM);
-
-    let mut unknown = reviewed.clone();
-    unknown.reviews[0].anchor = "demo.missing".into();
-    assert!(review::record(&fixture.0, &unknown).is_err());
-    assert_eq!(fixture.saved(), saved);
-    let mut duplicate = reviewed.clone();
-    duplicate.reviews.push(duplicate.reviews[0].clone());
-    assert!(review::record(&fixture.0, &duplicate).is_err());
-    assert_eq!(fixture.saved(), saved);
-
-    for field in ["reason", "reviewer"] {
-        let mut invalid = reviewed.clone();
-        if field == "reason" {
-            invalid.reviews[0].reason.clear();
-        } else {
-            invalid.reviews[0].reviewer.clear();
-        }
-        assert!(
-            review::record(&fixture.0, &invalid).is_err(),
-            "missing {field}"
-        );
-        assert_eq!(fixture.saved(), saved);
-    }
-    let mut unresolved = reviewed;
-    unresolved.reviews[0].decision = Decision::NeedsWork;
-    unresolved.reviews[0].reason = "The asserted scenario does not establish every case.".into();
-    review::record(&fixture.0, &unresolved).unwrap();
-    assert!(!sage_meta::check(&fixture.0).is_valid());
-}
-
-#[test]
-#[sage::test(meta.reviews.recording)]
-#[sage::test(meta.reviews.preparation)]
-fn recording_one_changed_claim_preserves_the_other_saved_review() {
-    let fixture = Fixture::new();
-    fixture.claim(&format!(
-        "{CLAIM}\n{{anchor}}`demo.other`\nA second claim.\n"
-    ));
-    fixture.rust(&format!(
-        "{TEST}\n#[test] #[sage::test(demo.other)] fn second() {{ assert_eq!(2 + 2, 4); }}"
-    ));
-    let reviewed = fixture.approve();
-    let unchanged = reviewed
-        .reviews
-        .iter()
-        .find(|review| review.anchor == "demo.other")
-        .unwrap()
-        .clone();
-    fixture.claim("{anchor}`demo.rule`\nThe addition of two and two yields four.\n\n{anchor}`demo.other`\nA second claim.\n");
-    let mut pending = review::prepare(&fixture.0).unwrap();
-    assert_eq!(pending.reviews.len(), 1);
-    assert_eq!(pending.reviews[0].anchor, "demo.rule");
-    pending.reviews[0].decision = Decision::Approved;
-    pending.reviews[0].reviewer = "second review fixture".into();
-    pending.reviews[0].reason = "The body still explicitly asserts the addition result.".into();
-    review::record(&fixture.0, &pending).unwrap();
-    let saved = review::load(&fixture.0.join(review::CHECKLIST_FILE)).unwrap();
-    assert_eq!(saved.reviews.len(), 2);
-    assert_eq!(
-        saved
-            .reviews
             .iter()
-            .find(|review| review.anchor == "demo.other"),
-        Some(&unchanged)
-    );
-    assert_eq!(
-        saved
-            .reviews
-            .iter()
-            .find(|review| review.anchor == "demo.rule"),
-        Some(&pending.reviews[0])
-    );
-    assert!(sage_meta::check(&fixture.0).is_valid());
-}
-
-#[test]
-#[sage::test(meta.reviews.gate)]
-fn library_and_cli_require_current_review_snapshots_without_mutating_them() {
-    let fixture = Fixture::new();
-    let missing = sage_meta::check(&fixture.0);
-    assert!(!missing.is_valid());
-    assert!(missing.review.unwrap().load_error.is_some());
-    let output = fixture.run(&["check", "--json"]);
-    assert!(!output.status.success());
-    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["review"]["valid"], false);
-    assert!(
-        String::from_utf8(output.stderr)
+            .find(|t| t.rust_path.ends_with("verifies_result"))
             .unwrap()
-            .contains("sage-review")
     );
-
+    review::record(&fixture.0, "demo.rule", &Fixture::report()).unwrap();
+    fixture.write("src/tests.rs", TEST);
+    let error = sage_meta::check(&fixture.0)
+        .ensure_valid()
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("demo.rule"), "{error}");
+    assert!(error.contains("test associations"), "{error}");
+    assert!(error.contains("sage-review-checklist/SKILL.md"), "{error}");
     fixture.approve();
-    let saved = fixture.saved();
-    let report = sage_meta::check(&fixture.0);
-    assert!(report.is_valid());
-    assert_eq!(report.review.unwrap().approved, 1);
-    assert!(fixture.run(&["check"]).status.success());
-    assert_eq!(fixture.saved(), saved);
-
-    fixture.rust(&TEST.replace("2 + 2, 4", "2 + 2, 5"));
-    let stale = fixture.run(&["check"]);
-    assert!(!stale.status.success());
-    assert!(
-        String::from_utf8(stale.stderr)
-            .unwrap()
-            .contains("stale review for demo.rule")
-    );
-    assert_eq!(sage_meta::check(&fixture.0).review.unwrap().approved, 0);
-    assert_eq!(fixture.saved(), saved);
+    fixture.write("src/lib.rs", "#[sage::item(crate)] mod model {}\nmod behavior;\n#[cfg(test)] mod tests;\n// {anchor}`demo.rule`\nfn another_implementation() {}\n");
+    let error = sage_meta::check(&fixture.0)
+        .ensure_valid()
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("demo.rule"), "{error}");
+    assert!(error.contains("implementation associations"), "{error}");
+    assert!(error.contains("sage-review-checklist/SKILL.md"), "{error}");
+    assert_eq!(fixture.start().implementations.len(), 2);
 }
 
 #[test]
-#[sage::test(meta.reviews.decisions)]
-#[sage::test(meta.reviews.test_source)]
-fn placeholder_decisions_require_matching_explicit_test_status() {
+#[sage::test(meta.reviews.selector_whole_file)]
+#[sage::test(meta.reviews.selector_line_range)]
+#[sage::test(meta.reviews.recorded_reads)]
+#[sage::test(meta.reviews.fragment_freshness)]
+#[sage::test(meta.reviews.input_format)]
+#[sage::test(meta.reviews.input_fragments)]
+#[sage::test(meta.reviews.source_representation)]
+fn whole_files_and_ranges_preserve_exact_line_endings_and_detect_selected_edits() {
     let fixture = Fixture::new();
-    let mut reviewed = review::prepare(&fixture.0).unwrap();
-    reviewed.reviews[0].reviewer = "review test fixture".into();
-    reviewed.reviews[0].reason = "A reviewed placeholder explicitly records the gap.".into();
-    for decision in [Decision::Todo, Decision::NotApplicable, Decision::Pending] {
-        reviewed.reviews[0].decision = decision;
-        assert!(review::record(&fixture.0, &reviewed).is_err());
-    }
-    fixture.rust(&format!("mod todo {{ {TEST} }}"));
-    let mut todo = review::prepare(&fixture.0).unwrap();
-    assert_eq!(todo.reviews[0].input.tests[0].status, TestStatus::Todo);
-    todo.reviews[0].reviewer = "review test fixture".into();
-    todo.reviews[0].reason = "The TODO module explicitly records an unfinished test.".into();
-    todo.reviews[0].decision = Decision::Approved;
-    assert!(review::record(&fixture.0, &todo).is_err());
-    todo.reviews[0].decision = Decision::Todo;
-    review::record(&fixture.0, &todo).unwrap();
-    assert_eq!(sage_meta::check(&fixture.0).review.unwrap().todo, 1);
-
-    fixture.rust(&format!("mod todo {{ {TEST} }}\n{TEST}"));
-    let mut mixed = review::prepare(&fixture.0).unwrap();
-    assert_eq!(mixed.reviews[0].input.tests.len(), 2);
-    mixed.reviews[0].reviewer = "review test fixture".into();
-    mixed.reviews[0].reason = "Ordinary evidence exists, but a second test remains TODO.".into();
-    mixed.reviews[0].decision = Decision::Approved;
-    assert!(review::record(&fixture.0, &mixed).is_err());
-    mixed.reviews[0].decision = Decision::Todo;
-    review::record(&fixture.0, &mixed).unwrap();
-    assert_eq!(sage_meta::check(&fixture.0).review.unwrap().todo, 1);
-
-    std::fs::write(fixture.0.join("src/lib.rs"), format!(
-        "#[sage::item(crate)] mod model {{}}\nmod not_applicable {{\n// {{anchor}}`demo.rule`\n{TEST}\n}}"
-    )).unwrap();
-    let mut na = review::prepare(&fixture.0).unwrap();
+    fixture.start();
+    fixture.write("helper.txt", "first\r\n\r\nthird\nlast");
     assert_eq!(
-        na.reviews[0].input.tests[0].status,
-        TestStatus::NotApplicable
-    );
-    na.reviews[0].reviewer = "review test fixture".into();
-    na.reviews[0].reason = "The N/A module explicitly records inapplicability.".into();
-    na.reviews[0].decision = Decision::NotApplicable;
-    review::record(&fixture.0, &na).unwrap();
-    assert_eq!(
-        sage_meta::check(&fixture.0).review.unwrap().not_applicable,
-        1
-    );
-
-    fixture.rust(&format!("mod not_applicable {{ {TEST} }}\n{TEST}"));
-    let mut mixed = review::prepare(&fixture.0).unwrap();
-    assert_eq!(mixed.reviews[0].input.tests.len(), 2);
-    mixed.reviews[0].reviewer = "review test fixture".into();
-    mixed.reviews[0].reason =
-        "Mixed ordinary and N/A evidence cannot be classified as all N/A.".into();
-    mixed.reviews[0].decision = Decision::NotApplicable;
-    assert!(review::record(&fixture.0, &mixed).is_err());
-    mixed.reviews[0].decision = Decision::Approved;
-    assert!(review::record(&fixture.0, &mixed).is_err());
-}
-
-#[test]
-#[sage::test(meta.reviews.decisions)]
-fn a_crate_name_does_not_classify_an_ordinary_test_as_a_placeholder() {
-    for crate_name in ["todo", "not_applicable"] {
-        let fixture = Fixture::new();
-        let manifest = fixture.0.join("Cargo.toml");
-        let cargo = std::fs::read_to_string(&manifest).unwrap();
-        std::fs::write(
-            &manifest,
-            cargo.replace("name = \"demo\"", &format!("name = \"{crate_name}\"")),
+        review::capture_read(
+            &fixture.0,
+            "demo.rule",
+            "helper.txt",
+            Selector::LineRange { start: 1, end: 2 }
         )
-        .unwrap();
-        let pending = review::prepare(&fixture.0).unwrap();
-        let test = &pending.reviews[0].input.tests[0];
-        assert_eq!(test.crate_name, crate_name);
-        assert_eq!(test.rust_path, format!("{crate_name}::verifies_result"));
-        assert_eq!(test.status, TestStatus::Ordinary);
-    }
-}
-
-#[test]
-#[sage::test(meta.reviews.staleness)]
-#[sage::test(meta.reviews.recording)]
-#[sage::test(meta.reviews.gate)]
-fn schema_policy_duplicates_and_retired_claims_do_not_silently_pass() {
-    let fixture = Fixture::new();
-    let reviewed = fixture.approve();
-    let path = fixture.0.join(review::CHECKLIST_FILE);
-    let mut wrong_schema = reviewed.clone();
-    wrong_schema.schema_version += 1;
-    let mut wrong_policy = reviewed.clone();
-    wrong_policy.policy_version += 1;
-    let mut duplicate = reviewed.clone();
-    duplicate.reviews.push(duplicate.reviews[0].clone());
-    for invalid in [wrong_schema, wrong_policy, duplicate] {
-        std::fs::write(&path, serde_json::to_string(&invalid).unwrap()).unwrap();
-        assert!(!sage_meta::check(&fixture.0).is_valid());
-    }
-    std::fs::write(&path, serde_json::to_string(&reviewed).unwrap()).unwrap();
-    fixture.claim("# Rule retired\n");
-    fixture.rust("");
-    assert!(!sage_meta::check(&fixture.0).is_valid());
-    let retirement = review::prepare(&fixture.0).unwrap();
-    assert!(retirement.reviews.is_empty());
-    review::record(&fixture.0, &retirement).unwrap();
-    assert!(sage_meta::check(&fixture.0).is_valid());
-}
-
-#[test]
-#[sage::test(meta.reviews.recording)]
-fn cli_preparation_and_recording_preserve_the_reviewed_snapshot() {
-    let fixture = Fixture::new();
-    let output = fixture.run(&["review", "prepare"]);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
+        .unwrap(),
+        "first\r\n\r\n"
     );
-    assert!(!fixture.0.join(review::CHECKLIST_FILE).exists());
-    let mut pending: ReviewChecklist = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(pending.reviews[0].decision, Decision::Pending);
-    pending.reviews[0].decision = Decision::Approved;
-    pending.reviews[0].reviewer = "CLI fixture reviewer".into();
-    pending.reviews[0].reason =
-        "The assertion explicitly compares the addition result to four.".into();
-    std::fs::write(
-        fixture.0.join("reviewed.json"),
-        serde_json::to_vec(&pending).unwrap(),
+    assert_eq!(
+        review::capture_read(
+            &fixture.0,
+            "demo.rule",
+            "helper.txt",
+            Selector::LineRange { start: 4, end: 4 }
+        )
+        .unwrap(),
+        "last"
+    );
+    for (start, end) in [(0, 1), (3, 2), (1, 5), (5, 5)] {
+        assert!(
+            review::capture_read(
+                &fixture.0,
+                "demo.rule",
+                "helper.txt",
+                Selector::LineRange { start, end }
+            )
+            .is_err()
+        );
+    }
+    review::record(&fixture.0, "demo.rule", &Fixture::report()).unwrap();
+    fixture.write("helper.txt", "first\r\n\r\nUNSELECTED\nlast");
+    assert!(sage_meta::check(&fixture.0).is_valid());
+    fixture.write("helper.txt", "changed\r\n\r\nthird\nlast");
+    assert!(!sage_meta::check(&fixture.0).is_valid());
+    fixture.start();
+    for _ in 0..2 {
+        assert_eq!(
+            review::capture_read(&fixture.0, "demo.rule", "helper.txt", Selector::WholeFile)
+                .unwrap(),
+            "changed\r\n\r\nthird\nlast"
+        );
+    }
+    let input = fixture.input();
+    let tail = &input.fragments[input.fragments.len() - 2..];
+    assert_eq!(tail[0], tail[1]);
+    assert_eq!(tail[0].contents.join("\n"), "changed\r\n\r\nthird\nlast");
+    review::record(&fixture.0, "demo.rule", &Fixture::report()).unwrap();
+    fixture.write("helper.txt", "changed\r\n\r\nthird\nlast\n");
+    assert!(!sage_meta::check(&fixture.0).is_valid());
+}
+
+#[test]
+#[sage::test(meta.reviews.recording)]
+#[sage::test(meta.reviews.output_format)]
+#[sage::test(meta.reviews.decisions)]
+#[sage::test(meta.reviews.input_fragments)]
+#[sage::test(meta.reviews.fragment_freshness)]
+#[sage::test(meta.reviews.record_required)]
+fn invalid_reports_and_stale_inputs_never_complete_an_active_review() {
+    let fixture = Fixture::new();
+    assert!(review::record(&fixture.0, "demo.rule", &Fixture::report()).is_err());
+    fixture.start();
+    for field in ["reviewer", "report", "edit"] {
+        let mut output = Fixture::report();
+        match field {
+            "reviewer" => output.reviewer = "  ".into(),
+            "report" => output.report.clear(),
+            _ => output.requested_edits = vec!["\n".into()],
+        }
+        assert!(review::record(&fixture.0, "demo.rule", &output).is_err());
+        assert!(!fixture.0.join("validations/demo.rule/output.json").exists());
+    }
+    let before = std::fs::read(fixture.0.join("validations/demo.rule/input.json")).unwrap();
+    fixture.write(
+        "src/behavior.rs",
+        "// {anchor}`demo.rule`\npub fn result() -> u32 { 5 }\n",
+    );
+    assert!(review::record(&fixture.0, "demo.rule", &Fixture::report()).is_err());
+    assert_eq!(
+        before,
+        std::fs::read(fixture.0.join("validations/demo.rule/input.json")).unwrap()
+    );
+    assert!(!sage_meta::check(&fixture.0).is_valid());
+    fixture.start();
+    let mut output = Fixture::report();
+    output.requested_edits =
+        vec!["Return four and add an assertion against the implementation.".into()];
+    review::record(&fixture.0, "demo.rule", &output).unwrap();
+    assert_eq!(
+        review::load_saved(&fixture.0.join("validations"))
+            .unwrap()
+            .reviews[0]
+            .output
+            .as_ref(),
+        Some(&output)
+    );
+    assert!(!sage_meta::check(&fixture.0).is_valid());
+    let json: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(fixture.0.join("validations/demo.rule/output.json")).unwrap(),
     )
     .unwrap();
-    let output = fixture.run(&["review", "record", "reviewed.json"]);
+    assert_eq!(json.as_object().unwrap().len(), 3);
+    assert!(json.get("decision").is_none());
+    assert!(json.get("outcome").is_none());
+}
+
+#[test]
+#[sage::test(meta.reviews.decisions)]
+#[sage::test(meta.reviews.review_scope)]
+#[sage::test(meta.reviews.input_format)]
+fn accepted_placeholder_reports_preserve_todo_and_na_evidence() {
+    for (module, expected) in [
+        ("todo", TestStatus::Todo),
+        ("not_applicable", TestStatus::NotApplicable),
+    ] {
+        let fixture = Fixture::new();
+        fixture.write("src/behavior.rs", &format!("mod {module} {{\n// {{anchor}}`demo.rule`\n// Deferred until the concrete backend exists; editorial for N/A.\nfn placeholder() {{}}\n}}"));
+        fixture.write("src/tests.rs", &format!("mod {module} {{\n// Deferred until the concrete backend exists; editorial for N/A.\n#[test] #[sage::test(demo.rule)] fn placeholder() {{}}\n}}"));
+        let input = fixture.start();
+        assert_eq!(input.tests[0].status, expected);
+        assert_eq!(input.implementations[0].status, expected);
+        assert!(
+            input.implementations[0]
+                .explanation
+                .as_ref()
+                .unwrap()
+                .contains("backend")
+        );
+        let mut output = Fixture::report();
+        output.report = "The explicit placeholder explains why concrete evidence is unavailable and names its prerequisite. This accepts the stated gap, not implemented behavior.".into();
+        review::record(&fixture.0, "demo.rule", &output).unwrap();
+        let check = sage_meta::check(&fixture.0);
+        assert!(check.is_valid());
+        let stage = check.review.unwrap();
+        assert_eq!(stage.approved, 0);
+        assert_eq!(
+            (stage.todo, stage.not_applicable),
+            if module == "todo" { (1, 0) } else { (0, 1) }
+        );
+    }
+}
+
+#[test]
+#[sage::test(meta.reviews.preparation)]
+#[sage::test(meta.reviews.recorded_reads)]
+#[sage::test(meta.reviews.gate)]
+fn invalid_ids_and_paths_are_rejected_without_destroying_existing_reports() {
+    let fixture = Fixture::new();
+    fixture.approve();
+    let output = std::fs::read(fixture.0.join("validations/demo.rule/output.json")).unwrap();
+    for anchor in [
+        "../escape",
+        "/absolute",
+        "demo/rule",
+        "demo..rule",
+        "demo.missing",
+    ] {
+        assert!(review::start(&fixture.0, anchor, vec![]).is_err());
+        assert_eq!(
+            output,
+            std::fs::read(fixture.0.join("validations/demo.rule/output.json")).unwrap()
+        );
+    }
+    assert!(
+        review::capture_read(
+            &fixture.0,
+            "demo.missing",
+            "src/tests.rs",
+            Selector::WholeFile
+        )
+        .is_err()
+    );
+    fixture.start();
+    let before = fixture.input();
+    for path in ["../outside", "/etc/passwd", "missing.txt"] {
+        assert!(review::capture_read(&fixture.0, "demo.rule", path, Selector::WholeFile).is_err());
+        assert_eq!(fixture.input(), before);
+    }
+    assert!(
+        review::capture_read(
+            &fixture.0,
+            "demo.rule",
+            "src/tests.rs",
+            Selector::Claim {
+                anchor_id: "demo.rule".into()
+            }
+        )
+        .is_err()
+    );
+    assert!(
+        review::capture_read(
+            &fixture.0,
+            "demo.rule",
+            "src/tests.rs",
+            Selector::Test {
+                crate_name: "demo".into(),
+                target: "test:missing".into(),
+                rust_path: "demo::tests::verifies_result".into()
+            }
+        )
+        .is_err()
+    );
+    assert_eq!(fixture.input(), before);
+}
+
+#[test]
+#[sage::test(meta.reviews.gate)]
+#[sage::test(meta.reviews.review_diagnostics)]
+#[sage::test(meta.reviews.record_required)]
+fn diagnostics_identify_missing_unfinished_stale_and_requested_edit_reviews() {
+    let fixture = Fixture::new();
+    for state in ["missing", "unfinished", "stale", "requested edits"] {
+        match state {
+            "unfinished" => {
+                fixture.start();
+            }
+            "stale" => {
+                fixture.approve();
+                fixture.write(
+                    "src/behavior.rs",
+                    "// {anchor}`demo.rule`\npub fn result() -> u32 { 5 }\n",
+                );
+            }
+            "requested edits" => {
+                fixture.start();
+                let mut output = Fixture::report();
+                output
+                    .requested_edits
+                    .push("Fix the implementation.".into());
+                review::record(&fixture.0, "demo.rule", &output).unwrap();
+            }
+            _ => {}
+        }
+        let output = fixture.run(&["check"]);
+        assert!(!output.status.success(), "{state}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("demo.rule"), "{stderr}");
+        assert!(
+            stderr.contains("sage-review-checklist/SKILL.md"),
+            "{stderr}"
+        );
+        if matches!(state, "missing" | "unfinished") {
+            assert!(stderr.contains(state), "{stderr}");
+        }
+        if state == "stale" {
+            assert!(stderr.contains("src/behavior.rs"), "{stderr}");
+        }
+        if state == "requested edits" {
+            assert!(stderr.contains("edit"), "{stderr}");
+        }
+    }
+}
+
+#[test]
+#[sage::test(meta.reviews.gate)]
+#[sage::test(meta.reviews.summary_format)]
+#[sage::test(meta.reviews.review_diagnostics)]
+#[sage::test(meta.reviews.staleness)]
+fn unsupported_versions_and_mismatched_identity_cannot_pass() {
+    for field in ["schema_version", "policy_version", "anchor"] {
+        let fixture = Fixture::new();
+        fixture.approve();
+        let mut summary = fixture.summary();
+        summary[field] = if field == "anchor" {
+            "demo.other".into()
+        } else {
+            999.into()
+        };
+        fixture.write(
+            "validations/demo.rule/summary.json",
+            &serde_json::to_string(&summary).unwrap(),
+        );
+        let report = sage_meta::check(&fixture.0);
+        let error = report.ensure_valid().unwrap_err().to_string();
+        assert!(error.contains("demo.rule"), "{error}");
+        assert!(error.contains("sage-review-checklist/SKILL.md"), "{error}");
+        let reason = if field == "anchor" {
+            "does not match"
+        } else {
+            "unsupported schema/policy"
+        };
+        assert!(error.contains(reason), "{error}");
+    }
+}
+
+#[test]
+#[sage::test(meta.reviews.gate)]
+#[sage::test(meta.reviews.review_diagnostics)]
+fn retired_records_fail_even_when_every_remaining_anchor_passes() {
+    let fixture = Fixture::new();
+    fixture.approve();
+    fixture.write("md/design/README.md", "# Retired\n");
+    fixture.write("src/behavior.rs", "pub fn result() -> u32 { 4 }\n");
+    fixture.write("src/tests.rs", "");
+    let output = fixture.run(&["check"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("demo.rule"), "{stderr}");
+    assert!(stderr.contains("remove"), "{stderr}");
+    assert!(fixture.0.join("validations/demo.rule/output.json").exists());
+    std::fs::remove_dir_all(fixture.0.join("validations/demo.rule")).unwrap();
+    assert!(sage_meta::check(&fixture.0).is_valid());
+}
+
+#[test]
+#[sage::test(meta.reviews.preparation)]
+#[sage::test(meta.reviews.recording)]
+#[sage::test(meta.reviews.review_instructions)]
+fn cli_start_and_record_roundtrip_exact_saved_input() {
+    let fixture = Fixture::new();
+    fixture.write(
+        "instructions.txt",
+        "Inspect the edge cases.\nPreserve these instructions.",
+    );
+    let output = fixture.run(&[
+        "review",
+        "start",
+        "demo.rule",
+        "--instructions",
+        "instructions.txt",
+    ]);
     assert!(
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let saved = review::load(&fixture.0.join(review::CHECKLIST_FILE)).unwrap();
-    assert_eq!(saved.reviews[0].input, pending.reviews[0].input);
+    let input: ReviewInput = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(input, fixture.input());
+    assert_eq!(
+        input.coordinator_instructions,
+        ["Inspect the edge cases.\nPreserve these instructions."]
+    );
+    fixture.write(
+        "report.json",
+        &serde_json::to_string(&Fixture::report()).unwrap(),
+    );
+    let output = fixture.run(&["review", "record", "demo.rule", "report.json"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(fixture.run(&["check"]).status.success());
-    assert!(!fixture.run(&["review", "record"]).status.success());
     assert!(
         !fixture
-            .run(&["review", "prepare", "unexpected"])
+            .run(&["review", "record", "demo.rule"])
             .status
             .success()
     );
 }
 
 #[test]
-#[sage::test(meta.reviews.review_scope)]
-#[sage::test(meta.reviews.decisions)]
-fn implementation_placeholders_prevent_approval_even_with_ordinary_tests() {
+#[sage::test(meta.reviews.review_delegation)]
+fn review_skill_assigns_one_owner_and_requires_start_read_record() {
+    let skill = include_str!("../../../.agents/skills/sage-review-checklist/SKILL.md");
+    assert!(skill.contains("one") && skill.contains("subagent") && skill.contains("anchor"));
+    assert!(skill.contains("cargo meta review start"));
+    assert!(skill.contains("cargo meta review read"));
+    assert!(skill.contains("cargo meta review record"));
+    assert!(skill.contains("instructions"));
+    assert!(skill.contains("TODO") && skill.contains("N/A"));
+}
+
+#[test]
+#[sage::test(meta.reviews.selector_test)]
+#[sage::test(meta.reviews.recorded_reads)]
+fn test_selectors_disambiguate_identical_paths_by_cargo_target() {
     let fixture = Fixture::new();
-    for status in ["todo", "not_applicable"] {
-        std::fs::write(fixture.0.join("src/lib.rs"), format!(
-            "#[sage::item(crate)] mod model {{}}\nmod {status} {{\n// {{anchor}}`demo.rule`\n// Explicit implementation gap.\n}}\n{TEST}"
-        )).unwrap();
-        let mut packet = review::prepare(&fixture.0).unwrap();
-        let record = &mut packet.reviews[0];
-        assert_eq!(record.input.tests[0].status, TestStatus::Ordinary);
+    // The same physical source is compiled as two independently named targets.
+    fixture.write("Cargo.toml", "[package]\nname = 'demo'\nversion = '0.0.0'\nedition = '2024'\n[workspace]\n[[test]]\nname = 'first'\npath = 'tests/shared.rs'\n[[test]]\nname = 'second'\npath = 'tests/shared.rs'\n");
+    fixture.write(
+        "tests/shared.rs",
+        "#[test] #[sage::test(demo.rule)] fn shared() { assert_eq!(4, 4); }",
+    );
+    let input = fixture.start();
+    let tests: Vec<_> = input
+        .tests
+        .iter()
+        .filter(|test| test.file == "tests/shared.rs")
+        .collect();
+    assert_eq!(tests.len(), 2);
+    assert_ne!(tests[0].target, tests[1].target);
+    for test in tests {
+        let result = review::capture_read(
+            &fixture.0,
+            "demo.rule",
+            &test.file,
+            Selector::Test {
+                crate_name: test.crate_name.clone(),
+                target: test.target.clone(),
+                rust_path: test.rust_path.clone(),
+            },
+        )
+        .unwrap();
         assert_eq!(
-            record.input.implementations[0].explanation.as_deref(),
-            Some("Explicit implementation gap.")
+            result,
+            "#[test] #[sage::test(demo.rule)] fn shared() { assert_eq!(4, 4); }"
         );
-        record.reviewer = "fixture".into();
-        record.reason = "Implementation gap with an ordinary test.".into();
-        record.decision = Decision::Approved;
-        assert!(review::record(&fixture.0, &packet).is_err());
-        packet.reviews[0].decision = Decision::NotApplicable;
-        assert!(review::record(&fixture.0, &packet).is_err());
-        packet.reviews[0].decision = Decision::Todo;
+    }
+    assert!(
+        review::capture_read(
+            &fixture.0,
+            "demo.rule",
+            "tests/shared.rs",
+            Selector::Test {
+                crate_name: "other".into(),
+                target: "test:first".into(),
+                rust_path: "demo::shared".into()
+            }
+        )
+        .is_err()
+    );
+}
+
+#[test]
+#[sage::test(meta.reviews.preparation)]
+#[sage::test(meta.reviews.recording)]
+#[sage::test(meta.reviews.record_required)]
+fn restarting_one_anchor_leaves_other_anchor_record_unchanged() {
+    let fixture = Fixture::new();
+    fixture.write(
+        "md/design/README.md",
+        &format!("{CLAIM}\n{{anchor}}`demo.other`\nAnother claim.\n"),
+    );
+    fixture.write("src/behavior.rs", "// {anchor}`demo.rule`\npub fn result() -> u32 { 4 }\n// {anchor}`demo.other`\npub fn other() -> u32 { 4 }\n");
+    fixture.write(
+        "src/tests.rs",
+        &format!("{TEST}\n#[test] #[sage::test(demo.other)] fn other() {{ assert_eq!(4, 4); }}"),
+    );
+    fixture.approve();
+    review::start(&fixture.0, "demo.other", vec![]).unwrap();
+    review::record(&fixture.0, "demo.other", &Fixture::report()).unwrap();
+    assert!(sage_meta::check(&fixture.0).is_valid());
+    let before: Vec<_> = ["summary.json", "input.json", "output.json"]
+        .map(|file| std::fs::read(fixture.0.join("validations/demo.other").join(file)).unwrap())
+        .into();
+    fixture.start();
+    assert!(!sage_meta::check(&fixture.0).is_valid());
+    review::record(&fixture.0, "demo.rule", &Fixture::report()).unwrap();
+    for (file, bytes) in ["summary.json", "input.json", "output.json"]
+        .into_iter()
+        .zip(before)
+    {
         assert_eq!(
-            review::record(&fixture.0, &packet).is_ok(),
-            status == "todo"
+            bytes,
+            std::fs::read(fixture.0.join("validations/demo.other").join(file)).unwrap()
         );
+    }
+    assert!(sage_meta::check(&fixture.0).is_valid());
+}
+
+#[test]
+#[sage::test(meta.reviews.recording)]
+#[sage::test(meta.reviews.record_required)]
+#[sage::test(meta.reviews.gate)]
+fn incomplete_output_publication_never_satisfies_the_gate() {
+    let fixture = Fixture::new();
+    fixture.start();
+    // An output written before the summary records completion is incomplete.
+    fixture.write(
+        "validations/demo.rule/output.json",
+        &serde_json::to_string(&Fixture::report()).unwrap(),
+    );
+    assert!(!sage_meta::check(&fixture.0).is_valid());
+    fixture.approve();
+    std::fs::remove_file(fixture.0.join("validations/demo.rule/output.json")).unwrap();
+    assert!(!sage_meta::check(&fixture.0).is_valid());
+    fixture.start();
+    fixture.write("validations/demo.rule/output.json", "{bad json");
+    assert!(!sage_meta::check(&fixture.0).is_valid());
+}
+
+#[cfg(unix)]
+#[test]
+#[sage::test(meta.reviews.recorded_reads)]
+fn recorded_reads_reject_symlink_escape_without_capturing_context() {
+    let fixture = Fixture::new();
+    fixture.start();
+    let before = fixture.input();
+    std::os::unix::fs::symlink("/etc/passwd", fixture.0.join("escape")).unwrap();
+    assert!(review::capture_read(&fixture.0, "demo.rule", "escape", Selector::WholeFile).is_err());
+    assert_eq!(before, fixture.input());
+}
+
+#[test]
+#[sage::test(meta.reviews.selector_claim)]
+#[sage::test(meta.reviews.fragment_freshness)]
+#[sage::test(meta.reviews.recorded_reads)]
+fn declared_claim_read_tracks_selected_text_without_capturing_the_document() {
+    let fixture = Fixture::new();
+    fixture.start();
+    let text = review::capture_read(
+        &fixture.0,
+        "demo.rule",
+        "md/design/README.md",
+        Selector::Claim {
+            anchor_id: "demo.rule".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(text, "The result is four.");
+    let input = fixture.input();
+    assert_eq!(input.fragments.last().unwrap().contents.join("\n"), text);
+    review::record(&fixture.0, "demo.rule", &Fixture::report()).unwrap();
+    fixture.write(
+        "md/design/README.md",
+        &format!("# An unrelated heading\n\n{CLAIM}"),
+    );
+    assert!(sage_meta::check(&fixture.0).is_valid());
+    fixture.write("md/design/README.md", &CLAIM.replace("four", "five"));
+    assert!(!sage_meta::check(&fixture.0).is_valid());
+}
+
+#[test]
+#[sage::test(meta.reviews.selector_test)]
+#[sage::test(meta.reviews.fragment_freshness)]
+fn ambiguous_initial_test_selector_cannot_be_recorded_as_complete_context() {
+    let fixture = Fixture::new();
+    fixture.write(
+        "src/tests.rs",
+        &format!(
+            "#[cfg(unix)]\n{TEST}\n#[cfg(windows)]\n{}",
+            TEST.replace("2 + 2", "1 + 3")
+        ),
+    );
+    // One target/path identity resolves to two distinct annotated function spans.
+    // Initial context must reject the ambiguity just as an explicit read does.
+    match review::start(&fixture.0, "demo.rule", vec![]) {
+        Err(_) => {}
+        Ok(input) => {
+            assert_eq!(input.tests.len(), 2);
+            assert!(
+                review::record(&fixture.0, "demo.rule", &Fixture::report()).is_err(),
+                "recording must reject an ambiguous initial selector, not silently keep one function body"
+            );
+        }
+    }
+    assert!(!sage_meta::check(&fixture.0).is_valid());
+}
+
+#[test]
+#[sage::test(meta.reviews.selector_test)]
+#[sage::test(meta.reviews.fragment_freshness)]
+fn ambiguous_test_identity_across_anchors_is_rejected() {
+    let fixture = Fixture::new();
+    fixture.write(
+        "md/design/README.md",
+        &format!("{CLAIM}\n{{anchor}}`demo.other`\nAnother claim.\n"),
+    );
+    fixture.write(
+        "src/behavior.rs",
+        "// {anchor}`demo.rule`\nfn result() {}\n// {anchor}`demo.other`\nfn other() {}\n",
+    );
+    fixture.write(
+        "src/tests.rs",
+        &format!(
+            "#[cfg(unix)]\n{TEST}\n#[cfg(windows)]\n{}",
+            TEST.replace("demo.rule", "demo.other")
+        ),
+    );
+    assert!(
+        review::start(&fixture.0, "demo.rule", vec![]).is_err(),
+        "a selector is ambiguous even when its conflicting function is associated with a different anchor"
+    );
+    assert!(!sage_meta::check(&fixture.0).is_valid());
+}
+
+#[test]
+#[sage::test(meta.reviews.fragment_freshness)]
+#[sage::test(meta.reviews.recording)]
+fn disappeared_or_invalidated_additional_fragments_reject_recording() {
+    for range in [false, true] {
+        let fixture = Fixture::new();
+        fixture.start();
+        fixture.write("dependency.txt", "first\nsecond\n");
+        let selector = if range {
+            Selector::LineRange { start: 2, end: 2 }
+        } else {
+            Selector::WholeFile
+        };
+        review::capture_read(&fixture.0, "demo.rule", "dependency.txt", selector).unwrap();
+        let saved = std::fs::read(fixture.0.join("validations/demo.rule/input.json")).unwrap();
+        if range {
+            fixture.write("dependency.txt", "first\n");
+        } else {
+            std::fs::remove_file(fixture.0.join("dependency.txt")).unwrap();
+        }
+        let error = review::record(&fixture.0, "demo.rule", &Fixture::report())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("dependency.txt"), "{error}");
+        assert!(!fixture.0.join("validations/demo.rule/output.json").exists());
+        assert_eq!(
+            saved,
+            std::fs::read(fixture.0.join("validations/demo.rule/input.json")).unwrap()
+        );
+        assert!(!sage_meta::check(&fixture.0).is_valid());
     }
 }
 
 #[test]
-#[sage::test(meta.reviews.staleness)]
-#[sage::test(meta.reviews.preparation)]
-fn test_only_policy_reviews_load_but_require_fresh_review() {
-    let fixture = Fixture::new();
-    let approved = fixture.approve();
-    let mut legacy = serde_json::to_value(approved).unwrap();
-    legacy["policy_version"] = 1.into();
-    let input = legacy["reviews"][0]["input"].as_object_mut().unwrap();
-    input.remove("implementations");
-    input.remove("implementation_sources");
-    std::fs::write(
-        fixture.0.join(review::CHECKLIST_FILE),
-        serde_json::to_string(&legacy).unwrap(),
-    )
-    .unwrap();
-    let saved = fixture.saved();
-    assert!(review::load(&fixture.0.join(review::CHECKLIST_FILE)).is_ok());
-    assert!(!sage_meta::check(&fixture.0).is_valid());
-    let pending = review::prepare(&fixture.0).unwrap();
-    assert_eq!(pending.reviews.len(), 1);
-    assert_eq!(pending.reviews[0].decision, Decision::Pending);
-    assert_eq!(pending.policy_version, review::POLICY_VERSION);
-    assert!(!pending.reviews[0].input.implementations.is_empty());
-    assert_eq!(fixture.saved(), saved);
+#[sage::test(meta.reviews.fragment_freshness)]
+#[sage::test(meta.reviews.selector_test)]
+#[sage::test(meta.reviews.recorded_reads)]
+fn another_anchors_test_read_tracks_body_and_identity() {
+    for change in ["body", "missing", "ambiguous"] {
+        let fixture = Fixture::new();
+        fixture.write(
+            "md/design/README.md",
+            &format!("{CLAIM}\n{{anchor}}`demo.other`\nOther scenario.\n"),
+        );
+        fixture.write("src/behavior.rs", "// {anchor}`demo.rule`\npub fn result() -> u32 { 4 }\n// {anchor}`demo.other`\npub fn other() -> u32 { 5 }\n");
+        let other = "#[test] #[sage::test(demo.other)] fn other() { assert_eq!(2 + 3, 5); }";
+        fixture.write("src/tests.rs", &format!("{TEST}\n{other}"));
+        let initial = fixture.start();
+        let selector = Selector::Test {
+            crate_name: "demo".into(),
+            target: "lib:demo".into(),
+            rust_path: "demo::tests::other".into(),
+        };
+        assert_eq!(
+            review::capture_read(&fixture.0, "demo.rule", "src/tests.rs", selector).unwrap(),
+            other
+        );
+        let changed = match change {
+            "body" => other.replace("2 + 3", "1 + 4"),
+            "missing" => other.replace("fn other()", "fn renamed()"),
+            _ => format!("#[cfg(unix)] {other}\n#[cfg(windows)] {other}"),
+        };
+        fixture.write(
+            "src/tests.rs",
+            &format!("// unrelated line\n{TEST}\n{changed}"),
+        );
+        if change != "ambiguous" {
+            let spec = sage_meta::spec::SpecIndex::load_workspace(&fixture.0).unwrap();
+            let rust = sage_meta::correspondence::CorrespondenceIndex::load(&fixture.0).unwrap();
+            let current = review::inventory(&spec, &rust).unwrap();
+            assert_eq!(initial.fragments, current["demo.rule"].fragments);
+            assert_eq!(initial.tests, current["demo.rule"].tests);
+        }
+        assert!(
+            review::record(&fixture.0, "demo.rule", &Fixture::report()).is_err(),
+            "{change}"
+        );
+        assert!(!fixture.0.join("validations/demo.rule/output.json").exists());
+    }
 }
 
 #[test]
-#[sage::test(meta.reviews.review_scope)]
-#[sage::test(meta.reviews.staleness)]
-fn implementation_associations_and_inherited_cfg_are_review_inputs() {
+#[sage::test(meta.reviews.gate)]
+#[sage::test(meta.reviews.validation_layout)]
+#[sage::test(meta.reviews.output_format)]
+#[sage::test(meta.reviews.review_diagnostics)]
+fn completed_corrupt_records_and_invalid_layout_cannot_pass() {
+    for fault in [
+        "malformed",
+        "blank reviewer",
+        "blank report",
+        "blank edit",
+        "extra field",
+        "missing summary",
+        "missing input",
+        "missing output",
+        "non-directory",
+    ] {
+        let fixture = Fixture::new();
+        fixture.approve();
+        let directory = fixture.0.join("validations/demo.rule");
+        match fault {
+            "malformed" => fixture.write("validations/demo.rule/output.json", "{"),
+            "missing summary" => std::fs::remove_file(directory.join("summary.json")).unwrap(),
+            "missing input" => std::fs::remove_file(directory.join("input.json")).unwrap(),
+            "missing output" => std::fs::remove_file(directory.join("output.json")).unwrap(),
+            "non-directory" => {
+                fixture.write("validations/unexpected", "not a validation directory")
+            }
+            _ => {
+                let mut output = serde_json::to_value(Fixture::report()).unwrap();
+                match fault {
+                    "blank reviewer" => output["reviewer"] = " ".into(),
+                    "blank report" => output["report"] = "\n".into(),
+                    "blank edit" => output["requested_edits"] = serde_json::json!([""]),
+                    _ => output["outcome"] = true.into(),
+                }
+                fixture.write(
+                    "validations/demo.rule/output.json",
+                    &serde_json::to_string(&output).unwrap(),
+                );
+            }
+        }
+        assert!(!sage_meta::check(&fixture.0).is_valid(), "{fault}");
+        let output = fixture.run(&["check"]);
+        assert!(!output.status.success(), "{fault}");
+        let error = String::from_utf8_lossy(&output.stderr);
+        let anchor = if fault == "non-directory" {
+            "unexpected"
+        } else {
+            "demo.rule"
+        };
+        assert!(error.contains(anchor), "{error}");
+        assert!(error.contains("invalid validation"), "{error}");
+        assert!(error.contains("sage-review-checklist/SKILL.md"), "{error}");
+        let reason = match fault {
+            "malformed" => "EOF",
+            "blank reviewer" | "blank report" => "nonblank reviewer and report",
+            "blank edit" => "nonblank strings",
+            "extra field" => "unknown field",
+            "missing summary" | "missing input" | "missing output" => "No such file",
+            "non-directory" => "not a real directory",
+            _ => unreachable!(),
+        };
+        assert!(error.contains(reason), "{fault}: {error}");
+    }
+}
+
+#[test]
+#[sage::test(meta.reviews.gate)]
+#[sage::test(meta.reviews.recording)]
+#[sage::test(meta.reviews.review_diagnostics)]
+fn checking_is_read_only_and_recording_preserves_obsolete_records() {
     let fixture = Fixture::new();
-    let root = format!("#[sage::item(crate)] mod model {{}}\n#[cfg(unix)] mod behavior;\n{TEST}");
-    std::fs::write(fixture.0.join("src/lib.rs"), &root).unwrap();
-    let behavior = "// {anchor}`demo.rule`<<\npub fn result() -> u32 { 4 }\n// >>\n";
-    std::fs::write(fixture.0.join("src/behavior.rs"), behavior).unwrap();
-    let approved = fixture.approve();
-    let input = &approved.reviews[0].input;
-    assert_eq!(input.implementation_sources.len(), 1);
-    assert_eq!(
-        input.implementation_sources["src/behavior.rs"].join("\n"),
-        behavior
-    );
-    let site = &input.implementations[0];
-    assert_eq!(site.crate_name, "demo");
-    assert_eq!(site.target, "lib:demo");
-    assert_eq!(site.module, "demo::behavior");
-    assert_eq!(site.cfg, ["#[cfg(unix)]"]);
-    assert!(site.region);
-    assert_eq!(site.excerpt.join("\n"), behavior);
-
-    // Parent cfg is outside the associated file; association metadata captures it.
-    std::fs::write(
-        fixture.0.join("src/lib.rs"),
-        root.replace("unix", "windows"),
-    )
-    .unwrap();
-    let changed = review::prepare(&fixture.0).unwrap();
-    assert_eq!(
-        changed.reviews[0].input.implementation_sources,
-        input.implementation_sources
-    );
-    assert_eq!(changed.reviews[0].input.tests, input.tests);
-    assert_ne!(
-        changed.reviews[0].input.implementations,
-        input.implementations
-    );
-    assert!(review::record(&fixture.0, &approved).is_err());
-
-    std::fs::write(fixture.0.join("src/lib.rs"), &root).unwrap();
-    assert!(review::prepare(&fixture.0).unwrap().reviews.is_empty());
-    std::fs::write(
-        fixture.0.join("src/behavior.rs"),
-        format!("{behavior}// {{anchor}}`demo.rule`\n"),
-    )
-    .unwrap();
-    let added = review::prepare(&fixture.0).unwrap();
-    assert_eq!(added.reviews[0].input.implementations.len(), 2);
-    assert!(!sage_meta::check(&fixture.0).is_valid());
+    assert!(!fixture.run(&["check"]).status.success());
+    assert!(!fixture.0.join("validations").exists());
     fixture.approve();
-    std::fs::write(fixture.0.join("src/behavior.rs"), behavior).unwrap();
-    assert_eq!(
-        review::prepare(&fixture.0).unwrap().reviews[0]
-            .input
-            .implementations
-            .len(),
-        1
-    );
+    let snapshot = |name: &str| {
+        ["input.json", "output.json", "summary.json"]
+            .map(|file| std::fs::read(fixture.0.join("validations").join(name).join(file)).unwrap())
+    };
+    let original = snapshot("demo.rule");
+    assert!(fixture.run(&["check"]).status.success());
+    assert!(sage_meta::check(&fixture.0).is_valid());
+    assert_eq!(snapshot("demo.rule"), original);
+    let obsolete = fixture.0.join("validations/demo.retired");
+    std::fs::create_dir(&obsolete).unwrap();
+    for (index, file) in ["input.json", "output.json", "summary.json"]
+        .iter()
+        .enumerate()
+    {
+        std::fs::write(obsolete.join(file), &original[index]).unwrap();
+    }
+    let mut summary = fixture.summary();
+    summary["anchor"] = "demo.retired".into();
+    std::fs::write(
+        obsolete.join("summary.json"),
+        serde_json::to_vec(&summary).unwrap(),
+    )
+    .unwrap();
+    let retired = snapshot("demo.retired");
     assert!(!sage_meta::check(&fixture.0).is_valid());
+    assert_eq!(snapshot("demo.rule"), original);
+    assert_eq!(snapshot("demo.retired"), retired);
+    fixture.start();
+    review::record(&fixture.0, "demo.rule", &Fixture::report()).unwrap();
+    assert_eq!(snapshot("demo.retired"), retired);
+    assert!(!sage_meta::check(&fixture.0).is_valid());
+}
+
+#[test]
+#[sage::test(meta.reviews.gate)]
+fn accepted_report_cannot_replace_missing_test_or_implementation_evidence() {
+    for missing in ["test", "implementation"] {
+        let fixture = Fixture::new();
+        fixture.approve();
+        if missing == "test" {
+            fixture.write("src/tests.rs", "");
+        } else {
+            fixture.write("src/behavior.rs", "pub fn result() -> u32 { 4 }\n");
+        }
+        assert!(!sage_meta::check(&fixture.0).is_valid(), "{missing}");
+        let cli = fixture.run(&["check"]);
+        assert!(!cli.status.success());
+        assert!(String::from_utf8_lossy(&cli.stderr).contains("demo.rule"));
+    }
+}
+
+#[test]
+#[sage::test(meta.reviews.input_format)]
+#[sage::test(meta.reviews.review_scope)]
+#[sage::test(meta.reviews.input_fragments)]
+#[sage::test(meta.reviews.preparation)]
+fn input_keeps_complete_association_metadata_and_appends_context_in_one_collection() {
+    let fixture = Fixture::new();
+    fixture.write(
+        "src/lib.rs",
+        "#[sage::item(crate)] mod model {}\n#[cfg(unix)] mod behavior;\n#[cfg(test)] mod tests;\n",
+    );
+    let initial = fixture.start();
+    let implementation = &initial.implementations[0];
+    assert_eq!(implementation.crate_name, "demo");
+    assert_eq!(implementation.target, "lib:demo");
+    assert_eq!(implementation.module, "demo::behavior");
+    assert_eq!(implementation.file, "src/behavior.rs");
+    assert!(implementation.cfg.iter().any(|cfg| cfg.contains("unix")));
+    assert!(
+        implementation
+            .excerpt
+            .join("\n")
+            .contains("pub fn result() -> u32 { 4 }")
+    );
+    assert!(!implementation.region);
+    assert_eq!(implementation.status, TestStatus::Ordinary);
+    assert_eq!(implementation.explanation, None);
+    let test = &initial.tests[0];
+    assert_eq!(test.crate_name, "demo");
+    assert_eq!(test.target, "lib:demo");
+    assert_eq!(test.rust_path, "demo::tests::verifies_result");
+    assert_eq!(test.file, "src/tests.rs");
+    assert!(test.cfg.iter().any(|cfg| cfg.contains("test")));
+    assert_eq!(test.status, TestStatus::Ordinary);
+    fixture.write("helper.txt", "extra context\n");
+    assert_eq!(
+        review::capture_read(&fixture.0, "demo.rule", "helper.txt", Selector::WholeFile).unwrap(),
+        "extra context\n"
+    );
+    let captured = fixture.input();
+    assert_eq!(captured.implementations, initial.implementations);
+    assert_eq!(captured.tests, initial.tests);
+    assert_eq!(
+        &captured.fragments[..initial.fragments.len()],
+        initial.fragments
+    );
+    assert_eq!(captured.fragments.len(), initial.fragments.len() + 1);
+    assert_eq!(
+        captured.fragments.last().unwrap().contents.join("\n"),
+        "extra context\n"
+    );
+    let json = serde_json::to_value(&captured).unwrap();
+    let mut keys: Vec<_> = json
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort();
+    assert_eq!(
+        keys,
+        [
+            "coordinator_instructions",
+            "fragments",
+            "implementations",
+            "prompt",
+            "tests"
+        ]
+    );
+}
+
+#[test]
+#[sage::test(meta.reviews.input_format)]
+#[sage::test(meta.reviews.review_scope)]
+fn region_association_preserves_placeholder_explanation_and_excerpt() {
+    let fixture = Fixture::new();
+    fixture.write("src/behavior.rs", "mod todo {\n// {anchor}`demo.rule`<<\n// TODO: Implement arithmetic after the numeric type model is available.\npub fn result() -> u32 { 4 }\n// >>\n}\n");
+    let input = fixture.start();
+    let site = &input.implementations[0];
+    assert!(site.region);
+    assert_eq!(site.module, "demo::behavior::todo");
+    assert_eq!(site.status, TestStatus::Todo);
+    assert!(
+        site.explanation
+            .as_ref()
+            .unwrap()
+            .contains("numeric type model")
+    );
+    let excerpt = site.excerpt.join("\n");
+    assert!(excerpt.contains("pub fn result() -> u32 { 4 }"));
+    assert!(excerpt.contains("TODO: Implement arithmetic"));
+    let saved = fixture.input();
+    assert_eq!(saved.implementations, input.implementations);
+}
+
+#[test]
+#[sage::test(meta.reviews.preparation)]
+#[sage::test(meta.reviews.record_required)]
+fn interrupted_start_publication_states_cannot_reuse_an_old_approval() {
+    let fixture = Fixture::new();
+    fixture.approve();
+    let directory = fixture.0.join("validations/demo.rule");
+    let input = fixture.input();
+    // Start removes the old directory before creating any part of the new record.
+    std::fs::remove_dir_all(&directory).unwrap();
+    assert!(!sage_meta::check(&fixture.0).is_valid());
+    assert!(!fixture.run(&["check"]).status.success());
+    std::fs::create_dir(&directory).unwrap();
+    assert!(!sage_meta::check(&fixture.0).is_valid());
+    assert!(!fixture.run(&["check"]).status.success());
+    std::fs::write(
+        directory.join("input.json"),
+        serde_json::to_vec(&input).unwrap(),
+    )
+    .unwrap();
+    assert!(!sage_meta::check(&fixture.0).is_valid());
+    assert!(!fixture.run(&["check"]).status.success());
+    assert!(!directory.join("output.json").exists());
+    // A successful restart also stays failing until a fresh report is recorded.
+    fixture.start();
+    assert!(!sage_meta::check(&fixture.0).is_valid());
+    assert!(!fixture.run(&["check"]).status.success());
+    review::record(&fixture.0, "demo.rule", &Fixture::report()).unwrap();
+    assert!(sage_meta::check(&fixture.0).is_valid());
+}
+
+#[test]
+#[sage::test(meta.reviews.recorded_reads)]
+fn cli_read_defaults_to_whole_file_from_workspace_subdirectory() {
+    let fixture = Fixture::new();
+    let before = fixture.start();
+    let text = "first\r\nsecond\n";
+    fixture.write("context.txt", text);
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_sage-meta"))
+        .current_dir(fixture.0.join("src"))
+        .args(["review", "read", "demo.rule", "context.txt"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, text.as_bytes());
+    let after = fixture.input();
+    assert_eq!(after.fragments.len(), before.fragments.len() + 1);
+    assert_eq!(
+        &after.fragments[..before.fragments.len()],
+        before.fragments.as_slice()
+    );
+    let captured = after.fragments.last().unwrap();
+    assert_eq!(captured.path, "context.txt");
+    assert_eq!(captured.selector, Selector::WholeFile);
+    assert_eq!(captured.contents.join("\n"), text);
+    assert!(fixture.summary()["recorded_at_unix_seconds"].is_null());
+}
+
+#[test]
+#[sage::test(meta.reviews.recording)]
+fn record_rejects_invalid_active_identity_and_changed_associations() {
+    for fault in [
+        "unknown anchor",
+        "missing input",
+        "anchor",
+        "schema_version",
+        "policy_version",
+        "test cfg",
+    ] {
+        let fixture = Fixture::new();
+        let initial = fixture.start();
+        let directory = fixture.0.join("validations/demo.rule");
+        let anchor = match fault {
+            "unknown anchor" => "demo.unknown",
+            "missing input" => {
+                std::fs::remove_file(directory.join("input.json")).unwrap();
+                "demo.rule"
+            }
+            "test cfg" => {
+                fixture.write(
+                    "src/lib.rs",
+                    "#[sage::item(crate)] mod model {}\nmod behavior;\n#[cfg(unix)] mod tests;\n",
+                );
+                // The test text stays identical; only its enclosing cfg changes.
+                let spec = sage_meta::check(&fixture.0);
+                assert!(!spec.is_valid());
+                assert_eq!(fixture.input(), initial);
+                "demo.rule"
+            }
+            field => {
+                let mut summary = fixture.summary();
+                summary[field] = if field == "anchor" {
+                    "demo.other".into()
+                } else {
+                    0.into()
+                };
+                std::fs::write(
+                    directory.join("summary.json"),
+                    serde_json::to_vec(&summary).unwrap(),
+                )
+                .unwrap();
+                "demo.rule"
+            }
+        };
+        assert!(
+            review::record(&fixture.0, anchor, &Fixture::report()).is_err(),
+            "{fault}"
+        );
+        assert!(!directory.join("output.json").exists(), "{fault}");
+        assert!(
+            fixture.summary()["recorded_at_unix_seconds"].is_null(),
+            "{fault}"
+        );
+        assert!(!sage_meta::check(&fixture.0).is_valid(), "{fault}");
+    }
 }

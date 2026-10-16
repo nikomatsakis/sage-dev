@@ -6,7 +6,7 @@ use std::fmt;
 use std::path::Path;
 
 use crate::correspondence::{CorrespondenceIndex, RustSite};
-use crate::review::{self, Decision};
+use crate::review::{self, TestStatus};
 use crate::spec::SpecIndex;
 use crate::{Diagnostic, Span};
 
@@ -100,6 +100,7 @@ pub struct CheckReport {
     rendered_errors: Vec<String>,
 }
 
+// {anchor}`meta.reviews.review_diagnostics`
 impl CheckReport {
     pub fn is_valid(&self) -> bool {
         self.model.valid
@@ -135,6 +136,7 @@ impl fmt::Debug for CheckError {
     }
 }
 
+// {anchor}`meta.reviews.review_diagnostics`
 impl fmt::Display for CheckReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if !self.is_valid() {
@@ -431,6 +433,8 @@ fn check_roots(model_root: &Path, rust_root: Option<&Path>) -> CheckReport {
 }
 
 // {anchor}`meta.reviews.gate`
+// {anchor}`meta.reviews.decisions`
+// {anchor}`meta.reviews.review_diagnostics`
 fn check_reviews(
     report: &mut CheckReport,
     spec: &SpecIndex,
@@ -451,24 +455,29 @@ fn check_reviews(
         workspace.join("md")
     };
     let inputs = review::inventory(spec, rust);
-    let checklist = review::load(&workspace.join(review::CHECKLIST_FILE));
+    let checklist = review::load_saved(&workspace.join(review::CHECKLIST_FILE));
     match inputs.and_then(|inputs| checklist.map(|checklist| (inputs, checklist))) {
         Ok((inputs, checklist)) => {
-            let issues = review::validate(&inputs, &checklist);
-            for record in checklist.reviews.iter().filter(|record| {
-                inputs.get(&record.anchor) == Some(&record.input)
-                    && !issues.iter().any(|issue| {
-                        issue
-                            .anchor
-                            .as_ref()
-                            .is_none_or(|anchor| anchor == &record.anchor)
-                    })
+            let issues = review::validate(workspace, &inputs, &checklist);
+            for record in inputs.iter().filter_map(|(anchor, input)| {
+                review::acceptable(workspace, anchor, input, &checklist)
             }) {
-                match record.decision {
-                    Decision::Approved => stage.approved += 1,
-                    Decision::Todo => stage.todo += 1,
-                    Decision::NotApplicable => stage.not_applicable += 1,
-                    Decision::Pending | Decision::NeedsWork => {}
+                let statuses = record
+                    .input
+                    .tests
+                    .iter()
+                    .map(|site| site.status)
+                    .chain(record.input.implementations.iter().map(|site| site.status))
+                    .collect::<Vec<_>>();
+                if statuses.contains(&TestStatus::Todo) {
+                    stage.todo += 1;
+                } else if statuses
+                    .iter()
+                    .all(|status| *status == TestStatus::NotApplicable)
+                {
+                    stage.not_applicable += 1;
+                } else {
+                    stage.approved += 1;
                 }
             }
             for issue in issues {
@@ -504,7 +513,7 @@ fn check_reviews(
     }
     if !stage.valid {
         if let Some(error) = report.rendered_errors.last_mut() {
-            error.push_str(&format!("\n  = help: run the {} skill to review changed claims, implementations, and tests; start with `cargo run -p sage-meta -- review prepare`, then record the completed review with `cargo run -p sage-meta -- review record <file>`", review::REVIEW_SKILL));
+            error.push_str(&format!("\n  = help: run the {} skill to review changed claims, implementations, and tests; delegate each anchor to a subagent, run `cargo meta review start <anchor>`, then `cargo meta review record <anchor> <report-file>`", review::REVIEW_SKILL));
         }
     }
     report.review = Some(stage);

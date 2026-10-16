@@ -12,7 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .is_some_and(|arg| arg == "--help" || arg == "-h")
     {
         println!(
-            "sage-meta [model directory]\nsage-meta check [--json] [model directory]\nsage-meta review prepare\nsage-meta review record <file>\nsage-meta browse [model directory] [output.html]\nsage-meta serve <port> [model directory]\n\nCheck the model, Rust correspondence, specification tests, and review snapshots, or export an interactive explorer."
+            "sage-meta [model directory]\nsage-meta check [--json] [model directory]\nsage-meta review start <anchor> [--instructions <file>]\nsage-meta review read <anchor> <path> [selector]\nsage-meta review record <anchor> <report-file>\nsage-meta browse [model directory] [output.html]\nsage-meta serve <port> [model directory]\n\nCheck the model, Rust correspondence, specification tests, and review snapshots, or export an interactive explorer."
         );
         return Ok(());
     }
@@ -97,25 +97,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+// {anchor}`meta.reviews.preparation`
+// {anchor}`meta.reviews.recorded_reads`
+// {anchor}`meta.reviews.recording`
 fn review(args: &[std::ffi::OsString]) -> Result<(), Box<dyn std::error::Error>> {
-    match args {
-        [command] if command == "prepare" => {
-            let pending = sage_meta::review::prepare(Path::new("."))?;
-            println!("{}", serde_json::to_string_pretty(&pending)?);
+    use sage_meta::review::{self, Selector, ValidationOutput};
+    let args = args
+        .iter()
+        .map(|arg| arg.to_str().ok_or("arguments must be UTF-8"))
+        .collect::<Result<Vec<_>, _>>()?;
+    match args.as_slice() {
+        ["start", anchor] => {
+            println!("{}",serde_json::to_string_pretty(&review::start(Path::new("."),anchor,Vec::new())?)?);
         }
-        [command, path] if command == "record" => {
-            let reviewed = sage_meta::review::load(Path::new(path))?;
-            sage_meta::review::record(Path::new("."), &reviewed)?;
-            println!(
-                "Recorded reviewed snapshots in {}.",
-                sage_meta::review::CHECKLIST_FILE
-            );
+        ["start", anchor, "--instructions", file] => {
+            let instructions=std::fs::read_to_string(file)?;
+            println!("{}",serde_json::to_string_pretty(&review::start(Path::new("."),anchor,vec![instructions])?)?);
         }
-        _ => return Err("usage: sage-meta review prepare | sage-meta review record <file>".into()),
+        ["read", anchor, path, tail @ ..] => {
+            let selector=match tail {
+                [] => Selector::WholeFile,
+                ["--lines",start,end] => Selector::LineRange {start:start.parse()?,end:end.parse()?},
+                ["--claim",anchor_id] => Selector::Claim {anchor_id:(*anchor_id).into()},
+                ["--test",crate_name,target,rust_path] => Selector::Test {crate_name:(*crate_name).into(),target:(*target).into(),rust_path:(*rust_path).into()},
+                _ => return Err("read selector: --lines START END | --claim ANCHOR | --test CRATE TARGET RUST_PATH".into()),
+            };
+            print!("{}",review::capture_read(Path::new("."),anchor,path,selector)?);
+        }
+        ["record", anchor, file] => {
+            let output:ValidationOutput=serde_json::from_slice(&std::fs::read(file)?)?;
+            review::record(Path::new("."),anchor,&output)?;
+            println!("Recorded validation in validations/{anchor}/.");
+        }
+        _ => return Err("usage: cargo meta review start ANCHOR [--instructions FILE] | cargo meta review read ANCHOR PATH [--lines START END | --claim ANCHOR | --test CRATE TARGET RUST_PATH] | cargo meta review record ANCHOR REPORT_FILE".into()),
     }
     Ok(())
 }
 
+// {anchor}`meta.reviews.gate`
+// {anchor}`meta.reviews.review_diagnostics`
 fn check(args: &[std::ffi::OsString]) -> Result<(), Box<dyn std::error::Error>> {
     let mut json = false;
     let mut root = None;

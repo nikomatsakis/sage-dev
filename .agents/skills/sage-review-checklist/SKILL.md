@@ -1,105 +1,126 @@
 ---
 name: sage-review-checklist
-description: Review Sage implementation completeness and test adequacy against specification claims and record decisions when sage-meta check reports missing or stale reviews.
+description: Review Sage implementations and tests for each anchor reported by cargo meta check, capturing inputs and recording complete reports.
 ---
 
-# Review Sage implementations and tests
+# Review specification implementations and tests
 
-Review the exact claim, associated implementation code, and complete associated
-test set before recording a decision. Judge whether the anchor is fully and
-correctly implemented and whether the tests demonstrate its functionality.
-Source review does not replace test execution. Follow
-`md/design/meta/reviews.md` for the snapshot and freshness contract.
+Follow `md/design/meta/reviews.md`. A passing test run or annotation alone does
+not establish implementation completeness or test adequacy.
 
-## Prepare the work
+## Coordinator: delegate each failing anchor
 
-From the repository root, run:
+Run `cargo meta check --json` or read the shared Cargo validation test failure.
+Diagnostics identify each anchor requiring review and why. Fix structural source
+errors before starting reviews. Do not weaken claims, delete associations, or
+reclassify ordinary evidence as TODO merely to make the gate pass.
 
-```bash
-cargo run -p sage-meta -- review prepare > /tmp/sage-review.json
+Start one review subagent per anchor, including TODO/N/A anchors. Give each the
+anchor ID and the initial instruction to follow this skill, run
+`cargo meta review start ANCHOR`, and review the printed inputs. Only one agent
+owns an anchor's validation directory at a time; different anchors may be
+reviewed concurrently. Use the available agent slots and dispatch remaining
+anchors as slots become free. Avoid supplying uncaptured source context.
+Additional coordinator instructions must be saved with `start --instructions`.
+
+## Reviewer: capture initial context
+
+From the workspace run:
+
+```sh
+cargo meta review start ANCHOR
+# With additional coordinator instructions saved verbatim in a text file:
+cargo meta review start ANCHOR --instructions /tmp/review-instructions.txt
 ```
 
-Preparation emits current inputs for anchors needing review without updating
-`review-checklist.json`. Fix structural validation errors within the authorized
-scope before reviewing. Do not delete annotations, weaken claims, or reclassify
-ordinary tests as placeholders merely to make the gate pass.
+Start resets `validations/ANCHOR/`, writes summary and initial input files, and
+prints the same inputs and verification prompt. Read them. The gate now fails
+until a complete current report with no requested edits is recorded. An
+interrupted review cannot fall back to a previous approval.
 
-Dispatch review subagents with small, related groups of anchors. Give each the
-exact input records and repository access; request one result per anchor.
-Assign every emitted anchor explicitly, including TODO and N/A entries.
-Give reviewers separate test-file ownership or isolated worktrees when
-reproduction tests might overlap. Reviewers may add regression tests and
-implementation associations, but must not change production behavior or edit
-the shared checklist as part of review. Coordinate shared-file changes through
-the parent agent.
+The initial fragments contain the complete claim, all associated annotated test
+functions, and associated implementation source files, plus association metadata.
+Identify and capture every additional source dependency before using it in the
+assessment:
 
-## Evaluate each anchor
-
-1. Identify every requirement in the complete claim. Read all associated
-   implementation entries and their snapshotted source files. Trace each
-   requirement to actual behavior; check missing cases, edge cases, and
-   contradictions. An association or passing test does not establish
-   implementation completeness. Follow relevant helpers and dependencies. Add
-   associations for essential implementation code in other files so later edits
-   invalidate approval; a five-line point preview is only navigation context.
-2. Read the supplied test bodies as a set. Identify the scenario, expected
-   outcome, and assertions demonstrating each requirement. Different tests may
-   cover different parts. Names, annotations, comments, and passing results
-   alone are insufficient. Meaningful checks must be visible in the annotated
-   bodies; setup helpers are fine, but opaque `verify_everything()` calls are not.
-3. Investigate potential bugs by adding an anchor-associated regression test
-   asserting the specified behavior and running it against the implementation.
-   Use an existing test target where practical. Preserve the test and report a
-   reproduced behavioral failure as `needs_work`, citing its name, exact
-   command, expected behavior, and observed failure. Compilation, tooling, or
-   environment failures do not count as reproducing the suspected bug. Do not
-   weaken the claim or test expectation to obtain a passing result.
-4. If the concern cannot be reproduced with a test, or you cannot work out how
-   to write the test, consult the user: explain the suspected violation, what
-   was attempted, and what remains uncertain. Subagents report this to the
-   coordinator for consultation. Leave that review unresolved; a passing attempt
-   alone does not resolve the concern. Continue independent reviews meanwhile.
-5. Distinguish source inspection from tests actually run. Return the anchor,
-   decision, reviewer identity, and claim-specific reasoning covering both
-   implementation completeness (with code locations) and test adequacy (with
-   test names and assertions). Include reproduction results and follow-up work
-   for unsuccessful reviews.
-
-Use these decisions:
-
-- `approved`: all implementation and test entries are ordinary, the implementation
-  fully satisfies the claim, and the tests collectively demonstrate it.
-- `todo`: at least one implementation or test entry is in a `todo` module.
-  Explain the unfinished behavior and account for all entries on both sides.
-  This accepts the explicitly recorded gap, not the behavior as implemented.
-- `not_applicable`: every implementation and test entry is in a
-  `not_applicable` module and the explanations justify inapplicability.
-- `needs_work`: implementation or tests are incomplete, a bug is reproduced,
-  or a placeholder explanation is unjustified. State the smallest useful follow-up.
-
-Never promote TODO or N/A entries to `approved`. Do not reuse generic approval
-reasoning across unrelated claims. If review cannot finish, leave it pending
-and report it as unfinished.
-
-## Reconcile and record
-
-The coordinator checks every assigned result and reconciles conflicts. Preserve
-input snapshots exactly. If reviewers added tests or associations, prepare again
-and review the fresh affected records before recording; never transplant a
-verdict onto changed inputs without checking them. Populate only `decision`,
-`reason`, and `reviewer` on completed records, and write a separate JSON
-submission preserving schema and policy versions. Omit unfinished entries.
-
-```bash
-cargo run -p sage-meta -- review record /tmp/sage-reviewed.json
-cargo run -p sage-meta -- check
+```sh
+cargo meta review read ANCHOR path/to/file.rs
+cargo meta review read ANCHOR path/to/file.rs --lines 10 40
+cargo meta review read ANCHOR md/design/meta/reviews.md --claim meta.reviews.gate
+cargo meta review read ANCHOR crates/example/tests/check.rs --test example test:check example::verifies_result
 ```
 
-Recording reloads sources and rejects stale inputs. After rejection, prepare
-and review again; do not copy new source into an old approval. A recorded
-`needs_work` finding fails the gate. Resolve it through actual implementation
-or test changes and another review, or report the remaining blocker accurately.
+Paths are workspace-relative. Line bounds are one-based and inclusive. Claim and
+test selectors resolve identifiers rather than line numbers. The command saves
+the exact selected contents before returning them. All fragments use the same
+representation and freshness checks. Dependency completeness is agent-declared.
 
-Inspect the checklist diff, run relevant tests independently, and report
-outcomes and remaining gaps. Keep the checklist with the implementation/test
-changes for the user's normal commit workflow; do not automatically publish it.
+## Reviewer: evaluate every aspect
+
+1. Enumerate every requirement, qualification, edge case, and scenario in the
+   complete claim. Trace each to implementation behavior and actual test
+   assertions, or explain justified TODO/N/A evidence. Follow relevant helpers
+   and capture them. Add implementation associations for essential code in
+   other files so future association changes invalidate review.
+2. Read the complete associated test set. Different tests can cover different
+   aspects, but names, annotations, comments, and passing results alone are
+   insufficient. Meaningful assertions must be visible in annotated test bodies;
+   opaque `verify_everything()` wrappers do not establish adequacy.
+3. Investigate suspected bugs with an anchor-associated regression test and run
+   it. Preserve a reproduced failure, including test name, command, expected
+   behavior and actual result, and request concrete edits. Compilation or tool
+   failures are not behavioral reproductions. Do not weaken expectations.
+4. If a concern cannot be reproduced, or you cannot determine how to test it,
+   report it to the coordinator for user consultation. Leave the review
+   unfinished; a passing attempt does not resolve the concern. Continue other
+   independent work.
+5. Write a complete, anchor-specific report distinguishing source inspection
+   from commands actually executed. Account for every implementation/test entry
+   and all requirements. Explain each TODO/N/A rationale and prerequisite; an
+   accepted deferral remains visibly deferred, not implemented.
+
+Reviewers may add regression tests and implementation associations, coordinating
+shared files with the main agent. Production changes are coordinated by the
+main agent. Any changes to reviewed inputs require a fresh start and review.
+
+## Reviewer: record the report
+
+Write a separate JSON report file containing only:
+
+```json
+{
+  "reviewer": "reviewer identity",
+  "report": "Complete claim-specific explanation with code and test evidence.",
+  "requested_edits": []
+}
+```
+
+An empty edit list means all aspects are accounted for and no edits are needed.
+Otherwise list concrete, nonblank edits. Edits may request tests or an explicit
+TODO test with a comment documenting its prerequisite. Never submit an empty or
+generic report merely to pass the gate. TODO/N/A classification comes from the
+associated evidence; do not duplicate it in the output.
+
+```sh
+cargo meta review record ANCHOR /tmp/review-report.json
+```
+
+Record validates the saved inputs against current source and preserves them
+exactly. On stale-input rejection, start again and review the fresh inputs;
+never transplant a verdict without checking the changed context. A recorded
+report requesting edits remains failing. Return the report and requested edits
+to the coordinator. Do not edit saved JSON files directly.
+
+## Coordinator: follow up and check
+
+Reconcile findings and coordinate requested changes. After changes, delegate
+fresh start/read/record reviews for affected anchors. Run relevant tests and
+`cargo meta check` again. Every anchor needs a current completed report with no
+requested edits. The coordinator cannot substitute its own draft for a
+subagent's completed recording. Keep unresolved reviews failing and report them
+accurately. Do not automatically publish the change.
+
+For retired anchors, remove the obsolete validation directory. For renamed
+anchors, reconcile the specification and associations, remove the old directory,
+and review the new ID. Renaming a saved directory does not establish approval.
+Unsupported records require a fresh `start`; checking never silently prunes them.
