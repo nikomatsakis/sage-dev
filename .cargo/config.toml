@@ -1,2 +1,3 @@
 [alias]
+meta = "run --package sage-meta --bin sage-meta --"
 xtask = "run --package xtask --bin xtask --"

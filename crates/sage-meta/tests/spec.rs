@@ -739,7 +739,7 @@ class Node {
     let rust = sage_meta::correspondence::CorrespondenceIndex::from_sources(&[]).unwrap();
     let inputs = sage_meta::review::inventory(&index, &rust).unwrap();
     assert_eq!(
-        inputs["crates.demo.nodes.value"].claim.join("\n"),
+        inputs["crates.demo.nodes.value"].fragments.iter().find(|fragment| matches!(&fragment.selector, sage_meta::review::Selector::Claim { anchor_id } if anchor_id == "crates.demo.nodes.value")).unwrap().contents.join("\n"),
         "A value with **meaning**.\n\nPrécise values survive edits.\n\n- Keep the cached value.\n\n```text\n    Preserve relative indentation.\n```"
     );
     assert_eq!(

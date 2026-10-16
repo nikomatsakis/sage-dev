@@ -1,0 +1,147 @@
+{
+  "prompt": "Review this anchor as its assigned subagent. Enumerate ALL requirements, qualifications, edge cases and scenarios. Inspect all supplied implementation and test fragments and trace each aspect to implementation behavior and actual test assertions or justified TODO/N/A evidence. Passing tests and associations alone are insufficient. Follow helpers and capture every additional source dependency with cargo meta review read ANCHOR PATH [selector] before completing the report. Explain prerequisites for justified TODO tests; do not claim deferred behavior is implemented. Distinguish source inspection from commands actually executed. Write a JSON report containing reviewer, report, and requested_edits. Leave requested_edits empty only when every aspect is accounted for and no edits are needed. Otherwise list concrete changes, including missing tests or justified TODO tests with prerequisite comments. Run cargo meta review record ANCHOR REPORT_FILE to finish. After edits or stale-input rejection, run cargo meta review start ANCHOR and review the fresh inputs. The gate fails until a current report with no requested edits is recorded. Dependency capture is agent-declared.",
+  "coordinator_instructions": [
+    "Review only crates.sage_ir.checking.signature.storage. Follow the repository review skill. Independently reassess every claim aspect and its implementation/test evidence. Do not edit production or tests; report suspected issues to coordinator. Capture every additional source dependency using review read. Distinguish source review from commands actually executed. Record your own completed report via cargo meta review record; do not directly edit saved JSON. Existing justified TODO/N/A evidence can remain deferred.\nHistorical report supplied as context, not an approval to reuse mechanically; independently verify current evidence and rationale:\n{\n  \"decision\": \"todo\",\n  \"outcome\": true,\n  \"requested_edits\": [],\n  \"reason\": \"Claim aspects reviewed: **Checked interfaces are self-contained semantic values.** Signature lowering reads CST from one stash and writes all checked types, binders, predicates, and retained alias applications into a separate result stash. No checked value points into tree-sitter state or the source CST stash. This is the signature-level ownership boundary established by [Stash for type-level interning](../../../rfds/architectural-foundations/README.md#stash-for-type-level-interning).\\n\\nCheck holds immutable source_stash and a fresh target_stash, and finish moves the target into Stashed. The TODO defers structural traversal of retained aliases, predicates, and cross-stash pointer detection after source borrows end; ordinary association is not a claim that those tests exist.\\n\\nImplementation associations considered: crates/sage-ir/src/check/sig.rs [ordinary].\\n\\nExplicit deferred evidence sage_meta::todo::checking_signature_storage: TODO: Complete the claim-specific verification matrix: Structural snapshots traverse representative signatures after the parser and source stash borrows have ended, cover retained aliases and predicates, and detect any cross-stash pointer.\\n\\nDecision: TODO. The explicit placeholders retain the missing implementation or verification scenarios described above; their empty passing bodies are not behavioral evidence. All aspects are accounted for as implemented examples or this declared gap, and this review requests no additional edit to that accounting. This outcome does not assert complete implementation or test coverage.\\n\\nValidation method: source inspection of the supplied context and associated evidence. This review did not execute tests, use old approval decisions, or read additional dependency files.\",\n  \"reviewer\": \"Codex /root/sanity — fresh Sage IR anchor review\"\n}\nCoordinator reports full functional sage-meta suite 321 passing tests and root cargo build passed. This is separately reported execution, not a command you ran. Avoid redundant full suites unless needed to investigate a specific concern. Efficiently compare unchanged evidence to earlier snapshots, but reassess claim-specific rationale independently.\n\nCoordinator baseline comparison at dispatch preparation (reviewer must verify still current):\nimplementation_sources: crates/sage-ir/src/check/sig.rs: EXACT BYTE MATCH to historical reviewed source\ntest_sources: crates/sage-meta/tests/semantic_spec.rs: EXACT BYTE MATCH to historical reviewed source\nFor unchanged legacy anchors, prior report is a completed independent source review. Reassess its claim-specific sufficiency against current claim, metadata and associated test assertions; you need not rediscover all unchanged implementation or rerun tests. For any changed source, inspect the delta and relevant complete behavior. Historical input for exact comparison is /tmp/sage-pre-fragment-validations/crates.sage_ir.checking.signature.storage/input.json. If using historical source contents themselves beyond exact comparison, put them in captured coordinator instructions or use review read for their current workspace source.\n\nCoordinator clarification: evaluate the full associated set plus source reasoning; no demand for isolated field-per-test assertions where meaningful integration checks account for claim. If prior rationale relies on helper/surrounding source in historical test_sources/implementation_sources/reads beyond current initial fragments, capture each relied-on dependency via review read (whole file or precise selector). Byte-comparison alone does not persist a freshness dependency.\n\nEfficiency: unchanged legacy evidence already genuinely independently reviewed. Batch evidence reads; inspect only current inputs, deltas, and actually relied-on helpers. Avoid unrelated documentation, repeated broad checks, and rediscovery. Write concise complete claim/evidence/TODO-prerequisite reassessment, distinguish baseline/source/execution, then record promptly.\n"
+  ],
+  "fragments": [
+    {
+      "path": "md/design/crates/sage_ir/checking.sage",
+      "selector": {
+        "kind": "claim",
+        "anchor_id": "crates.sage_ir.checking.signature.storage"
+      },
+      "contents": [
+        "**Checked interfaces are self-contained semantic values.** Signature lowering reads CST from one stash and writes all checked types, binders, predicates, and retained alias applications into a separate result stash. No checked value points into tree-sitter state or the source CST stash. This is the signature-level ownership boundary established by [Stash for type-level interning](../../../rfds/architectural-foundations/README.md#stash-for-type-level-interning)."
+      ]
+    },
+    {
+      "path": "crates/sage-ir/src/check/sig.rs",
+      "selector": {
+        "kind": "whole_file"
+      },
+      "contents": [
+        "use sage_stash::{Stash, StashHash, Stashed};",
+        "",
+        "use crate::diagnostic::{Diagnostic, ErrorReported, Span};",
+        "use crate::local_syms::LocalModItemSym;",
+        "use crate::resolve::Resolver;",
+        "use crate::span::RelativeSpan;",
+        "use crate::ty::{CheckedParameterEnv, SolverEligibility, WherePredicate};",
+        "",
+        "#[sage::item(crate::checking::Check)]",
+        "pub struct Check<'a, 'db> {",
+        "    pub db: &'db dyn crate::Db,",
+        "    pub resolver: Resolver<'db>,",
+        "    pub source_stash: &'a Stash,",
+        "    pub target_stash: Stash,",
+        "    pub diagnostics: Vec<Diagnostic<'db>>,",
+        "    pub current_sym: Option<LocalModItemSym<'db>>,",
+        "    type_use_predicates: Vec<WherePredicate<'db>>,",
+        "    type_use_eligibility: SolverEligibility,",
+        "}",
+        "",
+        "impl<'a, 'db> Check<'a, 'db> {",
+        "    pub fn new(db: &'db dyn crate::Db, source_stash: &'a Stash, resolver: Resolver<'db>) -> Self {",
+        "        Self {",
+        "            db,",
+        "            resolver,",
+        "            source_stash,",
+        "            target_stash: Stash::new(),",
+        "            diagnostics: Vec::new(),",
+        "            current_sym: None,",
+        "            type_use_predicates: Vec::new(),",
+        "            type_use_eligibility: SolverEligibility::Eligible,",
+        "        }",
+        "    }",
+        "",
+        "    pub fn span(&self, relative: RelativeSpan) -> Span<'db> {",
+        "        Span::Relative(",
+        "            self.current_sym.expect(\"span() called without current_sym\"),",
+        "            relative,",
+        "        )",
+        "    }",
+        "",
+        "    pub fn report(&mut self, diag: Diagnostic<'db>) -> ErrorReported {",
+        "        crate::diagnostic::report(&mut self.diagnostics, diag)",
+        "    }",
+        "",
+        "    pub fn record_type_use_parameter_env(&mut self, environment: CheckedParameterEnv<'db>) {",
+        "        self.type_use_predicates",
+        "            .extend_from_slice(&self.target_stash[environment.where_clauses]);",
+        "        self.type_use_eligibility = self",
+        "            .type_use_eligibility",
+        "            .and(environment.solver_eligibility);",
+        "    }",
+        "",
+        "    pub fn complete_parameter_env(",
+        "        &mut self,",
+        "        where_clauses: sage_stash::Slice<WherePredicate<'db>>,",
+        "        solver_eligibility: SolverEligibility,",
+        "    ) -> CheckedParameterEnv<'db> {",
+        "        let mut predicates = self.target_stash[where_clauses].to_vec();",
+        "        predicates.extend_from_slice(&self.type_use_predicates);",
+        "        CheckedParameterEnv {",
+        "            where_clauses: self.target_stash.alloc_slice(&predicates),",
+        "            solver_eligibility: solver_eligibility.and(self.type_use_eligibility),",
+        "        }",
+        "    }",
+        "",
+        "    // {anchor}`crates.sage_ir.checking.owned_products`",
+        "    // {anchor}`crates.sage_ir.checking.signature.storage`",
+        "    pub fn finish<T: StashHash + Copy>(self, root: T) -> Stashed<T> {",
+        "        Stashed::new(self.target_stash, root)",
+        "    }",
+        "}",
+        ""
+      ]
+    },
+    {
+      "path": "crates/sage-meta/tests/semantic_spec.rs",
+      "selector": {
+        "kind": "test",
+        "crate_name": "sage_meta",
+        "target": "test:semantic_spec",
+        "rust_path": "sage_meta::todo::checking_signature_storage"
+      },
+      "contents": [
+        "#[test]",
+        "    #[sage::test(crates.sage_ir.checking.signature.storage)]",
+        "    fn checking_signature_storage() {",
+        "        // TODO: Complete the claim-specific verification matrix:",
+        "        // Structural snapshots traverse representative signatures after the parser and source stash",
+        "        // borrows have ended, cover retained aliases and predicates, and detect any cross-stash pointer.",
+        "    }"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "crate_name": "sage_ir",
+      "target": "lib:sage_ir",
+      "module": "sage_ir::check::sig",
+      "file": "crates/sage-ir/src/check/sig.rs",
+      "cfg": [],
+      "excerpt": [
+        "    // {anchor}`crates.sage_ir.checking.signature.storage`",
+        "    pub fn finish<T: StashHash + Copy>(self, root: T) -> Stashed<T> {",
+        "        Stashed::new(self.target_stash, root)",
+        "    }",
+        "}",
+        ""
+      ],
+      "region": false,
+      "status": "ordinary",
+      "explanation": null
+    }
+  ],
+  "tests": [
+    {
+      "crate_name": "sage_meta",
+      "target": "test:semantic_spec",
+      "rust_path": "sage_meta::todo::checking_signature_storage",
+      "file": "crates/sage-meta/tests/semantic_spec.rs",
+      "cfg": [],
+      "status": "todo"
+    }
+  ]
+}

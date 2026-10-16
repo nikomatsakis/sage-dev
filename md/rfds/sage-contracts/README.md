@@ -150,7 +150,7 @@ Source correspondence and runtime coverage remain separate requirements.
 ## Incremental review checklist
 
 Annotation coverage cannot determine whether a test meaningfully checks the
-claim it names. A committed `review-checklist.json` makes that judgment an
+claim it names. Committed per-anchor records in `validations/<anchor-id>/` make that judgment an
 explicit review step while allowing unchanged claim-and-test inputs to reuse
 a completed decision. The [review specification](../../design/meta/reviews.md)
 defines the extracted text, complete test-set input, stale decisions, and CI

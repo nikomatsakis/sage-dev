@@ -31,8 +31,7 @@ impl Fixture {
         )
         .unwrap();
         std::fs::write(root.join("src/lib.rs"), "#[sage::item(crate)] mod r#abstract {} #[sage::item(crate::Value)] struct Implementation;").unwrap();
-        let checklist = sage_meta::review::prepare(&root).unwrap();
-        sage_meta::review::record(&root, &checklist).unwrap();
+        std::fs::create_dir_all(root.join("validations")).unwrap();
         Self(root)
     }
     fn run(&self, args: &[&str]) -> std::process::Output {
@@ -127,11 +126,17 @@ fn specification_failures_fail_the_cli_and_library() {
         "\n// {anchor}`demo.documented`\n#[test] #[sage::test(demo.documented)] fn verifies_documented_behavior() {}\n",
     );
     std::fs::write(&source, rust).unwrap();
-    let mut reviewed = sage_meta::review::prepare(&fixture.0).unwrap();
-    reviewed.reviews[0].decision = sage_meta::review::Decision::Approved;
-    reviewed.reviews[0].reason = "Synthetic approval for testing CLI stage composition.".into();
-    reviewed.reviews[0].reviewer = "CLI test fixture".into();
-    sage_meta::review::record(&fixture.0, &reviewed).unwrap();
+    sage_meta::review::start(&fixture.0, "demo.documented", vec![]).unwrap();
+    sage_meta::review::record(
+        &fixture.0,
+        "demo.documented",
+        &sage_meta::review::ValidationOutput {
+            reviewer: "CLI test fixture".into(),
+            report: "Synthetic acceptance for testing CLI stage composition.".into(),
+            requested_edits: vec![],
+        },
+    )
+    .unwrap();
     sage_meta::check(&fixture.0).ensure_valid().unwrap();
     assert!(fixture.run(&["check"]).status.success());
 

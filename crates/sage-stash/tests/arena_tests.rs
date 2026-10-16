@@ -41,6 +41,18 @@ mod tests {
     // -- Basic alloc -------------------------------------------------------
 
     #[test]
+    #[sage::test(crates.sage_stash.storage.typed_interning)]
+    fn empty_unit_slice_and_scalar_do_not_confuse_interning() {
+        let mut stash = Stash::new();
+        let empty = stash.alloc_slice::<()>(&[]);
+        let scalar = stash.alloc(());
+        assert_eq!(stash[empty], []);
+        assert_eq!(stash[scalar], ());
+        assert_eq!(stash.alloc(()), scalar);
+        assert_eq!(stash.alloc_slice::<()>(&[]), empty);
+    }
+
+    #[test]
     fn alloc_and_read_back() {
         let mut stash = Stash::new();
         let p = stash.alloc(Point { x: 1, y: 2 });

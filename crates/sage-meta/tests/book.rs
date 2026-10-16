@@ -286,17 +286,26 @@ mod not_applicable {
 "#
         ),
     );
-    let mut packet = sage_meta::review::prepare(&fixture.root).unwrap();
-    for record in &mut packet.reviews {
-        record.decision = if record.anchor == "meta.foo" {
-            sage_meta::review::Decision::Todo
-        } else {
-            sage_meta::review::Decision::NotApplicable
-        };
-        record.reason = "Explicit placeholder status reviewed.".into();
-        record.reviewer = "fixture".into();
+    for anchor in ["meta.foo", "meta.foo.bar", "meta.other.leaf"] {
+        sage_meta::review::start(&fixture.root, anchor, vec![]).unwrap();
+        if anchor != "meta.other.leaf" {
+            sage_meta::review::record(
+                &fixture.root,
+                anchor,
+                &sage_meta::review::ValidationOutput {
+                    reviewer: "fixture".into(),
+                    report: "Explicit placeholder status reviewed.\n\nLiteral <p> & report detail."
+                        .into(),
+                    requested_edits: if anchor == "meta.foo.bar" {
+                        vec!["Clarify the editorial explanation.".into()]
+                    } else {
+                        vec![]
+                    },
+                },
+            )
+            .unwrap();
+        }
     }
-    sage_meta::review::record(&fixture.root, &packet).unwrap();
     let mut input = fixture.input("items");
     let children = input[1]["items"][0]["Chapter"]["sub_items"]
         .as_array_mut()
@@ -322,6 +331,13 @@ mod not_applicable {
     assert!(overview.contains("2 N/A"));
     assert!(overview.contains("aria-controls=\"anchor-text-meta-foo\""));
     assert!(overview.contains("<strong>parent rule</strong>"));
+    let page = entries["design/anchor/meta/foo.md"]["content"]
+        .as_str()
+        .unwrap();
+    assert!(page.contains(
+        "Explicit placeholder status reviewed.<br><br>Literal &lt;p&gt; &amp; report detail."
+    ));
+    assert!(!page.contains("<p>Explicit placeholder status reviewed.\n"));
     let table_rows = |content: &str| {
         content
             .split("data-anchor=\"")
@@ -369,12 +385,20 @@ mod not_applicable {
     assert!(content.contains("fn implementation()"));
     assert!(content.contains("fn behavior() { assert_eq!(2 + 2, 4); }"));
     assert!(content.contains("See more source"));
-    assert!(content.contains("Review: <strong>Todo</strong>"));
+    assert!(content.contains("Review: <strong>Accepted</strong>"));
     assert!(content.contains("Additional implementation and edge case."));
     let child = entries["design/anchor/meta/foo/bar.md"]["content"]
         .as_str()
         .unwrap();
     assert!(child.contains("N/A: This requirement describes an editorial convention."));
+    assert!(child.contains("Review: <strong>Changes requested</strong>"));
+    assert!(child.contains("Clarify the editorial explanation."));
+    let unfinished = entries["design/anchor/meta/other/leaf.md"]["content"]
+        .as_str()
+        .unwrap();
+    assert!(unfinished.contains("Review: <strong>Unfinished</strong>"));
+    assert!(content.contains("data-status=\"TODO\""));
+    assert!(child.contains("data-status=\"N/A\""));
     let definition = entries["design/meta.md"]["content"].as_str().unwrap();
     assert!(definition.contains("href=\"anchor/meta/foo.html\""));
     let inventory = sage_meta::spec::SpecIndex::load_workspace(&fixture.root).unwrap();
@@ -400,7 +424,18 @@ fn anchor_pages_and_disclosures_render_the_complete_reviewed_content() {
     assert!(spec.diagnostics.is_empty(), "{:?}", spec.diagnostics);
     let rust = sage_meta::correspondence::CorrespondenceIndex::load(&fixture.root).unwrap();
     let inputs = sage_meta::review::inventory(&spec, &rust).unwrap();
-    assert_eq!(inputs["handwritten.multiblock"].claim.join("\n"), claim);
+    let claim_fragment = inputs["handwritten.multiblock"]
+        .fragments
+        .iter()
+        .find(|fragment| {
+            matches!(
+                &fragment.selector,
+                sage_meta::review::Selector::Claim { anchor_id }
+                    if anchor_id == "handwritten.multiblock"
+            )
+        })
+        .unwrap();
+    assert_eq!(claim_fragment.contents.join("\n"), claim);
 
     let mut input = fixture.input("items");
     let children = input[1]["items"][0]["Chapter"]["sub_items"]
