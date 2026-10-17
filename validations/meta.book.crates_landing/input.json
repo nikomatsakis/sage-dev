@@ -1,7 +1,7 @@
 {
   "prompt": "Review this anchor as its assigned subagent. Enumerate ALL requirements, qualifications, edge cases and scenarios. Inspect all supplied implementation and test fragments and trace each aspect to implementation behavior and actual test assertions or justified TODO/N/A evidence. Passing tests and associations alone are insufficient. Follow helpers and capture every additional source dependency with cargo meta review read ANCHOR PATH [selector] before completing the report. Explain prerequisites for justified TODO tests; do not claim deferred behavior is implemented. Distinguish source inspection from commands actually executed. Write a JSON report containing reviewer, report, and requested_edits. Leave requested_edits empty only when every aspect is accounted for and no edits are needed. Otherwise list concrete changes, including missing tests or justified TODO tests with prerequisite comments. Run cargo meta review record ANCHOR REPORT_FILE to finish. After edits or stale-input rejection, run cargo meta review start ANCHOR and review the fresh inputs. The gate fails until a current report with no requested edits is recorded. Dependency capture is agent-declared.",
   "coordinator_instructions": [
-    "Review only meta.book.crates_landing. Follow the repository review skill. Independently reassess every claim aspect and its implementation/test evidence. Do not edit production or tests; report suspected issues to coordinator. Capture every additional source dependency using review read. Distinguish source review from commands actually executed. Record your own completed report via cargo meta review record; do not directly edit saved JSON. Existing justified TODO/N/A evidence can remain deferred.\nHistorical report supplied as context, not an approval to reuse mechanically; independently verify current evidence and rationale:\n{\n  \"decision\": \"approved\",\n  \"outcome\": true,\n  \"requested_edits\": [],\n  \"reason\": \"Claim reviewed in full: The Crates landing page preserves handwritten Markdown from `design/crates/README.md`. Its curated subsystem introductions link to rendered crate chapters and modeled entities. Generated crate and module chapters are children of this page; generation does not replace its prose with the explorer. Links written to `.sage` source chapters resolve to their rendered chapters.\\n\\nAssessment: book.rs generate_crates preserves the handwritten Crates chapter content while replacing generated children; crate/module and owned guide links use rendered source paths. curated_crates_landing_preserves_prose_and_links_to_generated_chapters asserts curated text, no landing iframe, transformed Sage link with fragment, companion guide linkage and hierarchy. The landing is a reading map rather than generated model prose.\\n\\nAll supplied test associations: sage_meta::curated_crates_landing_preserves_prose_and_links_to_generated_chapters [ordinary]. Implementation associations: crates/sage-meta/src/book.rs::sage_meta::book [ordinary], crates/sage-meta/src/spec.rs::sage_meta::spec [ordinary].\\n\\nMethod: inspected supplied claim, association bodies and relevant surrounding full-file implementation/test context. This is source adequacy review; no test commands were executed by this reviewer and no run result is inferred from annotations.\\n\\nFresh-input revalidation: compared this record against the prior reviewed packet. The only changed supplied full file is tests/book.rs: generated_anchor_pages_join_namespaces_claims_implementations_tests_and_reviews now supplies a multiline review reason containing literal <p> and &, and asserts HTML-escaped text with <br><br> between paragraphs and no raw paragraph newline. All other supplied evidence and the complete claim are unchanged. Existing assertions and implementation assessment above remain valid; for claims not associated with that generated-page test this is only changed surrounding test context. Coordinator reports all 13 book tests passing; this reviewer performed source/delta inspection and executed no tests.\",\n  \"reviewer\": \"Codex sage-sanity reviewer\"\n}\nCoordinator reports full functional sage-meta suite 321 passing tests and root cargo build passed. This is separately reported execution, not a command you ran. Avoid redundant full suites unless needed to investigate a specific concern. Efficiently compare unchanged evidence to earlier snapshots, but reassess claim-specific rationale independently.\n\nCoordinator baseline comparison at dispatch preparation (reviewer must verify still current):\nimplementation_sources: crates/sage-meta/src/book.rs: EXACT BYTE MATCH to historical reviewed source\nimplementation_sources: crates/sage-meta/src/spec.rs: EXACT BYTE MATCH to historical reviewed source\ntest_sources: crates/sage-meta/tests/book.rs: CHANGED; inspect delta\nFor unchanged legacy anchors, prior report is a completed independent source review. Reassess its claim-specific sufficiency against current claim, metadata and associated test assertions; you need not rediscover all unchanged implementation or rerun tests. For any changed source, inspect the delta and relevant complete behavior. Historical input for exact comparison is /tmp/sage-pre-fragment-validations/meta.book.crates_landing/input.json. If using historical source contents themselves beyond exact comparison, put them in captured coordinator instructions or use review read for their current workspace source.\n\nCoordinator clarification: evaluate the full associated set plus source reasoning; no demand for isolated field-per-test assertions where meaningful integration checks account for claim. If prior rationale relies on helper/surrounding source in historical test_sources/implementation_sources/reads beyond current initial fragments, capture each relied-on dependency via review read (whole file or precise selector). Byte-comparison alone does not persist a freshness dependency.\n\nEfficiency: unchanged legacy evidence already genuinely independently reviewed. Batch evidence reads; inspect only current inputs, deltas, and actually relied-on helpers. Avoid unrelated documentation, repeated broad checks, and rediscovery. Write concise complete claim/evidence/TODO-prerequisite reassessment, distinguish baseline/source/execution, then record promptly.\n"
+    "Review only your assigned anchor using the sage-review-checklist skill and its start/read/record workflow. Capture these instructions with start --instructions /tmp/anchor-review-instructions.txt. Use captured source context; do not import old approvals or uncaptured coordinator conclusions. Write only your anchor's validations directory and a unique report file under /tmp. Coordinate production, test, and association edits with the coordinator before making them because concurrent reviewers may capture the same files. Capture essential dependencies using review read; report any necessary association additions for coordinated handling. Existing TODO/N/A evidence must be individually justified and remain deferred; do not claim passing placeholders verify functionality. Distinguish source review from tests actually run. On a suspected behavioral violation, coordinate a regression test and follow the skill rather than rubber-stamping. Return a concise summary of the recorded outcome or precise unresolved finding. Do not commit or change unrelated files.\n\nCoordinator authorization: resolve missing evidence as part of this assignment. You may add essential anchor association comments and focused tests (or associate existing substantive tests), then format, run relevant tests, and perform a fresh review. Announce the files you will edit and coordinate with another active reviewer if sharing a file. Do not stop merely to request these routine evidence edits. Production behavioral changes still require reporting a reproduced failure and coordinating the correction with root. Root will perform centralized delegated post-codegen and Sage sanity checks covering all reviewer edits; report your changed paths for that pass. Preserve honest existing TODOs. If an additional implementation obligation is genuinely absent, report it to root rather than disguising the gap as a test TODO.\n"
   ],
   "fragments": [
     {
@@ -1638,6 +1638,7 @@
       "contents": [
         "#[test]",
         "#[sage::test(meta.book.crates_landing)]",
+        "#[sage::test(meta.anchors.book_explorer)]",
         "fn curated_crates_landing_preserves_prose_and_links_to_generated_chapters() {",
         "    let fixture = Fixture::new(\"manual\");",
         "    let landing = \"# Crates\\n\\nStart with [symbols](demo/symbols.sage#item:demo::symbols::Item).\\n\\nOur handwritten tour.\\n\";",
@@ -1661,7 +1662,24 @@
         "        .unwrap();",
         "    assert!(rendered.contains(\"Our handwritten tour.\"));",
         "    assert!(rendered.contains(\"demo/symbols.html#item:demo::symbols::Item\"));",
+        "    assert_eq!(rendered, landing.replace(\".sage\", \".html\"));",
         "    assert!(!rendered.contains(\"<iframe\"));",
+        "    let crate_children = entries[\"design/crates/README.md\"][\"sub_items\"]",
+        "        .as_array()",
+        "        .unwrap();",
+        "    assert!(",
+        "        crate_children",
+        "            .iter()",
+        "            .any(|child| { child[\"Chapter\"][\"source_path\"] == \"design/crates/demo/crate.sage\" })",
+        "    );",
+        "    let module_children = entries[\"design/crates/demo/crate.sage\"][\"sub_items\"]",
+        "        .as_array()",
+        "        .unwrap();",
+        "    assert!(",
+        "        module_children",
+        "            .iter()",
+        "            .any(|child| { child[\"Chapter\"][\"source_path\"] == \"design/crates/demo/symbols.sage\" })",
+        "    );",
         "    let guide = entries[\"design/crates/demo/guide.md\"];",
         "    assert!(guide[\"content\"].as_str().unwrap().contains(\"symbols.html\"));",
         "    assert_eq!(guide[\"parent_names\"], json!([\"Design\", \"Crates\", \"demo\"]));",
@@ -1678,7 +1696,7 @@
       "selector": {
         "kind": "line_range",
         "start": 1,
-        "end": 240
+        "end": 173
       },
       "contents": [
         "#![feature(register_tool)]",
@@ -1854,73 +1872,6 @@
         "        }",
         "    }",
         "    result",
-        "}",
-        "",
-        "#[test]",
-        "#[sage::test(meta.book.crates_landing)]",
-        "fn curated_crates_landing_preserves_prose_and_links_to_generated_chapters() {",
-        "    let fixture = Fixture::new(\"manual\");",
-        "    let landing = \"# Crates\\n\\nStart with [symbols](demo/symbols.sage#item:demo::symbols::Item).\\n\\nOur handwritten tour.\\n\";",
-        "    fixture.doc(\"design/crates/README.md\", landing);",
-        "    fixture.doc(",
-        "        \"design/crates/demo/guide.md\",",
-        "        \"# Semantic guide\\n\\nRead [symbols](symbols.sage).\\n\",",
-        "    );",
-        "    let mut input = fixture.input(\"items\");",
-        "    input[1][\"items\"][0][\"Chapter\"][\"sub_items\"][0][\"Chapter\"][\"content\"] = json!(landing);",
-        "    let output = fixture.run(&input);",
-        "    assert!(",
-        "        output.status.success(),",
-        "        \"{}\",",
-        "        String::from_utf8_lossy(&output.stderr)",
-        "    );",
-        "    let book: Value = serde_json::from_slice(&output.stdout).unwrap();",
-        "    let entries = chapters(book[\"items\"].as_array().unwrap());",
-        "    let rendered = entries[\"design/crates/README.md\"][\"content\"]",
-        "        .as_str()",
-        "        .unwrap();",
-        "    assert!(rendered.contains(\"Our handwritten tour.\"));",
-        "    assert!(rendered.contains(\"demo/symbols.html#item:demo::symbols::Item\"));",
-        "    assert!(!rendered.contains(\"<iframe\"));",
-        "    let guide = entries[\"design/crates/demo/guide.md\"];",
-        "    assert!(guide[\"content\"].as_str().unwrap().contains(\"symbols.html\"));",
-        "    assert_eq!(guide[\"parent_names\"], json!([\"Design\", \"Crates\", \"demo\"]));",
-        "    let data = script_data(",
-        "        &std::fs::read_to_string(fixture.asset()).unwrap(),",
-        "        \"book-data\",",
-        "    );",
-        "    assert_eq!(data[\"home\"], \"design/crates/index.html\");",
-        "}",
-        "",
-        "#[test]",
-        "#[sage::test(meta.book.shared_model)]",
-        "fn companion_guides_use_the_nearest_enclosing_crate_in_inventory_and_book() {",
-        "    let fixture = Fixture::new(\"manual\");",
-        "    std::fs::rename(",
-        "        fixture.source.join(\"design/crates/support\"),",
-        "        fixture.source.join(\"design/crates/demo/support\"),",
-        "    )",
-        "    .unwrap();",
-        "    fixture.doc(\"design/crates/demo/guide.md\", \"# Demo guide\\n\");",
-        "    fixture.doc(\"design/crates/demo/support/guide.md\", \"# Support guide\\n\");",
-        "",
-        "    let spec = sage_meta::spec::SpecIndex::load_workspace(&fixture.root).unwrap();",
-        "    assert!(spec.diagnostics.is_empty(), \"{:?}\", spec.diagnostics);",
-        "    let book = fixture.book(\"items\");",
-        "    let entries = chapters(book[\"items\"].as_array().unwrap());",
-        "    for (file, owner) in [",
-        "        (\"design/crates/demo/guide.md\", \"demo\"),",
-        "        (\"design/crates/demo/support/guide.md\", \"support\"),",
-        "    ] {",
-        "        assert!(spec.chapters.contains_key(file));",
-        "        assert_eq!(entries[file][\"source_path\"], file);",
-        "        assert_eq!(",
-        "            entries[file][\"parent_names\"],",
-        "            json!([\"Design\", \"Crates\", owner])",
-        "        );",
-        "    }",
-        "}",
-        "",
         ""
       ]
     },
@@ -1928,8 +1879,8 @@
       "path": "crates/sage-meta/tests/book.rs",
       "selector": {
         "kind": "line_range",
-        "start": 561,
-        "end": 570
+        "start": 579,
+        "end": 589
       },
       "contents": [
         "fn script_data(html: &str, id: &str) -> Value {",
@@ -1942,6 +1893,7 @@
         "        .unwrap()",
         "        .0;",
         "    serde_json::from_str(data).unwrap()",
+        "}",
         ""
       ]
     },
@@ -1982,12 +1934,39 @@
         "Sage with independently emitted rustc results. Their command-line usage is",
         "covered in the [User's Guide](../../guide/README.md).",
         "",
+        "The [inline compilation tests](sage_test_harness/compile-tests.md)",
+        "keep source fixtures, type and symbol observations, diagnostics, and query expectations",
+        "inside ordinary annotated Cargo tests. Its",
+        "[RFD](../../rfds/inline-compile-tests/README.md) explains the design.",
+        "",
         "The [specification tooling](sage_meta/crate.sage) checks the correspondence",
         "between this model, named specification rules, and Rust code and tests.",
         "The [Anchors](../anchor/README.md) chapter gathers those rules and their",
         "implementation and test status. [Worked examples](../examples.md) provide",
         "concrete programs to follow through the compiler.",
         ""
+      ]
+    },
+    {
+      "path": "md/design/meta/reviews.md",
+      "selector": {
+        "kind": "claim",
+        "anchor_id": "meta.reviews.review_scope"
+      },
+      "contents": [
+        "One review judges both implementation completeness and test adequacy against",
+        "an anchor's complete claim. Its saved input includes every implementation",
+        "association's crate, target, module, file, cfg conditions, excerpt, region flag,",
+        "placeholder status, and explanation, in deterministic order. Source line",
+        "numbers and byte offsets are not association metadata. Source context used to",
+        "assess these associations is recorded under {spec}`meta.reviews.input_fragments`.",
+        "A point marker's five-line preview is navigation context, not a sufficient",
+        "boundary for reviewing behavior that depends on other code.",
+        "",
+        "Reviewers follow relevant helpers and dependencies and record the source",
+        "fragments they use. They add implementation associations for essential code in",
+        "other files before approval. Reviews are source judgments, not proofs; test",
+        "execution remains separate evidence."
       ]
     }
   ],

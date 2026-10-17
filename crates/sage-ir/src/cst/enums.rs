@@ -1,9 +1,10 @@
+// {anchor}`crates.sage_test_harness.compile_tests.checking_scope`
 use sage_stash::{AllocStashData, Ptr, Slice, Stashed};
 
 use crate::cst::attrs::AttrCst;
+use crate::cst::expr::ExprCst;
 use crate::cst::generics::GenericParamCst;
 use crate::cst::structs::FieldCst;
-use crate::cst::ty::TypeCst;
 use crate::cst::where_clause::WhereClauseCst;
 use crate::name::Name;
 use crate::span::RelativeSpan;
@@ -26,7 +27,7 @@ pub struct EnumCstData<'db> {
 pub struct VariantCst<'db> {
     pub name: Name<'db>,
     pub fields: Slice<FieldCst<'db>>,
-    pub discriminant: Option<Ptr<TypeCst<'db>>>,
+    pub discriminant: Option<Ptr<ExprCst<'db>>>,
     pub span: RelativeSpan,
 }
 
@@ -36,7 +37,7 @@ pub struct VariantCst<'db> {
 
 use crate::tokens::{
     Delimiter, Punct, ToTokens, TokenCtx, TokenSink, emit_attrs_filtered, emit_comma_sep,
-    emit_generics, emit_where_clauses,
+    emit_generics, emit_span_raw, emit_where_clauses,
 };
 
 impl<'db> EnumCstData<'db> {
@@ -80,7 +81,8 @@ impl<'db> ToTokens<'db> for VariantCst<'db> {
         }
         if let Some(disc_ptr) = self.discriminant {
             sink.punct(Punct::Eq);
-            ctx.stash[disc_ptr].to_tokens(ctx, sink);
+            let span = ctx.stash[disc_ptr].span;
+            emit_span_raw(ctx, sink, span.start, span.end);
         }
     }
 }

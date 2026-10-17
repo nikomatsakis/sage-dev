@@ -1,3 +1,4 @@
+// {anchor}`crates.sage_ir.modules.parse.dependencies`
 use crate::Db;
 use crate::name::Name;
 use crate::span::{AbsoluteSpan, ParseSource, RelativeSpan};
@@ -30,6 +31,7 @@ pub(super) fn item_start(
         .map_or(node.start_byte(), |a| a.start_byte()) as u32
 }
 
+// {anchor}`crates.sage_ir.types.spans.offset_reuse`
 pub(super) fn relative_span(node: tree_sitter::Node<'_>, item_start: u32) -> RelativeSpan {
     RelativeSpan {
         start: node.start_byte() as u32 - item_start,
@@ -37,6 +39,7 @@ pub(super) fn relative_span(node: tree_sitter::Node<'_>, item_start: u32) -> Rel
     }
 }
 
+// {anchor}`crates.sage_ir.types.spans.relative_composition`
 pub(super) fn absolute_span<'db>(
     source: ParseSource<'db>,
     node: tree_sitter::Node<'_>,

@@ -27,6 +27,7 @@ pub(crate) struct Parser<'a, 'db> {
 // {anchor}`crates.sage_ir.modules.parse.syntax_identities`
 // {anchor}`crates.sage_ir.modules.parse.detail_firewall`
 // {anchor}`crates.sage_ir.modules.parse.dependencies`
+// {anchor}`crates.sage_ir.modules.expand.direct_members`
 pub fn parse_str_to_cst<'db>(
     db: &'db dyn Db,
     source: ParseSource<'db>,

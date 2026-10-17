@@ -69,10 +69,14 @@ mod todo {
     #[test]
     #[sage::test(crates.sage_inspector.inspection.detail_free_index)]
     fn crates_sage_inspector_inspection_detail_free_index() {
-        // TODO: Associate and review the complete evidence for A real-workspace trace snapshots the
-        // closed set of operation families used by directory construction, including the permitted
-        // macro metadata families, and explicitly forbids signatures, bodies, associated values, and
-        // impl discovery.
+        // TODO: Prerequisite: source-backed Inspector integration fixtures with nested modules,
+        // associated items, macro-generated items, and dependency symbols, plus a browser request
+        // recorder. Assert one complete local index excludes dependency symbols and item details.
+        // Snapshot the closed set of directory-construction operation families, including permitted
+        // macro metadata, and forbid signatures, bodies, associated values, and impl discovery.
+        // Exercise browser filtering and branch expansion against that index; assert matching
+        // results, no search-text transmission, and no additional branch or search requests.
+        // Associate and review those assertions before replacing this deferred coverage.
     }
     #[test]
     #[sage::test(crates.sage_inspector.inspection.product_availability)]
@@ -110,12 +114,18 @@ mod todo {
         // dispositions. Accumulator traversal separately proves that its internal memo refreshes use
         // the same lifecycle.
     }
+    // {anchor}`crates.sage_inspector.inspection.unknown_work`
+    // TODO: Closed dependency claim checking is absent. It needs an API accepting the complete
+    // projected trace and allowed operations, recursively rejecting unexpected unmapped query or
+    // metadata nodes without filtering them. Ordinary trace projection already retains these nodes.
+
     #[test]
     #[sage::test(crates.sage_inspector.inspection.unknown_work)]
     fn crates_sage_inspector_inspection_unknown_work() {
         // TODO: Associate and review the complete evidence for Real traces include all balanced Salsa
         // requests and metadata calls, and forbidden-demand tests cannot pass by filtering an unknown
-        // node.
+        // node. Closed-claim rejection tests require the missing complete-trace checking API above;
+        // they must include an unexpected nested unmapped query and metadata operation.
     }
     #[test]
     #[sage::test(crates.sage_inspector.inspection.semantic_phase_boundary)]

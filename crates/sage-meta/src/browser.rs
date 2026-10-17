@@ -24,6 +24,7 @@ pub fn render_browser_with_workspace(
 
 /// Render the shared book asset with links back to the owning source chapters.
 /// Paths in `chapters` and `home` are relative to the asset at the book root.
+// {anchor}`meta.anchors.book_explorer`
 pub fn render_book_browser(
     documents: &[Document],
     workspace: &Path,

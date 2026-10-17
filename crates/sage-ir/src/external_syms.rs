@@ -294,6 +294,7 @@ pub struct AppliedExternalAdt<'db> {
 
 /// Apply explicit source arguments and declaration defaults in order, then
 /// instantiate the declaration's ordinary predicate environment.
+// {anchor}`crates.sage_ir.checking.signature.storage`
 pub fn apply_external_adt_signature<'db>(
     db: &'db dyn crate::Db,
     target: &mut Stash,
@@ -397,6 +398,7 @@ pub fn external_trait_items<'db>(
 // ANCHOR: example_external_fn_signature
 #[salsa::tracked]
 #[sage::item(crate::symbols::ExternalFn::signature)]
+// {anchor}`crates.sage_ir.checking.signature.body_independence`
 pub fn external_fn_signature<'db>(
     db: &'db dyn crate::Db,
     fn_sym: SymExt<'db>,
@@ -782,6 +784,7 @@ fn lower_ty<'db>(
                 args: stash.alloc_slice(&args),
             }))
         }
+        // {anchor}`crates.sage_ir.types.lifetimes.dummy`
         RawTy::Ref(inner, mutability) => Ty::Ref(
             lower_ty(db, stash, generics, *inner)?,
             mutability,
@@ -835,6 +838,20 @@ mod tests {
 #[sage::item(crate::symbols::ExternalStruct::signature)]
 #[sage::item(crate::symbols::ExternalEnum::signature)]
 mod nominal_signature_anchor {}
+
+mod todo {
+    // {anchor}`crates.sage_ir.metadata.keyed_reuse`<<
+    // TODO: Add independently tracked, definition/product-keyed owned provider
+    // inputs and connect each lowered query to its corresponding input. The
+    // current immutable TcxDb service has no per-fact update/invalidation layer;
+    // Salsa memoizes lowering but does not track changes to provider facts.
+    // Associated-value facts must also own the binder information needed for
+    // lowering: lower_associated_type_value currently loads the impl signature
+    // separately. Completing that provider representation is prerequisite to
+    // the cold/warm and relevant/unrelated provider-edit verification matrix.
+    mod provider_fact_reuse {}
+    // >>
+}
 
 /// These modeled external branches are conceptual locations only: dedicated
 /// external struct fields, enum variants, and impl-item producers are not

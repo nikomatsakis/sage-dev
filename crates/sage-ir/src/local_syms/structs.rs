@@ -1,3 +1,4 @@
+// {anchor}`crates.sage_ir.modules.parse.syntax_identities`
 use sage_stash::{StashDirect, Stashed};
 
 use crate::cst::structs::StructCst;
@@ -9,6 +10,7 @@ use crate::ty::{Binder, StructFields, StructSig};
 
 #[salsa::tracked(debug)]
 #[sage::item(crate::symbols::LocalStructSym)]
+// {anchor}`crates.sage_ir.symbols.local_identity`
 pub struct LocalStructSym<'db> {
     pub name: Name<'db>,
     pub scope: ScopeSymbol<'db>,
@@ -81,6 +83,7 @@ impl<'db> LocalStructSym<'db> {
     #[salsa::tracked]
     #[sage::item(crate::symbols::LocalStructSym::value)]
     // {anchor}`crates.sage_ir.checking.signature.narrow_detail`
+    // {anchor}`crates.sage_ir.checking.symbol_keyed_interfaces`
     pub fn fields(self, db: &'db dyn crate::Db) -> Stashed<StructFields<'db>> {
         use crate::check::Check;
         use crate::resolve::Resolver;

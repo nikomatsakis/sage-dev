@@ -21,6 +21,8 @@ struct AntiUnifier<'a, 'db> {
     witnesses: Vec<ResponseVarInfo<'db>>,
 }
 
+// {anchor}`crates.sage_ir.modules.expand.completeness`
+// {anchor}`crates.sage_ir.solver.alternative_isolation`
 pub(crate) fn merge_hints<'db>(
     db: &'db dyn crate::Db,
     next_response_param: u32,

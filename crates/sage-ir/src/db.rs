@@ -1,4 +1,5 @@
 // {anchor}`crates.sage_test_harness.compile_tests.project_isolation`
+// {anchor}`crates.sage_test_harness.compile_tests.query_capture`
 use std::collections::HashMap;
 
 use crate::source::SourceFile;
@@ -160,6 +161,7 @@ impl Database {
         Self::storage_and_logs_with_observer(None)
     }
 
+    // {anchor}`crates.sage_inspector.inspection.balanced_traces`
     fn storage_and_logs_with_observer(
         observer: Option<Box<dyn Fn(&salsa::Event) + Send + Sync>>,
     ) -> (

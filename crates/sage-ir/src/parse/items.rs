@@ -1,3 +1,5 @@
+// {anchor}`crates.sage_ir.modules.parse.syntax_identities`
+// {anchor}`crates.sage_ir.modules.parse.dependencies`
 // {anchor}`crates.sage_test_harness.compile_tests.fixtures`
 // {anchor}`crates.sage_test_harness.compile_tests.checking_scope`
 use sage_stash::{Ptr, Stash, Stashed};
@@ -63,6 +65,7 @@ impl<'a, 'db> Parser<'a, 'db> {
     // Functions
     // -----------------------------------------------------------------------
 
+    // {anchor}`crates.sage_ir.modules.parse.detail_firewall`
     pub(super) fn parse_fn(
         &self,
         node: tree_sitter::Node<'a>,
@@ -434,7 +437,9 @@ impl<'a, 'db> Parser<'a, 'db> {
         VariantCst {
             name,
             fields: stash.alloc_slice(&fields),
-            discriminant: None,
+            discriminant: node
+                .child_by_field_name("value")
+                .map(|value| self.parse_expr(stash, value, item_start)),
             span,
         }
     }
@@ -530,6 +535,8 @@ impl<'a, 'db> Parser<'a, 'db> {
         attrs.is_empty()
     }
 
+    // {anchor}`crates.sage_ir.types.spans.offset_reuse`
+    // {anchor}`crates.sage_ir.types.spans.relative_composition`
     fn parse_associated_items(
         &self,
         stash: &mut Stash,
@@ -673,6 +680,7 @@ impl<'a, 'db> Parser<'a, 'db> {
     // Modules
     // -----------------------------------------------------------------------
 
+    // {anchor}`crates.sage_ir.modules.expand.direct_members`
     pub(super) fn parse_mod(
         &self,
         node: tree_sitter::Node<'a>,
@@ -1396,3 +1404,4 @@ fn parent_dir_for(path: &str) -> String {
     }
     String::new()
 }
+// {anchor}`crates.sage_test_harness.compile_tests.project_isolation`

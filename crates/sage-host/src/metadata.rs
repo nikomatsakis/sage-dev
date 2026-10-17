@@ -1,6 +1,8 @@
+// {anchor}`crates.sage_test_harness.compile_tests.rustc_execution`
 // {anchor}`crates.sage_test_harness.compile_tests.dependencies`
 // {anchor}`crates.sage_test_harness.compile_tests.production_execution`
 // {anchor}`crates.sage_test_harness.compile_tests.edition`
+// {anchor}`crates.sage_test_harness.compile_tests.project_isolation`
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -103,6 +105,7 @@ pub fn our_sysroot() -> &'static str {
 }
 
 /// Get the path to the rustc binary in sage's sysroot.
+// {anchor}`crates.sage_test_harness.compile_tests.rustc_lints`
 pub fn our_rustc() -> PathBuf {
     Path::new(our_sysroot()).join("bin/rustc")
 }

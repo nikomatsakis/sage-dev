@@ -7,6 +7,7 @@ use crate::span::AbsoluteSpan;
 
 #[salsa::tracked(debug)]
 #[sage::item(crate::symbols::LocalTraitSym)]
+// {anchor}`crates.sage_ir.symbols.local_identity`
 pub struct LocalTraitSym<'db> {
     pub name: Name<'db>,
     pub scope: ScopeSymbol<'db>,
@@ -38,6 +39,9 @@ impl<'db> LocalTraitSym<'db> {
 impl<'db> LocalTraitSym<'db> {
     #[salsa::tracked]
     #[sage::item(crate::symbols::LocalTraitSym::signature)]
+    // {anchor}`crates.sage_ir.checking.identity_minting`
+    // {anchor}`crates.sage_ir.checking.signature.owner_binder`
+    // {anchor}`crates.sage_ir.checking.signature.body_independence`
     pub fn sig(
         self,
         db: &'db dyn crate::Db,
@@ -95,6 +99,8 @@ impl<'db> LocalTraitSym<'db> {
 
     #[salsa::tracked]
     #[sage::item(crate::symbols::LocalTraitSym::items)]
+    // {anchor}`crates.sage_ir.checking.symbol_keyed_interfaces`
+    // {anchor}`crates.sage_ir.checking.signature.narrow_detail`
     pub fn items(self, db: &'db dyn crate::Db) -> sage_stash::Stashed<crate::ty::TraitItems<'db>> {
         use crate::ty::BinderExt;
 

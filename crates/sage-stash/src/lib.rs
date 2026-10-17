@@ -554,8 +554,10 @@ pub struct Stashed<T> {
 }
 
 impl<T: StashHash + Copy> Stashed<T> {
+    // {anchor}`crates.sage_ir.checking.owned_products`
     // {anchor}`crates.sage_stash.storage.rooted_equality`
     // {anchor}`crates.sage_stash.storage.query_value`
+    // {anchor}`crates.sage_ir.checking.signature.storage`
     pub fn new(stash: Stash, root: T) -> Self {
         let mut hasher = FingerprintHasher::new();
         root.stash_hash(&stash, &mut hasher);

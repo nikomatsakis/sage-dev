@@ -1,3 +1,4 @@
+// {anchor}`crates.sage_ir.modules.parse.syntax_identities`
 // {anchor}`crates.sage_test_harness.compile_tests.fixtures`
 use sage_stash::{Slice, StashDirect, Stashed};
 
@@ -15,6 +16,8 @@ use crate::symbol::{MacroDefSymbol, Symbol, SymbolData};
 /// A module written in (or synthesized for) the local workspace.
 #[salsa::tracked(debug)]
 #[sage::item(crate::modules::LocalModSym)]
+// {anchor}`crates.sage_ir.modules.parse.detail_firewall`
+// {anchor}`crates.sage_ir.symbols.local_identity`
 pub struct LocalModSym<'db> {
     pub name: Name<'db>,
 
@@ -61,6 +64,7 @@ impl<'db> LocalModSym<'db> {
         (stash, &stash[slice])
     }
 
+    // {anchor}`crates.sage_ir.modules.parse.dependencies`
     pub fn unexpanded_items(self, db: &'db dyn Db) -> &'db [LocalModItemSym<'db>] {
         unexpanded_items(db, self)
     }
@@ -531,6 +535,7 @@ pub(crate) fn module_expansion_complete_for_trait<'db>(
 /// not hide a provider even when Sage does not represent that derive's output.
 /// Proc-macro derives and active attributes remain incomplete because they may
 /// emit arbitrary items.
+// {anchor}`crates.sage_ir.resolution.lookup.completeness`
 pub(crate) fn module_expansion_complete_for_method_providers<'db>(
     db: &'db dyn Db,
     module: LocalModSym<'db>,
@@ -546,6 +551,7 @@ pub(crate) fn module_expansion_complete_for_method_providers<'db>(
 /// unsupported derive is incomplete even when it cannot affect a particular
 /// lookup.
 // ANCHOR: architecture_symbol_listing_completeness
+// {anchor}`crates.sage_inspector.inspection.detail_free_index`
 #[salsa::tracked]
 pub fn module_expansion_complete_for_symbol_listing<'db>(
     db: &'db dyn Db,
@@ -678,6 +684,7 @@ fn derive_complete_for_trait<'db>(
 }
 
 /// Expand one `#[derive(Name)]` entry into ordinary sibling items.
+// {anchor}`crates.sage_ir.types.spans.generated_identity`
 fn expand_derive<'db>(
     db: &'db dyn Db,
     module: LocalModSym<'db>,

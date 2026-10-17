@@ -1,4 +1,5 @@
 //! Resolve semantic names while capturing queries; format only frozen data later.
+// {anchor}`crates.sage_test_harness.compile_tests.annotation_validation`
 // {anchor}`crates.sage_test_harness.compile_tests.resolved_symbols`
 // {anchor}`crates.sage_test_harness.compile_tests.completed_types`
 // {anchor}`crates.sage_test_harness.compile_tests.rendering`

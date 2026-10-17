@@ -118,11 +118,13 @@ fn numeric_domains_reject_nonmembers() {
 #[test]
 #[sage::test(crates.sage_ir.inference.numeric_domains)]
 fn unconstrained_numeric_literals_report_errors_instead_of_defaulting() {
+    // Sage intentionally diagnoses unresolved numeric domains; rustc defaults
+    // these literals to i32/f64 and accepts the same source.
     compile_test! {
         source: indoc! {r#"
-            fn integer() { let value = 22; } //# ERROR
+            fn integer() { let value = 22; } //# ERROR if SAGE
             //# ty
-            fn float() { let value = 1.0; } //# ERROR
+            fn float() { let value = 1.0; } //# ERROR if SAGE
             //# ty
         "#},
         observations: expect![[r#"
@@ -139,12 +141,12 @@ fn unconstrained_numeric_literals_report_errors_instead_of_defaulting() {
             error: could not infer an integer type
              --> src/lib.rs:1:1
               |
-            1 | fn integer() { let value = 22; } //# ERROR
+            1 | fn integer() { let value = 22; } //# ERROR if SAGE
               | ^
             error: could not infer a floating-point type
              --> src/lib.rs:3:1
               |
-            3 | fn float() { let value = 1.0; } //# ERROR
+            3 | fn float() { let value = 1.0; } //# ERROR if SAGE
               | ^"#]],
     }
 }
@@ -179,9 +181,12 @@ fn top_level_never_coercion_preserves_source_and_result_types() {
 #[test]
 #[sage::test(crates.sage_ir.inference.subtyping_and_coercion)]
 fn never_to_any_is_not_subtyping_beneath_mutable_references() {
+    // rustc additionally feature-gates ! in parameter types. Sage accepts that
+    // syntax but cannot yet parse feature(never_type); both still report the
+    // distinct subtype mismatch at the return expression.
     compile_test! {
         source: indoc! {r#"
-            fn invalid(value: &mut !) -> &mut u32 {
+            fn invalid(value: &mut !) -> &mut u32 { //# ERROR if rustc
                 value //# ERROR
             }
         "#},
@@ -189,7 +194,7 @@ fn never_to_any_is_not_subtyping_beneath_mutable_references() {
             error: type mismatch: expected `u32`, found `!`
              --> src/lib.rs:1:39
               |
-            1 |   fn invalid(value: &mut !) -> &mut u32 {
+            1 |   fn invalid(value: &mut !) -> &mut u32 { //# ERROR if rustc
               |  ______________________________--------_^
               | |                              |
               | |                              expected `u32` because of return type

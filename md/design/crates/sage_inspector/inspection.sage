@@ -55,8 +55,21 @@ unsupported products are absent.
 {anchor}`canonical_ownership`
 Navigation uses backend-authored canonical ownership paths. Local
 and external semantic references carry opaque canonical paths distinct from
-labels. Paths survive unrelated/detail edits, sibling movement, and host
-reconstruction; rename, move, deletion, or a forged path fails explicitly.
+labels. Paths whose ownership segments are all named survive unrelated/detail
+edits, sibling movement, and host reconstruction; rename, move, deletion, or
+a forged path fails explicitly.
+
+Paths containing anonymous ownership segments are best-effort navigation
+identities, not persistent identities across edits or host reconstruction.
+Changing or deleting an anonymous entity can invalidate its link or cause it
+to select another indistinguishable occurrence. The same limitation applies
+to links to its descendants. Within the current host and source revision,
+paths still distinguish represented entities, and nonexistent paths fail
+explicitly. This qualification concerns inspector navigation only; import
+routes to the same definition do not give that definition different semantic
+identities.
+Anonymous import identity derives from its import paths and binding kinds,
+excluding source positions and database-local handles.
 
 {anchor}`owned_reflection`
 Product reflection is faithful, bounded, and owned. Ordinary

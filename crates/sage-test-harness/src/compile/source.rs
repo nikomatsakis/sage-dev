@@ -1,3 +1,6 @@
+// {anchor}`crates.sage_test_harness.compile_tests.annotation_validation`
+// {anchor}`crates.sage_test_harness.compile_tests.grouped_observations`
+// {anchor}`crates.sage_test_harness.compile_tests.completed_types`
 // {anchor}`crates.sage_test_harness.compile_tests.resolved_symbols`
 // {anchor}`crates.sage_test_harness.compile_tests.starting_expressions`
 use sage_ir::cst::expr::{ExprCst, ExprCstKind as C, StmtCstKind};
@@ -135,4 +138,30 @@ pub(super) fn walk(stash: &Stash, expr: ExprCst<'_>, rows: &mut Vec<SourceExpres
         span: expr.span,
         kind,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[sage::test(crates.sage_test_harness.compile_tests.resolved_symbols)]
+    fn only_expression_paths_are_symbol_candidates() {
+        let source = "fn f(value: Kind) { let typed: Other = value.field; value.method(); match value { Pattern(binding) => value } }";
+        crate::with_test_crate(source, |db, root| {
+            let function = crate::local_function_named(db, root, "f");
+            let (stash, cst) = function.cst(db).open_deref();
+            let mut rows = Vec::new();
+            super::walk(stash, stash[cst.body.unwrap()], &mut rows);
+            let paths: Vec<_> = rows
+                .iter()
+                .filter(|row| row.kind == "path")
+                .map(|row| {
+                    let span = function.span(db).resolve(row.span);
+                    &source[span.start as usize..span.end as usize]
+                })
+                .collect();
+            // Neither type names, field/method names, nor pattern paths are
+            // expressions. Generated calls cannot enter this source CST list.
+            assert_eq!(paths, vec!["value", "value", "value", "value"]);
+        });
+    }
 }

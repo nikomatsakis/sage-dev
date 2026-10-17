@@ -1,6 +1,8 @@
 // {anchor}`crates.sage_test_harness.compile_tests.query_projection`
 use sage_inspector::*;
 
+// {anchor}`crates.sage_inspector.inspection.balanced_traces`
+// {anchor}`crates.sage_inspector.inspection.unknown_work`
 pub fn build_dynamic_trace(
     events: Vec<sage_ir::db::InspectionEvent>,
     default_phase: TracePhase,

@@ -13,6 +13,7 @@ pub enum InferDomain {
 }
 
 impl InferDomain {
+    // {anchor}`crates.sage_ir.inference.numeric_domains`
     pub fn intersect(self, other: Self) -> Option<Self> {
         match (self, other) {
             (Self::Any, domain) | (domain, Self::Any) => Some(domain),
@@ -154,6 +155,7 @@ impl VersionTree {
         );
     }
 
+    // {anchor}`crates.sage_ir.inference.body_local_quiescence`
     pub fn is_leaf(&self, version: Version) -> bool {
         self.assert_live(version);
         self.nodes[version.0 as usize].children.is_empty()
@@ -184,6 +186,8 @@ impl VersionTree {
     }
 
     /// Create a child version branching from the specified parent.
+    // {anchor}`crates.sage_ir.inference.atomic_checking`
+    // {anchor}`crates.sage_ir.inference.transaction_isolation`
     pub fn branch_from(&mut self, parent: Version) -> Version {
         self.assert_live(parent);
         let child = Version(self.nodes.len() as u32);

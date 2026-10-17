@@ -99,6 +99,7 @@ fn main() {
 }
 
 // ANCHOR: semantic_inspector_command_entry
+// {anchor}`crates.sage_inspector.inspection.source_evidence`
 fn run_inspector(
     project_dir: std::path::PathBuf,
     packages: Vec<String>,

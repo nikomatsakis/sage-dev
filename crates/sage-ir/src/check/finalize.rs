@@ -15,6 +15,11 @@ use super::infer::version::Version;
 /// Resolve every inference edge and rebuild the completed body in a fresh,
 /// append-only stash.
 // ANCHOR: finalize_typed_body_into_fresh_stash
+// {anchor}`crates.sage_ir.types.body.no_inference`
+// {anchor}`crates.sage_ir.inference.body_local_quiescence`
+// {anchor}`crates.sage_ir.inference.completed_body_boundary`
+// {anchor}`crates.sage_ir.checking.owned_products`
+// {anchor}`crates.sage_ir.checking.body.elaboration`
 // {anchor}`crates.sage_stash.storage.handle_ownership`
 // {anchor}`crates.sage_stash.storage.immutable_entries`
 pub(super) fn finalize_typed_body<'db>(
@@ -140,6 +145,7 @@ impl<'db> BodyFinalizer<'_, '_, 'db> {
         self.target.alloc_slice(&target_values)
     }
 
+    // {anchor}`crates.sage_ir.types.body.diagnosed_recovery`
     fn copy_expr(&mut self, source: Ptr<TyExpr<'db>>) -> Ptr<TyExpr<'db>> {
         if let Some(&target) = self.copied_exprs.get(&source) {
             return target;
@@ -235,6 +241,7 @@ impl<'db> BodyFinalizer<'_, '_, 'db> {
             TyExprData::Ref(operand, mutability) => {
                 TyExprData::Ref(self.copy_expr(operand), mutability)
             }
+            // {anchor}`crates.sage_ir.inference.subtyping_and_coercion`
             TyExprData::NeverToAny(operand) => {
                 let operand = self.copy_expr(operand);
                 if matches!(self.target[finalized_ty], Ty::Never) {
@@ -309,6 +316,8 @@ impl<'db> BodyFinalizer<'_, '_, 'db> {
         }
     }
 
+    // {anchor}`crates.sage_ir.checking.body.operator_calls`
+    // {anchor}`crates.sage_ir.types.calls.selected_semantics`
     fn copy_call_target(&mut self, target: ResolvedCallTarget<'db>) -> ResolvedCallTarget<'db> {
         let ResolvedCallTarget {
             function,
@@ -537,6 +546,7 @@ mod tests {
     #[test]
     #[sage::test(crates.sage_stash.storage.handle_ownership)]
     #[sage::test(crates.sage_stash.storage.immutable_entries)]
+    #[sage::test(crates.sage_ir.types.body.no_inference)]
     fn finalized_nested_body_owns_resolved_and_imported_types_after_sources_drop() {
         use crate::cst::expr::Literal;
 
@@ -556,7 +566,12 @@ mod tests {
             ty: inference,
             span,
         });
-        let elements = source.alloc_slice(&[child, child]);
+        let pending = source.alloc(TyExpr {
+            data: TyExprData::Unresolved(ExprSlot(0)),
+            ty: inference,
+            span,
+        });
+        let elements = source.alloc_slice(&[pending, child]);
         let types = source.alloc_slice(&[inference, boolean]);
         let tuple = source.alloc(Ty::Tuple(types));
         let root = source.alloc(TyExpr {
@@ -564,10 +579,11 @@ mod tests {
             ty: tuple,
             span,
         });
-        let completed = finalize_typed_body(&source, &egraph, root, &[], &[], span);
+        let completed = finalize_typed_body(&source, &egraph, root, &[child], &[], span);
         assert_eq!(source[inference], Ty::InferVar(variable));
         assert_eq!(source[types], [inference, boolean]);
-        assert_eq!(source[elements], [child, child]);
+        assert_eq!(source[elements], [pending, child]);
+        assert_eq!(source[pending].data, TyExprData::Unresolved(ExprSlot(0)));
         assert_eq!(imported.root_deref(), Ty::Bool);
         drop(egraph);
         drop(source);

@@ -454,6 +454,7 @@ impl<'db> Symbol<'db> {
     ///
     /// - Anonymous items, like impls.
     /// - `use` symbols, which may define multiple items (e.g., globs etc).
+    // {anchor}`crates.sage_ir.resolution.lookup.precedence`
     pub fn name(&self, db: &'db dyn Db) -> Option<(Name<'db>, Namespace)> {
         match self.data {
             SymbolDataPriv::FnSymbol(sym) => Some((sym.name(db), Namespace::Value)),
@@ -616,6 +617,7 @@ pub struct MacroExpandError;
 mod r#abstract {}
 
 impl<'db> MacroDefSymbol<'db> {
+    // {anchor}`crates.sage_ir.modules.expand.dependencies`
     pub fn expand(self, db: &'db dyn Db, input: &str) -> Result<String, MacroExpandError> {
         match self {
             MacroDefSymbol::Local(sym) => {

@@ -1,4 +1,5 @@
 //! Freeze resolved identities before query capture ends; never print database IDs.
+// {anchor}`crates.sage_test_harness.compile_tests.annotation_validation`
 // {anchor}`crates.sage_test_harness.compile_tests.resolved_symbols`
 // {anchor}`crates.sage_test_harness.compile_tests.query_capture`
 use sage_ir::{
@@ -91,5 +92,17 @@ fn definition(db: &dyn Db, symbol: Symbol<'_>) -> Result<String, String> {
         | SymbolData::UseSymbol(_)
         | SymbolData::IntrinsicTypeSymbol(_)
         | SymbolData::MacroInvocationSymbol(_) => Err("unsupported symbol identity".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[sage::test(crates.sage_test_harness.compile_tests.resolved_symbols)]
+    fn missing_local_correspondence_is_not_an_unresolved_name() {
+        use sage_ir::tytree::{LocalId, PathResolution};
+        let db = sage_ir::db::Database::default();
+        let error = super::resolution(&db, PathResolution::Local(LocalId(0)), &[]).unwrap_err();
+        assert_eq!(error, "missing local binding");
     }
 }

@@ -113,3 +113,21 @@ fn external_definitions_use_metadata_paths() {
         "#]],
     }
 }
+
+#[test]
+#[sage::test(crates.sage_test_harness.compile_tests.resolved_symbols)]
+fn symbol_selection_excludes_field_names_types_and_let_patterns() {
+    compile_test! {
+        source: indoc! {r#"
+            struct Record { field: u16 }
+            fn example(record: Record) -> u16 {
+                let field: u16 = record.field; //# sym
+                field
+            }
+        "#},
+        observations: expect![[r#"
+            src/lib.rs: path `record`
+              symbol: local record#1
+        "#]],
+    }
+}

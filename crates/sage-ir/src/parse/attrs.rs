@@ -1,3 +1,4 @@
+// {anchor}`crates.sage_ir.modules.parse.dependencies`
 // {anchor}`crates.sage_test_harness.compile_tests.project_isolation`
 // {anchor}`crates.sage_test_harness.compile_tests.fixtures`
 use sage_stash::{Slice, Stash};

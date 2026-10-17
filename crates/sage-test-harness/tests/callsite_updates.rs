@@ -5,7 +5,10 @@
 use std::process::Command;
 
 #[test]
+#[sage::test(crates.sage_test_harness.compile_tests.annotation_validation)]
 #[sage::test(crates.sage_test_harness.compile_tests.callsite_updates)]
+#[sage::test(crates.sage_test_harness.compile_tests.invocation)]
+#[sage::test(crates.sage_test_harness.compile_tests.blessing_gate)]
 #[sage::test(crates.sage_test_harness.compile_tests.review_visibility)]
 fn blessing_edits_the_inline_callsite_and_then_passes_without_updates() {
     // Compile a disposable copy: expect-test must never update this test suite
@@ -56,7 +59,7 @@ fn inline_source() {
     let path = project.path().join("src/lib.rs");
     std::fs::write(&path, source).unwrap();
     let target = harness.join("../../target");
-    let run = |update| {
+    let run = |update, expected_success| {
         let mut command = Command::new("cargo");
         command
             .args(["test", "--offline", "--lib", "--quiet"])
@@ -69,14 +72,30 @@ fn inline_source() {
             command.env_remove("UPDATE_EXPECT");
         }
         let output = command.output().unwrap();
-        assert!(
+        assert_eq!(
             output.status.success(),
+            expected_success,
             "{}\n{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
+        String::from_utf8_lossy(&output.stdout).to_string()
     };
-    run(true);
+    // A rustc-only warning is an unexpected diagnostic even with UPDATE_EXPECT.
+    // The stale observation must remain byte-for-byte unchanged on failure.
+    let unexpected = source.replace("fn answer()", "#[warn(dead_code)] fn answer()");
+    std::fs::write(&path, &unexpected).unwrap();
+    let failure = run(true, false);
+    assert!(
+        failure.contains("Rustc diagnostic markers do not match"),
+        "{failure}"
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), unexpected);
+    std::fs::write(&path, source).unwrap();
+    let stale = run(false, false);
+    assert!(stale.contains("expect test failed"), "{stale}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
+    run(true, true);
     let blessed = std::fs::read_to_string(&path).unwrap();
     assert!(
         blessed.contains("src/lib.rs: literal `22`") && blessed.contains("type: u16"),
@@ -85,6 +104,6 @@ fn inline_source() {
     assert!(blessed.contains("22 //# ty"));
     assert!(blessed.contains("diagnostics: expect![\"\"]"));
     assert_eq!(blessed.matches("src/lib.rs: literal").count(), 1);
-    run(false);
+    run(false, true);
     assert_eq!(std::fs::read_to_string(path).unwrap(), blessed);
 }

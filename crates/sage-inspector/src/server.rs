@@ -66,6 +66,7 @@ pub async fn bind(options: ServerOptions) -> std::io::Result<(SocketAddr, TcpLis
     Ok((address, listener))
 }
 
+// {anchor}`crates.sage_inspector.inspection.source_evidence`
 pub async fn run_server(listener: TcpListener, client: InspectionClient) -> std::io::Result<()> {
     axum::serve(listener, router(client)).await
 }

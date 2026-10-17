@@ -1,3 +1,5 @@
+// {anchor}`crates.sage_test_harness.compile_tests.rustc_execution`
+// {anchor}`crates.sage_test_harness.compile_tests.dependencies`
 fn main() {
     // Embed the sysroot lib path as an rpath so the binary can find
     // librustc_driver and other rustc dylibs at runtime.

@@ -1,3 +1,4 @@
+// {anchor}`crates.sage_test_harness.compile_tests.checking_scope`
 use sage_stash::{Slice, Stash, StashCopy, Stashed};
 
 use crate::cst::traits::TraitItemCst;
@@ -19,6 +20,7 @@ pub(crate) enum LocalAssociatedItemKind {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+// {anchor}`crates.sage_ir.symbols.local_identity`
 // {anchor}`crates.sage_ir.symbols.associated_identity`
 pub(crate) struct LocalAssociatedItemKey<'db> {
     pub kind: LocalAssociatedItemKind,
@@ -26,6 +28,9 @@ pub(crate) struct LocalAssociatedItemKey<'db> {
     pub occurrence: u32,
 }
 
+// {anchor}`crates.sage_ir.checking.signature.owner_binder`
+// {anchor}`crates.sage_ir.checking.signature.narrow_detail`
+// {anchor}`crates.sage_ir.checking.symbol_keyed_interfaces`
 pub(crate) fn lower_items<'db>(
     db: &'db dyn crate::Db,
     owner: LocalAssociatedOwner<'db>,
@@ -68,6 +73,8 @@ pub(crate) fn lower_items<'db>(
 ///
 /// This is the membership boundary used by symbol browsing and by other
 /// clients which need identity but not semantic item values.
+// {anchor}`crates.sage_inspector.inspection.detail_free_index`
+// {anchor}`crates.sage_ir.checking.signature.narrow_detail`
 pub fn local_associated_items<'db>(
     db: &'db dyn crate::Db,
     owner: LocalAssociatedOwner<'db>,
@@ -132,6 +139,7 @@ fn compute_local_associated_items<'db>(
 }
 
 #[salsa::tracked]
+// {anchor}`crates.sage_ir.checking.identity_minting`
 pub(crate) fn local_trait_associated_item<'db>(
     db: &'db dyn crate::Db,
     trait_sym: crate::local_syms::traits::LocalTraitSym<'db>,
@@ -150,6 +158,7 @@ pub(crate) fn local_trait_associated_item<'db>(
 }
 
 #[salsa::tracked]
+// {anchor}`crates.sage_ir.checking.identity_minting`
 pub(crate) fn local_impl_associated_item<'db>(
     db: &'db dyn crate::Db,
     impl_sym: crate::local_syms::impls::LocalImplSym<'db>,
@@ -194,6 +203,8 @@ fn item_kind_and_name<'db>(
     }
 }
 
+// {anchor}`crates.sage_ir.types.spans.offset_reuse`
+// {anchor}`crates.sage_ir.types.spans.relative_composition`
 fn lower_item<'db>(
     db: &'db dyn crate::Db,
     owner: LocalAssociatedOwner<'db>,

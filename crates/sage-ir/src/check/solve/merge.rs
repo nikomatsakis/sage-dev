@@ -11,6 +11,7 @@ use super::{Atom, Goal, GoalOutput, QueryResult, QueryResultData, SubstEntry, me
 // ANCHOR: example_merge_candidates
 // {anchor}`crates.sage_ir.solver.alternative_isolation`
 // {anchor}`crates.sage_ir.solver.schedule_independence`
+// {anchor}`crates.sage_ir.modules.expand.completeness`
 pub(crate) fn merge_candidate_results<'db>(
     db: &'db dyn crate::Db,
     next_response_param: u32,
@@ -523,6 +524,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.modules.expand.completeness)]
     fn unconditional_yes_wins_over_incomplete_source() {
         let db = Database::default();
         let result = merge_candidate_results(
@@ -537,6 +539,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.solver.alternative_isolation)]
     fn unconditional_type_output_does_not_hide_an_incomplete_source() {
         let db = Database::default();
         let mut stash = Stash::new();
@@ -567,6 +570,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.solver.alternative_isolation)]
     fn duplicate_identical_yes_is_one_answer() {
         let db = Database::default();
         let answer = yes(false);
@@ -582,6 +586,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.modules.expand.completeness)]
     fn no_candidates_is_no_only_for_complete_source() {
         let db = Database::default();
         assert!(matches!(
@@ -731,6 +736,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.solver.alternative_isolation)]
     fn distinct_response_domains_do_not_subsume_each_other() {
         let db = Database::default();
         let key = AlphaEquivParam::new(&db, GenericParamKind::Type, 0);
@@ -754,6 +760,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.solver.alternative_isolation)]
     fn merged_bare_hints_preserve_a_common_response_domain() {
         let db = Database::default();
         let key = AlphaEquivParam::new(&db, GenericParamKind::Type, 0);
@@ -789,6 +796,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.solver.alternative_isolation)]
     fn merged_nested_hints_preserve_a_common_response_domain() {
         let db = Database::default();
         let key = AlphaEquivParam::new(&db, GenericParamKind::Type, 0);
@@ -827,6 +835,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.solver.alternative_isolation)]
     fn divergent_bare_values_produce_empty_hard_hint() {
         let db = Database::default();
         let key = AlphaEquivParam::new(&db, GenericParamKind::Type, 0);
@@ -851,6 +860,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.solver.alternative_isolation)]
     fn anti_unification_retains_shared_constructor_and_component() {
         let db = Database::default();
         let key = AlphaEquivParam::new(&db, GenericParamKind::Type, 0);
@@ -907,6 +917,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.solver.alternative_isolation)]
     fn general_conditional_answer_subsumes_specific_one() {
         let db = Database::default();
         let key = AlphaEquivParam::new(&db, GenericParamKind::Type, 0);
@@ -994,6 +1005,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.solver.alternative_isolation)]
     fn directional_subsumption_binds_only_repeated_consequent_witnesses() {
         let db = Database::default();
         let key = AlphaEquivParam::new(&db, GenericParamKind::Type, 0);
@@ -1051,6 +1063,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.solver.alternative_isolation)]
     fn subsumption_witness_cannot_capture_a_newer_rigid_input() {
         let db = Database::default();
         let key = AlphaEquivParam::new(&db, GenericParamKind::Type, 0);

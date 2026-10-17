@@ -16,6 +16,8 @@ struct OpenedOwner<'db> {
 }
 
 // {anchor}`crates.sage_ir.types.binder.owner_parameters`
+// {anchor}`crates.sage_ir.checking.signature.owner_binder`
+// {anchor}`crates.sage_ir.checking.signature.storage`
 fn open_owner<'db>(
     cx: &mut crate::check::Check<'_, 'db>,
     owner: Option<LocalAssociatedOwner<'db>>,
@@ -84,6 +86,8 @@ fn open_owner<'db>(
 #[sage::item(crate::symbols::LocalFnSym)]
 // {anchor}`crates.sage_ir.symbols.local_identity`
 // {anchor}`crates.sage_ir.symbols.associated_identity`
+// {anchor}`crates.sage_ir.modules.parse.detail_firewall`
+// {anchor}`crates.sage_ir.types.spans.offset_reuse`
 pub struct LocalFnSym<'db> {
     pub name: Name<'db>,
     pub scope: ScopeSymbol<'db>,
@@ -122,6 +126,8 @@ impl<'db> LocalFnSym<'db> {
     // {anchor}`crates.sage_ir.symbols.associated_interfaces`
     // {anchor}`crates.sage_ir.checking.symbol_keyed_interfaces`
     // {anchor}`crates.sage_ir.checking.signature.body_independence`
+    // {anchor}`crates.sage_ir.checking.identity_minting`
+    // {anchor}`crates.sage_ir.checking.signature.narrow_detail`
     pub fn sig(self, db: &'db dyn crate::Db) -> Stashed<Binder<'db, FnSig<'db>>> {
         use crate::check::Check;
         use crate::cst::fns::ReceiverCst;
@@ -242,6 +248,10 @@ impl<'db> LocalFnSym<'db> {
     #[salsa::tracked(returns(ref))]
     #[sage::item(crate::symbols::LocalFnSym::body)]
     // {anchor}`crates.sage_ir.symbols.body_interfaces`
+    // {anchor}`crates.sage_ir.checking.body.interface_dependencies`
+    // {anchor}`crates.sage_ir.checking.identity_minting`
+    // {anchor}`crates.sage_ir.inference.completed_body_boundary`
+    // {anchor}`crates.sage_ir.inference.body_local_quiescence`
     pub fn body(self, db: &'db dyn crate::Db) -> CheckedBody<'db> {
         use crate::check::infer_ctx::{ErrorContext, InferCtx, Scope};
         use crate::local_syms::LocalModItemSym;
@@ -289,6 +299,7 @@ impl<'db> LocalFnSym<'db> {
                 ) => match imported.receiver {
                     Some(receiver) => match receiver.form {
                         crate::ty::MethodReceiver::Value { .. } => receiver.owner_self_ty,
+                        // {anchor}`crates.sage_ir.types.lifetimes.dummy`
                         crate::ty::MethodReceiver::Ref { mutability } => {
                             cx.alloc_ty(crate::ty::Ty::Ref(
                                 receiver.owner_self_ty,
@@ -322,6 +333,7 @@ impl<'db> LocalFnSym<'db> {
             };
 
             // Constrain body type against declared return type.
+            // {anchor}`crates.sage_ir.inference.subtyping_and_coercion`
             let body_span = cx.stash()[expr].span;
             match cx.coerce_expr(expr, imported.ret, body_span) {
                 Ok(coerced) => coerced,

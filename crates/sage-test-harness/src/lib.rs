@@ -2427,6 +2427,10 @@ mod trait_system_tests {
                 .get(item_index)
                 .copied()
                 .expect("expected observed item");
+            assert!(
+                !matches!(item, sage_ir::local_syms::LocalModItemSym::Error(_)),
+                "expected a represented item, got a parse error"
+            );
             let symbol: Symbol<'_> = item.into();
             observe_symbol_identity(db, ObservedSymbol::new(db, symbol));
         }
@@ -2531,6 +2535,65 @@ mod trait_system_tests {
                 case.label
             );
         }
+    }
+
+    #[test]
+    #[sage::test(crates.sage_ir.symbols.local_identity)]
+    fn local_function_identity_changes_are_distinguishable() {
+        use salsa::Setter as _;
+
+        let mut database = Database::default();
+        let source_file =
+            database.add_source_file("lib.rs".to_owned(), "fn before() {}".to_owned());
+        database.attach(|db| {
+            let (_, root) = setup_root_module(db, source_file);
+            let function = local_function_named(db, root, "before");
+            observe_symbol_identity(db, ObservedSymbol::new(db, Symbol::from(function)));
+        });
+        assert!(
+            database
+                .take_query_log()
+                .contains("observe_symbol_identity")
+        );
+
+        source_file
+            .set_text(&mut database)
+            .to("fn after() {}".to_owned());
+        database.attach(|db| {
+            let (_, root) = setup_root_module(db, source_file);
+            let function = local_function_named(db, root, "after");
+            assert_eq!(function.name(db).text(db), "after");
+            observe_symbol_identity(db, ObservedSymbol::new(db, Symbol::from(function)));
+        });
+        assert!(
+            database
+                .take_query_log()
+                .contains("observe_symbol_identity"),
+            "renaming the definition must create a distinguishable identity"
+        );
+
+        source_file
+            .set_text(&mut database)
+            .to("fn same() {} mod nested { fn same() {} }".to_owned());
+        database.attach(|db| {
+            let (_, root) = setup_root_module(db, source_file);
+            let outer = local_function_named(db, root, "same");
+            let nested = root
+                .expanded_module_items(db)
+                .iter()
+                .find_map(|symbol| match symbol.data(db) {
+                    SymbolData::ModSymbol(module) => Some(module),
+                    _ => None,
+                })
+                .expect("nested module");
+            let inner = local_function_named(db, nested, "same");
+            assert_eq!(outer.name(db), inner.name(db));
+            assert_ne!(outer.scope(db), inner.scope(db));
+            assert_ne!(
+                outer, inner,
+                "same-name definitions in different scopes are distinct"
+            );
+        });
     }
 
     #[test]
@@ -3010,6 +3073,53 @@ mod trait_solver_boundary_tests {
 
             assert!(matches!(applied.certainty, AppliedCertainty::Yes { .. }));
             assert_eq!(caller_egraph.find(Version::ROOT, input), integer);
+        });
+    }
+
+    #[test]
+    #[sage::test(crates.sage_ir.inference.canonical_boundary)]
+    fn canonical_response_preserves_lowered_input_universe() {
+        with_test_crate("trait Marker {}", |db, root| {
+            let krate = crate_from_root_items(db, root);
+            let mut stash = Stash::new();
+            let mut egraph = VersionedEGraph::new();
+            let input_index = egraph.alloc_var(Version::ROOT, Universe(2));
+            let input = stash.alloc(Ty::InferVar(input_index));
+            let assumptions = stash.alloc_slice::<Assumption>(&[]);
+            let canonical = canonicalize_goal(
+                db,
+                &stash,
+                &egraph,
+                Version::ROOT,
+                krate,
+                Universe(1),
+                true,
+                assumptions,
+                Goal::Atom(Atom::Equals(input, input)),
+            );
+            let mut proof = instantiate_query(&canonical.data);
+            let Ty::InferVar(proof_input) = proof.stash[proof.inputs[0].ty] else {
+                panic!("expected flexible proof input");
+            };
+            proof
+                .egraph
+                .lower_universe(proof.version, proof_input, Universe::ROOT);
+            let modulo = Goal::true_(&mut proof.stash);
+            let response = extract_query_result(db, &proof, GoalResult::Yes { modulo });
+            apply_query_response(
+                db,
+                &mut stash,
+                &mut egraph,
+                Version::ROOT,
+                &canonical.data,
+                &canonical.mapping,
+                &response,
+            )
+            .unwrap();
+            assert_eq!(
+                egraph.current_universe(Version::ROOT, input_index),
+                Universe(1)
+            );
         });
     }
 
@@ -3840,6 +3950,7 @@ mod trait_solver_proof_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.solver.normalization_demand)]
     fn local_normalization_reads_one_keyed_value_without_impl_item_enumeration() {
         use salsa::Setter as _;
 
@@ -4186,6 +4297,7 @@ mod trait_solver_proof_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.solver.normalization_demand)]
     fn nested_associated_value_remains_a_normalizable_alias() {
         with_test_crate(
             "trait Inner { type Value; }\ntrait Outer { type Item; }",

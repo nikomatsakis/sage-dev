@@ -20,11 +20,11 @@ mod todo {
     #[test]
     #[sage::test(crates.sage_ir.resolution.lookup.precedence)]
     fn resolution_lookup_precedence() {
-        // TODO: Complete the remaining import/path matrix: repeated import routes to one
-        // definition, enum-variant globs, macro subnamespace distinctions, and Rust 2015
+        // TODO: Complete the remaining import/path matrix: macro subnamespace distinctions and Rust 2015
         // path rules. Source fixtures now cover lexical/nested/sibling shadowing, independent
         // type/value/bang-macro namespaces, named-versus-glob precedence, renamed imports,
-        // cyclic and ambiguous globs, qualified/absolute paths, and 2018/2021/2024 preludes.
+        // cyclic and ambiguous globs, repeated routes to one definition, local/external enum
+        // globs, qualified/absolute paths, and 2018/2021/2024 preludes.
     }
 
     #[test]
@@ -105,6 +105,8 @@ mod todo {
 
     // {anchor}`crates.sage_ir.solver.normalization_demand`
     // TODO: Named alias expansion and opaque reveal context remain unsupported.
+    // Local discovery still scans unrelated impl identities; excluding those reads requires
+    // the tracked private index deferred by crates.sage_ir.solver.local_index_firewall.
     #[test]
     #[sage::test(crates.sage_ir.solver.normalization_demand)]
     fn solver_normalization_demand() {

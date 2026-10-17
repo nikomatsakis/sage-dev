@@ -291,6 +291,7 @@ pub(crate) fn unify_in_probe<'db>(
         ) => {}
     }
 
+    // {anchor}`crates.sage_ir.inference.subtyping_and_coercion`
     let left_decomposed = decompose(stash, left);
     let right_decomposed = decompose(stash, right);
     if left_decomposed.skeleton != right_decomposed.skeleton
@@ -813,6 +814,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.inference.numeric_domains)]
     fn numeric_domains_accept_members_and_reject_other_families() {
         for integer in [Ty::Int(IntTy::I128), Ty::Uint(UintTy::Usize)] {
             let mut egraph = VersionedEGraph::new();
@@ -882,6 +884,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.inference.numeric_domains)]
     fn exact_bounds_enforce_domains_transactionally() {
         let mut egraph = VersionedEGraph::new();
         let mut stash = Stash::new();
@@ -914,6 +917,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.inference.numeric_domains)]
     fn exact_bounds_join_the_validated_equality_class() {
         let mut egraph = VersionedEGraph::new();
         let mut stash = Stash::new();
@@ -981,6 +985,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.inference.numeric_domains)]
     fn reported_error_recovery_is_admitted_by_numeric_domains() {
         let db = Database::default();
         let source = SourceFile::new(&db, "domain-recovery.rs".to_owned(), String::new());
@@ -1032,6 +1037,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.inference.numeric_domains)]
     fn domain_narrowing_follows_child_commit_and_discard() {
         let mut egraph = VersionedEGraph::new();
         let mut stash = Stash::new();
@@ -1072,6 +1078,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.inference.atomic_checking)]
     fn concrete_and_nested_unification() {
         let mut egraph = VersionedEGraph::new();
         let mut stash = Stash::new();
@@ -1091,6 +1098,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.inference.atomic_checking)]
     fn late_mismatch_rolls_back_earlier_equality() {
         let mut egraph = VersionedEGraph::new();
         let mut stash = Stash::new();
@@ -1112,6 +1120,7 @@ mod tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.inference.atomic_checking)]
     fn batch_failure_is_atomic() {
         let mut egraph = VersionedEGraph::new();
         let mut stash = Stash::new();

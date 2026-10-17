@@ -132,6 +132,7 @@ impl sage_stash::StashDirect for ErrorReported {}
 ///
 /// Pushes `diag` into `diagnostics` and returns the witness token.
 /// Every construction of `Ty::Error` or `Res::Error` must flow through here.
+// {anchor}`crates.sage_ir.types.body.diagnosed_recovery`
 pub fn report<'db>(diagnostics: &mut Vec<Diagnostic<'db>>, diag: Diagnostic<'db>) -> ErrorReported {
     diagnostics.push(diag);
     ErrorReported(())
@@ -229,6 +230,7 @@ fn same_file(a: ParseSource<'_>, b: ParseSource<'_>) -> bool {
 /// Owned diagnostic evidence emitted by a signature query. Salsa retains each
 /// query's emissions once even when multiple clients demand the same signature.
 #[salsa::accumulator]
+// {anchor}`crates.sage_test_harness.compile_tests.diagnostic_counts`
 #[derive(Clone, Debug)]
 pub struct SignatureDiagnostic(pub DiagnosticSnapshot);
 

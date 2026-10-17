@@ -54,6 +54,7 @@ impl<'a, 'db> Check<'a, 'db> {
             .and(environment.solver_eligibility);
     }
 
+    // {anchor}`crates.sage_ir.checking.signature.body_independence`
     pub fn complete_parameter_env(
         &mut self,
         where_clauses: sage_stash::Slice<WherePredicate<'db>>,

@@ -10,6 +10,7 @@ use crate::span::AbsoluteSpan;
 /// A use declaration, desugared into flat imports.
 #[salsa::tracked(debug)]
 #[sage::item(crate::symbols::LocalUseSym)]
+// {anchor}`crates.sage_ir.symbols.local_identity`
 pub struct LocalUseSym<'db> {
     pub scope: ScopeSymbol<'db>,
 

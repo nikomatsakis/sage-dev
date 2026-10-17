@@ -6,7 +6,9 @@ runner; implementation and test evidence is reported by the generated anchors.
 
 `compile_test!` puts Rust fixtures, source annotations, and expected observations
 inside ordinary Cargo tests. The runner produces semantic observations through
-Sage's production workspace and compiler paths. It complements direct unit tests
+Sage's production workspace and compiler paths. Every fixture also runs through
+the pinned rustc and checks its diagnostics against the source markers. It
+complements direct unit tests
 and the independent [oracle comparisons](../sage_oracle_harness/oracle-guide.md).
 
 ## Authoring a test
@@ -72,6 +74,19 @@ used to capture its presentation. `queries: expect![...]` optionally adds a
 snapshot of the checking run's query log. An omitted diagnostic expectation
 means an empty expected diagnostic output; an omitted query expectation makes
 no query-log assertion. A missing observation expectation is an error when observation markers are present.
+
+Unqualified diagnostic markers must match both compilers. Use compiler-qualified
+markers for deliberate differences. For example, rustc warning tests explicitly
+enable the lint because ordinary warning-by-default lints are quiet:
+
+```rust,ignore
+compile_test! {
+    source: "#[warn(dead_code)] fn unused() {} //# WARN if rustc",
+}
+```
+
+This fixture expects one rustc warning and no Sage diagnostics. The rustc
+comparison does not add another snapshot field.
 
 ## Cargo integration and fixture inputs
 
@@ -161,6 +176,24 @@ must reach Sage even if it would fail rustc checking. Using rustc to provide
 standard-library metadata does not count as running a rustc conformance test.
 Setup and provider failures fail the test directly, not as expected source
 diagnostics.
+
+{anchor}`rustc_execution`
+Every inline fixture is checked by both Sage and the rustc binary paired with
+Sage's embedded compiler and standard-library sysroot. There is no implicit
+skip or opt-out. rustc checks the same materialized `src/lib.rs`, files, edition,
+and host target as an ordinary library, with no test configuration or enabled
+features. It emits metadata only; fixture code is never executed. rustc checking
+is separate from dependency metadata loading and Sage query capture. Source
+errors in either compiler do not prevent running the other compiler. Missing
+executables, malformed compiler output, abnormal termination, and an exit status
+inconsistent with the reported errors fail preparation as infrastructure errors.
+
+{anchor}`rustc_lints`
+rustc starts with warning-by-default lints individually allowed, using the
+pinned compiler's lint inventory, to keep incidental unused-item and naming
+lints out of ordinary fixtures. Deny-by-default lints remain enabled. Source-level lint attributes may enable specific
+warnings or deny them; emitted warnings and errors must then have matching
+markers. This is not a lint cap and does not suppress hard language errors.
 
 {anchor}`checking_scope`
 V1 requests signatures and checks every supported body in the selected local
@@ -394,6 +427,14 @@ or ERROR/WARN events. Matching does not parse rendered text. Each diagnostic
 counts once even if its primary span or expansion ancestry matches several lines. A source diagnostic with no matchable location remains
 unmatched and fails the test.
 
+For rustc, only spans marked `is_primary` in structured JSON diagnostics and
+their recursive expansion invocation spans are eligible. Any eligible primary
+span may match. Child notes/help and secondary spans do not introduce events
+or eligible locations. rustc's spanless final error/warning count summaries and
+failure-note explanations are presentation, not additional source diagnostics;
+other spanless errors or warnings fail matching. Distinct top-level diagnostics
+are never deduplicated by message text.
+
 {anchor}`diagnostic_counts`
 The diagnostic set includes all source diagnostics from parsing, expansion,
 resolution, signature checking, and body checking. Repeated demands reporting
@@ -410,13 +451,13 @@ extra diagnostics, and severity mismatches fail even if their rendered output
 matches a snapshot. Matching never changes diagnostic output order.
 
 {anchor}`compiler_conditions`
-V1 executes Sage checks only. Unqualified markers and markers conditional on
-SAGE apply to Sage; markers conditional on rustc are parsed and validated but
-inactive, and are not claimed as verified. A later rustc mode will independently
-match its structured diagnostic locations, severities, and counts against
-unqualified and rustc-qualified markers. That mode does not require rustc type
-observations or text snapshots. An unqualified marker expects one diagnostic
-from each enabled compiler, not two from either compiler.
+Both Sage and rustc run for every fixture. Unqualified ERROR/WARN markers
+apply independently to each compiler; `if SAGE` and `if rustc` apply only to
+the named compiler. Each compiler must have a complete one-to-one match against
+its applicable markers. One unqualified marker expects one diagnostic from each
+compiler, not two from either. rustc contributes diagnostic checks only, not
+observation, diagnostic-text, or query snapshots. Compiler-specific markers
+record intentional differences and require a semantic explanation when changed.
 
 ## Snapshot outputs and query evidence
 
@@ -464,7 +505,8 @@ inventing an unrelated raw-debug-string golden format.
 {anchor}`blessing_gate`
 Before any expectation in one test invocation is compared in updating mode,
 the runner completes fixture validation, compilation, annotation validation,
-observation collection, exhaustive diagnostic matching, requested query projection,
+observation collection, independent exhaustive diagnostic matching for both Sage
+and rustc, requested query projection,
 and rendering of every requested output. All resulting snapshot strings are
 prepared before any updating expectation assertion runs. A failure in any of those
 steps prevents all snapshot writes for that invocation. After they succeed,

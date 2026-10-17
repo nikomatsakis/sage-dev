@@ -1056,6 +1056,8 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         }
     }
 
+    // {anchor}`crates.sage_ir.checking.body.isolated_completion`
+    // {anchor}`crates.sage_ir.inference.atomic_checking`
     pub(crate) fn commit_branch(&self, version: Version) {
         let effects = {
             let mut stash = self.target_stash.borrow_mut();
@@ -1244,6 +1246,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     // TyExpr allocation
     // ------------------------------------------------------------------
 
+    // {anchor}`crates.sage_ir.types.spans.relative_composition`
     pub fn alloc_expr(
         &self,
         data: TyExprData<'db>,
@@ -1255,6 +1258,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
             .alloc(TyExpr { data, ty, span })
     }
 
+    // {anchor}`crates.sage_ir.types.lifetimes.dummy`
     pub(crate) fn adjust_method_receiver(
         &self,
         expression: Ptr<TyExpr<'db>>,
@@ -1486,6 +1490,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
 
     /// Publish obligations staged beside an inference transaction. A caller
     /// that rolls its inference child back simply drops the batch.
+    // {anchor}`crates.sage_ir.inference.transaction_isolation`
     pub fn publish_obligation_batch(&self, batch: StagedObligationBatch<'db>) {
         use super::solve::{Atom, Goal};
 
@@ -1972,6 +1977,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         }
     }
 
+    // {anchor}`crates.sage_ir.inference.canonical_boundary`
     fn apply_normalization_relation(
         &self,
         canonical_goal: &Stashed<super::solve::GoalQueryData<'db>>,
@@ -2130,6 +2136,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         self.recover_expr_slots(&recoveries, error);
     }
 
+    // {anchor}`crates.sage_ir.checking.body.operator_calls`
     fn recover_expr_slots(&self, recoveries: &[ObligationRecovery<'db>], error: ErrorReported) {
         let error_ty = self.alloc_ty(Ty::Error(error));
         for recovery in recoveries {
@@ -2204,6 +2211,8 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     }
 
     #[sage::item(crate::inference::InferCtx::finalize)]
+    // {anchor}`crates.sage_ir.inference.numeric_domains`
+    // {anchor}`crates.sage_ir.checking.body.isolated_completion`
     // {anchor}`crates.sage_ir.inference.terminal_obligations`
     pub fn finalize(&self) {
         // First consume every proof that current inference already enables.
@@ -2298,6 +2307,8 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     // ------------------------------------------------------------------
 
     #[sage::item(crate::inference::InferCtx::finish)]
+    // {anchor}`crates.sage_ir.checking.body.isolated_completion`
+    // {anchor}`crates.sage_ir.checking.body.elaboration`
     // {anchor}`crates.sage_ir.types.body.no_inference`
     // {anchor}`crates.sage_ir.inference.body_local_quiescence`
     // {anchor}`crates.sage_ir.inference.completed_body_boundary`

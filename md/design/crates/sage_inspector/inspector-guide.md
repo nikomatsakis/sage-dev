@@ -162,6 +162,14 @@ roots include rustc's crate disambiguator and every structured definition-path
 segment includes its kind, name, and disambiguator. Display labels are never
 parsed to recover identity.
 
+Links through anonymous entities are best effort across edits and inspector
+restarts. Content-derived segments often preserve a link, but cannot reliably
+distinguish identical occurrences across revisions: deleting one duplicate may
+make its old link select another. This also affects descendants reached through
+an anonymous ownership segment. The stronger stability guarantee applies to
+paths with entirely named ownership segments. These navigation limitations do
+not change the semantic identity of a definition reached through imports.
+
 Inspector navigation deliberately has its own external-path projection. The
 existing conformance projection omits anonymous rustc ownership segments where
 both emitters omit them; canonical navigation retains those

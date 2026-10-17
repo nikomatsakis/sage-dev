@@ -1,3 +1,4 @@
+// {anchor}`crates.sage_ir.modules.parse.dependencies`
 use sage_stash::{Ptr, Stash};
 
 use crate::cst::Mutability;

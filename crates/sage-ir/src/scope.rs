@@ -12,6 +12,7 @@ pub enum Edition {
     Rust2024,
 }
 
+// {anchor}`crates.sage_test_harness.compile_tests.edition`
 impl Edition {
     pub fn parse(text: &str) -> Option<Self> {
         match text {

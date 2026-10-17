@@ -10,9 +10,11 @@ fn malformed_body_is_not_silently_accepted() {
     let result = std::panic::catch_unwind(|| {
         compile_test! { source: "fn broken() { let = ; }" }
     });
+    let panic = result.unwrap_err();
+    let message = panic.downcast_ref::<String>().unwrap();
     assert!(
-        result.is_err(),
-        "malformed source must emit a diagnostic or fail checking"
+        message.contains("Sage diagnostic markers do not match"),
+        "{message}"
     );
 }
 
@@ -22,7 +24,13 @@ fn malformed_private_enum_signature_is_checked() {
     let result = std::panic::catch_unwind(|| {
         compile_test! { source: "enum Hidden { Value(Missing) }" }
     });
-    assert!(result.is_err(), "private enum signature must be checked");
+    let panic = result.unwrap_err();
+    let message = panic.downcast_ref::<String>().unwrap();
+    assert!(
+        message.contains("Sage diagnostic markers do not match"),
+        "{message}"
+    );
+    assert!(message.contains("unresolved type"), "{message}");
 }
 
 #[test]
@@ -117,4 +125,73 @@ fn path_attribute_inside_inline_module_uses_its_module_directory() {
               type: u16
         "#]],
     }
+}
+#[test]
+#[sage::test(crates.sage_test_harness.compile_tests.checking_scope)]
+fn enum_discriminant_body_is_not_silently_accepted() {
+    let result = std::panic::catch_unwind(|| {
+        // Account for rustc's independent error so it cannot mask Sage's omission.
+        compile_test! { source: "enum Hidden { Value = missing() } //# ERROR if rustc" }
+    });
+    let panic = result.expect_err(
+        "enum discriminant bodies must be checked or explicitly rejected as unsupported",
+    );
+    let message = panic.downcast_ref::<String>().unwrap();
+    assert!(
+        message.contains("Sage diagnostic markers do not match"),
+        "{message}"
+    );
+    assert!(
+        message.contains("whole-crate checking of enum discriminants is not supported"),
+        "{message}"
+    );
+}
+
+#[test]
+#[sage::test(crates.sage_test_harness.compile_tests.checking_scope)]
+fn valid_enum_discriminant_reports_sage_limitation() {
+    compile_test! {
+        source: "enum Hidden { Value = 1 } //# ERROR if SAGE",
+        diagnostics: expect_test::expect![[r#"
+            error: whole-crate checking of enum discriminants is not supported
+             --> src/lib.rs:1:23
+              |
+            1 | enum Hidden { Value = 1 } //# ERROR if SAGE
+              |                       ^"#]],
+    }
+}
+
+#[test]
+#[sage::test(crates.sage_test_harness.compile_tests.checking_scope)]
+fn enum_discriminants_survive_syntax_token_rendering() {
+    use sage_ir::symbol::{EnumSymbol, SymbolData};
+    use sage_ir::tokens::{StringSink, ToTokens, TokenCtx};
+    let source = "enum Hidden { First = 1 + 2, Second = 7 }";
+    sage_test_harness::with_test_crate(source, |db, root| {
+        let symbol = root.expanded_module_items(db)[0];
+        let SymbolData::EnumSymbol(EnumSymbol::Local(enum_symbol)) = symbol.data(db) else {
+            panic!("expected the source enum");
+        };
+        let (stash, cst) = enum_symbol.cst(db).open_deref();
+        let variants = &stash[cst.variants];
+        assert_eq!(variants.len(), 2);
+        assert!(
+            variants
+                .iter()
+                .all(|variant| variant.discriminant.is_some())
+        );
+        let mut sink = StringSink::new();
+        cst.to_tokens(
+            &TokenCtx {
+                db,
+                stash,
+                source_text: source,
+            },
+            &mut sink,
+        );
+        assert_eq!(
+            sink.into_string(),
+            "enum Hidden {First = 1 + 2, Second = 7}"
+        );
+    });
 }

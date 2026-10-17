@@ -81,6 +81,7 @@ impl Obligation<'_> {
     /// from the canonical solver goal. Otherwise an error in one expression
     /// could recover another expression that happens to require the same
     /// proof.
+    // {anchor}`crates.sage_ir.checking.body.operator_calls`
     pub fn same_dedup_key(&self, other: &Self) -> bool {
         matches!(self.goal, ObligationGoal::Prove(_))
             && matches!(other.goal, ObligationGoal::Prove(_))
@@ -95,7 +96,9 @@ pub(crate) struct ObligationManager<'db> {
     pub obligations: Vec<Obligation<'db>>,
 }
 
+// {anchor}`crates.sage_ir.inference.terminal_obligations`
 impl<'db> ObligationManager<'db> {
+    // {anchor}`crates.sage_ir.inference.body_local_quiescence`
     pub fn has_pending(&self) -> bool {
         self.obligations
             .iter()
@@ -142,6 +145,7 @@ impl<'db> ObligationManager<'db> {
 /// Obligations staged by an inference transaction. Dropping the batch is a
 /// rollback; the caller publishes it only after committing the transaction.
 #[derive(Default)]
+// {anchor}`crates.sage_ir.inference.atomic_checking`
 pub struct StagedObligationBatch<'db> {
     pub(crate) environments: Vec<(CheckedParameterEnv<'db>, ObligationProvenance)>,
 }

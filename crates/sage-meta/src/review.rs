@@ -211,6 +211,7 @@ pub fn inventory(
             });
         }
         // {anchor}`meta.reviews.test_source`
+        // {anchor}`crates.sage_test_harness.compile_tests.review_visibility`
         let mut tests = Vec::new();
         let mut test_fragments = BTreeMap::new();
         for site in rust.tests.get(name).into_iter().flatten() {

@@ -35,6 +35,7 @@ fn call_argument_types() {
 
 #[test]
 #[sage::test(crates.sage_test_harness.compile_tests.dependencies)]
+#[sage::test(crates.sage_test_harness.compile_tests.checking_scope)]
 fn real_std() {
     compile_test! {
         source: "fn example(value: std::string::String) {}",
@@ -44,6 +45,7 @@ fn real_std() {
 
 #[test]
 #[sage::test(crates.sage_test_harness.compile_tests.fixtures)]
+#[sage::test(crates.sage_test_harness.compile_tests.checking_scope)]
 fn modules_and_associated_bodies() {
     compile_test! {
         files: {
@@ -68,6 +70,7 @@ fn modules_and_associated_bodies() {
 #[sage::test(crates.sage_test_harness.compile_tests.production_execution)]
 #[sage::test(crates.sage_test_harness.compile_tests.diagnostic_counts)]
 #[sage::test(crates.sage_test_harness.compile_tests.diagnostic_locations)]
+#[sage::test(crates.sage_test_harness.compile_tests.rendering)]
 fn invalid_source_reaches_sage() {
     compile_test! {
         source: indoc! {r#"
@@ -94,11 +97,11 @@ fn invalid_source_reaches_sage() {
 #[test]
 #[sage::test(crates.sage_test_harness.compile_tests.compiler_conditions)]
 #[sage::test(crates.sage_test_harness.compile_tests.edition)]
-fn explicit_edition_and_inactive_rustc_marker() {
+fn explicit_edition_and_rustc_warning_marker() {
     compile_test! {
         diagnostics: expect![""],
         edition: "2021",
-        source: "fn example() {} //# ERROR if rustc",
+        source: "#[warn(dead_code)] fn example() {} //# WARN if rustc",
     }
 }
 
@@ -134,6 +137,7 @@ fn tuples_and_multiline_descriptions() {
 
 #[test]
 #[sage::test(crates.sage_test_harness.compile_tests.completed_types)]
+#[sage::test(crates.sage_test_harness.compile_tests.starting_expressions)]
 fn coercion_wrapper_follows_its_source_expression() {
     compile_test! {
         source: indoc! {r#"
@@ -184,6 +188,7 @@ fn signature_diagnostics_are_retained_once() {
 
 #[test]
 #[sage::test(crates.sage_test_harness.compile_tests.diagnostic_locations)]
+#[sage::test(crates.sage_test_harness.compile_tests.checking_scope)]
 fn macro_generated_errors_match_the_invocation() {
     compile_test! {
         source: indoc! {r#"
@@ -255,5 +260,20 @@ fn unused_import_is_checked() {
               |
             1 | use missing::Item; //# ERROR
               |     ^^^^^^^^^^^^^"#]],
+    }
+}
+
+#[test]
+#[sage::test(crates.sage_test_harness.compile_tests.coordinates)]
+#[sage::test(crates.sage_test_harness.compile_tests.starting_expressions)]
+fn unicode_and_indentation_do_not_change_line_type_selection() {
+    compile_test! {
+        source: "    fn café() -> bool { true } //# ty",
+        observations: expect![[r#"
+            src/lib.rs: literal `true`
+              type: bool
+            src/lib.rs: block `{ true }`
+              type: bool
+        "#]],
     }
 }

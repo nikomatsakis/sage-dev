@@ -85,6 +85,7 @@ pub fn canonicalize_goal<'db>(
 }
 
 #[allow(clippy::too_many_arguments)]
+// {anchor}`crates.sage_ir.inference.canonical_boundary`
 pub fn canonicalize_solver_goal<'db>(
     db: &'db dyn crate::Db,
     source: &Stash,

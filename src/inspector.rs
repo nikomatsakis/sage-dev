@@ -29,6 +29,9 @@ use salsa::plumbing::FromId;
 
 use crate::driver::{SageContext, SageHost};
 
+#[cfg(test)]
+mod canonical_ownership_tests;
+
 const RETAINED_REVISION_LIMIT: usize = 64;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1966,7 +1969,29 @@ fn stable_symbol_hash(db: &dyn Db, symbol: Symbol<'_>) -> u64 {
             cst.where_clauses.stash_hash(stash, &mut hasher);
         }
         SymbolData::MacroInvocationSymbol(symbol) => symbol.hash(&mut hasher),
-        SymbolData::UseSymbol(UseSymbol::Local(symbol)) => symbol.hash(&mut hasher),
+        SymbolData::UseSymbol(UseSymbol::Local(symbol)) => {
+            use sage_ir::cst::uses::UseKind;
+            use sage_ir::tokens::{StringSink, ToTokens, TokenCtx};
+
+            let (stash, imports) = symbol.imports(db).open();
+            let context = TokenCtx {
+                db,
+                stash,
+                source_text: "",
+            };
+            let imports = &stash[imports];
+            imports.len().hash(&mut hasher);
+            for import in imports {
+                let mut sink = StringSink::new();
+                stash[import.path].to_tokens(&context, &mut sink);
+                sink.into_string().hash(&mut hasher);
+                std::mem::discriminant(&import.kind).hash(&mut hasher);
+                match import.kind {
+                    UseKind::Named(name) => name.text(db).hash(&mut hasher),
+                    UseKind::Glob | UseKind::Unnamed => {}
+                }
+            }
+        }
         SymbolData::FnSymbol(_)
         | SymbolData::StructSymbol(_)
         | SymbolData::EnumSymbol(_)

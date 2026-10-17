@@ -39,6 +39,7 @@ impl<'db> ExprCst<'db> {
     /// This is the initial bidirectional-checking boundary. For now the
     /// expectation is applied only after ordinary synthesis; future expression
     /// forms can consume it while they are checked.
+    // {anchor}`crates.sage_ir.inference.subtyping_and_coercion`
     async fn check_with_expected(
         &self,
         cx: &InferCtx<'_, 'db>,
@@ -245,6 +246,7 @@ impl<'db> ExprCst<'db> {
                 let ty = cx.stash()[ro].ty;
                 (TyExprData::Unary(*op, ro), ty)
             }
+            // {anchor}`crates.sage_ir.types.lifetimes.dummy`
             ExprCstKind::Ref(inner, m) => {
                 let ri = cx.source_stash[*inner].check_with(cx, scope).await;
                 let inner_ty = cx.stash()[ri].ty;
@@ -453,7 +455,13 @@ impl<'db> ExprCst<'db> {
             ExprCstKind::Index(obj, idx) => {
                 let ro = cx.source_stash[*obj].check_with(cx, scope).await;
                 let ri = cx.source_stash[*idx].check_with(cx, scope).await;
-                let ty = cx.fresh_ty_var();
+                // TODO: Select and materialize Index/IndexMut before accepting
+                // indexing in a successfully elaborated body.
+                let error = cx.record(Diagnostic::error(
+                    cx.span(span),
+                    "indexing elaboration is not supported yet",
+                ));
+                let ty = cx.alloc_ty(Ty::Error(error));
                 (TyExprData::Index(ro, ri), ty)
             }
             ExprCstKind::Cast(expr, ty_cst) => {
@@ -1179,6 +1187,7 @@ fn res_to_ty<'db>(
     }
 }
 
+// {anchor}`crates.sage_ir.symbols.body_interfaces`
 fn def_to_ty<'db>(
     cx: &InferCtx<'_, 'db>,
     sym: crate::symbol::Symbol<'db>,

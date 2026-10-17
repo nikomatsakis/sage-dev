@@ -3,6 +3,62 @@
 #![register_tool(sage)]
 use expect_test::expect;
 use indoc::indoc;
+
+#[test]
+#[sage::test(crates.sage_ir.resolution.lookup.precedence)]
+fn enum_glob_import_resolves_a_variant() {
+    compile_test! {
+        source: indoc! {r#"
+            enum Choice { Selected }
+            use Choice::*;
+            fn example() -> Choice {
+                Selected //# sym
+            }
+        "#},
+        observations: expect![[r#"
+            src/lib.rs: path `Selected`
+              symbol: variant crate::Choice::Selected
+        "#]],
+    }
+}
+
+#[test]
+#[sage::test(crates.sage_ir.resolution.lookup.precedence)]
+fn external_enum_glob_import_resolves_a_variant() {
+    compile_test! {
+        source: indoc! {r#"
+            use std::cmp::Ordering::*;
+            fn example() -> std::cmp::Ordering {
+                Less //# sym
+            }
+        "#},
+        observations: expect![[r#"
+            src/lib.rs: path `Less`
+              symbol: variant std::cmp::Ordering::Less
+        "#]],
+    }
+}
+
+#[test]
+#[sage::test(crates.sage_ir.resolution.lookup.precedence)]
+fn repeated_glob_routes_to_one_definition_are_unambiguous() {
+    compile_test! {
+        source: indoc! {r#"
+            mod origin { pub fn value() -> u16 { 1 } }
+            mod first { pub use crate::origin::value; }
+            mod second { pub use crate::origin::value; }
+            use first::*;
+            use second::*;
+            fn example() -> u16 {
+                value() //# sym
+            }
+        "#},
+        observations: expect![[r#"
+            src/lib.rs: path `value`
+              symbol: fn crate::origin::value
+        "#]],
+    }
+}
 use sage_test_harness::compile_test;
 
 #[test]

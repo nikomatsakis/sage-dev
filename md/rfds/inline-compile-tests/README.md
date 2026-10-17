@@ -127,10 +127,9 @@ several macro-ancestry locations to the only marker another diagnostic could use
 ERROR/WARN events.
 
 Compiler conditions use `//# ERROR if SAGE` and `//# ERROR if rustc`, with the
-same grammar for WARN. Neither type nor diagnostic markers use slugs. V1 parses the
-conditions but runs only Sage. A later rustc adapter will use structured
-compiler output to check lines, severity, and counts, without requiring rustc
-text snapshots or type extraction. This extension does not replace exact
+same grammar for WARN. Neither type nor diagnostic markers use slugs. The initial implementation ran only Sage. The rustc-default follow-up runs both
+compilers and uses structured rustc output to check lines, severity, and counts,
+without requiring rustc text snapshots or type extraction. This extension does not replace exact
 oracle comparison of independent semantic emissions.
 
 ### Observe demand as well as results
@@ -244,3 +243,26 @@ type fields regardless of marker order. The initial symbol selector covers
 explicit expression paths; field and method selections remain future work.
 The normative contracts are `grouped_observations` and `resolved_symbols` in
 [the test specification](../../design/crates/sage_test_harness/compile-tests.md).
+
+## Follow-up: rustc comparison by default
+
+Every inline fixture now has a specified rustc comparison, including tests that
+request only Sage observations. This prevents a passing Sage snapshot from
+silently accepting a fixture that rustc rejects. The same pinned compiler and
+sysroot supply metadata and check the fixture, but these are independent tasks;
+a metadata provider invocation does not constitute conformance evidence.
+
+The [test specification](../../design/crates/sage_test_harness/compile-tests.md)
+defines `rustc_execution`, `rustc_lints`, and the updated `compiler_conditions`,
+`diagnostic_locations`, and `blessing_gate` guarantees. Source-level warning
+opt-ins with a quiet command-line default keep incidental lints out of semantic
+fixtures without disabling warning tests. The broad `-A warnings` group suppresses even
+source-level specific warning opt-ins, so the adapter individually allows the
+pinned compiler's warning-by-default lints instead. Both compilers run before diagnostics
+are matched, and both checks gate snapshot updates. Differences require an
+explicit compiler-qualified marker and investigation, not automatic blessing.
+
+Implementation order is the rustc adapter and independent marker matching,
+focused execution/diagnostic tests, then migration of existing fixtures. Audit
+each migration against actual compiler output; preserve language intent and
+record Sage limitations rather than altering source merely to hide a mismatch.

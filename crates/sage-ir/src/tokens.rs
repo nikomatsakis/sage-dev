@@ -56,6 +56,7 @@ pub trait ToTokens<'db> {
 // StringSink: concatenates tokens into a string with spacing
 // ---------------------------------------------------------------------------
 
+// {anchor}`crates.sage_inspector.inspection.canonical_ownership`
 pub struct StringSink {
     buf: String,
     needs_space: bool,

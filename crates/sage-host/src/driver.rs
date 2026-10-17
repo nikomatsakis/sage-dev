@@ -428,6 +428,7 @@ impl Drop for MetadataStub {
 
 /// Build rustc arguments and a session-unique source stub for the metadata
 /// provider. Raw identifiers keep Cargo extern aliases such as `type` valid.
+// {anchor}`crates.sage_test_harness.compile_tests.dependencies`
 fn build_rustc_args(ws: &WorkspaceInfo) -> Result<(Vec<String>, MetadataStub), String> {
     let sysroot = metadata::our_sysroot();
 
@@ -515,6 +516,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[sage::test(crates.sage_test_harness.compile_tests.production_execution)]
     fn failed_metadata_provider_replacement_preserves_the_live_host() {
         let project = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../test-projects/semantic-inspector/db-drop-guard");

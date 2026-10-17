@@ -1,6 +1,9 @@
+// {anchor}`crates.sage_test_harness.compile_tests.production_execution`
+// {anchor}`crates.sage_test_harness.compile_tests.project_isolation`
 // {anchor}`crates.sage_test_harness.compile_tests.annotation_validation`
 // {anchor}`crates.sage_test_harness.compile_tests.compiler_conditions`
 // {anchor}`crates.sage_test_harness.compile_tests.fixtures`
+use super::annotations::Compiler;
 use super::types::FrozenType;
 use super::{BTreeSet, Kind, Marker, Output};
 use sage_host::driver::SageContext;
@@ -14,6 +17,8 @@ use sage_ir::{
 };
 use sage_stash::{Ptr, Stash};
 
+// {anchor}`crates.sage_test_harness.compile_tests.blessing_gate`
+// {anchor}`crates.sage_test_harness.compile_tests.coordinates`
 pub(super) fn collect(
     context: &SageContext<'_>,
     markers: &[Marker],
@@ -273,6 +278,18 @@ fn walk_symbol<'db>(db: &'db dyn Db, symbol: Symbol<'db>, checked: &mut Checked)
         }
         SymbolData::EnumSymbol(EnumSymbol::Local(s)) => {
             s.sig(db);
+            let (stash, cst) = s.cst(db).open_deref();
+            for variant in &stash[cst.variants] {
+                if let Some(discriminant) = variant.discriminant {
+                    checked.diagnostics.push(
+                        Diagnostic::error(
+                            Span::Relative(LocalModItemSym::Enum(s), stash[discriminant].span),
+                            "whole-crate checking of enum discriminants is not supported",
+                        )
+                        .snapshot(db),
+                    );
+                }
+            }
         }
         SymbolData::TraitSymbol(TraitSymbol::Local(s)) => {
             s.sig(db);
@@ -573,10 +590,22 @@ fn compact(source: &str) -> String {
 
 // {anchor}`crates.sage_test_harness.compile_tests.diagnostic_locations`
 // {anchor}`crates.sage_test_harness.compile_tests.diagnostic_counts`<<
-fn match_diagnostics(markers: &[Marker], diagnostics: &[DiagnosticSnapshot]) -> Result<(), String> {
+pub(super) fn match_diagnostics(
+    markers: &[Marker],
+    diagnostics: &[DiagnosticSnapshot],
+) -> Result<(), String> {
+    match_compiler_diagnostics(Compiler::Sage, markers, diagnostics)
+}
+
+// {anchor}`crates.sage_test_harness.compile_tests.rustc_lints`
+pub(super) fn match_compiler_diagnostics(
+    compiler: Compiler,
+    markers: &[Marker],
+    diagnostics: &[DiagnosticSnapshot],
+) -> Result<(), String> {
     let markers: Vec<_> = markers
         .iter()
-        .filter(|m| m.active && matches!(m.kind, Kind::Error | Kind::Warning))
+        .filter(|m| m.applies_to(compiler) && matches!(m.kind, Kind::Error | Kind::Warning))
         .collect();
     let edges: Vec<Vec<_>> = markers
         .iter()
@@ -621,7 +650,7 @@ fn match_diagnostics(markers: &[Marker], diagnostics: &[DiagnosticSnapshot]) -> 
         (0..markers.len()).all(|m| augment(m, &edges, &mut assigned, &mut BTreeSet::new()));
     if !matched || assigned.iter().any(Option::is_none) {
         return Err(format!(
-            "diagnostic markers do not match: {} markers, {} diagnostics\n{}",
+            "{compiler:?} diagnostic markers do not match: {} markers, {} diagnostics\n{}",
             markers.len(),
             diagnostics.len(),
             diagnostics
@@ -659,7 +688,7 @@ mod tests {
             file: "src/lib.rs".into(),
             line,
             kind,
-            active: true,
+            compiler: None,
         }
     }
 
@@ -685,6 +714,7 @@ mod tests {
 
     #[test]
     #[sage::test(crates.sage_test_harness.compile_tests.diagnostic_locations)]
+    #[sage::test(crates.sage_test_harness.compile_tests.rendering)]
     fn labels_and_notes_do_not_supply_matching_locations() {
         let mut diagnostic = diagnostic(1, 1, Severity::Error);
         let other = self::diagnostic(2, 2, Severity::Warning);

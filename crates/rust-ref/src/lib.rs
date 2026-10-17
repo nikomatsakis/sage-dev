@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(serialize = "Def: Serialize", deserialize = "Def: Deserialize<'de>"))]
 #[sage::item(crate::Representation)]
+// {anchor}`crates.sage_oracle_harness.crate.fixed_projection`
 pub struct Crate<Def> {
     pub root: Module<Def>,
 }

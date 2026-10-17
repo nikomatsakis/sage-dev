@@ -635,6 +635,7 @@ async fn solve_atomic_frame<'db>(
     }
 }
 
+// {anchor}`crates.sage_ir.solver.alternative_isolation`
 async fn solve_normalize_frame<'db>(
     db: &'db dyn crate::Db,
     whiteboard: &Whiteboard<'db>,
@@ -974,6 +975,9 @@ fn input_domains<'db>(
         .collect()
 }
 
+// {anchor}`crates.sage_ir.modules.expand.completeness`
+// {anchor}`crates.sage_ir.solver.alternative_isolation`
+// {anchor}`crates.sage_ir.inference.transaction_isolation`
 async fn solve_trait_frame<'db>(
     db: &'db dyn crate::Db,
     whiteboard: &Whiteboard<'db>,
@@ -1119,6 +1123,7 @@ fn match_candidate_head<'db>(
 // ANCHOR_END: example_match_candidate_head
 
 // ANCHOR: example_prove_conjunction
+// {anchor}`crates.sage_ir.inference.atomic_checking`
 async fn prove_conjunction<'db>(
     db: &'db dyn crate::Db,
     whiteboard: &Whiteboard<'db>,
@@ -1534,6 +1539,7 @@ mod whiteboard_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.solver.shared_final_result)]
     fn same_parent_requests_share_one_live_producer_and_result() {
         with_crate(|db, krate| {
             let query = equality_query(krate, 0);

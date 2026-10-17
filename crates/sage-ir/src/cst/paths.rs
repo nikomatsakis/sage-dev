@@ -93,6 +93,7 @@ impl<'db> Path<'db> {
 
 use crate::tokens::{Delimiter, Punct, ToTokens, TokenCtx, TokenSink, emit_comma_sep};
 
+// {anchor}`crates.sage_inspector.inspection.canonical_ownership`
 impl<'db> ToTokens<'db> for Path<'db> {
     fn to_tokens(&self, ctx: &TokenCtx<'_, 'db>, sink: &mut dyn TokenSink) {
         match *self {
@@ -177,6 +178,7 @@ impl<'db> PathAnchor<'db> {
 }
 
 impl<'db> PathSegment<'db> {
+    // {anchor}`crates.sage_ir.checking.signature.storage`
     pub(crate) fn check_type_args(&self, cx: &mut Check<'_, 'db>) -> Slice<Ptr<Ty<'db>>> {
         let src_args = &cx.source_stash[self.type_args];
         if src_args.is_empty() {

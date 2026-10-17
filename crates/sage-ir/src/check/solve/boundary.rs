@@ -21,6 +21,7 @@ pub struct InputInstance<'db> {
     pub param: AlphaEquivParam<'db>,
     pub role: CanonicalVarRole,
     pub domain: InferDomain,
+    pub universe: Universe,
     pub ty: Ptr<Ty<'db>>,
 }
 
@@ -39,6 +40,8 @@ pub struct QueryProofState<'db> {
 }
 
 /// Import a canonical query into a fresh explicit-version proof egraph.
+// {anchor}`crates.sage_ir.inference.atomic_checking`
+// {anchor}`crates.sage_ir.solver.alternative_isolation`
 pub fn instantiate_query<'db>(query: &Stashed<GoalQueryData<'db>>) -> QueryProofState<'db> {
     let (source, data) = query.open();
     let mut stash = Stash::new();
@@ -67,6 +70,7 @@ pub fn instantiate_query<'db>(query: &Stashed<GoalQueryData<'db>>) -> QueryProof
             param: info.param,
             role: info.role,
             domain: info.domain,
+            universe,
             ty,
         });
     }
@@ -120,6 +124,7 @@ pub(crate) fn extract_query_result_at<'db>(
     extract_query_result_with_output_at(db, state, version, GoalOutput::Proven, result)
 }
 
+// {anchor}`crates.sage_ir.solver.alternative_isolation`
 pub(crate) fn extract_query_result_with_output_at<'db>(
     db: &'db dyn crate::Db,
     state: &QueryProofState<'db>,
@@ -298,6 +303,8 @@ pub enum AppliedCertainty<'db> {
 /// Instantiate and transactionally apply a response to its original caller.
 #[allow(clippy::too_many_arguments)]
 // {anchor}`crates.sage_ir.inference.canonical_boundary`
+// {anchor}`crates.sage_ir.inference.transaction_isolation`
+// {anchor}`crates.sage_ir.inference.terminal_obligations`
 pub fn apply_query_response<'db>(
     db: &'db dyn crate::Db,
     caller_stash: &mut Stash,
@@ -492,6 +499,7 @@ impl<'state, 'target, 'db> ResponseExtractor<'state, 'target, 'db> {
                 .egraph
                 .effective_domain(version, &state.stash, root)
                 .is_some_and(|effective_domain| input.domain == effective_domain)
+                && state.egraph.current_universe(version, index) == input.universe
             {
                 class_inputs.entry(root).or_insert(input.param);
             }

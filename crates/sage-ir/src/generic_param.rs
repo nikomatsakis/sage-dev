@@ -26,6 +26,7 @@ impl sage_stash::StashDirect for GenericParamKind {}
 // ---------------------------------------------------------------------------
 
 #[salsa::tracked(debug)]
+// {anchor}`crates.sage_ir.checking.identity_minting`
 pub struct AstGenericParam<'db> {
     pub kind: GenericParamKind,
     pub name: Option<Name<'db>>,

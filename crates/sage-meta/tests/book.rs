@@ -175,6 +175,7 @@ fn chapters(items: &[Value]) -> BTreeMap<String, &Value> {
 
 #[test]
 #[sage::test(meta.book.crates_landing)]
+#[sage::test(meta.anchors.book_explorer)]
 fn curated_crates_landing_preserves_prose_and_links_to_generated_chapters() {
     let fixture = Fixture::new("manual");
     let landing = "# Crates\n\nStart with [symbols](demo/symbols.sage#item:demo::symbols::Item).\n\nOur handwritten tour.\n";
@@ -198,7 +199,24 @@ fn curated_crates_landing_preserves_prose_and_links_to_generated_chapters() {
         .unwrap();
     assert!(rendered.contains("Our handwritten tour."));
     assert!(rendered.contains("demo/symbols.html#item:demo::symbols::Item"));
+    assert_eq!(rendered, landing.replace(".sage", ".html"));
     assert!(!rendered.contains("<iframe"));
+    let crate_children = entries["design/crates/README.md"]["sub_items"]
+        .as_array()
+        .unwrap();
+    assert!(
+        crate_children
+            .iter()
+            .any(|child| { child["Chapter"]["source_path"] == "design/crates/demo/crate.sage" })
+    );
+    let module_children = entries["design/crates/demo/crate.sage"]["sub_items"]
+        .as_array()
+        .unwrap();
+    assert!(
+        module_children
+            .iter()
+            .any(|child| { child["Chapter"]["source_path"] == "design/crates/demo/symbols.sage" })
+    );
     let guide = entries["design/crates/demo/guide.md"];
     assert!(guide["content"].as_str().unwrap().contains("symbols.html"));
     assert_eq!(guide["parent_names"], json!(["Design", "Crates", "demo"]));
@@ -572,6 +590,7 @@ fn script_data(html: &str, id: &str) -> Value {
 
 #[test]
 #[sage::test(meta.book.sage_chapters)]
+#[sage::test(meta.anchors.book_explorer)]
 fn generates_crate_and_module_chapters_for_both_mdbook_protocols() {
     for items_key in ["items", "sections"] {
         let fixture = Fixture::new("manual/src");
@@ -727,6 +746,7 @@ fn chapter_paths_with_url_delimiters_fail_before_publishing_broken_links() {
 
 #[test]
 #[sage::test(meta.book.browser_delivery)]
+#[sage::test(meta.anchors.book_explorer)]
 fn book_asset_is_self_contained_and_embeds_exact_script_safe_model_and_source() {
     let fixture = Fixture::new("manual");
     let prose = "</script><script>globalThis.compromised = true</script> & prose";
@@ -774,6 +794,7 @@ fn book_asset_is_self_contained_and_embeds_exact_script_safe_model_and_source() 
 
 #[test]
 #[sage::test(meta.book.browser_delivery)]
+#[sage::test(meta.anchors.book_explorer)]
 fn unchanged_preprocessing_preserves_asset_timestamp_and_source_edits_refresh_it() {
     let fixture = Fixture::new("manual");
     fixture.book("items");

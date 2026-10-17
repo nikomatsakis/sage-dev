@@ -160,6 +160,7 @@ pub enum Const<'db> {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, sage_reflect::Reflect)]
 #[sage::item(crate::types::Binder)]
+// {anchor}`crates.sage_ir.types.binder.owner_parameters`
 pub struct Binder<'db, T> {
     pub value: T,
     pub generics: Slice<GenericParam<'db>>,
@@ -380,6 +381,24 @@ pub enum TraitItemDef<'db> {
 
 pub type TraitItems<'db> = Binder<'db, Slice<TraitItemDef<'db>>>;
 pub type ImplItems<'db> = Binder<'db, Slice<TraitItemDef<'db>>>;
+
+mod todo {
+    // {anchor}`crates.sage_ir.checking.signature.narrow_detail`<<
+    // TODO: Associated type aliases and constants have no checked signature queries
+    // yet. Implement item-keyed queries that reuse the owner binder without eagerly
+    // checking sibling signatures or bodies; enumeration and function signatures
+    // already have separate query boundaries. Verification for these missing item
+    // kinds depends on introducing their signature APIs.
+    // >>
+
+    // {anchor}`crates.sage_ir.types.binder.owner_parameters`<<
+    // TODO: Associated type aliases and constants have owner identities but no
+    // checked signature queries yet. Implement those queries and open their owner
+    // binders before introducing item parameters; function owner opening is already
+    // implemented. Identity-preservation coverage for these item kinds depends on
+    // those signature APIs and remains deferred.
+    // >>
+}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 #[sage::item(crate::types::MethodReceiver)]

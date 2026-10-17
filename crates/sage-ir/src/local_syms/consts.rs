@@ -9,6 +9,7 @@ use crate::span::AbsoluteSpan;
 #[salsa::tracked(debug)]
 #[sage::item(crate::symbols::LocalConstSym)]
 // {anchor}`crates.sage_ir.symbols.associated_identity`
+// {anchor}`crates.sage_ir.symbols.local_identity`
 pub struct LocalConstSym<'db> {
     pub name: Name<'db>,
     pub scope: ScopeSymbol<'db>,

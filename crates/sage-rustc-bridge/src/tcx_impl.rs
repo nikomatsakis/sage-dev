@@ -158,6 +158,7 @@ impl<'tcx> RustcTcxDb<'tcx> {
         self.external_def_path(crate_num, def_index, false)
     }
 
+    // {anchor}`crates.sage_inspector.inspection.canonical_ownership`
     pub fn canonical_def_path(
         &self,
         crate_num: CrateNum,

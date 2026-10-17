@@ -15,6 +15,8 @@ use crate::symbol::{DefIndex, SymExt, SymExtKind, TraitSymbol};
 /// `None` means this derive or input shape is not represented yet. In
 /// particular, the first vertical slice supports `Clone` for non-generic
 /// structs with named fields, which is sufficient for mini-redis's `Db`.
+// {anchor}`crates.sage_ir.modules.expand.completeness`
+// {anchor}`crates.sage_ir.modules.expand.dependencies`
 pub(crate) fn expand_builtin_derive(
     db: &dyn crate::Db,
     derive_name: &str,
