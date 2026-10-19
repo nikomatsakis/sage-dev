@@ -74,6 +74,7 @@ impl<'a, 'db> Parser<'a, 'db> {
             && crate::cst::attrs::is_known_inert_inner_attribute(&self.text[path.byte_range()])
     }
 
+    // {anchor}`crates.sage_ir.types.spans.item_origin`
     pub(super) fn parse_attr_nodes(
         &self,
         stash: &mut Stash,

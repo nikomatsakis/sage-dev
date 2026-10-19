@@ -1,7 +1,7 @@
 {
   "prompt": "Review this anchor as its assigned subagent. Enumerate ALL requirements, qualifications, edge cases and scenarios. Inspect all supplied implementation and test fragments and trace each aspect to implementation behavior and actual test assertions or justified TODO/N/A evidence. Passing tests and associations alone are insufficient. Follow helpers and capture every additional source dependency with cargo meta review read ANCHOR PATH [selector] before completing the report. Explain prerequisites for justified TODO tests; do not claim deferred behavior is implemented. Distinguish source inspection from commands actually executed. Write a JSON report containing reviewer, report, and requested_edits. Leave requested_edits empty only when every aspect is accounted for and no edits are needed. Otherwise list concrete changes, including missing tests or justified TODO tests with prerequisite comments. Run cargo meta review record ANCHOR REPORT_FILE to finish. After edits or stale-input rejection, run cargo meta review start ANCHOR and review the fresh inputs. The gate fails until a current report with no requested edits is recorded. Dependency capture is agent-declared.",
   "coordinator_instructions": [
-    "Review only meta.anchors.anchor_pages. Follow the repository review skill. Independently reassess every claim aspect and its implementation/test evidence. Do not edit production or tests; report suspected issues to coordinator. Capture every additional source dependency using review read. Distinguish source review from commands actually executed. Record your own completed report via cargo meta review record; do not directly edit saved JSON. Existing justified TODO/N/A evidence can remain deferred.\nHistorical report supplied as context, not an approval to reuse mechanically; independently verify current evidence and rationale:\n{\n  \"decision\": \"todo\",\n  \"outcome\": true,\n  \"requested_edits\": [],\n  \"reason\": \"Complete claim: Every specification anchor has a stable page identifying the rule and showing its definition, context, implementation entries, and tests/evidence. The page includes Rust excerpts and access to surrounding source, and exposes each entry's placeholder status and explanation. Multiple sites remain individually inspectable rather than being reduced to a single coverage badge.\\n\\nStable identity and definition/context: anchors.rs children derives one page per dotted name, page shows the complete claim, provenance and reverse context URL. Individual implementations: page iterates every site, retaining module/file/line/target, status, explanation, cfg and exact escaped excerpt; source_link exposes the surrounding source route. Individual tests: page iterates every test, preserving source body, path/target/cfg/status and matching source link rather than reducing the collection to one badge. The generated_anchor_pages_join_namespaces_claims_implementations_tests_and_reviews body asserts parent and child pages, definition/context link, both fn implementation and ordinary test body, See more link, explicit TODO and N/A explanations, and that generated copies do not become definitions. Its multiline rationale assertion verifies exact escaped literal <p>/& with <br><br> and no raw paragraph newline. The new load_saved call consumes the one-per-anchor saved record; declared review.rs dependency validates directory identity/hashes and acceptable matches current input/outcome/no requested edits before presenting current status. canonical_anchor_pages remains an explicit TODO for exhaustive stable-page/every-site/status/explanation coverage. That documented presentation-test gap is accepted as deferred work; it is not behavioral proof or approval of completed coverage.\\n\\nFresh review method: inspected complete anchors.rs and associated test bodies/full-file context, confirmed unchanged claim/tests against the earlier reviewed packet, and inspected the actual anchor-ID loader replacement. Captured the additionally inspected review.rs through cargo meta review read before completing this decision. Independently executed cargo test -p sage-meta --test book generated_anchor_pages_join_namespaces_claims_implementations_tests_and_reviews -- --exact: 1 passed, 0 failed, 12 filtered out. This verifies the generated-page integration; remaining TODO browser scenarios were not executed.\",\n  \"reviewer\": \"Codex sage-sanity reviewer\"\n}\nCoordinator reports full functional sage-meta suite 321 passing tests and root cargo build passed. This is separately reported execution, not a command you ran. Avoid redundant full suites unless needed to investigate a specific concern. Efficiently compare unchanged evidence to earlier snapshots, but reassess claim-specific rationale independently.\n\nCoordinator baseline comparison at dispatch preparation (reviewer must verify still current):\nimplementation_sources: crates/sage-meta/src/book/anchors.rs: CHANGED; inspect delta\ntest_sources: crates/sage-meta/tests/book.rs: CHANGED; inspect delta\ntest_sources: crates/sage-meta/tests/spec_plan.rs: EXACT BYTE MATCH to historical reviewed source\nFor unchanged legacy anchors, prior report is a completed independent source review. Reassess its claim-specific sufficiency against current claim, metadata and associated test assertions; you need not rediscover all unchanged implementation or rerun tests. For any changed source, inspect the delta and relevant complete behavior. Historical input for exact comparison is /tmp/sage-pre-fragment-validations/meta.anchors.anchor_pages/input.json. If using historical source contents themselves beyond exact comparison, put them in captured coordinator instructions or use review read for their current workspace source.\n\nCoordinator clarification: evaluate the full associated set plus source reasoning; no demand for isolated field-per-test assertions where meaningful integration checks account for claim. If prior rationale relies on helper/surrounding source in historical test_sources/implementation_sources/reads beyond current initial fragments, capture each relied-on dependency via review read (whole file or precise selector). Byte-comparison alone does not persist a freshness dependency.\n\nEfficiency: unchanged legacy evidence already genuinely independently reviewed. Batch evidence reads; inspect only current inputs, deltas, and actually relied-on helpers. Avoid unrelated documentation, repeated broad checks, and rediscovery. Write concise complete claim/evidence/TODO-prerequisite reassessment, distinguish baseline/source/execution, then record promptly.\n"
+    "Follow sage-review-checklist for only the assigned anchor. Begin fresh review using cargo meta review start ANCHOR --instructions /tmp/ci-anchor-review-instructions.txt. Inspect current claim, implementation, complete tests, and capture dependencies through review read. Independently assess current evidence; do not transplant old approvals. Preserve justified TODO/N/A entries honestly. Record a complete claim-specific report. Coordinate all source edits with root BEFORE editing, to avoid invalidating concurrent reviews. Prefer reporting concrete necessary changes for root to batch; do not add unrelated evidence. You own only your assigned validation directory and unique /tmp report. Distinguish source inspection from tests executed. Do not commit.\nRoot centrally runs relevant suites. Do not repeat full suites for a source-only review unless investigating a specific concern. Report source assessment honestly without claiming execution. This does not waive regression reproduction for suspected bugs.\n"
   ],
   "fragments": [
     {
@@ -151,6 +151,9 @@
         "    }",
         "",
         "    // {anchor}`meta.anchors.anchor_pages`",
+        "    // {anchor}`meta.anchors.context_navigation`",
+        "    // {anchor}`meta.anchors.evidence_status`",
+        "    // {anchor}`meta.anchors.placeholder_status`",
         "    fn page(&self, name: &str, url: &str) -> String {",
         "        let mut text = format!(",
         "            \"# {}\\n\\n<nav class=\\\"anchor-breadcrumbs\\\" aria-label=\\\"Anchor namespaces\\\"><a href=\\\"{}\\\">All anchors</a>\",",
@@ -645,7 +648,7 @@
       "selector": {
         "kind": "line_range",
         "start": 1,
-        "end": 173
+        "end": 178
       },
       "contents": [
         "#![feature(register_tool)]",
@@ -821,6 +824,63 @@
         "        }",
         "    }",
         "    result",
+        "}",
+        "",
+        "#[test]",
+        "#[sage::test(meta.book.crates_landing)]",
+        "#[sage::test(meta.anchors.book_explorer)]",
+        ""
+      ]
+    },
+    {
+      "path": "crates/sage-meta/src/spec.rs",
+      "selector": {
+        "kind": "line_range",
+        "start": 576,
+        "end": 580
+      },
+      "contents": [
+        "pub fn anchor_url(name: &str) -> String {",
+        "    format!(\"design/anchor/{}.html\", name.replace('.', \"/\"))",
+        "}",
+        "",
+        "/// mdBook renders directory landing pages as index.html.",
+        ""
+      ]
+    },
+    {
+      "path": "crates/sage-meta/src/book.rs",
+      "selector": {
+        "kind": "line_range",
+        "start": 368,
+        "end": 392
+      },
+      "contents": [
+        "fn encode_url_component(text: &str) -> String {",
+        "    text.bytes()",
+        "        .map(|byte| {",
+        "            if byte.is_ascii_alphanumeric() || b\"-._~\".contains(&byte) {",
+        "                (byte as char).to_string()",
+        "            } else {",
+        "                format!(\"%{byte:02X}\")",
+        "            }",
+        "        })",
+        "        .collect()",
+        "}",
+        "",
+        "fn escape(text: &str) -> String {",
+        "    text.replace('&', \"&amp;\")",
+        "        .replace('<', \"&lt;\")",
+        "        .replace('>', \"&gt;\")",
+        "        .replace('\"', \"&quot;\")",
+        "        .replace('\\'', \"&#39;\")",
+        "        .replace('`', \"&#96;\")",
+        "}",
+        "",
+        "fn render_sections(",
+        "    sections: &mut [serde_json::Value],",
+        "    spec: &sage_meta::spec::SpecIndex,",
+        ") -> Result<(), Box<dyn std::error::Error>> {",
         ""
       ]
     },
@@ -828,70 +888,12 @@
       "path": "crates/sage-meta/src/review.rs",
       "selector": {
         "kind": "line_range",
-        "start": 154,
-        "end": 278
+        "start": 215,
+        "end": 272
       },
       "contents": [
-        "pub fn inventory(",
-        "    spec: &SpecIndex,",
-        "    rust: &CorrespondenceIndex,",
-        ") -> Result<BTreeMap<String, ReviewInput>, Box<dyn Error>> {",
-        "    let workspace = rust.workspace_root().unwrap_or(Path::new(\".\"));",
-        "    let mut test_identities = BTreeMap::new();",
-        "    for site in rust.tests.values().flatten() {",
-        "        let identity = (&site.file, &site.crate_name, &site.target, &site.rust_path);",
-        "        let span = (site.span.start, site.span.end);",
-        "        if test_identities",
-        "            .insert(identity, span)",
-        "            .is_some_and(|previous| previous != span)",
-        "        {",
-        "            return Err(format!(",
-        "                \"ambiguous test selector: {} {} {}\",",
-        "                site.file, site.target, site.rust_path",
-        "            )",
-        "            .into());",
-        "        }",
-        "    }",
-        "    let mut inputs = BTreeMap::new();",
-        "    for (name, anchor) in &spec.anchors {",
-        "        // {anchor}`meta.reviews.claim_text`",
-        "        let mut fragments = vec![InputFragment {",
-        "            path: claim_path(workspace, &anchor.file)?,",
-        "            selector: Selector::Claim {",
-        "                anchor_id: name.clone(),",
-        "            },",
-        "            contents: source_lines(&anchor.content),",
-        "        }];",
-        "        let mut implementations = Vec::new();",
-        "        let mut files = BTreeSet::new();",
-        "        for site in rust.implementations.get(name).into_iter().flatten() {",
-        "            implementations.push(ReviewImplementation {",
-        "                crate_name: site.crate_name.clone(),",
-        "                target: site.target.clone(),",
-        "                module: site.module.clone(),",
-        "                file: site.file.clone(),",
-        "                cfg: site.cfg.clone(),",
-        "                excerpt: source_lines(&site.excerpt),",
-        "                region: site.region,",
-        "                status: site.status,",
-        "                explanation: site.explanation.clone(),",
-        "            });",
-        "            files.insert(site.file.clone());",
-        "        }",
-        "        implementations.sort();",
-        "        implementations.dedup();",
-        "        for file in files {",
-        "            let source = rust",
-        "                .files",
-        "                .get(&file)",
-        "                .ok_or(\"missing implementation source\")?;",
-        "            fragments.push(InputFragment {",
-        "                path: file,",
-        "                selector: Selector::WholeFile,",
-        "                contents: source_lines(source),",
-        "            });",
-        "        }",
         "        // {anchor}`meta.reviews.test_source`",
+        "        // {anchor}`crates.sage_test_harness.compile_tests.review_visibility`",
         "        let mut tests = Vec::new();",
         "        let mut test_fragments = BTreeMap::new();",
         "        for site in rust.tests.get(name).into_iter().flatten() {",
@@ -948,31 +950,6 @@
         "        inputs.insert(",
         "            name.clone(),",
         "            ReviewInput {",
-        "                prompt: PROMPT.into(),",
-        "                coordinator_instructions: Vec::new(),",
-        "                fragments,",
-        "                implementations,",
-        "                tests,",
-        "            },",
-        "        );",
-        "    }",
-        "    Ok(inputs)",
-        ""
-      ]
-    },
-    {
-      "path": "crates/sage-meta/src/spec.rs",
-      "selector": {
-        "kind": "line_range",
-        "start": 574,
-        "end": 578
-      },
-      "contents": [
-        "pub fn anchor_url(name: &str) -> String {",
-        "    format!(\"design/anchor/{}.html\", name.replace('.', \"/\"))",
-        "}",
-        "",
-        "/// mdBook renders directory landing pages as index.html.",
         ""
       ]
     }
@@ -986,11 +963,11 @@
       "cfg": [],
       "excerpt": [
         "    // {anchor}`meta.anchors.anchor_pages`",
+        "    // {anchor}`meta.anchors.context_navigation`",
+        "    // {anchor}`meta.anchors.evidence_status`",
+        "    // {anchor}`meta.anchors.placeholder_status`",
         "    fn page(&self, name: &str, url: &str) -> String {",
         "        let mut text = format!(",
-        "            \"# {}\\n\\n<nav class=\\\"anchor-breadcrumbs\\\" aria-label=\\\"Anchor namespaces\\\"><a href=\\\"{}\\\">All anchors</a>\",",
-        "            escape(name),",
-        "            relative_href(url, ROOT_URL)",
         ""
       ],
       "region": false,

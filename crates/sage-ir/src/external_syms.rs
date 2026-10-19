@@ -171,6 +171,7 @@ pub fn external_inherent_method_candidates<'db>(
 /// External explicit impl identities for one fixed trait and optional rigid
 /// self head. Header and associated-value metadata remain separate queries.
 #[salsa::tracked(returns(ref))]
+// {anchor}`crates.sage_ir.solver.candidate_completeness`
 pub fn external_relevant_impls<'db>(
     db: &'db dyn crate::Db,
     trait_sym: SymExt<'db>,

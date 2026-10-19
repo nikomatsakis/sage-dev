@@ -100,6 +100,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 // {anchor}`meta.reviews.preparation`
 // {anchor}`meta.reviews.recorded_reads`
 // {anchor}`meta.reviews.recording`
+// {anchor}`meta.reviews.review_instructions`
 fn review(args: &[std::ffi::OsString]) -> Result<(), Box<dyn std::error::Error>> {
     use sage_meta::review::{self, Selector, ValidationOutput};
     let args = args
@@ -135,6 +136,7 @@ fn review(args: &[std::ffi::OsString]) -> Result<(), Box<dyn std::error::Error>>
 }
 
 // {anchor}`meta.reviews.gate`
+// {anchor}`meta.reviews.record_required`
 // {anchor}`meta.reviews.review_diagnostics`
 fn check(args: &[std::ffi::OsString]) -> Result<(), Box<dyn std::error::Error>> {
     let mut json = false;

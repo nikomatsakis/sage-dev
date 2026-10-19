@@ -318,6 +318,7 @@ impl<'db> BodyFinalizer<'_, '_, 'db> {
 
     // {anchor}`crates.sage_ir.checking.body.operator_calls`
     // {anchor}`crates.sage_ir.types.calls.selected_semantics`
+    // {anchor}`crates.sage_ir.types.operators.trait_calls`
     fn copy_call_target(&mut self, target: ResolvedCallTarget<'db>) -> ResolvedCallTarget<'db> {
         let ResolvedCallTarget {
             function,

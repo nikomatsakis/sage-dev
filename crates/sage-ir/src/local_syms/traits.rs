@@ -39,6 +39,7 @@ impl<'db> LocalTraitSym<'db> {
 impl<'db> LocalTraitSym<'db> {
     #[salsa::tracked]
     #[sage::item(crate::symbols::LocalTraitSym::signature)]
+    // {anchor}`crates.sage_ir.symbols.associated_interfaces`
     // {anchor}`crates.sage_ir.checking.identity_minting`
     // {anchor}`crates.sage_ir.checking.signature.owner_binder`
     // {anchor}`crates.sage_ir.checking.signature.body_independence`

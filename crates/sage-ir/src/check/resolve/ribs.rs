@@ -8,6 +8,7 @@ use crate::tytree::LocalId;
 use super::Namespace;
 
 /// The result of resolving a name or path.
+// {anchor}`crates.sage_ir.symbols.definition_identity`
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Resolution<'db> {
     Local(LocalId),
@@ -63,6 +64,8 @@ impl<'db> Ribs<'db> {
         }
     }
 
+    // {anchor}`crates.sage_ir.resolution.lookup.dependencies`
+    // {anchor}`crates.sage_ir.resolution.lookup.identity_only`
     pub fn lookup(&self, name: Name<'db>, ns: Namespace) -> Option<Resolution<'db>> {
         for scope in self.scopes.iter().rev() {
             for (n, entry_ns, entry) in scope.iter().rev() {

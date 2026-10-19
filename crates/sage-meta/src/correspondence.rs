@@ -575,6 +575,7 @@ impl CorrespondenceIndex {
                         self.load_file(child)?;
                     }
                 }
+                // {anchor}`meta.reviews.selector_test`
                 syn::Item::Fn(function) => {
                     self.record(
                         &function.attrs,
@@ -700,6 +701,7 @@ impl CorrespondenceIndex {
         }
         Ok(())
     }
+    // {anchor}`meta.anchors.evidence_status`
     fn record(
         &mut self,
         attrs: &[syn::Attribute],

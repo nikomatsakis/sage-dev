@@ -1,7 +1,7 @@
 {
   "prompt": "Review this anchor as its assigned subagent. Enumerate ALL requirements, qualifications, edge cases and scenarios. Inspect all supplied implementation and test fragments and trace each aspect to implementation behavior and actual test assertions or justified TODO/N/A evidence. Passing tests and associations alone are insufficient. Follow helpers and capture every additional source dependency with cargo meta review read ANCHOR PATH [selector] before completing the report. Explain prerequisites for justified TODO tests; do not claim deferred behavior is implemented. Distinguish source inspection from commands actually executed. Write a JSON report containing reviewer, report, and requested_edits. Leave requested_edits empty only when every aspect is accounted for and no edits are needed. Otherwise list concrete changes, including missing tests or justified TODO tests with prerequisite comments. Run cargo meta review record ANCHOR REPORT_FILE to finish. After edits or stale-input rejection, run cargo meta review start ANCHOR and review the fresh inputs. The gate fails until a current report with no requested edits is recorded. Dependency capture is agent-declared.",
   "coordinator_instructions": [
-    "Review only your assigned anchor using the sage-review-checklist skill and its start/read/record workflow. Capture these instructions with start --instructions /tmp/anchor-review-instructions.txt. Use captured source context; do not import old approvals or uncaptured coordinator conclusions. Write only your anchor's validations directory and a unique report file under /tmp. Coordinate production, test, and association edits with the coordinator before making them because concurrent reviewers may capture the same files. Capture essential dependencies using review read; report any necessary association additions for coordinated handling. Existing TODO/N/A evidence must be individually justified and remain deferred; do not claim passing placeholders verify functionality. Distinguish source review from tests actually run. On a suspected behavioral violation, coordinate a regression test and follow the skill rather than rubber-stamping. Return a concise summary of the recorded outcome or precise unresolved finding. Do not commit or change unrelated files.\n"
+    "Follow sage-review-checklist for only the assigned anchor. Begin fresh review using cargo meta review start ANCHOR --instructions /tmp/ci-anchor-review-instructions.txt. Inspect current claim, implementation, complete tests, and capture dependencies through review read. Independently assess current evidence; do not transplant old approvals. Preserve justified TODO/N/A entries honestly. Record a complete claim-specific report. Coordinate all source edits with root BEFORE editing, to avoid invalidating concurrent reviews. Prefer reporting concrete necessary changes for root to batch; do not add unrelated evidence. You own only your assigned validation directory and unique /tmp report. Distinguish source inspection from tests executed. Do not commit.\nRoot centrally runs relevant suites. Do not repeat full suites for a source-only review unless investigating a specific concern. Report source assessment honestly without claiming execution. This does not waive regression reproduction for suspected bugs.\n"
   ],
   "fragments": [
     {
@@ -579,8 +579,10 @@
         "}",
         "",
         "impl<T: StashHash + Copy> Stashed<T> {",
+        "    // {anchor}`crates.sage_ir.checking.owned_products`",
         "    // {anchor}`crates.sage_stash.storage.rooted_equality`",
         "    // {anchor}`crates.sage_stash.storage.query_value`",
+        "    // {anchor}`crates.sage_ir.checking.signature.storage`",
         "    pub fn new(stash: Stash, root: T) -> Self {",
         "        let mut hasher = FingerprintHasher::new();",
         "        root.stash_hash(&stash, &mut hasher);",
@@ -1787,11 +1789,11 @@
       "cfg": [],
       "excerpt": [
         "    // {anchor}`crates.sage_stash.storage.query_value`",
+        "    // {anchor}`crates.sage_ir.checking.signature.storage`",
         "    pub fn new(stash: Stash, root: T) -> Self {",
         "        let mut hasher = FingerprintHasher::new();",
         "        root.stash_hash(&stash, &mut hasher);",
         "        let fingerprint = hasher.finalize();",
-        "        Self {",
         ""
       ],
       "region": false,

@@ -433,6 +433,7 @@ fn check_roots(model_root: &Path, rust_root: Option<&Path>) -> CheckReport {
 }
 
 // {anchor}`meta.reviews.gate`
+// {anchor}`meta.reviews.record_required`
 // {anchor}`meta.reviews.decisions`
 // {anchor}`meta.reviews.review_diagnostics`
 fn check_reviews(

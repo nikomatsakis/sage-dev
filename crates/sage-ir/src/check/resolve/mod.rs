@@ -125,6 +125,7 @@ impl<'db> Resolver<'db> {
     }
 
     // ANCHOR: architecture_resolve_path
+    // {anchor}`crates.sage_ir.symbols.definition_identity`
     #[sage::item(crate::resolution::Resolver::resolve)]
     // {anchor}`crates.sage_ir.resolution.lookup.precedence`
     // {anchor}`crates.sage_ir.resolution.lookup.identity_only`

@@ -537,6 +537,7 @@ impl<'a, 'db> Parser<'a, 'db> {
 
     // {anchor}`crates.sage_ir.types.spans.offset_reuse`
     // {anchor}`crates.sage_ir.types.spans.relative_composition`
+    // {anchor}`crates.sage_ir.types.spans.item_origin`
     fn parse_associated_items(
         &self,
         stash: &mut Stash,
@@ -563,12 +564,12 @@ impl<'a, 'db> Parser<'a, 'db> {
                 pending_attrs.clear();
                 continue;
             }
-            pending_attrs.clear();
-            let placement = relative_span(child, item_start);
-            let child_start = child.start_byte() as u32;
+            let child_start = super::util::item_start(child, &pending_attrs);
+            let mut placement = relative_span(child, item_start);
+            placement.start = child_start - item_start;
             match child.kind() {
                 "function_item" | "function_signature_item" => {
-                    let fn_data = self.parse_fn_cst_data(stash, child, child_start);
+                    let fn_data = self.parse_fn_cst_data(stash, child, &pending_attrs, child_start);
                     let ptr = stash.alloc(fn_data);
                     items.push(TraitItemCst::Fn {
                         cst: ptr,
@@ -576,7 +577,8 @@ impl<'a, 'db> Parser<'a, 'db> {
                     });
                 }
                 "associated_type" | "type_item" => {
-                    let ta_data = self.parse_type_alias_cst_data(stash, child, child_start);
+                    let ta_data =
+                        self.parse_type_alias_cst_data(stash, child, &pending_attrs, child_start);
                     let ptr = stash.alloc(ta_data);
                     items.push(TraitItemCst::Type {
                         cst: ptr,
@@ -584,7 +586,8 @@ impl<'a, 'db> Parser<'a, 'db> {
                     });
                 }
                 "const_item" => {
-                    let c_data = self.parse_const_cst_data(stash, child, child_start);
+                    let c_data =
+                        self.parse_const_cst_data(stash, child, &pending_attrs, child_start);
                     let ptr = stash.alloc(c_data);
                     items.push(TraitItemCst::Const {
                         cst: ptr,
@@ -593,6 +596,7 @@ impl<'a, 'db> Parser<'a, 'db> {
                 }
                 _ => {}
             }
+            pending_attrs.clear();
         }
         stash.alloc_slice(&items)
     }
@@ -1298,13 +1302,14 @@ impl<'a, 'db> Parser<'a, 'db> {
         &self,
         stash: &mut Stash,
         node: tree_sitter::Node<'a>,
+        pending_attrs: &[tree_sitter::Node<'a>],
         item_start: u32,
     ) -> FnCstData<'db> {
         let name = node
             .child_by_field_name("name")
             .map(|n| Name::new(self.db, self.text[n.byte_range()].to_owned()))
             .unwrap_or_else(|| Name::new(self.db, "_".to_owned()));
-        let attrs = stash.alloc_slice(&[]);
+        let attrs = self.parse_attr_nodes(stash, pending_attrs, item_start);
         let generics = self.parse_generics(stash, node, item_start);
         let params = self.parse_fn_params(stash, node, item_start);
         let ret = self.parse_return_type(stash, node, item_start);
@@ -1313,7 +1318,7 @@ impl<'a, 'db> Parser<'a, 'db> {
             .map(|n| self.parse_expr(stash, n, item_start));
         let where_clauses = self.parse_where_clauses(stash, node, item_start);
         let span = RelativeSpan {
-            start: node.start_byte() as u32 - item_start,
+            start: 0,
             end: node.end_byte() as u32 - item_start,
         };
 
@@ -1333,20 +1338,21 @@ impl<'a, 'db> Parser<'a, 'db> {
         &self,
         stash: &mut Stash,
         node: tree_sitter::Node<'a>,
+        pending_attrs: &[tree_sitter::Node<'a>],
         item_start: u32,
     ) -> TypeAliasCstData<'db> {
         let name = node
             .child_by_field_name("name")
             .map(|n| Name::new(self.db, self.text[n.byte_range()].to_owned()))
             .unwrap_or_else(|| Name::new(self.db, "_".to_owned()));
-        let attrs = stash.alloc_slice(&[]);
+        let attrs = self.parse_attr_nodes(stash, pending_attrs, item_start);
         let generics = self.parse_generics(stash, node, item_start);
         let ty = node
             .child_by_field_name("type")
             .map(|n| self.parse_type(stash, n, item_start));
         let where_clauses = self.parse_where_clauses(stash, node, item_start);
         let span = RelativeSpan {
-            start: node.start_byte() as u32 - item_start,
+            start: 0,
             end: node.end_byte() as u32 - item_start,
         };
 
@@ -1364,13 +1370,14 @@ impl<'a, 'db> Parser<'a, 'db> {
         &self,
         stash: &mut Stash,
         node: tree_sitter::Node<'a>,
+        pending_attrs: &[tree_sitter::Node<'a>],
         item_start: u32,
     ) -> ConstCstData<'db> {
         let name = node
             .child_by_field_name("name")
             .map(|n| Name::new(self.db, self.text[n.byte_range()].to_owned()))
             .unwrap_or_else(|| Name::new(self.db, "_".to_owned()));
-        let attrs = stash.alloc_slice(&[]);
+        let attrs = self.parse_attr_nodes(stash, pending_attrs, item_start);
         let ty = node
             .child_by_field_name("type")
             .map(|n| self.parse_type(stash, n, item_start));
@@ -1378,7 +1385,7 @@ impl<'a, 'db> Parser<'a, 'db> {
             .child_by_field_name("value")
             .map(|n| self.parse_expr(stash, n, item_start));
         let span = RelativeSpan {
-            start: node.start_byte() as u32 - item_start,
+            start: 0,
             end: node.end_byte() as u32 - item_start,
         };
 

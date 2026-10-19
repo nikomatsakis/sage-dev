@@ -241,12 +241,55 @@ impl<'db> ExprCst<'db> {
                 let rr = cx.source_stash[*rhs].check_with(cx, scope).await;
                 super::operator::check_binary_operator(cx, scope, *op, rl, rr, span)
             }
+            // {anchor}`crates.sage_ir.types.lifetimes.unchecked_borrows`
+            ExprCstKind::Unary(UnaryOp::Deref, operand) => {
+                let operand = cx.source_stash[*operand].check_with(cx, scope).await;
+                let operand_ty = cx.stash()[operand].ty;
+                let operand_ty = cx.find(operand_ty);
+                let operand_kind = cx.stash()[operand_ty];
+                match operand_kind {
+                    Ty::Ref(pointee, _, _) => (TyExprData::Deref(operand), pointee),
+                    Ty::Error(error) => (TyExprData::Error(error), operand_ty),
+                    Ty::InferVar(_) => {
+                        // TODO: Retain a deferred dereference operation so later
+                        // constraints can determine the operand's reference shape.
+                        // Suspending the main body task here prevents those
+                        // constraints and finalization from running.
+                        let error = cx.record(Diagnostic::error(
+                            cx.span(span),
+                            "dereference of an unresolved operand type is not supported yet",
+                        ));
+                        (TyExprData::Error(error), cx.alloc_ty(Ty::Error(error)))
+                    }
+                    Ty::Bool
+                    | Ty::Char
+                    | Ty::Int(_)
+                    | Ty::Uint(_)
+                    | Ty::Float(_)
+                    | Ty::Str
+                    | Ty::Adt(_, _)
+                    | Ty::Alias(_)
+                    | Ty::Tuple(_)
+                    | Ty::Slice(_)
+                    | Ty::Array(_, _)
+                    | Ty::FnPtr(_, _)
+                    | Ty::Param(_)
+                    | Ty::Never => {
+                        let error = cx.record(Diagnostic::error(
+                            cx.span(span),
+                            "dereference requires a reference type",
+                        ));
+                        (TyExprData::Error(error), cx.alloc_ty(Ty::Error(error)))
+                    }
+                }
+            }
             ExprCstKind::Unary(op, operand) => {
                 let ro = cx.source_stash[*operand].check_with(cx, scope).await;
                 let ty = cx.stash()[ro].ty;
                 (TyExprData::Unary(*op, ro), ty)
             }
             // {anchor}`crates.sage_ir.types.lifetimes.dummy`
+            // {anchor}`crates.sage_ir.types.lifetimes.unchecked_borrows`
             ExprCstKind::Ref(inner, m) => {
                 let ri = cx.source_stash[*inner].check_with(cx, scope).await;
                 let inner_ty = cx.stash()[ri].ty;

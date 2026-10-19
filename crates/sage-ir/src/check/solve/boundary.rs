@@ -495,11 +495,14 @@ impl<'state, 'target, 'db> ResponseExtractor<'state, 'target, 'db> {
             };
             input_indices.insert(index, input.param);
             let root = state.egraph.find(version, input.ty);
+            let Ty::InferVar(root_index) = state.stash[root] else {
+                continue;
+            };
             if state
                 .egraph
                 .effective_domain(version, &state.stash, root)
                 .is_some_and(|effective_domain| input.domain == effective_domain)
-                && state.egraph.current_universe(version, index) == input.universe
+                && state.egraph.current_universe(version, root_index) == input.universe
             {
                 class_inputs.entry(root).or_insert(input.param);
             }
@@ -629,6 +632,7 @@ impl<'state, 'target, 'db> ResponseExtractor<'state, 'target, 'db> {
         }
     }
 
+    // {anchor}`crates.sage_ir.types.aliases.identity`
     fn copy_alias(&mut self, alias: AliasTy<'db>) -> AliasTy<'db> {
         match alias {
             AliasTy::Named(alias) => AliasTy::Named(NamedAliasTy {

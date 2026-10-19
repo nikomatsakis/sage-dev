@@ -325,7 +325,7 @@ mod tests {
         assert!(
             test.prepare()
                 .unwrap_err()
-                .contains("0 markers, 1 diagnostics")
+                .contains("Sage diagnostic markers do not match: 0 markers, 1 diagnostics")
         );
         let mut test = CompileTest::default();
         test.source("fn f() -> u16 {\n missing //# sym\n //# ERROR\n}");
@@ -387,12 +387,18 @@ mod tests {
         let mut test = CompileTest::default();
         test.source("fn good() {}\nfn bad() -> u16 { true }");
         let error = test.prepare().unwrap_err();
-        assert!(error.contains("0 markers, 1 diagnostics"), "{error}");
+        assert!(
+            error.contains("Sage diagnostic markers do not match: 0 markers, 1 diagnostics"),
+            "{error}"
+        );
         let mut selected = CompileTest::default();
         selected.source("fn good() {} //# ty\nfn bad() -> u16 { true }");
         selected.observations(expect![""]);
         let error = selected.prepare().unwrap_err();
-        assert!(error.contains("0 markers, 1 diagnostics"), "{error}");
+        assert!(
+            error.contains("Sage diagnostic markers do not match: 0 markers, 1 diagnostics"),
+            "{error}"
+        );
     }
 
     #[test]

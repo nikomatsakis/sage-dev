@@ -18,6 +18,10 @@ mod todo {
     fn definitions_across_markdown_and_sage() {
         // TODO: Check both definition origins, cross-source duplicates,
         // references, preserved context, and the chapter-based naming rules.
+        // Envelope-clause rule ownership additionally requires clause-level
+        // prose syntax, captured clause source spans, and a stable clause owner
+        // representation; parser::method models effects without prose. Add
+        // owner/source-location assertions once that representation exists.
     }
 
     #[test]
@@ -71,8 +75,10 @@ mod todo {
     #[test]
     #[sage::test(meta.anchors.context_navigation)]
     fn anchor_pages_and_definition_context_links() {
-        // TODO: Badges open the anchor page; context links return precisely to
-        // Markdown or Sage definitions while preserving context permalinks.
+        // TODO: Add browser-driven badge-to-anchor-to-context round trips for
+        // Markdown and Sage definitions, verifying permalink preservation and
+        // scrolling to the exact definition. Rendered-link assertions alone
+        // do not exercise this interactive navigation.
     }
 
     #[test]

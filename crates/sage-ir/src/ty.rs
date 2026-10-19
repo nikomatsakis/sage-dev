@@ -17,6 +17,7 @@ use crate::symbol::{ConstSymbol, FnSymbol, Symbol, TraitSymbol, TypeAliasSymbol}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]
 #[sage::item(crate::types::Ty)]
+// {anchor}`crates.sage_ir.symbols.definition_identity`
 pub enum Ty<'db> {
     // --- primitives ---
     Bool,

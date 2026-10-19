@@ -1,7 +1,7 @@
 {
   "prompt": "Review this anchor as its assigned subagent. Enumerate ALL requirements, qualifications, edge cases and scenarios. Inspect all supplied implementation and test fragments and trace each aspect to implementation behavior and actual test assertions or justified TODO/N/A evidence. Passing tests and associations alone are insufficient. Follow helpers and capture every additional source dependency with cargo meta review read ANCHOR PATH [selector] before completing the report. Explain prerequisites for justified TODO tests; do not claim deferred behavior is implemented. Distinguish source inspection from commands actually executed. Write a JSON report containing reviewer, report, and requested_edits. Leave requested_edits empty only when every aspect is accounted for and no edits are needed. Otherwise list concrete changes, including missing tests or justified TODO tests with prerequisite comments. Run cargo meta review record ANCHOR REPORT_FILE to finish. After edits or stale-input rejection, run cargo meta review start ANCHOR and review the fresh inputs. The gate fails until a current report with no requested edits is recorded. Dependency capture is agent-declared.",
   "coordinator_instructions": [
-    "Review only your assigned anchor using the sage-review-checklist skill and its start/read/record workflow. Capture these instructions with start --instructions /tmp/anchor-review-instructions.txt. Use captured source context; do not import old approvals or uncaptured coordinator conclusions. Write only your anchor's validations directory and a unique report file under /tmp. Coordinate production, test, and association edits with the coordinator before making them because concurrent reviewers may capture the same files. Capture essential dependencies using review read; report any necessary association additions for coordinated handling. Existing TODO/N/A evidence must be individually justified and remain deferred; do not claim passing placeholders verify functionality. Distinguish source review from tests actually run. On a suspected behavioral violation, coordinate a regression test and follow the skill rather than rubber-stamping. Return a concise summary of the recorded outcome or precise unresolved finding. Do not commit or change unrelated files.\n\nCoordinator authorization: resolve missing evidence as part of this assignment. You may add essential anchor association comments and focused tests (or associate existing substantive tests), then format, run relevant tests, and perform a fresh review. Announce the files you will edit and coordinate with another active reviewer if sharing a file. Do not stop merely to request these routine evidence edits. Production behavioral changes still require reporting a reproduced failure and coordinating the correction with root. Root will perform centralized delegated post-codegen and Sage sanity checks covering all reviewer edits; report your changed paths for that pass. Preserve honest existing TODOs. If an additional implementation obligation is genuinely absent, report it to root rather than disguising the gap as a test TODO.\n"
+    "Follow sage-review-checklist for only the assigned anchor. Begin fresh review using cargo meta review start ANCHOR --instructions /tmp/ci-anchor-review-instructions.txt. Inspect current claim, implementation, complete tests, and capture dependencies through review read. Independently assess current evidence; do not transplant old approvals. Preserve justified TODO/N/A entries honestly. Record a complete claim-specific report. Coordinate all source edits with root BEFORE editing, to avoid invalidating concurrent reviews. Prefer reporting concrete necessary changes for root to batch; do not add unrelated evidence. You own only your assigned validation directory and unique /tmp report. Distinguish source inspection from tests executed. Do not commit.\nRoot centrally runs relevant suites. Do not repeat full suites for a source-only review unless investigating a specific concern. Report source assessment honestly without claiming execution. This does not waive regression reproduction for suspected bugs.\n"
   ],
   "fragments": [
     {
@@ -658,6 +658,7 @@
         "}",
         "",
         "// {anchor}`crates.sage_ir.solver.alternative_isolation`",
+        "// {anchor}`crates.sage_ir.solver.canonical_outputs`",
         "async fn solve_normalize_frame<'db>(",
         "    db: &'db dyn crate::Db,",
         "    whiteboard: &Whiteboard<'db>,",
@@ -999,6 +1000,8 @@
         "",
         "// {anchor}`crates.sage_ir.modules.expand.completeness`",
         "// {anchor}`crates.sage_ir.solver.alternative_isolation`",
+        "// {anchor}`crates.sage_ir.inference.transaction_isolation`",
+        "// {anchor}`crates.sage_ir.solver.candidate_completeness`",
         "async fn solve_trait_frame<'db>(",
         "    db: &'db dyn crate::Db,",
         "    whiteboard: &Whiteboard<'db>,",

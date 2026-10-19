@@ -141,6 +141,8 @@ struct SourceData {
 /// Render specification prose with safe Markdown, rule links, and book-relative URLs.
 /// Generated badges are inserted after Markdown rendering, so raw source HTML
 /// cannot acquire executable meaning in an exported architecture snapshot.
+// {anchor}`meta.anchors.context_navigation`
+// {anchor}`meta.reviews.claim_text`
 pub fn render_spec_markdown(
     spec: &crate::spec::SpecIndex,
     file: &str,

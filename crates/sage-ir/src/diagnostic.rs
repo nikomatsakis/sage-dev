@@ -33,6 +33,7 @@ pub enum Span<'db> {
 }
 
 impl<'db> Span<'db> {
+    // {anchor}`crates.sage_ir.types.spans.relative_composition`
     pub fn resolve(&self, db: &'db dyn crate::Db) -> AbsoluteSpan<'db> {
         match self {
             Span::Relative(sym, rel) => sym.relative_span_base(db).resolve(*rel),

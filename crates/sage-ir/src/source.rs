@@ -12,6 +12,7 @@ pub struct SourceFile {
 
 /// Normalize logical paths, retaining leading parent components used by a
 /// source root nested inside its package directory.
+// {anchor}`crates.sage_test_harness.compile_tests.project_isolation`
 pub fn normalize_path(path: &str) -> String {
     let mut parts = Vec::new();
     for part in path.split('/') {

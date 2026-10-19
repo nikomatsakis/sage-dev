@@ -1,7 +1,7 @@
 {
   "prompt": "Review this anchor as its assigned subagent. Enumerate ALL requirements, qualifications, edge cases and scenarios. Inspect all supplied implementation and test fragments and trace each aspect to implementation behavior and actual test assertions or justified TODO/N/A evidence. Passing tests and associations alone are insufficient. Follow helpers and capture every additional source dependency with cargo meta review read ANCHOR PATH [selector] before completing the report. Explain prerequisites for justified TODO tests; do not claim deferred behavior is implemented. Distinguish source inspection from commands actually executed. Write a JSON report containing reviewer, report, and requested_edits. Leave requested_edits empty only when every aspect is accounted for and no edits are needed. Otherwise list concrete changes, including missing tests or justified TODO tests with prerequisite comments. Run cargo meta review record ANCHOR REPORT_FILE to finish. After edits or stale-input rejection, run cargo meta review start ANCHOR and review the fresh inputs. The gate fails until a current report with no requested edits is recorded. Dependency capture is agent-declared.",
   "coordinator_instructions": [
-    "Review only your assigned anchor using the sage-review-checklist skill and its start/read/record workflow. Capture these instructions with start --instructions /tmp/anchor-review-instructions.txt. Use captured source context; do not import old approvals or uncaptured coordinator conclusions. Write only your anchor's validations directory and a unique report file under /tmp. Coordinate production, test, and association edits with the coordinator before making them because concurrent reviewers may capture the same files. Capture essential dependencies using review read; report any necessary association additions for coordinated handling. Existing TODO/N/A evidence must be individually justified and remain deferred; do not claim passing placeholders verify functionality. Distinguish source review from tests actually run. On a suspected behavioral violation, coordinate a regression test and follow the skill rather than rubber-stamping. Return a concise summary of the recorded outcome or precise unresolved finding. Do not commit or change unrelated files.\n"
+    "Follow sage-review-checklist for only the assigned anchor. Begin fresh review using cargo meta review start ANCHOR --instructions /tmp/ci-anchor-review-instructions.txt. Inspect current claim, implementation, complete tests, and capture dependencies through review read. Independently assess current evidence; do not transplant old approvals. Preserve justified TODO/N/A entries honestly. Record a complete claim-specific report. Coordinate all source edits with root BEFORE editing, to avoid invalidating concurrent reviews. Prefer reporting concrete necessary changes for root to batch; do not add unrelated evidence. You own only your assigned validation directory and unique /tmp report. Distinguish source inspection from tests executed. Do not commit.\nRoot centrally runs relevant suites. Do not repeat full suites for a source-only review unless investigating a specific concern. Report source assessment honestly without claiming execution. This does not waive regression reproduction for suspected bugs.\n"
   ],
   "fragments": [
     {
@@ -158,6 +158,38 @@
         "#[cfg(test)]",
         "mod tests {",
         "    use super::*;",
+        "    #[test]",
+        "    #[sage::test(crates.sage_test_harness.compile_tests.target_line)]",
+        "    fn all_directives_share_targets_and_reject_caret_and_range_syntax() {",
+        "        for directive in [\"ty\", \"sym\", \"ERROR\", \"WARN\"] {",
+        "            let source = format!(",
+        "                \"fn f() {{\\n    value; //# {directive}\\n\\n    //# {directive}\\n    //# {directive}\\n}}\"",
+        "            );",
+        "            let markers = parse(\"src/lib.rs\", &source).unwrap();",
+        "            assert_eq!(",
+        "                markers.iter().map(|marker| marker.line).collect::<Vec<_>>(),",
+        "                vec![2, 2, 2],",
+        "                \"{directive}\"",
+        "            );",
+        "            assert!(",
+        "                parse(\"src/lib.rs\", &format!(\"\\n  //# {directive}\"))",
+        "                    .unwrap_err()",
+        "                    .contains(\"annotation has no target\"),",
+        "                \"{directive}\"",
+        "            );",
+        "            for suffix in [\"^\", \"1..2\"] {",
+        "                assert!(",
+        "                    parse(",
+        "                        \"src/lib.rs\",",
+        "                        &format!(\"fn f() {{}} //# {directive} {suffix}\")",
+        "                    )",
+        "                    .unwrap_err()",
+        "                    .contains(\"malformed directive\"),",
+        "                    \"{directive} {suffix}\"",
+        "                );",
+        "            }",
+        "        }",
+        "    }",
         "    #[test]",
         "    #[sage::test(crates.sage_test_harness.compile_tests.target_line)]",
         "    #[sage::test(crates.sage_test_harness.compile_tests.coordinates)]",
@@ -812,6 +844,7 @@
         "    match_compiler_diagnostics(Compiler::Sage, markers, diagnostics)",
         "}",
         "",
+        "// {anchor}`crates.sage_test_harness.compile_tests.rustc_lints`",
         "pub(super) fn match_compiler_diagnostics(",
         "    compiler: Compiler,",
         "    markers: &[Marker],",
@@ -1622,7 +1655,7 @@
         "        assert!(",
         "            test.prepare()",
         "                .unwrap_err()",
-        "                .contains(\"0 markers, 1 diagnostics\")",
+        "                .contains(\"Sage diagnostic markers do not match: 0 markers, 1 diagnostics\")",
         "        );",
         "        let mut test = CompileTest::default();",
         "        test.source(\"fn f() -> u16 {\\n missing //# sym\\n //# ERROR\\n}\");",
@@ -1892,7 +1925,7 @@
       "selector": {
         "kind": "line_range",
         "start": 1,
-        "end": 203
+        "end": 204
       },
       "contents": [
         "// {anchor}`crates.sage_test_harness.compile_tests.rendering`",
@@ -2098,6 +2131,7 @@
         "}",
         "// >>",
         "",
+        "#[cfg(test)]",
         ""
       ]
     },
@@ -2105,10 +2139,22 @@
       "path": "crates/sage-test-harness/src/lib.rs",
       "selector": {
         "kind": "line_range",
-        "start": 151,
-        "end": 305
+        "start": 139,
+        "end": 290
       },
       "contents": [
+        "",
+        "/// Execute a callback with a fully set-up sage crate from in-memory source.",
+        "/// This handles the salsa tracked-function requirement for creating tracked structs.",
+        "pub fn with_test_crate<R>(",
+        "    source: &str,",
+        "    f: impl for<'db> FnOnce(&'db dyn Db, ModSymbol<'db>) -> R,",
+        ") -> R {",
+        "    with_test_crate_files(&[(\"lib.rs\", source)], f)",
+        "}",
+        "",
+        "/// Find a named local free function among a root module's expanded items.",
+        "pub fn local_function_named<'db>(",
         "    db: &'db dyn Db,",
         "    root: ModSymbol<'db>,",
         "    name: &str,",
@@ -2249,84 +2295,6 @@
         "",
         "#[cfg(test)]",
         "#[salsa::tracked]",
-        "fn observe_symbol_identity<'db>(_db: &'db dyn Db, _symbol: ObservedSymbol<'db>) {}",
-        "",
-        "#[cfg(test)]",
-        "mod file_module_scope_tests {",
-        "    use super::*;",
-        "    use sage_ir::symbol::{FnSymbol, StructSymbol, Symbol, SymbolData};",
-        "    use sage_ir::ty::Ty;",
-        "",
-        "    #[test]",
-        "    #[sage::test(crates.sage_ir.modules.parse.syntax_identities)]",
-        "    fn items_in_a_file_backed_module_use_that_module_as_their_scope() {",
-        "        with_test_crate_files(",
-        "            &[(\"lib.rs\", \"mod child;\"), (\"child.rs\", \"struct Holder;\")],",
-        "            |db, root| {",
-        "                let child = root",
-        ""
-      ]
-    },
-    {
-      "path": "crates/sage-ir/src/tytree/mod.rs",
-      "selector": {
-        "kind": "line_range",
-        "start": 24,
-        "end": 49
-      },
-      "contents": [
-        "/// What a path resolved to.",
-        "#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]",
-        "#[sage::item(crate::types::PathResolution)]",
-        "// {anchor}`crates.sage_ir.types.body.resolved_references`",
-        "pub enum PathResolution<'db> {",
-        "    Def(Symbol<'db>),",
-        "    Local(LocalId),",
-        "    Error(ErrorReported),",
-        "}",
-        "",
-        "/// Short alias.",
-        "pub type Res<'db> = PathResolution<'db>;",
-        "",
-        "/// Identifies a local variable within a function body.",
-        "#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]",
-        "#[sage::item(crate::types::LocalId)]",
-        "// {anchor}`crates.sage_ir.types.scoped_identities`",
-        "pub struct LocalId(pub u32);",
-        "",
-        "/// Metadata about a local variable.",
-        "#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData, sage_reflect::Reflect)]",
-        "#[sage::item(crate::types::LocalVar)]",
-        "pub struct LocalVar<'db> {",
-        "    pub name: Name<'db>,",
-        "    pub span: RelativeSpan,",
-        "}",
-        ""
-      ]
-    },
-    {
-      "path": "crates/sage-test-harness/src/lib.rs",
-      "selector": {
-        "kind": "line_range",
-        "start": 139,
-        "end": 153
-      },
-      "contents": [
-        "",
-        "/// Execute a callback with a fully set-up sage crate from in-memory source.",
-        "/// This handles the salsa tracked-function requirement for creating tracked structs.",
-        "pub fn with_test_crate<R>(",
-        "    source: &str,",
-        "    f: impl for<'db> FnOnce(&'db dyn Db, ModSymbol<'db>) -> R,",
-        ") -> R {",
-        "    with_test_crate_files(&[(\"lib.rs\", source)], f)",
-        "}",
-        "",
-        "/// Find a named local free function among a root module's expanded items.",
-        "pub fn local_function_named<'db>(",
-        "    db: &'db dyn Db,",
-        "    root: ModSymbol<'db>,",
-        "    name: &str,",
         ""
       ]
     }

@@ -68,6 +68,7 @@ pub fn default_fold_ty<'db>(folder: &mut impl TyFolder<'db>, ty: Ty<'db>) -> Ty<
     }
 }
 
+// {anchor}`crates.sage_ir.types.aliases.identity`
 pub fn fold_alias_ty<'db>(folder: &mut impl TyFolder<'db>, alias: AliasTy<'db>) -> AliasTy<'db> {
     match alias {
         AliasTy::Named(alias) => AliasTy::Named(NamedAliasTy {

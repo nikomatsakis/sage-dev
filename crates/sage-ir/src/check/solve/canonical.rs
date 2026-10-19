@@ -166,6 +166,7 @@ pub fn canonicalize_solver_goal<'db>(
 }
 // ANCHOR_END: example_canonicalize_goal
 
+// {anchor}`crates.sage_ir.types.aliases.identity`
 impl<'db> Canonicalizer<'_, 'db> {
     fn fold_solver_goal(&mut self, goal: SolverGoal<'db>) -> SolverGoal<'db> {
         match goal {

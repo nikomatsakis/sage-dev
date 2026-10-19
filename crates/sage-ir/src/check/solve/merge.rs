@@ -12,6 +12,8 @@ use super::{Atom, Goal, GoalOutput, QueryResult, QueryResultData, SubstEntry, me
 // {anchor}`crates.sage_ir.solver.alternative_isolation`
 // {anchor}`crates.sage_ir.solver.schedule_independence`
 // {anchor}`crates.sage_ir.modules.expand.completeness`
+// {anchor}`crates.sage_ir.solver.candidate_completeness`
+// {anchor}`crates.sage_ir.solver.canonical_outputs`
 pub(crate) fn merge_candidate_results<'db>(
     db: &'db dyn crate::Db,
     next_response_param: u32,

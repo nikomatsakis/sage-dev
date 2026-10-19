@@ -1,7 +1,7 @@
 {
   "prompt": "Review this anchor as its assigned subagent. Enumerate ALL requirements, qualifications, edge cases and scenarios. Inspect all supplied implementation and test fragments and trace each aspect to implementation behavior and actual test assertions or justified TODO/N/A evidence. Passing tests and associations alone are insufficient. Follow helpers and capture every additional source dependency with cargo meta review read ANCHOR PATH [selector] before completing the report. Explain prerequisites for justified TODO tests; do not claim deferred behavior is implemented. Distinguish source inspection from commands actually executed. Write a JSON report containing reviewer, report, and requested_edits. Leave requested_edits empty only when every aspect is accounted for and no edits are needed. Otherwise list concrete changes, including missing tests or justified TODO tests with prerequisite comments. Run cargo meta review record ANCHOR REPORT_FILE to finish. After edits or stale-input rejection, run cargo meta review start ANCHOR and review the fresh inputs. The gate fails until a current report with no requested edits is recorded. Dependency capture is agent-declared.",
   "coordinator_instructions": [
-    "Refresh ONLY meta.reviews.review_diagnostics under sage-review-checklist. Previous actual independent report below is rationale to reassess, not a verdict to copy. Saved inputs became stale for these reasons:\nreview required for meta.reviews.review_diagnostics: initial fragment changed: crates/sage-meta/tests/review.rs Test { crate_name: \"sage_meta\", target: \"test:review\", rust_path: \"sage_meta::unsupported_versions_and_mismatched_identity_cannot_pass\" }; invoke .agents/skills/sage-review-checklist/SKILL.md\nPrevious report:\n{\n  \"reviewer\": \"Codex independent reviewer /root/review_other/anchor_015\",\n  \"report\": \"Fresh review after authorized diagnostic-test strengthening and implementation-association additions. The claim is unchanged. Inspected all five ordinary implementation entries across review.rs (validate), check.rs (check_reviews, CheckReport, Display), and main.rs (check), including complete associated source files. All six associated tests are ordinary; no TODO/N/A gaps exist. Fixture setup/run/report helpers, the shared Cargo workspace test and library reexports were captured with fresh review reads.\\n\\nImplementation: validate accumulates every current anchor's missing/unfinished/requested-edits and association errors, preserves malformed/unsupported loader issues, and identifies obsolete records. input_errors includes changed fragment paths/selectors and test/implementation association categories; read_summary and load_saved supply version, identity, parsing and layout reasons. check_reviews preserves all issues and supplies review-skill guidance. CheckReport::ensure_valid, Display and matching Debug render the same failure text for CLI check and Cargo's Result-returning workspace test. Iteration has no early exit; all anchors are represented without needing a redundant multi-anchor formatting test. Checking reads/locks existing files and never invokes start, record or write operations.\\n\\nComplete test assessment: diagnostics_identify_missing_unfinished_stale_and_requested_edit_reviews asserts CLI failure, anchor and skill for each state, missing/unfinished reason text, stale source filename and edit reason. added_or_removed_associations_invalidate_unchanged_saved_fragments now asserts rendered library failure, anchor, skill and test/implementation association categories for added/removed tests and added implementation, preserving original inventory comparisons. unsupported_versions_and_mismatched_identity_cannot_pass asserts anchor and skill plus unsupported-version or identity-mismatch reasons through ensure_valid. completed_corrupt_records_and_invalid_layout_cannot_pass asserts library/CLI failure and anchor/skill/invalid-validation text plus specific parse, blank-field, unknown-field, missing-file, and directory reasons across all nine existing scenarios. These tests detect generic-message regressions previously uncovered. retired_records_fail_even_when_every_remaining_anchor_passes checks named obsolete failure/removal guidance, retains output until explicit deletion, then passes. checking_is_read_only_and_recording_preserves_obsolete_records proves missing validation storage stays absent, normal records remain byte-identical after CLI/library checks, and obsolete records survive failure and unrelated recording. Combined with the shared rendering call graph, these tests cover the full claim without duplicating each case per CLI and Cargo surface.\\n\\nExecuted by this reviewer after edits: cargo fmt; cargo test -p sage-meta --test review (31 passed, zero failed); cargo build (passed with existing sage-ir warnings); fresh review start and dependency reads. Parent separately reported broader functional/build/book success before these edits; that prior result is not substituted for the actual focused execution above. No production behavior was changed. The previous evidence and association requests are satisfied. Independent post-codegen quality/sanity review is being coordinated by the parent and remains separate from this claim assessment.\",\n  \"requested_edits\": []\n}\nCurrent execution reported by coordinator: 331 sage-meta functional tests passed (repository gate awaits reviews), 46 sage-stash tests passed, workspace build passed. Do not claim these as personally executed. Review current claim and complete evidence, focused on deltas where prior analysis remains supported. Capture all relied-on helper dependencies using review read; no source changes or redundant broad tests. Start, consume saved inputs, and personally record complete report. Relevant changes: validator tests gained additional assertions/associations; check/main gained diagnostic associations; stash scalar interning now skips count!=1 collision entries before read_one, with safety comment and empty unit-slice regression.\n"
+    "Follow sage-review-checklist for only the assigned anchor. Begin fresh review using cargo meta review start ANCHOR --instructions /tmp/ci-anchor-review-instructions.txt. Inspect current claim, implementation, complete tests, and capture dependencies through review read. Independently assess current evidence; do not transplant old approvals. Preserve justified TODO/N/A entries honestly. Record a complete claim-specific report. Coordinate all source edits with root BEFORE editing, to avoid invalidating concurrent reviews. Prefer reporting concrete necessary changes for root to batch; do not add unrelated evidence. You own only your assigned validation directory and unique /tmp report. Distinguish source inspection from tests executed. Do not commit.\nRoot centrally runs relevant suites. Do not repeat full suites for a source-only review unless investigating a specific concern. Report source assessment honestly without claiming execution. This does not waive regression reproduction for suspected bugs.\n"
   ],
   "fragments": [
     {
@@ -460,6 +460,7 @@
         "}",
         "",
         "// {anchor}`meta.reviews.gate`",
+        "// {anchor}`meta.reviews.record_required`",
         "// {anchor}`meta.reviews.decisions`",
         "// {anchor}`meta.reviews.review_diagnostics`",
         "fn check_reviews(",
@@ -694,6 +695,7 @@
         "// {anchor}`meta.reviews.preparation`",
         "// {anchor}`meta.reviews.recorded_reads`",
         "// {anchor}`meta.reviews.recording`",
+        "// {anchor}`meta.reviews.review_instructions`",
         "fn review(args: &[std::ffi::OsString]) -> Result<(), Box<dyn std::error::Error>> {",
         "    use sage_meta::review::{self, Selector, ValidationOutput};",
         "    let args = args",
@@ -729,6 +731,7 @@
         "}",
         "",
         "// {anchor}`meta.reviews.gate`",
+        "// {anchor}`meta.reviews.record_required`",
         "// {anchor}`meta.reviews.review_diagnostics`",
         "fn check(args: &[std::ffi::OsString]) -> Result<(), Box<dyn std::error::Error>> {",
         "    let mut json = false;",
@@ -919,6 +922,7 @@
         "",
         "// {anchor}`meta.reviews.input_fragments`",
         "// {anchor}`meta.reviews.review_scope`",
+        "// {anchor}`meta.book.index_status`",
         "pub fn inventory(",
         "    spec: &SpecIndex,",
         "    rust: &CorrespondenceIndex,",
@@ -978,7 +982,9 @@
         "                contents: source_lines(source),",
         "            });",
         "        }",
+        "        // {anchor}`meta.anchors.placeholder_status`",
         "        // {anchor}`meta.reviews.test_source`",
+        "        // {anchor}`crates.sage_test_harness.compile_tests.review_visibility`",
         "        let mut tests = Vec::new();",
         "        let mut test_fragments = BTreeMap::new();",
         "        for site in rust.tests.get(name).into_iter().flatten() {",
@@ -1480,6 +1486,7 @@
         "                reasons.extend(input_errors(workspace, &record.input, input));",
         "            }",
         "        }",
+        "        // {anchor}`meta.book.index_status`",
         "        if input.tests.is_empty() {",
         "            reasons.push(\"missing test association\".into());",
         "        }",
@@ -1515,6 +1522,7 @@
         "#[sage::test(meta.reviews.fragment_associations)]",
         "#[sage::test(meta.reviews.input_format)]",
         "#[sage::test(meta.reviews.review_diagnostics)]",
+        "#[sage::test(meta.reviews.staleness)]",
         "fn added_or_removed_associations_invalidate_unchanged_saved_fragments() {",
         "    let fixture = Fixture::new();",
         "    fixture.approve();",
@@ -1791,6 +1799,7 @@
         "#[sage::test(meta.reviews.summary_format)]",
         "#[sage::test(meta.reviews.review_diagnostics)]",
         "#[sage::test(meta.reviews.staleness)]",
+        "#[sage::test(meta.reviews.validation_layout)]",
         "fn unsupported_versions_and_mismatched_identity_cannot_pass() {",
         "    for field in [\"schema_version\", \"policy_version\", \"anchor\"] {",
         "        let fixture = Fixture::new();",
@@ -1824,7 +1833,7 @@
       "selector": {
         "kind": "line_range",
         "start": 1,
-        "end": 105
+        "end": 104
       },
       "contents": [
         "#![feature(register_tool)]",
@@ -1931,59 +1940,24 @@
         "    }",
         "}",
         "",
-        "#[test]",
         ""
       ]
     },
     {
       "path": "crates/sage-meta/tests/workspace.rs",
       "selector": {
-        "kind": "whole_file"
+        "kind": "test",
+        "crate_name": "sage_meta",
+        "target": "test:workspace",
+        "rust_path": "sage_meta::repository_docs_model_and_rust_correspond"
       },
       "contents": [
-        "//! Run the same repository validation as `sage-meta check`, without a CLI subprocess.",
-        "#![feature(register_tool)]",
-        "#![register_tool(sage)]",
-        "use std::path::Path;",
-        "",
         "#[test]",
         "#[sage::test(meta.reviews.gate)]",
         "fn repository_docs_model_and_rust_correspond() -> Result<(), sage_meta::check::CheckError> {",
         "    let root = Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(\"../..\");",
         "    sage_meta::check(&root).ensure_valid()",
-        "}",
-        ""
-      ]
-    },
-    {
-      "path": "crates/sage-meta/src/lib.rs",
-      "selector": {
-        "kind": "line_range",
-        "start": 1,
-        "end": 20
-      },
-      "contents": [
-        "#![feature(register_tool)]",
-        "#![register_tool(sage)]",
-        "//! Build-time correspondence checks and runtime contracts for Sage's design.",
-        "mod browser;",
-        "pub mod check;",
-        "pub mod contracts;",
-        "pub mod correspondence;",
-        "pub mod evidence;",
-        "mod parser;",
-        "pub mod review;",
-        "#[cfg(feature = \"salsa\")]",
-        "pub mod salsa_contracts;",
-        "pub mod spec;",
-        "pub mod workspace;",
-        "pub use browser::{",
-        "    render_book_browser, render_browser, render_browser_with_workspace, render_spec_markdown,",
-        "};",
-        "pub use check::{CheckReport, check};",
-        "mod validate;",
-        "",
-        ""
+        "}"
       ]
     }
   ],

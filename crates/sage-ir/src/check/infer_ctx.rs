@@ -1978,6 +1978,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     }
 
     // {anchor}`crates.sage_ir.inference.canonical_boundary`
+    // {anchor}`crates.sage_ir.solver.canonical_outputs`
     fn apply_normalization_relation(
         &self,
         canonical_goal: &Stashed<super::solve::GoalQueryData<'db>>,

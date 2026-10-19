@@ -121,6 +121,7 @@ impl<'db> LocalImplSym<'db> {
 
     #[salsa::tracked]
     #[sage::item(crate::symbols::LocalImplSym::signature)]
+    // {anchor}`crates.sage_ir.symbols.associated_interfaces`
     // {anchor}`crates.sage_ir.checking.identity_minting`
     // {anchor}`crates.sage_ir.checking.signature.owner_binder`
     // {anchor}`crates.sage_ir.checking.signature.body_independence`
@@ -248,6 +249,7 @@ pub struct LocalImplCandidates<'db> {
 /// index still scans module impls internally.
 #[salsa::tracked(returns(ref))]
 // {anchor}`crates.sage_ir.modules.expand.completeness`
+// {anchor}`crates.sage_ir.solver.candidate_completeness`
 pub fn local_impl_candidates<'db>(
     db: &'db dyn crate::Db,
     krate: crate::scope::LocalCrateSymbol<'db>,

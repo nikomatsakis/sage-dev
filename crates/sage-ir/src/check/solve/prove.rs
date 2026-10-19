@@ -636,6 +636,7 @@ async fn solve_atomic_frame<'db>(
 }
 
 // {anchor}`crates.sage_ir.solver.alternative_isolation`
+// {anchor}`crates.sage_ir.solver.canonical_outputs`
 async fn solve_normalize_frame<'db>(
     db: &'db dyn crate::Db,
     whiteboard: &Whiteboard<'db>,
@@ -978,6 +979,7 @@ fn input_domains<'db>(
 // {anchor}`crates.sage_ir.modules.expand.completeness`
 // {anchor}`crates.sage_ir.solver.alternative_isolation`
 // {anchor}`crates.sage_ir.inference.transaction_isolation`
+// {anchor}`crates.sage_ir.solver.candidate_completeness`
 async fn solve_trait_frame<'db>(
     db: &'db dyn crate::Db,
     whiteboard: &Whiteboard<'db>,

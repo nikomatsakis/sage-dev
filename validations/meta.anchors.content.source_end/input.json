@@ -1,7 +1,7 @@
 {
   "prompt": "Review this anchor as its assigned subagent. Enumerate ALL requirements, qualifications, edge cases and scenarios. Inspect all supplied implementation and test fragments and trace each aspect to implementation behavior and actual test assertions or justified TODO/N/A evidence. Passing tests and associations alone are insufficient. Follow helpers and capture every additional source dependency with cargo meta review read ANCHOR PATH [selector] before completing the report. Explain prerequisites for justified TODO tests; do not claim deferred behavior is implemented. Distinguish source inspection from commands actually executed. Write a JSON report containing reviewer, report, and requested_edits. Leave requested_edits empty only when every aspect is accounted for and no edits are needed. Otherwise list concrete changes, including missing tests or justified TODO tests with prerequisite comments. Run cargo meta review record ANCHOR REPORT_FILE to finish. After edits or stale-input rejection, run cargo meta review start ANCHOR and review the fresh inputs. The gate fails until a current report with no requested edits is recorded. Dependency capture is agent-declared.",
   "coordinator_instructions": [
-    "Review only meta.anchors.content.source_end. Follow the repository review skill. Independently reassess every claim aspect and its implementation/test evidence. Do not edit production or tests; report suspected issues to coordinator. Capture every additional source dependency using review read. Distinguish source review from commands actually executed. Record your own completed report via cargo meta review record; do not directly edit saved JSON. Existing justified TODO/N/A evidence can remain deferred.\nHistorical report supplied as context, not an approval to reuse mechanically; independently verify current evidence and rationale:\n{\n  \"decision\": \"approved\",\n  \"outcome\": true,\n  \"requested_edits\": [],\n  \"reason\": \"Claim reviewed in full: An anchor's content ends at the end of its containing Markdown document or `.sage` triple-quoted prose block. A `.sage` anchor never captures surrounding language syntax or content from another prose block, declaration, or method.\\n\\nAssessment: spec.rs finishes at input end; add_chapter_text parses each Sage prose block independently and remaps dedented offsets. claims_retain_all_blocks_until_the_next_definition_or_document_end checks final Markdown content; sage_prose_rules_have_precise_spans_model_owners_and_cross_source_references verifies exact Sage body and excludes enclosing syntax. an_end_marker_in_another_sage_prose_block_is_unmatched proves state never crosses prose blocks.\\n\\nAll supplied test associations: sage_meta::an_end_marker_in_another_sage_prose_block_is_unmatched [ordinary], sage_meta::claims_retain_all_blocks_until_the_next_definition_or_document_end [ordinary], sage_meta::sage_prose_rules_have_precise_spans_model_owners_and_cross_source_references [ordinary]. Implementation associations: crates/sage-meta/src/spec.rs::sage_meta::spec [ordinary].\\n\\nMethod: inspected supplied claim, association bodies and relevant surrounding full-file implementation/test context. This is source adequacy review; no test commands were executed by this reviewer and no run result is inferred from annotations.\",\n  \"reviewer\": \"Codex sage-sanity reviewer\"\n}\nCoordinator reports full functional sage-meta suite 321 passing tests and root cargo build passed. This is separately reported execution, not a command you ran. Avoid redundant full suites unless needed to investigate a specific concern. Efficiently compare unchanged evidence to earlier snapshots, but reassess claim-specific rationale independently.\n\nCoordinator baseline comparison at dispatch preparation (reviewer must verify still current):\nimplementation_sources: crates/sage-meta/src/spec.rs: EXACT BYTE MATCH to historical reviewed source\ntest_sources: crates/sage-meta/tests/spec.rs: CHANGED; inspect delta\nFor unchanged legacy anchors, prior report is a completed independent source review. Reassess its claim-specific sufficiency against current claim, metadata and associated test assertions; you need not rediscover all unchanged implementation or rerun tests. For any changed source, inspect the delta and relevant complete behavior. Historical input for exact comparison is /tmp/sage-pre-fragment-validations/meta.anchors.content.source_end/input.json. If using historical source contents themselves beyond exact comparison, put them in captured coordinator instructions or use review read for their current workspace source.\n\nCoordinator clarification: evaluate the full associated set plus source reasoning; no demand for isolated field-per-test assertions where meaningful integration checks account for claim. If prior rationale relies on helper/surrounding source in historical test_sources/implementation_sources/reads beyond current initial fragments, capture each relied-on dependency via review read (whole file or precise selector). Byte-comparison alone does not persist a freshness dependency.\n\nEfficiency: unchanged legacy evidence already genuinely independently reviewed. Batch evidence reads; inspect only current inputs, deltas, and actually relied-on helpers. Avoid unrelated documentation, repeated broad checks, and rediscovery. Write concise complete claim/evidence/TODO-prerequisite reassessment, distinguish baseline/source/execution, then record promptly.\n"
+    "Follow sage-review-checklist for only the assigned anchor. Begin fresh review using cargo meta review start ANCHOR --instructions /tmp/ci-anchor-review-instructions.txt. Inspect current claim, implementation, complete tests, and capture dependencies through review read. Independently assess current evidence; do not transplant old approvals. Preserve justified TODO/N/A entries honestly. Record a complete claim-specific report. Coordinate all source edits with root BEFORE editing, to avoid invalidating concurrent reviews. Prefer reporting concrete necessary changes for root to batch; do not add unrelated evidence. You own only your assigned validation directory and unique /tmp report. Distinguish source inspection from tests executed. Do not commit.\nRoot centrally runs relevant suites. Do not repeat full suites for a source-only review unless investigating a specific concern. Report source assessment honestly without claiming execution. This does not waive regression reproduction for suspected bugs.\n"
   ],
   "fragments": [
     {
@@ -167,6 +167,7 @@
         "            .collect()",
         "    }",
         "",
+        "    // {anchor}`meta.anchors.implementation_references`",
         "    pub fn validate_implementation_references(",
         "        &self,",
         "        rust: &crate::correspondence::CorrespondenceIndex,",
@@ -437,6 +438,7 @@
         "",
         "// {anchor}`meta.anchors.content.blocks`",
         "// {anchor}`meta.reviews.claim_text`",
+        "// {anchor}`meta.reviews.selector_claim`",
         "fn finish_anchor(",
         "    source: &str,",
         "    end: usize,",
@@ -752,6 +754,7 @@
         "                let model = documents.iter().find(|doc| doc.file == absolute);",
         "                let model_namespace =",
         "                    model.and_then(|doc| crate::workspace::document_namespace(&documents, doc));",
+        "                // {anchor}`meta.book.crate_ownership`",
         "                if model_namespace.is_none() {",
         "                    return Err(format!(\"Sage chapter `{file}` has no modeled crate owner\").into());",
         "                }",
@@ -1287,6 +1290,7 @@
         "#[sage::test(meta.anchors.context_navigation)]",
         "#[sage::test(meta.anchors.content.source_end)]",
         "#[sage::test(meta.reviews.claim_text)]",
+        "#[sage::test(meta.anchors.unique_names)]",
         "fn sage_prose_rules_have_precise_spans_model_owners_and_cross_source_references() {",
         "    let fixture =",
         "        BookFixture::new(\"- [Meta](design/meta.md)\\n- [Crates](design/crates/README.md)\\n\");",
@@ -1383,11 +1387,108 @@
       ]
     },
     {
+      "path": "crates/sage-meta/src/parser.rs",
+      "selector": {
+        "kind": "line_range",
+        "start": 1,
+        "end": 57
+      },
+      "contents": [
+        "use crate::*;",
+        "",
+        "#[derive(Clone, Debug, PartialEq, Eq)]",
+        "enum TokenKind {",
+        "    Word(String),",
+        "    Prose(String),",
+        "    Mark(String),",
+        "}",
+        "#[derive(Clone, Debug)]",
+        "struct Token {",
+        "    kind: TokenKind,",
+        "    span: Span,",
+        "}",
+        "",
+        "/// Parse one crate manifest or module. Errors carry source byte ranges.",
+        "#[sage::item(crate::language::Language::parse)]",
+        "pub fn parse(file: &str, source: &str) -> Result<Document, Diagnostic> {",
+        "    let mut tokens = Vec::new();",
+        "    let mut offset = 0;",
+        "    while offset < source.len() {",
+        "        let tail = &source[offset..];",
+        "        let start = offset;",
+        "        let ch = tail.chars().next().unwrap();",
+        "        if ch.is_whitespace() {",
+        "            offset += ch.len_utf8();",
+        "            continue;",
+        "        }",
+        "        if tail.starts_with(\"//\") {",
+        "            offset += tail.find('\\n').unwrap_or(tail.len());",
+        "            continue;",
+        "        }",
+        "        let kind = if let Some(rest) = tail.strip_prefix(\"\\\"\\\"\\\"\") {",
+        "            let Some(end) = rest.find(\"\\\"\\\"\\\"\") else {",
+        "                return Err(Diagnostic {",
+        "                    file: file.into(),",
+        "                    span: Span {",
+        "                        start,",
+        "                        end: source.len(),",
+        "                    },",
+        "                    message: \"unterminated triple-quoted prose\".into(),",
+        "                });",
+        "            };",
+        "            offset += end + 6;",
+        "            TokenKind::Prose(rest[..end].into())",
+        "        } else if ch.is_ascii_alphabetic() || ch == '_' {",
+        "            let len = tail",
+        "                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))",
+        "                .unwrap_or(tail.len());",
+        "            offset += len;",
+        "            TokenKind::Word(tail[..len].into())",
+        "        } else if tail.starts_with(\"::\") || tail.starts_with(\"->\") {",
+        "            offset += 2;",
+        "            TokenKind::Mark(tail[..2].into())",
+        "        } else if \"{}():;.$<>,#[]\".contains(ch) {",
+        "            offset += 1;",
+        "            TokenKind::Mark(ch.to_string())",
+        "        } else {",
+        ""
+      ]
+    },
+    {
+      "path": "crates/sage-meta/src/parser.rs",
+      "selector": {
+        "kind": "line_range",
+        "start": 139,
+        "end": 156
+      },
+      "contents": [
+        "    fn prose(&mut self) -> Result<String, Diagnostic> {",
+        "        match self.tokens.get(self.cursor).map(|t| &t.kind) {",
+        "            Some(TokenKind::Prose(prose)) => {",
+        "                let result = prose.clone();",
+        "                let span = &self.tokens[self.cursor].span;",
+        "                self.prose_blocks.push(ProseBlock {",
+        "                    text: result.clone(),",
+        "                    span: Span {",
+        "                        start: span.start + 3,",
+        "                        end: span.end - 3,",
+        "                    },",
+        "                    owner: self.owner.clone(),",
+        "                });",
+        "                self.cursor += 1;",
+        "                Ok(result)",
+        "            }",
+        "            _ => Err(self.error(\"expected triple-quoted description\")),",
+        "        }",
+        ""
+      ]
+    },
+    {
       "path": "crates/sage-meta/tests/spec.rs",
       "selector": {
         "kind": "line_range",
         "start": 1,
-        "end": 16
+        "end": 15
       },
       "contents": [
         "#![feature(register_tool)]",
@@ -1405,7 +1506,6 @@
         "        source: text.into(),",
         "    }",
         "}",
-        "",
         ""
       ]
     },
@@ -1413,8 +1513,8 @@
       "path": "crates/sage-meta/tests/spec.rs",
       "selector": {
         "kind": "line_range",
-        "start": 535,
-        "end": 564
+        "start": 536,
+        "end": 565
       },
       "contents": [
         "struct BookFixture(std::path::PathBuf);",
@@ -1447,6 +1547,28 @@
         "    }",
         "}",
         "",
+        ""
+      ]
+    },
+    {
+      "path": "crates/sage-meta/src/review.rs",
+      "selector": {
+        "kind": "line_range",
+        "start": 175,
+        "end": 185
+      },
+      "contents": [
+        "    let mut inputs = BTreeMap::new();",
+        "    for (name, anchor) in &spec.anchors {",
+        "        // {anchor}`meta.reviews.claim_text`",
+        "        let mut fragments = vec![InputFragment {",
+        "            path: claim_path(workspace, &anchor.file)?,",
+        "            selector: Selector::Claim {",
+        "                anchor_id: name.clone(),",
+        "            },",
+        "            contents: source_lines(&anchor.content),",
+        "        }];",
+        "        let mut implementations = Vec::new();",
         ""
       ]
     }

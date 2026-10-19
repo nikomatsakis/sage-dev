@@ -1,7 +1,7 @@
 {
   "prompt": "Review this anchor as its assigned subagent. Enumerate ALL requirements, qualifications, edge cases and scenarios. Inspect all supplied implementation and test fragments and trace each aspect to implementation behavior and actual test assertions or justified TODO/N/A evidence. Passing tests and associations alone are insufficient. Follow helpers and capture every additional source dependency with cargo meta review read ANCHOR PATH [selector] before completing the report. Explain prerequisites for justified TODO tests; do not claim deferred behavior is implemented. Distinguish source inspection from commands actually executed. Write a JSON report containing reviewer, report, and requested_edits. Leave requested_edits empty only when every aspect is accounted for and no edits are needed. Otherwise list concrete changes, including missing tests or justified TODO tests with prerequisite comments. Run cargo meta review record ANCHOR REPORT_FILE to finish. After edits or stale-input rejection, run cargo meta review start ANCHOR and review the fresh inputs. The gate fails until a current report with no requested edits is recorded. Dependency capture is agent-declared.",
   "coordinator_instructions": [
-    "Refresh ONLY meta.reviews.fragment_freshness under sage-review-checklist. Previous actual independent report below is rationale to reassess, not a verdict to copy. Saved inputs became stale for these reasons:\nreview required for meta.reviews.fragment_freshness: initial fragment changed: crates/sage-meta/tests/review.rs Test { crate_name: \"sage_meta\", target: \"test:review\", rust_path: \"sage_meta::invalid_reports_and_stale_inputs_never_complete_an_active_review\" }; initial fragment changed: crates/sage-meta/tests/review.rs Test { crate_name: \"sage_meta\", target: \"test:review\", rust_path: \"sage_meta::whole_files_and_ranges_preserve_exact_line_endings_and_detect_selected_edits\" }; fragment contents changed: crates/sage-meta/src/check.rs LineRange { start: 433, end: 517 }; invoke .agents/skills/sage-review-checklist/SKILL.md\nPrevious report:\n{\n  \"reviewer\": \"Codex anchor_005 independent reviewer\",\n  \"report\": \"Fresh review of meta.reviews.fragment_freshness after the added regressions and association fixes. Complete requirements: recording and checking validate every fragment against current selected source by exact equality; missing, ambiguous, invalid, and changed selections invalidate the review; neither origin nor selector kind bypasses this. The ordinary review.rs association covers inventory, select, input_errors, record, validate, and acceptable in the same captured file. Inventory regenerates initial claim/whole-file/test fragments and rejects duplicate test identities across all anchors. input_errors requires that complete ordered initial prefix to equal the fresh inventory (including contents), then resolves every appended fragment through select and compares text exactly with saved lines joined by newline. Selection errors are recorded as errors. select handles all four variants: whole-file exact reads, one-based inclusive ranges with zero/reversed/out-of-bounds rejection, claims with identity/path and inventory checks, and tests with exact crate/target/path identity requiring a unique span. record rejects input_errors before output publication. validate and acceptable use the same function; the captured check_reviews caller builds a fresh inventory and routes checking through these functions. Thus initial and appended context use equivalent freshness semantics without normalizing selected whitespace.\\n\\nAll eight ordinary associated tests were inspected completely. ambiguous_initial_test_selector_cannot_be_recorded_as_complete_context rejects duplicate function spans initially and asserts check failure; ambiguous_test_identity_across_anchors_is_rejected covers conflicting identities assigned different anchors. declared_claim_read_tracks_selected_text_without_capturing_the_document asserts exact claim capture, successful recording, acceptance after an unrelated heading, and check failure after changed claim text. whole_files_and_ranges_preserve_exact_line_endings_and_detect_selected_edits asserts CRLF, blank-line and unterminated-final-line preservation, invalid range rejection, acceptance after an unselected edit, rejection after selected edits, repeated whole-file retention, and rejection for a changed trailing newline. invalid_reports_and_stale_inputs_never_complete_an_active_review now explicitly supplies stale recording coverage: implementation text changes, recording errors, saved input stays byte-identical, and checking fails; its report-format cases do not substitute for that assertion. test_selector_preserves_metadata_and_ignores_unrelated_line_movement explicitly appends a Test read, records successfully, accepts unchanged function movement, and rejects cfg metadata changes.\\n\\nThe two new tests close the remaining gaps. disappeared_or_invalidated_additional_fragments_reject_recording captures a real dependency, then independently deletes the whole file or truncates it so the saved range is out of bounds; record must fail with that dependency path, publish no output, and preserve exact input bytes. Its final check-failure assertion also confirms the active review remains failing (not an independent completed-review freshness baseline). another_anchors_test_read_tracks_body_and_identity reads a different anchor's test, then changes only its body, renames it, or introduces conflicting cfg-selected identities. It asserts original anchor initial fragments and test metadata remain unchanged in the body and rename cases, so appended selection validation is essential; every case rejects record and publishes no output. Ambiguity can validly fail at global inventory validation. Together these tests exercise each selector and both origins, exact selected text, missing/invalid/ambiguous resolution, stale record rejection, and the shared checking path; they do not need every selector/error/command cross-product because the common input_errors path was directly inspected. No TODO/N/A entries exist or are needed. No unresolved production defect or coverage request remains.\\n\\nExtra source dependencies consumed were captured Fixture construction/report/read helpers (tests/review.rs lines 1-105) and check_reviews wiring (check.rs lines 433-517); relevant implementation helpers are already in the initial whole-file fragment. Commands executed by this reviewer: fresh review start, recorded reads, cargo fmt --check (passed), source inspection/searches, and review record. I did not execute functional tests or cargo build; coordinator-reported prior tests/build are separate execution evidence. Independent post-codegen and Sage-pattern inspection of the two new tests found no quality defect: no Tokio mutex, unsafe, workspace-enum wildcard, inference-variable error fallback, or silent IR error construction; primitive string/boolean case selection is legitimate. Test fixture setup repetition is ordinary readable scenario setup, assertions remain visible. Documentation/architecture changes are unnecessary for test-only coverage additions.\",\n  \"requested_edits\": []\n}\nCurrent execution reported by coordinator: 331 sage-meta functional tests passed (repository gate awaits reviews), 46 sage-stash tests passed, workspace build passed. Do not claim these as personally executed. Review current claim and complete evidence, focused on deltas where prior analysis remains supported. Capture all relied-on helper dependencies using review read; no source changes or redundant broad tests. Start, consume saved inputs, and personally record complete report. Relevant changes: validator tests gained additional assertions/associations; check/main gained diagnostic associations; stash scalar interning now skips count!=1 collision entries before read_one, with safety comment and empty unit-slice regression.\n"
+    "Follow sage-review-checklist for only the assigned anchor. Begin fresh review using cargo meta review start ANCHOR --instructions /tmp/ci-anchor-review-instructions.txt. Inspect current claim, implementation, complete tests, and capture dependencies through review read. Independently assess current evidence; do not transplant old approvals. Preserve justified TODO/N/A entries honestly. Record a complete claim-specific report. Coordinate all source edits with root BEFORE editing, to avoid invalidating concurrent reviews. Prefer reporting concrete necessary changes for root to batch; do not add unrelated evidence. You own only your assigned validation directory and unique /tmp report. Distinguish source inspection from tests executed. Do not commit.\nRoot centrally runs relevant suites. Do not repeat full suites for a source-only review unless investigating a specific concern. Report source assessment honestly without claiming execution. This does not waive regression reproduction for suspected bugs.\n"
   ],
   "fragments": [
     {
@@ -177,6 +177,7 @@
         "",
         "// {anchor}`meta.reviews.input_fragments`",
         "// {anchor}`meta.reviews.review_scope`",
+        "// {anchor}`meta.book.index_status`",
         "pub fn inventory(",
         "    spec: &SpecIndex,",
         "    rust: &CorrespondenceIndex,",
@@ -236,7 +237,9 @@
         "                contents: source_lines(source),",
         "            });",
         "        }",
+        "        // {anchor}`meta.anchors.placeholder_status`",
         "        // {anchor}`meta.reviews.test_source`",
+        "        // {anchor}`crates.sage_test_harness.compile_tests.review_visibility`",
         "        let mut tests = Vec::new();",
         "        let mut test_fragments = BTreeMap::new();",
         "        for site in rust.tests.get(name).into_iter().flatten() {",
@@ -738,6 +741,7 @@
         "                reasons.extend(input_errors(workspace, &record.input, input));",
         "            }",
         "        }",
+        "        // {anchor}`meta.book.index_status`",
         "        if input.tests.is_empty() {",
         "            reasons.push(\"missing test association\".into());",
         "        }",
@@ -989,6 +993,7 @@
         "#[sage::test(meta.reviews.input_fragments)]",
         "#[sage::test(meta.reviews.fragment_freshness)]",
         "#[sage::test(meta.reviews.record_required)]",
+        "#[sage::test(meta.reviews.staleness)]",
         "fn invalid_reports_and_stale_inputs_never_complete_an_active_review() {",
         "    let fixture = Fixture::new();",
         "    assert!(review::record(&fixture.0, \"demo.rule\", &Fixture::report()).is_err());",
@@ -1109,6 +1114,7 @@
         "#[sage::test(meta.reviews.input_format)]",
         "#[sage::test(meta.reviews.input_fragments)]",
         "#[sage::test(meta.reviews.source_representation)]",
+        "#[sage::test(meta.reviews.staleness)]",
         "fn whole_files_and_ranges_preserve_exact_line_endings_and_detect_selected_edits() {",
         "    let fixture = Fixture::new();",
         "    fixture.start();",
@@ -1172,7 +1178,7 @@
       "selector": {
         "kind": "line_range",
         "start": 1,
-        "end": 105
+        "end": 104
       },
       "contents": [
         "#![feature(register_tool)]",
@@ -1279,7 +1285,6 @@
         "    }",
         "}",
         "",
-        "#[test]",
         ""
       ]
     },
@@ -1287,15 +1292,10 @@
       "path": "crates/sage-meta/src/check.rs",
       "selector": {
         "kind": "line_range",
-        "start": 433,
-        "end": 520
+        "start": 439,
+        "end": 470
       },
       "contents": [
-        "}",
-        "",
-        "// {anchor}`meta.reviews.gate`",
-        "// {anchor}`meta.reviews.decisions`",
-        "// {anchor}`meta.reviews.review_diagnostics`",
         "fn check_reviews(",
         "    report: &mut CheckReport,",
         "    spec: &SpecIndex,",
@@ -1328,57 +1328,34 @@
         "                    .tests",
         "                    .iter()",
         "                    .map(|site| site.status)",
-        "                    .chain(record.input.implementations.iter().map(|site| site.status))",
-        "                    .collect::<Vec<_>>();",
-        "                if statuses.contains(&TestStatus::Todo) {",
-        "                    stage.todo += 1;",
-        "                } else if statuses",
-        "                    .iter()",
-        "                    .all(|status| *status == TestStatus::NotApplicable)",
-        "                {",
-        "                    stage.not_applicable += 1;",
-        "                } else {",
-        "                    stage.approved += 1;",
-        "                }",
-        "            }",
-        "            for issue in issues {",
-        "                let anchor = issue",
-        "                    .anchor",
-        "                    .as_ref()",
-        "                    .and_then(|name| spec.anchors.get(name));",
-        "                let diagnostic = Diagnostic {",
-        "                    file: anchor.map_or_else(",
-        "                        || review::CHECKLIST_FILE.into(),",
-        "                        |anchor| docs_root.join(&anchor.file).to_string_lossy().into_owned(),",
-        "                    ),",
-        "                    span: anchor.map_or(Span { start: 0, end: 0 }, |anchor| anchor.span.clone()),",
-        "                    message: issue.message,",
-        "                };",
-        "                let source = anchor.and_then(|anchor| spec.sources.get(&anchor.file));",
-        "                report.rendered_errors.push(render_diagnostic(",
-        "                    &diagnostic,",
-        "                    &diagnostic.file,",
-        "                    source.map(String::as_str),",
-        "                ));",
-        "                stage.diagnostics.push(diagnostic);",
-        "            }",
-        "            stage.valid = stage.diagnostics.is_empty();",
-        "        }",
-        "        Err(error) => {",
-        "            stage.load_error = Some(error.to_string());",
-        "            report.rendered_errors.push(format!(",
-        "                \"error: could not load specification review snapshots from {}\\n  = {error}\",",
-        "                workspace.join(review::CHECKLIST_FILE).display()",
-        "            ));",
-        "        }",
+        ""
+      ]
+    },
+    {
+      "path": "crates/sage-meta/src/spec.rs",
+      "selector": {
+        "kind": "line_range",
+        "start": 418,
+        "end": 434
+      },
+      "contents": [
+        "fn finish_anchor(",
+        "    source: &str,",
+        "    end: usize,",
+        "    active: &mut Option<SpecAnchor>,",
+        "    anchors: &mut Vec<SpecAnchor>,",
+        ") {",
+        "    if let Some(mut anchor) = active.take() {",
+        "        let content = &source[anchor.span.end..end];",
+        "        anchor.content = content.trim().into();",
+        "        anchor.content_span = Span {",
+        "            start: anchor.span.end + content.len() - content.trim_start().len(),",
+        "            end: end - (content.len() - content.trim_end().len()),",
+        "        };",
+        "        anchors.push(anchor);",
         "    }",
-        "    if !stage.valid {",
-        "        if let Some(error) = report.rendered_errors.last_mut() {",
-        "            error.push_str(&format!(\"\\n  = help: run the {} skill to review changed claims, implementations, and tests; delegate each anchor to a subagent, run `cargo meta review start <anchor>`, then `cargo meta review record <anchor> <report-file>`\", review::REVIEW_SKILL));",
-        "        }",
-        "    }",
-        "    report.review = Some(stage);",
         "}",
+        "",
         ""
       ]
     }

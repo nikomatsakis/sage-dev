@@ -1,7 +1,7 @@
 {
   "prompt": "Review this anchor as its assigned subagent. Enumerate ALL requirements, qualifications, edge cases and scenarios. Inspect all supplied implementation and test fragments and trace each aspect to implementation behavior and actual test assertions or justified TODO/N/A evidence. Passing tests and associations alone are insufficient. Follow helpers and capture every additional source dependency with cargo meta review read ANCHOR PATH [selector] before completing the report. Explain prerequisites for justified TODO tests; do not claim deferred behavior is implemented. Distinguish source inspection from commands actually executed. Write a JSON report containing reviewer, report, and requested_edits. Leave requested_edits empty only when every aspect is accounted for and no edits are needed. Otherwise list concrete changes, including missing tests or justified TODO tests with prerequisite comments. Run cargo meta review record ANCHOR REPORT_FILE to finish. After edits or stale-input rejection, run cargo meta review start ANCHOR and review the fresh inputs. The gate fails until a current report with no requested edits is recorded. Dependency capture is agent-declared.",
   "coordinator_instructions": [
-    "Review only meta.anchors.region_balance. Follow the repository review skill. Independently reassess every claim aspect and its implementation/test evidence. Do not edit production or tests; report suspected issues to coordinator. Capture every additional source dependency using review read. Distinguish source review from commands actually executed. Record your own completed report via cargo meta review record; do not directly edit saved JSON. Existing justified TODO/N/A evidence can remain deferred.\nHistorical report supplied as context, not an approval to reuse mechanically; independently verify current evidence and rationale:\n{\n  \"decision\": \"approved\",\n  \"outcome\": true,\n  \"requested_edits\": [],\n  \"reason\": \"Claim reviewed in full: A region opener without a closing delimiter, or a closing delimiter without an open region, is an error. Delimiters in string literals do not open or close regions. Region boundaries are determined from source comments, independently of the five-line previews used for point references.  The existing `// ANCHOR: name` / `// ANCHOR_END: name` convention remains independent: it delimits explanatory excerpts for mdBook/ezanchor. Canonical implementation entries require only the specification comment syntax above.\\n\\nAssessment: evidence.rs stack is per source; standalone closer pops or reports unmatched and remaining openers report errors. unmatched_regions_fail_and_strings_or_trailing_comments_do_not_close_them checks orphan ends/openers and rejects string/trailing fake closers. mdbook_excerpt_markers_neither_define_nor_close_canonical_regions proves unrelated ANCHOR markers neither open nor close regions, including a region longer than preview length.\\n\\nAll supplied test associations: sage_meta::mdbook_excerpt_markers_neither_define_nor_close_canonical_regions [ordinary], sage_meta::unmatched_regions_fail_and_strings_or_trailing_comments_do_not_close_them [ordinary]. Implementation associations: crates/sage-meta/src/evidence.rs::sage_meta::evidence [ordinary].\\n\\nMethod: inspected supplied claim, association bodies and relevant surrounding full-file implementation/test context. This is source adequacy review; no test commands were executed by this reviewer and no run result is inferred from annotations.\",\n  \"reviewer\": \"Codex sage-sanity reviewer\"\n}\nCoordinator reports full functional sage-meta suite 321 passing tests and root cargo build passed. This is separately reported execution, not a command you ran. Avoid redundant full suites unless needed to investigate a specific concern. Efficiently compare unchanged evidence to earlier snapshots, but reassess claim-specific rationale independently.\n\nCoordinator baseline comparison at dispatch preparation (reviewer must verify still current):\nimplementation_sources: crates/sage-meta/src/evidence.rs: CHANGED; inspect delta\ntest_sources: crates/sage-meta/tests/evidence.rs: EXACT BYTE MATCH to historical reviewed source\nFor unchanged legacy anchors, prior report is a completed independent source review. Reassess its claim-specific sufficiency against current claim, metadata and associated test assertions; you need not rediscover all unchanged implementation or rerun tests. For any changed source, inspect the delta and relevant complete behavior. Historical input for exact comparison is /tmp/sage-pre-fragment-validations/meta.anchors.region_balance/input.json. If using historical source contents themselves beyond exact comparison, put them in captured coordinator instructions or use review read for their current workspace source.\n\nCoordinator clarification: evaluate the full associated set plus source reasoning; no demand for isolated field-per-test assertions where meaningful integration checks account for claim. If prior rationale relies on helper/surrounding source in historical test_sources/implementation_sources/reads beyond current initial fragments, capture each relied-on dependency via review read (whole file or precise selector). Byte-comparison alone does not persist a freshness dependency.\n\nEfficiency: unchanged legacy evidence already genuinely independently reviewed. Batch evidence reads; inspect only current inputs, deltas, and actually relied-on helpers. Avoid unrelated documentation, repeated broad checks, and rediscovery. Write concise complete claim/evidence/TODO-prerequisite reassessment, distinguish baseline/source/execution, then record promptly.\n"
+    "Follow sage-review-checklist for only the assigned anchor. Begin fresh review using cargo meta review start ANCHOR --instructions /tmp/ci-anchor-review-instructions.txt. Inspect current claim, implementation, complete tests, and capture dependencies through review read. Independently assess current evidence; do not transplant old approvals. Preserve justified TODO/N/A entries honestly. Record a complete claim-specific report. Coordinate all source edits with root BEFORE editing, to avoid invalidating concurrent reviews. Prefer reporting concrete necessary changes for root to batch; do not add unrelated evidence. You own only your assigned validation directory and unique /tmp report. Distinguish source inspection from tests executed. Do not commit.\nRoot centrally runs relevant suites. Do not repeat full suites for a source-only review unless investigating a specific concern. Report source assessment honestly without claiming execution. This does not waive regression reproduction for suspected bugs.\n"
   ],
   "fragments": [
     {
@@ -55,6 +55,7 @@
         "/// name itself. Special modules may nest, but conflicting classifications cannot.",
         "// {anchor}`meta.anchors.placeholder_status`",
         "// {anchor}`meta.reviews.decisions`",
+        "// {anchor}`meta.book.index_status`",
         "pub fn placeholder_status(module: &str) -> Result<EvidenceStatus, String> {",
         "    let mut todo = false;",
         "    let mut not_applicable = false;",
@@ -104,6 +105,7 @@
         "",
         "/// Index one Cargo-owned source snapshot, using its inherited module context.",
         "// {anchor}`meta.anchors.implementation_references`",
+        "// {anchor}`meta.anchors.evidence_status`",
         "pub(crate) fn index_source(",
         "    source: &str,",
         "    syntax: &syn::File,",
@@ -653,7 +655,7 @@
       "selector": {
         "kind": "line_range",
         "start": 245,
-        "end": 275
+        "end": 273
       },
       "contents": [
         "    pub fn from_sources(sources: &[RustSource]) -> Result<Self, Box<dyn std::error::Error>> {",
@@ -685,8 +687,6 @@
         "        }",
         "        Ok(index)",
         "    }",
-        "",
-        "    /// Compare with text embedded by the running binary, for example using",
         ""
       ]
     },
@@ -694,45 +694,10 @@
       "path": "crates/sage-meta/src/correspondence.rs",
       "selector": {
         "kind": "line_range",
-        "start": 475,
-        "end": 530
+        "start": 510,
+        "end": 524
       },
       "contents": [
-        "                    format!(",
-        "                        \"Rust source {} is outside workspace {}\",",
-        "                        file.display(),",
-        "                        workspace.display()",
-        "                    )",
-        "                })?",
-        "                .to_string_lossy(),",
-        "        ))",
-        "    }",
-        "    fn load_file(&mut self, mut context: Context) -> Result<(), Box<dyn std::error::Error>> {",
-        "        if !self.visited.insert((",
-        "            context.file.clone(),",
-        "            context.module.clone(),",
-        "            context.target.clone(),",
-        "        )) {",
-        "            return Ok(());",
-        "        }",
-        "        let path = self.workspace.as_ref().unwrap().join(&context.file);",
-        "        let source = std::fs::read_to_string(&path)?;",
-        "        let syntax =",
-        "            syn::parse_file(&source).map_err(|error| format!(\"{}: {error}\", path.display()))?;",
-        "        self.files.insert(context.file.clone(), source);",
-        "        let parent = path.parent().unwrap();",
-        "        context.physical_parent = parent.to_path_buf();",
-        "        context.directory =",
-        "            if context.source_root || path.file_name().is_some_and(|name| name == \"mod.rs\") {",
-        "                parent.to_path_buf()",
-        "            } else {",
-        "                parent.join(path.file_stem().unwrap())",
-        "            };",
-        "        self.items(&syntax.items, &context)?;",
-        "        self.check_attributes(&syntax, &context);",
-        "        self.implementation_entries(&syntax, &context);",
-        "        Ok(())",
-        "    }",
         "    fn implementation_entries(&mut self, syntax: &syn::File, context: &Context) {",
         "        crate::evidence::index_source(",
         "            &self.files[&context.file],",
@@ -748,12 +713,6 @@
         "            &mut self.diagnostics,",
         "        );",
         "    }",
-        "    fn items(",
-        "        &mut self,",
-        "        items: &[syn::Item],",
-        "        context: &Context,",
-        "    ) -> Result<(), Box<dyn std::error::Error>> {",
-        "        for item in items {",
         ""
       ]
     }

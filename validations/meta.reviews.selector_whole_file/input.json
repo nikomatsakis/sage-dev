@@ -1,7 +1,7 @@
 {
   "prompt": "Review this anchor as its assigned subagent. Enumerate ALL requirements, qualifications, edge cases and scenarios. Inspect all supplied implementation and test fragments and trace each aspect to implementation behavior and actual test assertions or justified TODO/N/A evidence. Passing tests and associations alone are insufficient. Follow helpers and capture every additional source dependency with cargo meta review read ANCHOR PATH [selector] before completing the report. Explain prerequisites for justified TODO tests; do not claim deferred behavior is implemented. Distinguish source inspection from commands actually executed. Write a JSON report containing reviewer, report, and requested_edits. Leave requested_edits empty only when every aspect is accounted for and no edits are needed. Otherwise list concrete changes, including missing tests or justified TODO tests with prerequisite comments. Run cargo meta review record ANCHOR REPORT_FILE to finish. After edits or stale-input rejection, run cargo meta review start ANCHOR and review the fresh inputs. The gate fails until a current report with no requested edits is recorded. Dependency capture is agent-declared.",
   "coordinator_instructions": [
-    "Refresh ONLY meta.reviews.selector_whole_file under sage-review-checklist. Previous actual independent report below is rationale to reassess, not a verdict to copy. Saved inputs became stale for these reasons:\nreview required for meta.reviews.selector_whole_file: initial fragment changed: crates/sage-meta/tests/review.rs Test { crate_name: \"sage_meta\", target: \"test:review\", rust_path: \"sage_meta::whole_files_and_ranges_preserve_exact_line_endings_and_detect_selected_edits\" }; invoke .agents/skills/sage-review-checklist/SKILL.md\nPrevious report:\n{\n  \"reviewer\": \"Codex delegated reviewer anchor_021\",\n  \"report\": \"Reviewed meta.reviews.selector_whole_file independently against its current complete claim, its single ordinary implementation association in sage_meta::review (lib:sage_meta), and its complete associated ordinary test set: sage_meta::whole_files_and_ranges_preserve_exact_line_endings_and_detect_selected_edits (test:review). There are no TODO or N/A entries.\\n\\nThe requirements are selection of all source-file contents, preservation of any trailing newline, and absence of additional selector payload. The implementation's Selector::WholeFile unit variant carries no fields. select resolves the source path and returns std::fs::read_to_string(resolved) directly, without trimming, line splitting, or newline normalization. capture_read saves that same returned text through source_lines, which splits on newline while retaining terminal empty elements; joining the saved elements reconstructs the text. input_errors reselects captured reads and compares exact reconstructed strings, so a newly added terminal newline is significant. These operations and the data model are all in the initially captured review.rs; no additional production implementation association is necessary.\\n\\nThe associated test uses a concrete fixture file with CRLF, a blank line, LF, and a final unterminated line. Its two whole-file calls assert exact equality to the full input, and it asserts equality of repeated captured fragments and exact reconstruction of persisted contents. After recording, it appends only a final newline and asserts that checking becomes invalid. This tests both complete selection and the significance of the trailing newline, catching trimming or truncation implementations. Its preceding range assertions distinguish partial selection from the whole-file behavior and establish a valid baseline before selected-content changes invalidate the record. The fixture helper source was captured with review read (lines 1\\u2013130): writes use std::fs::write directly, input reads the persisted JSON, and start/record use the actual review APIs. The unit selector construction in the test together with the fieldless enum definition adequately accounts for no additional selector data; an isolated assertion of every serialized field is unnecessary for this claim. Empty files and files already ending in newlines follow the same unmodified read and reversible split path; the claim does not require separate per-input tests. The complete set gives meaningful assertions for the stated guarantee.\\n\\nI read the review specification and required repository guidance and reassessed the evidence rather than inheriting a baseline verdict. Commands I executed were review start, recorded reads, and source/JSON inspection, followed by review record for this report. I did not rerun test suites or edit Rust. The coordinator reports 331 root tests plus 31 review tests and cargo build passing; these are separately reported execution results, not commands executed by me. Source inspection found no claim violation or outstanding concern requiring reproduction. All claim aspects are accounted for; no edits requested.\",\n  \"requested_edits\": []\n}\nCurrent execution reported by coordinator: 331 sage-meta functional tests passed (repository gate awaits reviews), 46 sage-stash tests passed, workspace build passed. Do not claim these as personally executed. Review current claim and complete evidence, focused on deltas where prior analysis remains supported. Capture all relied-on helper dependencies using review read; no source changes or redundant broad tests. Start, consume saved inputs, and personally record complete report. Relevant changes: validator tests gained additional assertions/associations; check/main gained diagnostic associations; stash scalar interning now skips count!=1 collision entries before read_one, with safety comment and empty unit-slice regression.\n"
+    "Follow sage-review-checklist for only the assigned anchor. Begin fresh review using cargo meta review start ANCHOR --instructions /tmp/ci-anchor-review-instructions.txt. Inspect current claim, implementation, complete tests, and capture dependencies through review read. Independently assess current evidence; do not transplant old approvals. Preserve justified TODO/N/A entries honestly. Record a complete claim-specific report. Coordinate all source edits with root BEFORE editing, to avoid invalidating concurrent reviews. Prefer reporting concrete necessary changes for root to batch; do not add unrelated evidence. You own only your assigned validation directory and unique /tmp report. Distinguish source inspection from tests executed. Do not commit.\nRoot centrally runs relevant suites. Do not repeat full suites for a source-only review unless investigating a specific concern. Report source assessment honestly without claiming execution. This does not waive regression reproduction for suspected bugs.\n"
   ],
   "fragments": [
     {
@@ -174,6 +174,7 @@
         "",
         "// {anchor}`meta.reviews.input_fragments`",
         "// {anchor}`meta.reviews.review_scope`",
+        "// {anchor}`meta.book.index_status`",
         "pub fn inventory(",
         "    spec: &SpecIndex,",
         "    rust: &CorrespondenceIndex,",
@@ -233,7 +234,9 @@
         "                contents: source_lines(source),",
         "            });",
         "        }",
+        "        // {anchor}`meta.anchors.placeholder_status`",
         "        // {anchor}`meta.reviews.test_source`",
+        "        // {anchor}`crates.sage_test_harness.compile_tests.review_visibility`",
         "        let mut tests = Vec::new();",
         "        let mut test_fragments = BTreeMap::new();",
         "        for site in rust.tests.get(name).into_iter().flatten() {",
@@ -735,6 +738,7 @@
         "                reasons.extend(input_errors(workspace, &record.input, input));",
         "            }",
         "        }",
+        "        // {anchor}`meta.book.index_status`",
         "        if input.tests.is_empty() {",
         "            reasons.push(\"missing test association\".into());",
         "        }",
@@ -773,6 +777,7 @@
         "#[sage::test(meta.reviews.input_format)]",
         "#[sage::test(meta.reviews.input_fragments)]",
         "#[sage::test(meta.reviews.source_representation)]",
+        "#[sage::test(meta.reviews.staleness)]",
         "fn whole_files_and_ranges_preserve_exact_line_endings_and_detect_selected_edits() {",
         "    let fixture = Fixture::new();",
         "    fixture.start();",
@@ -836,7 +841,7 @@
       "selector": {
         "kind": "line_range",
         "start": 1,
-        "end": 108
+        "end": 104
       },
       "contents": [
         "#![feature(register_tool)]",
@@ -943,10 +948,6 @@
         "    }",
         "}",
         "",
-        "#[test]",
-        "#[sage::test(meta.reviews.validation_layout)]",
-        "#[sage::test(meta.reviews.summary_format)]",
-        "#[sage::test(meta.reviews.preparation)]",
         ""
       ]
     }
