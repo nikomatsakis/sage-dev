@@ -104,6 +104,10 @@ pub trait CheckGenerics<'db> {
     ) -> Slice<GenericParam<'db>>;
 }
 
+// {anchor}`crates.sage_ir.checking.identity_minting`
+// {anchor}`crates.sage_ir.checking.signature.owner_binder`
+// {anchor}`crates.sage_ir.checking.signature.storage`
+// {anchor}`crates.sage_ir.checking.signature.body_independence`
 impl<'db> CheckGenerics<'db> for Slice<GenericParamCst<'db>> {
     fn check(
         self,

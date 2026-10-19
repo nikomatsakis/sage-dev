@@ -1,3 +1,4 @@
+// {anchor}`crates.sage_test_harness.compile_tests.diagnostic_counts`
 use sage_stash::{Stash, StashHash, Stashed};
 
 use crate::diagnostic::{Diagnostic, ErrorReported, Span};
@@ -40,6 +41,8 @@ impl<'a, 'db> Check<'a, 'db> {
     }
 
     pub fn report(&mut self, diag: Diagnostic<'db>) -> ErrorReported {
+        use salsa::Accumulator as _;
+        crate::diagnostic::SignatureDiagnostic(diag.snapshot(self.db)).accumulate(self.db);
         crate::diagnostic::report(&mut self.diagnostics, diag)
     }
 
@@ -51,6 +54,7 @@ impl<'a, 'db> Check<'a, 'db> {
             .and(environment.solver_eligibility);
     }
 
+    // {anchor}`crates.sage_ir.checking.signature.body_independence`
     pub fn complete_parameter_env(
         &mut self,
         where_clauses: sage_stash::Slice<WherePredicate<'db>>,

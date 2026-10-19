@@ -199,6 +199,7 @@ fn fmt_ty(
     }
 }
 
+// {anchor}`crates.sage_ir.types.aliases.identity`
 fn fmt_alias_name(
     f: &mut fmt::Formatter<'_>,
     db: &dyn crate::Db,

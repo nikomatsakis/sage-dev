@@ -37,6 +37,8 @@ impl<'db> DeriveExpansion<'db> {
     /// Parse generated items behind a stable tracked boundary so the module
     /// expansion fixed point observes the same symbol identities on retries.
     #[salsa::tracked(returns(ref))]
+    // {anchor}`crates.sage_ir.modules.expand.dependencies`
+    // {anchor}`crates.sage_ir.modules.expand.direct_members`
     pub fn parse_output(self, db: &'db dyn crate::Db) -> Vec<LocalModItemSym<'db>> {
         let Some(output) = self.text(db) else {
             return Vec::new();

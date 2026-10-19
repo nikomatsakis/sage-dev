@@ -554,8 +554,10 @@ pub struct Stashed<T> {
 }
 
 impl<T: StashHash + Copy> Stashed<T> {
+    // {anchor}`crates.sage_ir.checking.owned_products`
     // {anchor}`crates.sage_stash.storage.rooted_equality`
     // {anchor}`crates.sage_stash.storage.query_value`
+    // {anchor}`crates.sage_ir.checking.signature.storage`
     pub fn new(stash: Stash, root: T) -> Self {
         let mut hasher = FingerprintHasher::new();
         root.stash_hash(&stash, &mut hasher);
@@ -642,10 +644,12 @@ struct Entry {
     inline_hash: u64,
 }
 
-/// Key for the intern deduplication map.
+/// Key for the intern deduplication map. Element count prevents a scalar hash
+/// collision from reading an empty or differently sized slice as a scalar.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct InternKey {
     type_id: TypeId,
+    count: usize,
     content_hash: u64,
     collision: u32,
 }
@@ -875,19 +879,16 @@ impl Stash {
         for collision in 0u32.. {
             let key = InternKey {
                 type_id,
+                count: 1,
                 content_hash,
                 collision,
             };
             match self.intern_map.get(&key) {
                 Some(&entry_idx) => {
                     let entry = &self.entries[entry_idx.get() as usize];
-                    // Slice entries share this hash bucket. Compare a scalar
-                    // only with entries that contain exactly one value.
-                    if entry.count != 1 {
-                        continue;
-                    }
-                    // SAFETY: The key matches T's type and this entry contains
-                    // one value, initialized with T's alignment by push_raw.
+                    debug_assert_eq!(entry.count, 1);
+                    // SAFETY: The key matches T's type and element count;
+                    // entry.offset is a live allocation initialized by push_raw.
                     let existing = unsafe { self.read_one::<T>(entry.offset) };
                     if *existing == value {
                         return self.make_ptr(entry_idx);
@@ -925,12 +926,15 @@ impl Stash {
         for collision in 0u32.. {
             let key = InternKey {
                 type_id,
+                count: values.len(),
                 content_hash,
                 collision,
             };
             match self.intern_map.get(&key) {
                 Some(&entry_idx) => {
                     let entry = &self.entries[entry_idx.get() as usize];
+                    // Safety: the key matches T::StaticSelf and the requested element
+                    // count; this live entry owns that many aligned elements.
                     let existing = unsafe { self.read_slice::<T>(entry.offset, entry.count) };
                     if existing == values {
                         return self.make_slice(entry_idx);

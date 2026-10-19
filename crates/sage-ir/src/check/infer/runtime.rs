@@ -213,6 +213,7 @@ impl Runtime {
         }
     }
 
+    // {anchor}`crates.sage_ir.inference.body_local_quiescence`
     pub fn is_quiescent(&self) -> bool {
         self.tasks.is_empty() && self.ready.lock().unwrap().is_empty()
     }
@@ -283,6 +284,7 @@ impl<'scope, T> ScopedTasks<'scope, T> {
         }
     }
 
+    // {anchor}`crates.sage_ir.inference.transaction_isolation`
     pub fn cancel_all(&mut self) {
         for task in &mut self.tasks {
             *task = None;

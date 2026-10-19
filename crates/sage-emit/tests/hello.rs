@@ -1,3 +1,4 @@
+#![feature(rustc_private)]
 use rust_ref::*;
 use sage_emit::emit_module;
 use sage_test_harness::with_test_crate;

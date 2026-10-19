@@ -1,7 +1,7 @@
 {
   "prompt": "Review this anchor as its assigned subagent. Enumerate ALL requirements, qualifications, edge cases and scenarios. Inspect all supplied implementation and test fragments and trace each aspect to implementation behavior and actual test assertions or justified TODO/N/A evidence. Passing tests and associations alone are insufficient. Follow helpers and capture every additional source dependency with cargo meta review read ANCHOR PATH [selector] before completing the report. Explain prerequisites for justified TODO tests; do not claim deferred behavior is implemented. Distinguish source inspection from commands actually executed. Write a JSON report containing reviewer, report, and requested_edits. Leave requested_edits empty only when every aspect is accounted for and no edits are needed. Otherwise list concrete changes, including missing tests or justified TODO tests with prerequisite comments. Run cargo meta review record ANCHOR REPORT_FILE to finish. After edits or stale-input rejection, run cargo meta review start ANCHOR and review the fresh inputs. The gate fails until a current report with no requested edits is recorded. Dependency capture is agent-declared.",
   "coordinator_instructions": [
-    "Review only meta.reviews.review_scope. Follow the repository review skill. Independently reassess every claim aspect and its implementation/test evidence. Do not edit production or tests; report suspected issues to coordinator. Capture every additional source dependency using review read. Distinguish source review from commands actually executed. Record your own completed report via cargo meta review record; do not directly edit saved JSON. Existing justified TODO/N/A evidence can remain deferred.\nHistorical report supplied as context, not an approval to reuse mechanically; independently verify current evidence and rationale:\n{\n  \"decision\": \"approved\",\n  \"outcome\": true,\n  \"requested_edits\": [],\n  \"reason\": \"review.rs::inventory records each implementation site's crate, target, module, file, inherited cfg, excerpt, region flag, placeholder status and explanation in ReviewImplementation; sorting/deduplication makes the collection deterministic. implementation_sources uses a BTreeMap keyed by path so a complete file occurs once even when several associations point into it. It records neither source line numbers nor byte offsets. inputs_match compares the complete resulting input, then separately verifies declared reads. implementation_edits_including_outside_the_preview_invalidate_review changes a helper outside a point preview and demonstrates failed checking plus refreshed complete source; implementation_associations_and_inherited_cfg_are_review_inputs checks cfg, adding a second associated region, changed excerpts/association sets and staleness when a previous association is removed. implementation_placeholders_prevent_approval_even_with_ordinary_tests demonstrates that review includes implementation status and rationale, not only tests. Captured correspondence, evidence and workspace helpers were inspected to trace associations and inherited conditions. Full-file changes conservatively invalidate reviews, while uncaptured unrelated code is not claimed as cached evidence. The exact prompt directs reviewers to examine every requirement and account for both implementation and tests; this source judgment is complemented by separately reported test execution. All evidence entries here are ordinary. Independently executed cargo test -p sage-meta --test review --test book --test spec against these sources: 26 review, 13 book and 30 spec tests passed. This report combines source inspection with that execution; declared dependencies are self-reported, not hook-intercepted.\",\n  \"reviewer\": \"Codex /root/quality independent anchor-ID source review\"\n}\nCoordinator reports full functional sage-meta suite 321 passing tests and root cargo build passed. This is separately reported execution, not a command you ran. Avoid redundant full suites unless needed to investigate a specific concern. Efficiently compare unchanged evidence to earlier snapshots, but reassess claim-specific rationale independently.\n\nCoordinator clarification: evaluate the full associated set plus source reasoning; no demand for isolated field-per-test assertions where meaningful integration checks account for claim. If prior rationale relies on helper/surrounding source in historical test_sources/implementation_sources/reads beyond current initial fragments, capture each relied-on dependency via review read (whole file or precise selector). Byte-comparison alone does not persist a freshness dependency.\n"
+    "Follow sage-review-checklist for only the assigned anchor. Begin fresh review using cargo meta review start ANCHOR --instructions /tmp/ci-anchor-review-instructions.txt. Inspect current claim, implementation, complete tests, and capture dependencies through review read. Independently assess current evidence; do not transplant old approvals. Preserve justified TODO/N/A entries honestly. Record a complete claim-specific report. Coordinate all source edits with root BEFORE editing, to avoid invalidating concurrent reviews. Prefer reporting concrete necessary changes for root to batch; do not add unrelated evidence. You own only your assigned validation directory and unique /tmp report. Distinguish source inspection from tests executed. Do not commit.\nRoot centrally runs relevant suites. Do not repeat full suites for a source-only review unless investigating a specific concern. Report source assessment honestly without claiming execution. This does not waive regression reproduction for suspected bugs.\n"
   ],
   "fragments": [
     {
@@ -185,6 +185,7 @@
         "",
         "// {anchor}`meta.reviews.input_fragments`",
         "// {anchor}`meta.reviews.review_scope`",
+        "// {anchor}`meta.book.index_status`",
         "pub fn inventory(",
         "    spec: &SpecIndex,",
         "    rust: &CorrespondenceIndex,",
@@ -244,7 +245,9 @@
         "                contents: source_lines(source),",
         "            });",
         "        }",
+        "        // {anchor}`meta.anchors.placeholder_status`",
         "        // {anchor}`meta.reviews.test_source`",
+        "        // {anchor}`crates.sage_test_harness.compile_tests.review_visibility`",
         "        let mut tests = Vec::new();",
         "        let mut test_fragments = BTreeMap::new();",
         "        for site in rust.tests.get(name).into_iter().flatten() {",
@@ -746,6 +749,7 @@
         "                reasons.extend(input_errors(workspace, &record.input, input));",
         "            }",
         "        }",
+        "        // {anchor}`meta.book.index_status`",
         "        if input.tests.is_empty() {",
         "            reasons.push(\"missing test association\".into());",
         "        }",
@@ -780,6 +784,7 @@
         "#[sage::test(meta.reviews.decisions)]",
         "#[sage::test(meta.reviews.review_scope)]",
         "#[sage::test(meta.reviews.input_format)]",
+        "#[sage::test(meta.reviews.test_source)]",
         "fn accepted_placeholder_reports_preserve_todo_and_na_evidence() {",
         "    for (module, expected) in [",
         "        (\"todo\", TestStatus::Todo),",
@@ -810,6 +815,66 @@
         "            if module == \"todo\" { (1, 0) } else { (0, 1) }",
         "        );",
         "    }",
+        "}"
+      ]
+    },
+    {
+      "path": "crates/sage-meta/tests/review.rs",
+      "selector": {
+        "kind": "test",
+        "crate_name": "sage_meta",
+        "target": "test:review",
+        "rust_path": "sage_meta::implementation_metadata_is_sorted_and_excludes_source_positions"
+      },
+      "contents": [
+        "#[test]",
+        "#[sage::test(meta.reviews.review_scope)]",
+        "fn implementation_metadata_is_sorted_and_excludes_source_positions() {",
+        "    let fixture = Fixture::new();",
+        "    let alpha = \"mod alpha {\\n// {anchor}`demo.rule`<<\\npub fn result() -> u32 { 4 }\\n// >>\\n}\\n\";",
+        "    let zeta = \"mod zeta {\\n// {anchor}`demo.rule`<<\\npub fn result() -> u32 { 4 }\\n// >>\\n}\\n\";",
+        "    fixture.write(\"src/behavior.rs\", &format!(\"{zeta}{alpha}\"));",
+        "    let first = fixture.start();",
+        "    assert_eq!(",
+        "        first",
+        "            .implementations",
+        "            .iter()",
+        "            .map(|site| site.module.as_str())",
+        "            .collect::<Vec<_>>(),",
+        "        [\"demo::behavior::alpha\", \"demo::behavior::zeta\"]",
+        "    );",
+        "    for site in &first.implementations {",
+        "        let value = serde_json::to_value(site).unwrap();",
+        "        let mut keys = value",
+        "            .as_object()",
+        "            .unwrap()",
+        "            .keys()",
+        "            .map(String::as_str)",
+        "            .collect::<Vec<_>>();",
+        "        keys.sort();",
+        "        assert_eq!(",
+        "            keys,",
+        "            [",
+        "                \"cfg\",",
+        "                \"crate_name\",",
+        "                \"excerpt\",",
+        "                \"explanation\",",
+        "                \"file\",",
+        "                \"module\",",
+        "                \"region\",",
+        "                \"status\",",
+        "                \"target\"",
+        "            ]",
+        "        );",
+        "    }",
+        "    fixture.write(",
+        "        \"src/behavior.rs\",",
+        "        &format!(\"// Unrelated leading context moves source positions.\\n\\n{alpha}{zeta}\"),",
+        "    );",
+        "    let moved = fixture.start();",
+        "    assert_eq!(moved.implementations, first.implementations);",
+        "    // Whole-file context still changes; position independence applies to metadata.",
+        "    assert_ne!(moved.fragments, first.fragments);",
         "}"
       ]
     },
@@ -996,7 +1061,7 @@
       "selector": {
         "kind": "line_range",
         "start": 1,
-        "end": 100
+        "end": 94
       },
       "contents": [
         "#![feature(register_tool)]",
@@ -1093,12 +1158,6 @@
         "            .current_dir(&self.0)",
         "            .args(args)",
         "            .output()",
-        "            .unwrap()",
-        "    }",
-        "}",
-        "",
-        "impl Drop for Fixture {",
-        "    fn drop(&mut self) {",
         ""
       ]
     },
@@ -1708,11 +1767,11 @@
       "cfg": [],
       "excerpt": [
         "// {anchor}`meta.reviews.review_scope`",
+        "// {anchor}`meta.book.index_status`",
         "pub fn inventory(",
         "    spec: &SpecIndex,",
         "    rust: &CorrespondenceIndex,",
         ") -> Result<BTreeMap<String, ReviewInput>, Box<dyn Error>> {",
-        "    let workspace = rust.workspace_root().unwrap_or(Path::new(\".\"));",
         ""
       ],
       "region": false,
@@ -1725,6 +1784,14 @@
       "crate_name": "sage_meta",
       "target": "test:review",
       "rust_path": "sage_meta::accepted_placeholder_reports_preserve_todo_and_na_evidence",
+      "file": "crates/sage-meta/tests/review.rs",
+      "cfg": [],
+      "status": "ordinary"
+    },
+    {
+      "crate_name": "sage_meta",
+      "target": "test:review",
+      "rust_path": "sage_meta::implementation_metadata_is_sorted_and_excludes_source_positions",
       "file": "crates/sage-meta/tests/review.rs",
       "cfg": [],
       "status": "ordinary"

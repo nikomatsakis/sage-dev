@@ -1,7 +1,7 @@
 {
   "prompt": "Review this anchor as its assigned subagent. Enumerate ALL requirements, qualifications, edge cases and scenarios. Inspect all supplied implementation and test fragments and trace each aspect to implementation behavior and actual test assertions or justified TODO/N/A evidence. Passing tests and associations alone are insufficient. Follow helpers and capture every additional source dependency with cargo meta review read ANCHOR PATH [selector] before completing the report. Explain prerequisites for justified TODO tests; do not claim deferred behavior is implemented. Distinguish source inspection from commands actually executed. Write a JSON report containing reviewer, report, and requested_edits. Leave requested_edits empty only when every aspect is accounted for and no edits are needed. Otherwise list concrete changes, including missing tests or justified TODO tests with prerequisite comments. Run cargo meta review record ANCHOR REPORT_FILE to finish. After edits or stale-input rejection, run cargo meta review start ANCHOR and review the fresh inputs. The gate fails until a current report with no requested edits is recorded. Dependency capture is agent-declared.",
   "coordinator_instructions": [
-    "Review only crates.sage_ir.types.body.try_residual. Follow the repository review skill. Independently reassess every claim aspect and its implementation/test evidence. Do not edit production or tests; report suspected issues to coordinator. Capture every additional source dependency using review read. Distinguish source review from commands actually executed. Record your own completed report via cargo meta review record; do not directly edit saved JSON. Existing justified TODO/N/A evidence can remain deferred.\nHistorical report supplied as context, not an approval to reuse mechanically; independently verify current evidence and rationale:\n{\n  \"decision\": \"todo\",\n  \"outcome\": true,\n  \"requested_edits\": [],\n  \"reason\": \"Claim aspects reviewed: The question-mark operator lowers into a Try::branch call, a ControlFlow match, and a FromResidual call.\\n\\nBoth sides defer Try/residual elaboration. The deferred contract includes Try::branch, a ControlFlow match and FromResidual; merely retaining question-mark syntax does not satisfy it.\\n\\nImplementation associations considered: crates/sage-meta/tests/representation_spec.rs [todo]: TODO: Try and residual elaboration remain pending.\\nTODO: Try and residual elaboration remain pending..\\n\\nExplicit deferred evidence sage_meta::todo::types_body_try_residual: TODO: Try and residual elaboration remain pending.\\n\\nDecision: TODO. The explicit placeholders retain the missing implementation or verification scenarios described above; their empty passing bodies are not behavioral evidence. All aspects are accounted for as implemented examples or this declared gap, and this review requests no additional edit to that accounting. This outcome does not assert complete implementation or test coverage.\\n\\nValidation method: source inspection of the supplied context and associated evidence. This review did not execute tests, use old approval decisions, or read additional dependency files.\",\n  \"reviewer\": \"Codex /root/sanity — fresh Sage IR anchor review\"\n}\nCoordinator reports full functional sage-meta suite 321 passing tests and root cargo build passed. This is separately reported execution, not a command you ran. Avoid redundant full suites unless needed to investigate a specific concern. Efficiently compare unchanged evidence to earlier snapshots, but reassess claim-specific rationale independently.\n\nCoordinator baseline comparison at dispatch preparation (reviewer must verify still current):\nimplementation_sources: crates/sage-meta/tests/representation_spec.rs: EXACT BYTE MATCH to historical reviewed source\ntest_sources: crates/sage-meta/tests/representation_spec.rs: EXACT BYTE MATCH to historical reviewed source\nFor unchanged legacy anchors, prior report is a completed independent source review. Reassess its claim-specific sufficiency against current claim, metadata and associated test assertions; you need not rediscover all unchanged implementation or rerun tests. For any changed source, inspect the delta and relevant complete behavior. Historical input for exact comparison is /tmp/sage-pre-fragment-validations/crates.sage_ir.types.body.try_residual/input.json. If using historical source contents themselves beyond exact comparison, put them in captured coordinator instructions or use review read for their current workspace source.\n\nCoordinator clarification: evaluate the full associated set plus source reasoning; no demand for isolated field-per-test assertions where meaningful integration checks account for claim. If prior rationale relies on helper/surrounding source in historical test_sources/implementation_sources/reads beyond current initial fragments, capture each relied-on dependency via review read (whole file or precise selector). Byte-comparison alone does not persist a freshness dependency.\n\nEfficiency: unchanged legacy evidence already genuinely independently reviewed. Batch evidence reads; inspect only current inputs, deltas, and actually relied-on helpers. Avoid unrelated documentation, repeated broad checks, and rediscovery. Write concise complete claim/evidence/TODO-prerequisite reassessment, distinguish baseline/source/execution, then record promptly.\n"
+    "Follow sage-review-checklist for only the assigned anchor. Begin fresh review using cargo meta review start ANCHOR --instructions /tmp/ci-anchor-review-instructions.txt. Inspect current claim, implementation, complete tests, and capture dependencies through review read. Independently assess current evidence; do not transplant old approvals. Preserve justified TODO/N/A entries honestly. Record a complete claim-specific report. Coordinate all source edits with root BEFORE editing, to avoid invalidating concurrent reviews. Prefer reporting concrete necessary changes for root to batch; do not add unrelated evidence. You own only your assigned validation directory and unique /tmp report. Distinguish source inspection from tests executed. Do not commit.\nRoot centrally runs relevant suites. Do not repeat full suites for a source-only review unless investigating a specific concern. Report source assessment honestly without claiming execution. This does not waive regression reproduction for suspected bugs.\n"
   ],
   "fragments": [
     {
@@ -124,13 +124,6 @@
         "    fn types_lifetimes_dummy() {",
         "        // TODO: Local explicit/elided/static and synthesized references are covered;",
         "        // complete imported/bound/inferred-origin tests.",
-        "    }",
-        "",
-        "    #[test]",
-        "    #[sage::test(crates.sage_ir.types.lifetimes.unchecked_borrows)]",
-        "    fn types_lifetimes_unchecked_borrows() {",
-        "        // TODO: Add negative fixtures pinning intentional acceptance of programs rejected",
-        "        // only by lifetime or borrow rules.",
         "    }",
         "",
         "    #[test]",
@@ -294,6 +287,83 @@
         "    fn types_body_try_residual() {",
         "        // TODO: Try and residual elaboration remain pending.",
         "    }"
+      ]
+    },
+    {
+      "path": "crates/sage-ir/src/check/expr.rs",
+      "selector": {
+        "kind": "line_range",
+        "start": 448,
+        "end": 453
+      },
+      "contents": [
+        "            ExprCstKind::Try(inner) => {",
+        "                let ri = cx.source_stash[*inner].check_with(cx, scope).await;",
+        "                let ty = cx.fresh_ty_var();",
+        "                (TyExprData::Try(ri), ty)",
+        "            }",
+        "            ExprCstKind::Closure(params, body) => {",
+        ""
+      ]
+    },
+    {
+      "path": "md/design/crates/sage_ir/typed-ir-guide.md",
+      "selector": {
+        "kind": "line_range",
+        "start": 114,
+        "end": 137
+      },
+      "contents": [
+        "## Preserved and elaborated constructs",
+        "",
+        "The table is the destination contract. A row marked *planned* is not yet fully",
+        "represented by the implementation.",
+        "",
+        "| Source construct | Typed IR form |",
+        "|---|---|",
+        "| block, `let`, `if`, `match` | Preserved structured node with typed children |",
+        "| `loop`, `break`, `continue`, `return` | Preserved structured control flow |",
+        "| tuple, array, struct, enum construction | Resolved constructor and typed operands |",
+        "| field access | Resolved field definition, not a field name |",
+        "| closure | {spec}`crates.sage_ir.types.body.closures` |",
+        "| async block or async function body | {spec}`crates.sage_ir.types.body.coroutines` |",
+        "| `x.method(a)` | Resolved call with dispatch, owner/method substitutions, and receiver operations materialized (built for the conservative external trait and inherent method slices; general lookup planned) |",
+        "| non-short-circuit operator syntax | Resolved trait-method call (built for ground primitive and local user-defined operands; generic bodies planned) |",
+        "| `x && y`, `x || y` | Typed lazy logical operation with conditional RHS evaluation |",
+        "| `x[i]` | {spec}`crates.sage_ir.types.body.indexing` |",
+        "| callable `f(a)` | Direct, pointer, dynamic, or `Fn*` call as resolved (planned) |",
+        "| implicit coercion | Explicit coercion, borrow, dereference, or unsizing node (shared borrow and built-in dereference represented; general coercions planned) |",
+        "| `if let`, `while let`, and `let` chains | {spec}`crates.sage_ir.types.body.conditional_patterns` |",
+        "| `for` | {spec}`crates.sage_ir.types.body.for_iteration` |",
+        "| `expr?` | {spec}`crates.sage_ir.types.body.try_residual` |",
+        "| `.await` | {spec}`crates.sage_ir.types.body.await` |",
+        "| macro invocation | {spec}`crates.sage_ir.types.body.macro_expansion` |",
+        ""
+      ]
+    },
+    {
+      "path": "md/rfds/architectural-foundations/README.md",
+      "selector": {
+        "kind": "line_range",
+        "start": 232,
+        "end": 245
+      },
+      "contents": [
+        "## Completed bodies are elaborated typed trees",
+        "",
+        "`LocalFnSym::body` returns a fully typed, fully resolved, tree-structured IR.",
+        "Implicit type-directed operations such as receiver dereference, autoref,",
+        "coercion, and unsizing are materialized as nodes. Method syntax, unresolved",
+        "field names, inference variables, and adjustment lists do not survive in a",
+        "successful completed body.",
+        "",
+        "Structured control flow, closures, and async bodies remain above MIR: the IR",
+        "does not introduce basic blocks, drop schedules, or coroutine state-machine",
+        "layout. Candidate selection may use source-shaped nodes and adjustment recipes",
+        "internally, but those are consumed inside the body query. The full destination",
+        "contract is [Typed IR](../../design/crates/sage_ir/typed-ir-guide.md).",
+        "",
+        ""
       ]
     }
   ],

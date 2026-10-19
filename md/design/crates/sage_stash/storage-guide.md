@@ -34,7 +34,9 @@ outputs under the destination stash without consulting source stashes.
 
 All `alloc` and `alloc_slice` operations are hash-consing. Equal values of the
 same stash data type return the same handle; hash collisions are resolved by
-content comparison. Children are allocated before parents, so a parent's hash
+content comparison. Lookup keys include type, element count, and content hash,
+so a scalar collision cannot read an empty slice entry as a value.
+Children are allocated before parents, so a parent's hash
 can incorporate the already computed hashes of its handles without recursive
 tree traversal.
 
@@ -133,6 +135,9 @@ fingerprint only prevents an equal output from propagating further. See
 | `crates/sage-stash/src/lib.rs` | typed handles, hash-consed allocation, fingerprints, copying, Salsa updates |
 | `crates/sage-stash-macros/` | `AllocStashData` derive |
 | `crates/sage-stash/tests/arena_tests.rs` | allocation, collision, fingerprint, copy, and ordering evidence |
+| `crates/sage-stash/tests/storage_contracts.rs` | nested ownership, collision boundaries, immutable API, and rooted value evidence |
+| `crates/sage-stash/tests/incremental.rs` | real Salsa producer/consumer reuse and backdating |
+| `crates/sage-stash/tests/ui/` | rejected attempts to mutate interned scalar and slice entries |
 
 ## Implementation and test evidence
 

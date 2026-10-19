@@ -97,6 +97,8 @@ impl<'db> Resolver<'db> {
         }
     }
 
+    // {anchor}`crates.sage_ir.modules.expand.dependencies`
+    // {anchor}`crates.sage_ir.modules.expand.recursion_and_fixpoint`
     pub fn new_for_macro_expansion(
         db: &'db dyn Db,
         module: crate::local_syms::mods::LocalModSym<'db>,
@@ -123,6 +125,7 @@ impl<'db> Resolver<'db> {
     }
 
     // ANCHOR: architecture_resolve_path
+    // {anchor}`crates.sage_ir.symbols.definition_identity`
     #[sage::item(crate::resolution::Resolver::resolve)]
     // {anchor}`crates.sage_ir.resolution.lookup.precedence`
     // {anchor}`crates.sage_ir.resolution.lookup.identity_only`
@@ -193,6 +196,7 @@ impl<'db> Resolver<'db> {
     /// standard prelude. The boolean is false when an unresolved import or
     /// macro could contribute another trait; callers must not interpret that
     /// subset as an exhaustive negative.
+    // {anchor}`crates.sage_ir.resolution.lookup.completeness`
     pub(crate) fn traits_in_method_scope(&mut self) -> (Vec<(TraitSymbol<'db>, bool)>, bool) {
         let mut traits = Vec::new();
         let mut complete = match self.module() {
@@ -501,7 +505,7 @@ impl<'db> Resolver<'db> {
         }
         self.in_flight.push(query);
 
-        let results = match self.phase {
+        let mut results = match self.phase {
             ResolvePhase::MacroExpansion => self.lookup_in_module(
                 LookupFilter {
                     named: true,
@@ -538,6 +542,10 @@ impl<'db> Resolver<'db> {
         };
 
         self.in_flight.pop();
+        // Multiple import routes to one definition do not create ambiguity.
+        // Deduplicate only the selected precedence bucket, retaining its order.
+        let mut seen = rustc_hash::FxHashSet::default();
+        results.retain(|symbol| seen.insert(*symbol));
         results
     }
 
@@ -700,12 +708,27 @@ impl<'db> Resolver<'db> {
         name: Name<'db>,
         namespace: Namespace,
     ) -> Vec<Symbol<'db>> {
-        let modules: Vec<ModSymbol<'db>> =
-            glob_from.iter().filter_map(|s| s.module(self.db)).collect();
-
-        modules
-            .into_iter()
-            .flat_map(|module| self.resolve_name_from_module(module, name, namespace))
+        glob_from
+            .iter()
+            .flat_map(|symbol| match symbol.data(self.db) {
+                SymbolData::ModSymbol(module) => {
+                    self.resolve_name_from_module(module, name, namespace)
+                }
+                SymbolData::EnumSymbol(_) => self.resolve_name_in(*symbol, name, namespace),
+                SymbolData::FnSymbol(_)
+                | SymbolData::StructSymbol(_)
+                | SymbolData::VariantSymbol(_)
+                | SymbolData::VariantCtorSymbol(_)
+                | SymbolData::TraitSymbol(_)
+                | SymbolData::TypeAliasSymbol(_)
+                | SymbolData::ConstSymbol(_)
+                | SymbolData::StaticSymbol(_)
+                | SymbolData::ImplSymbol(_)
+                | SymbolData::MacroDefSymbol(_)
+                | SymbolData::UseSymbol(_)
+                | SymbolData::IntrinsicTypeSymbol(_)
+                | SymbolData::MacroInvocationSymbol(_) => Vec::new(),
+            })
             .collect()
     }
 

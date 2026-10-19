@@ -1,3 +1,5 @@
+// {anchor}`crates.sage_ir.modules.parse.dependencies`
+// {anchor}`crates.sage_test_harness.compile_tests.production_execution`
 use sage_stash::{Ptr, Stash};
 
 use crate::cst::Mutability;
@@ -69,7 +71,7 @@ impl<'a, 'db> Parser<'a, 'db> {
                     .or_else(|| {
                         let mut c = node.walk();
                         node.children(&mut c)
-                            .find(|ch| ch.is_named() && ch.kind() != "return")
+                            .find(|ch| ch.is_named() && !ch.is_extra() && ch.kind() != "return")
                     })
                     .map(|n| self.parse_expr(stash, n, item_start));
                 ExprCstKind::Return(val)
@@ -163,8 +165,8 @@ impl<'a, 'db> Parser<'a, 'db> {
                         }
                     }
                 }
-                "{" | "}" | "empty_statement" => {}
-                _ if child.is_named() => {
+                "{" | "}" | "empty_statement" | "line_comment" | "block_comment" => {}
+                _ if child.is_named() && !child.is_extra() => {
                     tail = Some(self.parse_expr(stash, *child, item_start));
                 }
                 _ => {}
@@ -225,7 +227,7 @@ impl<'a, 'db> Parser<'a, 'db> {
         if let Some(arg_list) = node.child_by_field_name("arguments") {
             let mut cursor = arg_list.walk();
             for child in arg_list.children(&mut cursor) {
-                if child.is_named() && child.kind() != "," {
+                if child.is_named() && !child.is_extra() && child.kind() != "," {
                     let arg = self.parse_expr(stash, child, item_start);
                     args.push(stash[arg]);
                 }
@@ -319,7 +321,7 @@ impl<'a, 'db> Parser<'a, 'db> {
         if let Some(arg_list) = node.child_by_field_name("arguments") {
             let mut cursor = arg_list.walk();
             for child in arg_list.children(&mut cursor) {
-                if child.is_named() && child.kind() != "," {
+                if child.is_named() && !child.is_extra() && child.kind() != "," {
                     let arg = self.parse_expr(stash, child, item_start);
                     args.push(stash[arg]);
                 }
@@ -405,7 +407,7 @@ impl<'a, 'db> Parser<'a, 'db> {
                 "!" => op = UnaryOp::Not,
                 "-" => op = UnaryOp::Neg,
                 "*" => op = UnaryOp::Deref,
-                _ if child.is_named() => operand_node = Some(child),
+                _ if child.is_named() && !child.is_extra() => operand_node = Some(child),
                 _ => {}
             }
         }
@@ -437,7 +439,7 @@ impl<'a, 'db> Parser<'a, 'db> {
             match child.kind() {
                 "mutable_specifier" => mutability = Mutability::Mut,
                 "&" => {}
-                _ if child.is_named() => inner_node = Some(child),
+                _ if child.is_named() && !child.is_extra() => inner_node = Some(child),
                 _ => {}
             }
         }
@@ -484,7 +486,7 @@ impl<'a, 'db> Parser<'a, 'db> {
             // The alternative is an `else_clause` node; unwrap to its body.
             let mut cursor = n.walk();
             n.children(&mut cursor)
-                .find(|c| c.is_named())
+                .find(|c| c.is_named() && !c.is_extra())
                 .map(|inner| self.parse_expr(stash, inner, item_start))
         });
 
@@ -710,7 +712,7 @@ impl<'a, 'db> Parser<'a, 'db> {
                     };
                     let pat = child
                         .child_by_field_name("pattern")
-                        .or_else(|| child.child(0).filter(|c| c.is_named()))
+                        .or_else(|| child.child(0).filter(|c| c.is_named() && !c.is_extra()))
                         .map(|n| self.parse_pat(stash, n, item_start))
                         .unwrap_or_else(|| {
                             stash.alloc(PatCst {
@@ -750,7 +752,7 @@ impl<'a, 'db> Parser<'a, 'db> {
         let mut elems = Vec::new();
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            if child.is_named() && child.kind() != "," {
+            if child.is_named() && !child.is_extra() && child.kind() != "," {
                 let e = self.parse_expr(stash, child, item_start);
                 elems.push(stash[e]);
             }
@@ -773,7 +775,7 @@ impl<'a, 'db> Parser<'a, 'db> {
         let mut elems = Vec::new();
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            if child.is_named() && child.kind() != "," {
+            if child.is_named() && !child.is_extra() && child.kind() != "," {
                 let e = self.parse_expr(stash, child, item_start);
                 elems.push(stash[e]);
             }
@@ -793,7 +795,7 @@ impl<'a, 'db> Parser<'a, 'db> {
         };
         let obj = node
             .child(0)
-            .filter(|c| c.is_named())
+            .filter(|c| c.is_named() && !c.is_extra())
             .map(|n| self.parse_expr(stash, n, item_start))
             .unwrap_or_else(|| {
                 stash.alloc(ExprCst {
@@ -803,7 +805,7 @@ impl<'a, 'db> Parser<'a, 'db> {
             });
         let idx = node
             .child(2)
-            .filter(|c| c.is_named())
+            .filter(|c| c.is_named() && !c.is_extra())
             .map(|n| self.parse_expr(stash, n, item_start))
             .unwrap_or_else(|| {
                 stash.alloc(ExprCst {
@@ -923,7 +925,7 @@ impl<'a, 'db> Parser<'a, 'db> {
         for child in &children {
             if child.kind().contains("..") {
                 saw_dots = true;
-            } else if child.is_named() {
+            } else if child.is_named() && !child.is_extra() {
                 if !saw_dots {
                     lo = Some(self.parse_expr(stash, *child, item_start));
                 } else {
@@ -952,7 +954,7 @@ impl<'a, 'db> Parser<'a, 'db> {
                 PatCstKind::Bind(name, Mutability::Shared)
             }
             "mut_pattern" => {
-                let inner = node.child(1).filter(|c| c.is_named());
+                let inner = node.child(1).filter(|c| c.is_named() && !c.is_extra());
                 match inner {
                     Some(n) => {
                         let name = Name::new(self.db, self.text[n.byte_range()].to_owned());
@@ -969,7 +971,7 @@ impl<'a, 'db> Parser<'a, 'db> {
                 let mut pats = Vec::new();
                 let mut cursor = node.walk();
                 for child in node.children(&mut cursor) {
-                    if child.is_named() && child.kind() != "," {
+                    if child.is_named() && !child.is_extra() && child.kind() != "," {
                         let p = self.parse_pat(stash, child, item_start);
                         pats.push(stash[p]);
                     }
@@ -986,7 +988,7 @@ impl<'a, 'db> Parser<'a, 'db> {
                     match child.kind() {
                         "mutable_specifier" => mutability = Mutability::Mut,
                         "&" => {}
-                        _ if child.is_named() => inner_node = Some(child),
+                        _ if child.is_named() && !child.is_extra() => inner_node = Some(child),
                         _ => {}
                     }
                 }
@@ -1002,7 +1004,7 @@ impl<'a, 'db> Parser<'a, 'db> {
                 let mut pats = Vec::new();
                 let mut cursor = node.walk();
                 for child in node.children(&mut cursor) {
-                    if child.is_named() && child.kind() != "|" {
+                    if child.is_named() && !child.is_extra() && child.kind() != "|" {
                         let p = self.parse_pat(stash, child, item_start);
                         pats.push(stash[p]);
                     }
@@ -1086,6 +1088,7 @@ impl<'a, 'db> Parser<'a, 'db> {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             if child.is_named()
+                && !child.is_extra()
                 && child.kind() != ","
                 && child.kind() != "("
                 && child.kind() != ")"

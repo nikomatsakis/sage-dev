@@ -125,6 +125,9 @@ impl AnchorPages<'_> {
     }
 
     // {anchor}`meta.anchors.anchor_pages`
+    // {anchor}`meta.anchors.context_navigation`
+    // {anchor}`meta.anchors.evidence_status`
+    // {anchor}`meta.anchors.placeholder_status`
     fn page(&self, name: &str, url: &str) -> String {
         let mut text = format!(
             "# {}\n\n<nav class=\"anchor-breadcrumbs\" aria-label=\"Anchor namespaces\"><a href=\"{}\">All anchors</a>",

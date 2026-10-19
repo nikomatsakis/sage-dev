@@ -54,7 +54,7 @@ context Parser {
         **Parse recovery never makes absence conclusive.** An error item or error CST node is terminal for the current parse, but any consumer asking an exhaustive question must treat the surrounding represented set as incomplete unless it can prove the error irrelevant to that question. This is the parsing consequence of [Incompleteness is an explicit terminal outcome](../../../rfds/architectural-foundations/README.md#incompleteness-is-an-explicit-terminal-outcome).
 
         {anchor}`parse.dependencies`
-        **The parse query depends only on parse inputs.** Parsing one module may read its source, scope, edition, and generated parse source, but never resolved names, checked interfaces, bodies of other items, or trait results.
+        **The parse query depends only on parse inputs.** Parsing one module may read its source, scope, edition, compilation configuration, and generated parse source, but never resolved names, checked interfaces, bodies of other items, or trait results.
         """
         envelope {
             invokes $sage_stash::storage::Stash::alloc();

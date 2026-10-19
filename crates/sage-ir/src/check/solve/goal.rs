@@ -38,6 +38,7 @@ pub enum CanonicalVarRole {
 /// value-producing operations are not encoded by adding an output variable to
 /// that proposition language.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+// {anchor}`crates.sage_ir.solver.canonical_outputs`
 pub enum SolverGoal<'db> {
     Prove(Goal<'db>),
     Normalize(AliasTy<'db>),

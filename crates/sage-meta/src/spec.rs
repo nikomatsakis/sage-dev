@@ -143,6 +143,7 @@ impl SpecIndex {
             .collect()
     }
 
+    // {anchor}`meta.anchors.implementation_references`
     pub fn validate_implementation_references(
         &self,
         rust: &crate::correspondence::CorrespondenceIndex,
@@ -413,6 +414,7 @@ fn parse_anchors(source: &SpecSource) -> (Vec<SpecAnchor>, Vec<Diagnostic>, Vec<
 
 // {anchor}`meta.anchors.content.blocks`
 // {anchor}`meta.reviews.claim_text`
+// {anchor}`meta.reviews.selector_claim`
 fn finish_anchor(
     source: &str,
     end: usize,
@@ -728,6 +730,7 @@ impl SpecIndex {
                 let model = documents.iter().find(|doc| doc.file == absolute);
                 let model_namespace =
                     model.and_then(|doc| crate::workspace::document_namespace(&documents, doc));
+                // {anchor}`meta.book.crate_ownership`
                 if model_namespace.is_none() {
                     return Err(format!("Sage chapter `{file}` has no modeled crate owner").into());
                 }

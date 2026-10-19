@@ -116,6 +116,8 @@ fn derive_arena_data_impl(input: TokenStream) -> TokenStream {
     .into()
 }
 
+// {anchor}`crates.sage_stash.storage.rooted_equality`
+// {anchor}`crates.sage_stash.storage.typed_interning`
 fn generate_stash_hash_body(input: &DeriveInput) -> proc_macro2::TokenStream {
     match &input.data {
         syn::Data::Struct(data) => generate_stash_hash_fields(&data.fields),
@@ -221,6 +223,7 @@ fn generate_stash_hash_fields(fields: &syn::Fields) -> proc_macro2::TokenStream 
 // StashCopy code generation
 // ---------------------------------------------------------------------------
 
+// {anchor}`crates.sage_stash.storage.handle_ownership`
 fn generate_stash_copy_body(input: &DeriveInput) -> proc_macro2::TokenStream {
     match &input.data {
         syn::Data::Struct(data) => generate_stash_copy_struct_fields(&data.fields),

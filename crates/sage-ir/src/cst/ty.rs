@@ -99,6 +99,8 @@ use crate::symbol::{Symbol, SymbolData};
 
 impl<'db> TypeCst<'db> {
     #[sage::item(crate::checking::Check::signature)]
+    // {anchor}`crates.sage_ir.checking.signature.storage`
+    // {anchor}`crates.sage_ir.checking.signature.body_independence`
     pub(crate) fn check(self, cx: &mut Check<'_, 'db>) -> Ty<'db> {
         let src = cx.source_stash;
         match self.kind {
@@ -118,6 +120,7 @@ impl<'db> TypeCst<'db> {
                     }
                 }
             }
+            // {anchor}`crates.sage_ir.types.lifetimes.dummy`
             TypeCstKind::Reference(inner, m, lifetime) => {
                 let inner_ty = src[inner].check(cx);
                 let inner = cx.target_stash.alloc(inner_ty);

@@ -106,6 +106,7 @@ impl<'db> VersionedEGraph<'db> {
     /// `None`; the unifier checks domain membership before performing that
     /// union. Callers use the result to validate later equalities and to carry
     /// unresolved restrictions across solver boundaries.
+    // {anchor}`crates.sage_ir.inference.numeric_domains`
     pub fn effective_domain(
         &self,
         version: Version,
@@ -238,6 +239,8 @@ impl<'db> VersionedEGraph<'db> {
     }
 
     /// Atomically merge an exclusive leaf child into its direct parent.
+    // {anchor}`crates.sage_ir.inference.atomic_checking`
+    // {anchor}`crates.sage_ir.inference.transaction_isolation`
     pub fn collapse_into(&mut self, child: Version, parent: Version) -> CommitEffects {
         self.versions.assert_live(child);
         self.versions.assert_live(parent);
@@ -300,6 +303,7 @@ impl<'db> VersionedEGraph<'db> {
     // Union-find
     // -----------------------------------------------------------------------
 
+    // {anchor}`crates.sage_stash.storage.immutable_entries`
     pub fn find(&self, version: Version, mut ty: Ptr<Ty<'db>>) -> Ptr<Ty<'db>> {
         self.versions.assert_live(version);
         loop {

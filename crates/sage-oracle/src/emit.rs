@@ -570,6 +570,7 @@ impl<'tcx> Emitter<'tcx> {
         }
     }
 
+    // {anchor}`crates.sage_ir.types.aliases.identity`
     fn emit_type(&self, ty: ty::Ty<'tcx>) -> Type<NormalizedDef> {
         match ty.kind() {
             ty::TyKind::Bool => Type::Primitive("bool".to_string()),

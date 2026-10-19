@@ -12,7 +12,7 @@ context Resolver {
         **Negative reasoning requires explicit completeness.** A resolution result preserves every represented alternative separately from the fact that the searched source is exhaustive. An empty incomplete result is never interpreted as proof that the name or provider does not exist. This is the resolution consequence of [Incompleteness is an explicit terminal outcome](../../../rfds/architectural-foundations/README.md#incompleteness-is-an-explicit-terminal-outcome).
 
         {anchor}`lookup.precedence`
-        **Lookup precedence is determined by scope, namespace, and path form.** Lexical ribs take priority only for an unqualified one-segment name; module lookup then follows the applicable Rust namespace, imports, ancestry, prelude, and external-module rules rather than combining every visible name into an unordered global set.
+        **Lookup precedence is determined by scope, namespace, and path form.** Lexical ribs take priority only for an unqualified one-segment name; module lookup then follows the applicable Rust namespace, imports, ancestry, prelude, and external-module rules rather than combining every visible name into an unordered global set. Leaving a lexical scope restores enclosing bindings; later bindings retain their own body-local identity and type even when nested or sibling scopes have allocated other locals.
 
         {anchor}`lookup.identity_only`
         **Resolution stops at semantic identity.** Ordinary path and name lookup returns symbols and completeness information; it does not infer a receiver, normalize an associated type, prove a trait obligation, or select an applicable method candidate as a hidden side effect.

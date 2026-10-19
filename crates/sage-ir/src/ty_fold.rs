@@ -22,6 +22,7 @@ pub trait TyFolder<'db> {
     }
 }
 
+// {anchor}`crates.sage_ir.checking.signature.storage`
 pub fn default_fold_ty<'db>(folder: &mut impl TyFolder<'db>, ty: Ty<'db>) -> Ty<'db> {
     match ty {
         Ty::Adt(sym, args) => {
@@ -67,6 +68,7 @@ pub fn default_fold_ty<'db>(folder: &mut impl TyFolder<'db>, ty: Ty<'db>) -> Ty<
     }
 }
 
+// {anchor}`crates.sage_ir.types.aliases.identity`
 pub fn fold_alias_ty<'db>(folder: &mut impl TyFolder<'db>, alias: AliasTy<'db>) -> AliasTy<'db> {
     match alias {
         AliasTy::Named(alias) => AliasTy::Named(NamedAliasTy {

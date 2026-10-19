@@ -266,6 +266,7 @@ pub enum RawGenericDefault {
 // {anchor}`crates.sage_ir.metadata.provider_authority`
 // {anchor}`crates.sage_ir.metadata.explicit_incompleteness`
 // {anchor}`crates.sage_ir.metadata.product_boundaries`
+// {anchor}`crates.sage_ir.symbols.external_fact_queries`
 pub trait TcxDb: Send + Sync {
     fn extern_crate(&self, name: &str) -> Option<CrateNum>;
 

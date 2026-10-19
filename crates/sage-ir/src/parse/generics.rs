@@ -1,3 +1,4 @@
+// {anchor}`crates.sage_ir.modules.parse.dependencies`
 use sage_stash::{Slice, Stash};
 
 use crate::cst::generics::{GenericParamCst, TypeBoundCst};

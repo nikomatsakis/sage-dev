@@ -17,7 +17,18 @@ with a generated `ParseSource`.
 ### Input
 
 Parsing consumes a parse-source identity, its Rust text, the containing
-`ScopeSymbol`, and the crate edition available through that scope.
+`ScopeSymbol`, the crate edition available through that scope, and tracked
+compilation configuration. An unspecified configuration remains unknown, preserving
+conservative expansion completeness for standalone semantic clients. The host supplies target cfg values and enabled
+Cargo features before local demand. Recognized `cfg` predicates filter items
+before creating their identities; unsupported attributes remain explicit
+incomplete expansion work. Inline test fixtures use normal library configuration.
+
+File-backed modules resolve from registered source inputs, including explicit
+`#[path = "..."]` paths relative to the containing source file and enclosing inline module directories. Inline modules
+retain explicit directory overrides. Logical paths
+are normalized independently of materialized temporary directories. A missing
+module source produces an error item rather than a host panic.
 
 ### Output
 
@@ -28,7 +39,7 @@ The output is an ordered `Vec<LocalModItemSym>`. A represented item has:
 - an absolute item span and relative spans inside the CST; and
 - its owning module/crate scope.
 
-Unrecognized or malformed top-level syntax produces an explicit
+Unrecognized syntax or a malformed item subtree produces an explicit
 `LocalModItemSym::Error` carrying its span. Parsing does not silently turn such
 input into a valid definition.
 

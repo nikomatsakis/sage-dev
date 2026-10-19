@@ -1,3 +1,8 @@
+// {anchor}`crates.sage_test_harness.compile_tests.rustc_execution`
+// {anchor}`crates.sage_test_harness.compile_tests.dependencies`
+// {anchor}`crates.sage_test_harness.compile_tests.production_execution`
+// {anchor}`crates.sage_test_harness.compile_tests.edition`
+// {anchor}`crates.sage_test_harness.compile_tests.project_isolation`
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -100,6 +105,7 @@ pub fn our_sysroot() -> &'static str {
 }
 
 /// Get the path to the rustc binary in sage's sysroot.
+// {anchor}`crates.sage_test_harness.compile_tests.rustc_lints`
 pub fn our_rustc() -> PathBuf {
     Path::new(our_sysroot()).join("bin/rustc")
 }
@@ -239,6 +245,12 @@ fn build_and_collect_direct_deps(
     selected_package: &str,
     direct_deps_by_package: &HashMap<String, Vec<String>>,
 ) -> Result<HashMap<String, PathBuf>, String> {
+    // Std comes from the pinned sysroot. With no direct Cargo dependencies,
+    // there is nothing to build; compiling the selected package here would
+    // incorrectly reject negative source fixtures before Sage sees them.
+    if direct_deps_by_package.is_empty() {
+        return Ok(HashMap::new());
+    }
     eprintln!("sage: building dependencies...");
 
     // Use RUSTC to force cargo to use the exact same rustc that's linked into sage.

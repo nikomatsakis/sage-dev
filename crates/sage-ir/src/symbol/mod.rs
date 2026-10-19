@@ -116,6 +116,7 @@ impl<'db> SymExt<'db> {
     /// `SymbolData`, while general module/enum enumeration must retain them so
     /// existing path behavior is unchanged.
     #[salsa::tracked(returns(ref))]
+    // {anchor}`crates.sage_ir.resolution.lookup.dependencies`
     pub fn trait_children(self, db: &'db dyn Db) -> Vec<TraitSymbol<'db>> {
         db.tcx()
             .module_children(self.crate_num(db), self.def_index(db))
@@ -135,6 +136,8 @@ impl<'db> SymExt<'db> {
     /// Look up exported children while retaining the namespace on the
     /// metadata edge. Namespace is not part of canonical definition identity.
     #[salsa::tracked(returns(ref))]
+    // {anchor}`crates.sage_ir.resolution.lookup.dependencies`
+    // {anchor}`crates.sage_ir.resolution.lookup.identity_only`
     pub fn named_children(
         self,
         db: &'db dyn Db,
@@ -352,7 +355,7 @@ define_kind_symbols! {
     pub enum ModSymbol<'db> { Local(crate::local_syms::mods::LocalModSym<'db>), Ext(SymExtKind::Mod) }
     #[sage::item(crate::types::MacroDefSymbol)]
     pub enum MacroDefSymbol<'db> { Local(crate::local_syms::macro_defs::LocalMacroDefSym<'db>), Ext(SymExtKind::MacroDef) }
-    pub enum UseSymbol<'db> { Local(crate::local_syms::uses::LocalUseSym<'db>), Ext(SymExtKind::Mod) }
+    pub enum UseSymbol<'db> { Local(crate::local_syms::uses::LocalUseSym<'db>), Ext(SymExtKind::Use) }
 
     { /* Local only */ }
 
@@ -454,6 +457,7 @@ impl<'db> Symbol<'db> {
     ///
     /// - Anonymous items, like impls.
     /// - `use` symbols, which may define multiple items (e.g., globs etc).
+    // {anchor}`crates.sage_ir.resolution.lookup.precedence`
     pub fn name(&self, db: &'db dyn Db) -> Option<(Name<'db>, Namespace)> {
         match self.data {
             SymbolDataPriv::FnSymbol(sym) => Some((sym.name(db), Namespace::Value)),
@@ -540,6 +544,7 @@ impl<'db> Symbol<'db> {
 
     /// If this symbol can be entered for path resolution (modules, enums),
     /// return its children.
+    // {anchor}`crates.sage_ir.resolution.lookup.identity_only`
     pub fn children(&self, db: &'db dyn Db) -> Option<&'db [Symbol<'db>]> {
         match self.data(db) {
             SymbolData::ModSymbol(m) => Some(m.expanded_module_items(db)),
@@ -550,6 +555,7 @@ impl<'db> Symbol<'db> {
 }
 
 impl<'db> ModSymbol<'db> {
+    // {anchor}`crates.sage_ir.resolution.lookup.dependencies`
     pub fn expanded_module_items(self, db: &'db dyn Db) -> &'db [Symbol<'db>] {
         match self {
             ModSymbol::Local(sym) => local_expanded_module_items(db, sym),
@@ -616,6 +622,7 @@ pub struct MacroExpandError;
 mod r#abstract {}
 
 impl<'db> MacroDefSymbol<'db> {
+    // {anchor}`crates.sage_ir.modules.expand.dependencies`
     pub fn expand(self, db: &'db dyn Db, input: &str) -> Result<String, MacroExpandError> {
         match self {
             MacroDefSymbol::Local(sym) => {

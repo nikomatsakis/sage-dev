@@ -66,6 +66,7 @@ impl<'db> LocalModItemSym<'db> {
         }
     }
 
+    // {anchor}`crates.sage_ir.types.spans.relative_composition`
     pub fn relative_span_base(self, db: &'db dyn crate::Db) -> AbsoluteSpan<'db> {
         match self {
             LocalModItemSym::Function(f) => f.span(db),

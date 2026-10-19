@@ -151,6 +151,7 @@ fn claim_path(workspace: &Path, file: &str) -> Result<String, Box<dyn Error>> {
 
 // {anchor}`meta.reviews.input_fragments`
 // {anchor}`meta.reviews.review_scope`
+// {anchor}`meta.book.index_status`
 pub fn inventory(
     spec: &SpecIndex,
     rust: &CorrespondenceIndex,
@@ -210,7 +211,9 @@ pub fn inventory(
                 contents: source_lines(source),
             });
         }
+        // {anchor}`meta.anchors.placeholder_status`
         // {anchor}`meta.reviews.test_source`
+        // {anchor}`crates.sage_test_harness.compile_tests.review_visibility`
         let mut tests = Vec::new();
         let mut test_fragments = BTreeMap::new();
         for site in rust.tests.get(name).into_iter().flatten() {
@@ -712,6 +715,7 @@ pub fn validate(
                 reasons.extend(input_errors(workspace, &record.input, input));
             }
         }
+        // {anchor}`meta.book.index_status`
         if input.tests.is_empty() {
             reasons.push("missing test association".into());
         }

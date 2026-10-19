@@ -31,6 +31,7 @@ pub struct QueryResult<'db> {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, AllocStashData)]
+// {anchor}`crates.sage_ir.solver.canonical_outputs`
 pub enum GoalOutput<'db> {
     Proven,
     Type(Ptr<Ty<'db>>),

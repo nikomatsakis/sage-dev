@@ -1,3 +1,6 @@
+// {anchor}`crates.sage_test_harness.compile_tests.project_isolation`
+// {anchor}`crates.sage_test_harness.compile_tests.diagnostic_counts`
+// {anchor}`crates.sage_test_harness.compile_tests.checking_scope`
 mod attrs;
 mod exprs;
 mod generics;
@@ -24,6 +27,7 @@ pub(crate) struct Parser<'a, 'db> {
 // {anchor}`crates.sage_ir.modules.parse.syntax_identities`
 // {anchor}`crates.sage_ir.modules.parse.detail_firewall`
 // {anchor}`crates.sage_ir.modules.parse.dependencies`
+// {anchor}`crates.sage_ir.modules.expand.direct_members`
 pub fn parse_str_to_cst<'db>(
     db: &'db dyn Db,
     source: ParseSource<'db>,
@@ -61,6 +65,20 @@ impl<'a, 'db> Parser<'a, 'db> {
         let mut cursor = list_node.walk();
 
         for child in list_node.children(&mut cursor) {
+            if !matches!(
+                child.kind(),
+                "attribute_item" | "line_comment" | "block_comment"
+            ) {
+                if !self.cfg_enabled(&pending_attrs) {
+                    pending_attrs.clear();
+                    continue;
+                }
+                if child.has_error() {
+                    items.push(self.error_item(child, &pending_attrs));
+                    pending_attrs.clear();
+                    continue;
+                }
+            }
             match child.kind() {
                 "attribute_item" => {
                     pending_attrs.push(child);

@@ -51,6 +51,8 @@ pub struct Decomposed<'db> {
 }
 
 /// Decompose a type into its skeleton and sub-type children.
+// {anchor}`crates.sage_ir.inference.subtyping_and_coercion`
+// {anchor}`crates.sage_ir.types.aliases.identity`
 pub fn decompose<'db>(stash: &Stash, ty: Ptr<Ty<'db>>) -> Decomposed<'db> {
     match stash[ty] {
         Ty::Bool => leaf(Skeleton::Bool),

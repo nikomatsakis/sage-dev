@@ -1,5 +1,8 @@
+#![feature(rustc_private)]
 #![feature(register_tool)]
 #![register_tool(sage)]
+pub mod compile;
+
 use expect_test::Expect;
 pub use expect_test::expect;
 use sage_ir::Db;
@@ -2424,6 +2427,10 @@ mod trait_system_tests {
                 .get(item_index)
                 .copied()
                 .expect("expected observed item");
+            assert!(
+                !matches!(item, sage_ir::local_syms::LocalModItemSym::Error(_)),
+                "expected a represented item, got a parse error"
+            );
             let symbol: Symbol<'_> = item.into();
             observe_symbol_identity(db, ObservedSymbol::new(db, symbol));
         }
@@ -2528,6 +2535,65 @@ mod trait_system_tests {
                 case.label
             );
         }
+    }
+
+    #[test]
+    #[sage::test(crates.sage_ir.symbols.local_identity)]
+    fn local_function_identity_changes_are_distinguishable() {
+        use salsa::Setter as _;
+
+        let mut database = Database::default();
+        let source_file =
+            database.add_source_file("lib.rs".to_owned(), "fn before() {}".to_owned());
+        database.attach(|db| {
+            let (_, root) = setup_root_module(db, source_file);
+            let function = local_function_named(db, root, "before");
+            observe_symbol_identity(db, ObservedSymbol::new(db, Symbol::from(function)));
+        });
+        assert!(
+            database
+                .take_query_log()
+                .contains("observe_symbol_identity")
+        );
+
+        source_file
+            .set_text(&mut database)
+            .to("fn after() {}".to_owned());
+        database.attach(|db| {
+            let (_, root) = setup_root_module(db, source_file);
+            let function = local_function_named(db, root, "after");
+            assert_eq!(function.name(db).text(db), "after");
+            observe_symbol_identity(db, ObservedSymbol::new(db, Symbol::from(function)));
+        });
+        assert!(
+            database
+                .take_query_log()
+                .contains("observe_symbol_identity"),
+            "renaming the definition must create a distinguishable identity"
+        );
+
+        source_file
+            .set_text(&mut database)
+            .to("fn same() {} mod nested { fn same() {} }".to_owned());
+        database.attach(|db| {
+            let (_, root) = setup_root_module(db, source_file);
+            let outer = local_function_named(db, root, "same");
+            let nested = root
+                .expanded_module_items(db)
+                .iter()
+                .find_map(|symbol| match symbol.data(db) {
+                    SymbolData::ModSymbol(module) => Some(module),
+                    _ => None,
+                })
+                .expect("nested module");
+            let inner = local_function_named(db, nested, "same");
+            assert_eq!(outer.name(db), inner.name(db));
+            assert_ne!(outer.scope(db), inner.scope(db));
+            assert_ne!(
+                outer, inner,
+                "same-name definitions in different scopes are distinct"
+            );
+        });
     }
 
     #[test]
@@ -3011,6 +3077,121 @@ mod trait_solver_boundary_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.inference.canonical_boundary)]
+    fn canonical_response_preserves_lowered_input_universe() {
+        with_test_crate("trait Marker {}", |db, root| {
+            let krate = crate_from_root_items(db, root);
+            let mut stash = Stash::new();
+            let mut egraph = VersionedEGraph::new();
+            let input_index = egraph.alloc_var(Version::ROOT, Universe(2));
+            let input = stash.alloc(Ty::InferVar(input_index));
+            let assumptions = stash.alloc_slice::<Assumption>(&[]);
+            let canonical = canonicalize_goal(
+                db,
+                &stash,
+                &egraph,
+                Version::ROOT,
+                krate,
+                Universe(1),
+                true,
+                assumptions,
+                Goal::Atom(Atom::Equals(input, input)),
+            );
+            let mut proof = instantiate_query(&canonical.data);
+            let Ty::InferVar(proof_input) = proof.stash[proof.inputs[0].ty] else {
+                panic!("expected flexible proof input");
+            };
+            proof
+                .egraph
+                .lower_universe(proof.version, proof_input, Universe::ROOT);
+            let modulo = Goal::true_(&mut proof.stash);
+            let response = extract_query_result(db, &proof, GoalResult::Yes { modulo });
+            apply_query_response(
+                db,
+                &mut stash,
+                &mut egraph,
+                Version::ROOT,
+                &canonical.data,
+                &canonical.mapping,
+                &response,
+            )
+            .unwrap();
+            assert_eq!(
+                egraph.current_universe(Version::ROOT, input_index),
+                Universe(1)
+            );
+        });
+    }
+
+    #[test]
+    #[sage::test(crates.sage_ir.inference.canonical_boundary)]
+    fn canonical_response_preserves_lowered_unified_input_universe() {
+        with_test_crate("trait Marker {}", |db, root| {
+            let krate = crate_from_root_items(db, root);
+            let mut stash = Stash::new();
+            let mut egraph = VersionedEGraph::new();
+            let input_index = egraph.alloc_var(Version::ROOT, Universe(2));
+            let input = stash.alloc(Ty::InferVar(input_index));
+            let other_index = egraph.alloc_var(Version::ROOT, Universe(2));
+            let other = stash.alloc(Ty::InferVar(other_index));
+            let assumptions = stash.alloc_slice::<Assumption>(&[]);
+            let canonical = canonicalize_goal(
+                db,
+                &stash,
+                &egraph,
+                Version::ROOT,
+                krate,
+                Universe(1),
+                true,
+                assumptions,
+                Goal::Atom(Atom::Equals(input, other)),
+            );
+            let mut proof = instantiate_query(&canonical.data);
+            let left = proof.inputs[0].ty;
+            let right = proof.inputs[1].ty;
+            try_unify(
+                &mut proof.egraph,
+                &mut proof.stash,
+                proof.version,
+                left,
+                right,
+            )
+            .unwrap();
+            let root = proof.egraph.find(proof.version, left);
+            let Ty::InferVar(proof_input) = proof.stash[root] else {
+                panic!("expected flexible proof input");
+            };
+            proof
+                .egraph
+                .lower_universe(proof.version, proof_input, Universe::ROOT);
+            let modulo = Goal::true_(&mut proof.stash);
+            let response = extract_query_result(db, &proof, GoalResult::Yes { modulo });
+            apply_query_response(
+                db,
+                &mut stash,
+                &mut egraph,
+                Version::ROOT,
+                &canonical.data,
+                &canonical.mapping,
+                &response,
+            )
+            .unwrap();
+            assert_eq!(
+                egraph.find(Version::ROOT, input),
+                egraph.find(Version::ROOT, other)
+            );
+            let root = egraph.find(Version::ROOT, input);
+            let Ty::InferVar(root_index) = stash[root] else {
+                panic!("expected unresolved caller class");
+            };
+            assert_eq!(
+                egraph.current_universe(Version::ROOT, root_index),
+                Universe(1)
+            );
+        });
+    }
+
+    #[test]
     fn canonical_domains_distinguish_query_keys_and_reinstantiate() {
         with_test_crate("trait Marker {}", |db, root| {
             let krate = crate_from_root_items(db, root);
@@ -3415,6 +3596,25 @@ mod trait_solver_boundary_tests {
                     Ty::Alias(AliasTy::Opaque(_))
                 ));
 
+                let Ty::Alias(AliasTy::Named(copy)) = copied[copied_named] else {
+                    unreachable!()
+                };
+                assert_eq!(copy.def, named);
+                assert_eq!(copied[copied[copy.args][0]], Ty::Param(parameter));
+                let Ty::Alias(AliasTy::Associated(copy)) = copied[copied_associated] else {
+                    unreachable!()
+                };
+                assert_eq!(copy.associated_ty, associated);
+                assert_eq!(copy.trait_ref.trait_sym, trait_symbol);
+                assert_eq!(copied[copy.self_ty], Ty::Param(parameter));
+                assert_eq!(copied[copied[copy.trait_ref.args][0]], Ty::Param(parameter));
+                assert_eq!(copied[copied[copy.args][0]], Ty::Param(parameter));
+                let Ty::Alias(AliasTy::Opaque(copy)) = copied[copied_opaque] else {
+                    unreachable!()
+                };
+                assert_eq!(copy.def, hidden);
+                assert_eq!(copied[copied[copy.args][0]], Ty::Param(parameter));
+
                 let mut substitution = FxHashMap::default();
                 substitution.insert(parameter, SubstTarget::Ty(Ty::Bool));
                 let mut folded = Stash::new();
@@ -3423,6 +3623,8 @@ mod trait_solver_boundary_tests {
                 let Ty::Alias(AliasTy::Associated(folded_projection)) = folded_alias else {
                     panic!("expected associated alias")
                 };
+                assert_eq!(folded_projection.associated_ty, associated);
+                assert_eq!(folded_projection.trait_ref.trait_sym, trait_symbol);
                 assert_eq!(folded[folded_projection.self_ty], Ty::Bool);
                 assert_eq!(
                     folded[folded_projection.trait_ref.args][0],
@@ -3586,6 +3788,8 @@ mod trait_solver_boundary_tests {
             let Ty::Alias(AliasTy::Named(canonical_named)) = canonical_stash[canonical_left] else {
                 panic!("expected named alias")
             };
+            assert_eq!(canonical_named.def, named);
+            assert_eq!(canonical_stash[canonical_named.args].len(), 1);
             assert!(matches!(
                 canonical_stash[canonical_stash[canonical_named.args][0]],
                 Ty::Param(GenericParam::AlphaEquiv(_))
@@ -3633,6 +3837,16 @@ mod trait_solver_boundary_tests {
                 Ty::Alias(AliasTy::Named(_))
             ));
 
+            let Ty::Alias(AliasTy::Named(response_alias)) = response_stash[entry.value] else {
+                unreachable!()
+            };
+            assert_eq!(response_alias.def, named);
+            assert_eq!(response_stash[response_alias.args].len(), 1);
+            assert!(matches!(
+                response_stash[response_stash[response_alias.args][0]],
+                Ty::Param(GenericParam::AlphaEquiv(_))
+            ));
+
             apply_query_response(
                 db,
                 &mut caller_stash,
@@ -3647,6 +3861,8 @@ mod trait_solver_boundary_tests {
             let Ty::Alias(AliasTy::Named(applied_alias)) = caller_stash[applied] else {
                 panic!("expected imported named alias")
             };
+            assert_eq!(applied_alias.def, named);
+            assert_eq!(caller_stash[applied_alias.args].len(), 1);
             let imported_variable = caller_stash[applied_alias.args][0];
             let Ty::InferVar(imported_index) = caller_stash[imported_variable] else {
                 panic!("expected imported response variable")
@@ -3837,6 +4053,7 @@ mod trait_solver_proof_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.solver.normalization_demand)]
     fn local_normalization_reads_one_keyed_value_without_impl_item_enumeration() {
         use salsa::Setter as _;
 
@@ -4183,6 +4400,7 @@ mod trait_solver_proof_tests {
     }
 
     #[test]
+    #[sage::test(crates.sage_ir.solver.normalization_demand)]
     fn nested_associated_value_remains_a_normalizable_alias() {
         with_test_crate(
             "trait Inner { type Value; }\ntrait Outer { type Item; }",

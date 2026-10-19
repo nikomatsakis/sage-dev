@@ -15,6 +15,13 @@ use super::infer::version::Version;
 /// Resolve every inference edge and rebuild the completed body in a fresh,
 /// append-only stash.
 // ANCHOR: finalize_typed_body_into_fresh_stash
+// {anchor}`crates.sage_ir.types.body.no_inference`
+// {anchor}`crates.sage_ir.inference.body_local_quiescence`
+// {anchor}`crates.sage_ir.inference.completed_body_boundary`
+// {anchor}`crates.sage_ir.checking.owned_products`
+// {anchor}`crates.sage_ir.checking.body.elaboration`
+// {anchor}`crates.sage_stash.storage.handle_ownership`
+// {anchor}`crates.sage_stash.storage.immutable_entries`
 pub(super) fn finalize_typed_body<'db>(
     source: &Stash,
     egraph: &VersionedEGraph<'db>,
@@ -138,6 +145,7 @@ impl<'db> BodyFinalizer<'_, '_, 'db> {
         self.target.alloc_slice(&target_values)
     }
 
+    // {anchor}`crates.sage_ir.types.body.diagnosed_recovery`
     fn copy_expr(&mut self, source: Ptr<TyExpr<'db>>) -> Ptr<TyExpr<'db>> {
         if let Some(&target) = self.copied_exprs.get(&source) {
             return target;
@@ -233,6 +241,7 @@ impl<'db> BodyFinalizer<'_, '_, 'db> {
             TyExprData::Ref(operand, mutability) => {
                 TyExprData::Ref(self.copy_expr(operand), mutability)
             }
+            // {anchor}`crates.sage_ir.inference.subtyping_and_coercion`
             TyExprData::NeverToAny(operand) => {
                 let operand = self.copy_expr(operand);
                 if matches!(self.target[finalized_ty], Ty::Never) {
@@ -307,6 +316,9 @@ impl<'db> BodyFinalizer<'_, '_, 'db> {
         }
     }
 
+    // {anchor}`crates.sage_ir.checking.body.operator_calls`
+    // {anchor}`crates.sage_ir.types.calls.selected_semantics`
+    // {anchor}`crates.sage_ir.types.operators.trait_calls`
     fn copy_call_target(&mut self, target: ResolvedCallTarget<'db>) -> ResolvedCallTarget<'db> {
         let ResolvedCallTarget {
             function,
@@ -530,5 +542,91 @@ mod tests {
             panic!("completed tuple should have one element")
         };
         assert_eq!(target[element], Ty::Int(IntTy::I32));
+    }
+
+    #[test]
+    #[sage::test(crates.sage_stash.storage.handle_ownership)]
+    #[sage::test(crates.sage_stash.storage.immutable_entries)]
+    #[sage::test(crates.sage_ir.types.body.no_inference)]
+    fn finalized_nested_body_owns_resolved_and_imported_types_after_sources_drop() {
+        use crate::cst::expr::Literal;
+
+        let mut imported_stash = Stash::new();
+        let imported_bool = imported_stash.alloc(Ty::Bool);
+        let imported = Stashed::new(imported_stash, imported_bool);
+        let mut source = Stash::new();
+        source.alloc(123_u64);
+        let boolean = imported.copy_into(&mut source);
+        let mut egraph = VersionedEGraph::new();
+        let variable = egraph.alloc_var(Version::ROOT, Universe::ROOT);
+        let inference = source.alloc(Ty::InferVar(variable));
+        try_unify(&mut egraph, &mut source, Version::ROOT, inference, boolean).unwrap();
+        let span = RelativeSpan { start: 0, end: 4 };
+        let child = source.alloc(TyExpr {
+            data: TyExprData::Literal(Literal::Bool(true)),
+            ty: inference,
+            span,
+        });
+        let pending = source.alloc(TyExpr {
+            data: TyExprData::Unresolved(ExprSlot(0)),
+            ty: inference,
+            span,
+        });
+        let elements = source.alloc_slice(&[pending, child]);
+        let types = source.alloc_slice(&[inference, boolean]);
+        let tuple = source.alloc(Ty::Tuple(types));
+        let root = source.alloc(TyExpr {
+            data: TyExprData::Tuple(elements),
+            ty: tuple,
+            span,
+        });
+        let completed = finalize_typed_body(&source, &egraph, root, &[child], &[], span);
+        assert_eq!(source[inference], Ty::InferVar(variable));
+        assert_eq!(source[types], [inference, boolean]);
+        assert_eq!(source[elements], [pending, child]);
+        assert_eq!(source[pending].data, TyExprData::Unresolved(ExprSlot(0)));
+        assert_eq!(imported.root_deref(), Ty::Bool);
+        drop(egraph);
+        drop(source);
+        drop(imported);
+
+        let (
+            target,
+            TyBodyData {
+                root,
+                locals,
+                span: completed_span,
+            },
+        ) = completed.open_deref();
+        assert_eq!(completed_span, span);
+        assert!(target[locals].is_empty());
+        let TyExpr {
+            data,
+            ty,
+            span: root_span,
+        } = target[root];
+        assert_eq!(root_span, span);
+        let Ty::Tuple(types) = target[ty] else {
+            panic!("expected tuple type")
+        };
+        assert_eq!(target[types].len(), 2);
+        for ty in &target[types] {
+            assert_eq!(target[*ty], Ty::Bool);
+        }
+        let TyExprData::Tuple(elements) = data else {
+            panic!("expected tuple expression")
+        };
+        assert_eq!(target[elements].len(), 2);
+        assert_eq!(target[elements][0], target[elements][1]);
+        for child in &target[elements] {
+            let TyExpr {
+                data,
+                ty,
+                span: child_span,
+            } = target[*child];
+            assert_eq!(data, TyExprData::Literal(Literal::Bool(true)));
+            assert_eq!(target[ty], Ty::Bool);
+            assert_eq!(child_span, span);
+        }
     }
 }

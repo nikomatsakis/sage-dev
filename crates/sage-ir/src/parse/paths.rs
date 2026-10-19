@@ -1,3 +1,4 @@
+// {anchor}`crates.sage_ir.modules.parse.dependencies`
 use sage_stash::{Ptr, Slice, Stash};
 
 use crate::cst::paths::{Path, PathAnchor, PathAnchorKind, PathSegment};

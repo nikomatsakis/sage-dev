@@ -30,6 +30,12 @@ The output preserves alias types rather than eagerly erasing their identity.
 Explicit and elided lifetimes currently occupy the type structure but the
 destination lifetime policy is defined separately from this phase contract.
 
+Signature checking also accumulates owned diagnostic snapshots. Whole-crate
+clients collect these from their top-level Salsa demand, so repeatedly reading
+a signature does not duplicate its diagnostic. Snapshotting resolves source
+provenance during semantic collection; rendering the owned result performs no
+additional semantic queries.
+
 ### Guarantees
 
 Consumers may instantiate the binder, reuse the same generic identities in

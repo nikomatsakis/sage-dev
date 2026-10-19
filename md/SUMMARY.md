@@ -35,6 +35,8 @@
     - [RFD template](rfds/TEMPLATE/README.md)
       - [Implementation plan and status](rfds/TEMPLATE/implementation.md)
     - [Draft](rfds/draft.md)
+      - [Inline Compilation Tests](rfds/inline-compile-tests/README.md)
+        - [Implementation plan and status](rfds/inline-compile-tests/implementation.md)
       - [Trait Impl Candidate Discovery](rfds/trait-impl-candidate-discovery/README.md)
         - [Implementation plan and status](rfds/trait-impl-candidate-discovery/implementation.md)
       - [Trait Solver Cycle Semantics](rfds/trait-solver-cycle-semantics/README.md)

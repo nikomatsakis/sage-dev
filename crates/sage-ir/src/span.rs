@@ -11,6 +11,7 @@ use crate::symbol::MacroDefSymbol;
 /// derive output carries an explicit `DeriveExpansion` identity.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 #[sage::item(crate::types::ParseSource)]
+// {anchor}`crates.sage_ir.types.spans.generated_identity`
 pub enum ParseSource<'db> {
     /// A real source file on disk.
     SourceFile(SourceFile),

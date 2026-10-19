@@ -12,6 +12,8 @@ use crate::symbol::MacroDefSymbol;
 /// An item-level macro invocation (e.g. `m!()` or `foo::bar::m!()`).
 #[salsa::tracked(debug)]
 #[sage::item(crate::symbols::LocalMacroInvocationSym)]
+// {anchor}`crates.sage_ir.symbols.local_identity`
+// {anchor}`crates.sage_ir.types.spans.generated_identity`
 pub struct LocalMacroInvocationSym<'db> {
     pub scope: ScopeSymbol<'db>,
 
@@ -41,6 +43,9 @@ impl<'db> LocalMacroInvocationSym<'db> {
 #[salsa::tracked]
 impl<'db> LocalMacroInvocationSym<'db> {
     #[salsa::tracked(returns(ref))]
+    // {anchor}`crates.sage_ir.modules.expand.completeness`
+    // {anchor}`crates.sage_ir.modules.expand.dependencies`
+    // {anchor}`crates.sage_ir.modules.expand.direct_members`
     pub fn parse_output(
         self,
         db: &'db dyn Db,

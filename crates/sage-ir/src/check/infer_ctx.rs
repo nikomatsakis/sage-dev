@@ -1056,6 +1056,8 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         }
     }
 
+    // {anchor}`crates.sage_ir.checking.body.isolated_completion`
+    // {anchor}`crates.sage_ir.inference.atomic_checking`
     pub(crate) fn commit_branch(&self, version: Version) {
         let effects = {
             let mut stash = self.target_stash.borrow_mut();
@@ -1244,6 +1246,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     // TyExpr allocation
     // ------------------------------------------------------------------
 
+    // {anchor}`crates.sage_ir.types.spans.relative_composition`
     pub fn alloc_expr(
         &self,
         data: TyExprData<'db>,
@@ -1255,6 +1258,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
             .alloc(TyExpr { data, ty, span })
     }
 
+    // {anchor}`crates.sage_ir.types.lifetimes.dummy`
     pub(crate) fn adjust_method_receiver(
         &self,
         expression: Ptr<TyExpr<'db>>,
@@ -1486,6 +1490,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
 
     /// Publish obligations staged beside an inference transaction. A caller
     /// that rolls its inference child back simply drops the batch.
+    // {anchor}`crates.sage_ir.inference.transaction_isolation`
     pub fn publish_obligation_batch(&self, batch: StagedObligationBatch<'db>) {
         use super::solve::{Atom, Goal};
 
@@ -1972,6 +1977,8 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         }
     }
 
+    // {anchor}`crates.sage_ir.inference.canonical_boundary`
+    // {anchor}`crates.sage_ir.solver.canonical_outputs`
     fn apply_normalization_relation(
         &self,
         canonical_goal: &Stashed<super::solve::GoalQueryData<'db>>,
@@ -2130,6 +2137,7 @@ impl<'check, 'db> InferCtx<'check, 'db> {
         self.recover_expr_slots(&recoveries, error);
     }
 
+    // {anchor}`crates.sage_ir.checking.body.operator_calls`
     fn recover_expr_slots(&self, recoveries: &[ObligationRecovery<'db>], error: ErrorReported) {
         let error_ty = self.alloc_ty(Ty::Error(error));
         for recovery in recoveries {
@@ -2204,6 +2212,8 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     }
 
     #[sage::item(crate::inference::InferCtx::finalize)]
+    // {anchor}`crates.sage_ir.inference.numeric_domains`
+    // {anchor}`crates.sage_ir.checking.body.isolated_completion`
     // {anchor}`crates.sage_ir.inference.terminal_obligations`
     pub fn finalize(&self) {
         // First consume every proof that current inference already enables.
@@ -2298,6 +2308,8 @@ impl<'check, 'db> InferCtx<'check, 'db> {
     // ------------------------------------------------------------------
 
     #[sage::item(crate::inference::InferCtx::finish)]
+    // {anchor}`crates.sage_ir.checking.body.isolated_completion`
+    // {anchor}`crates.sage_ir.checking.body.elaboration`
     // {anchor}`crates.sage_ir.types.body.no_inference`
     // {anchor}`crates.sage_ir.inference.body_local_quiescence`
     // {anchor}`crates.sage_ir.inference.completed_body_boundary`
@@ -2353,19 +2365,22 @@ impl<'check, 'db> InferCtx<'check, 'db> {
 #[derive(Clone)]
 pub struct Scope<'db> {
     pub resolver: Resolver<'db>,
-    pub locals: Vec<Ptr<Ty<'db>>>,
+    // Local IDs belong to the body, not this cloned scope. Nested scopes can
+    // allocate IDs that are absent here, so this table must tolerate gaps.
+    locals: FxHashMap<LocalId, Ptr<Ty<'db>>>,
 }
 
+// {anchor}`crates.sage_ir.resolution.lookup.precedence`
 impl<'db> Scope<'db> {
     pub fn new(resolver: Resolver<'db>) -> Self {
         Self {
             resolver,
-            locals: Vec::new(),
+            locals: FxHashMap::default(),
         }
     }
 
     pub fn local_type(&self, id: u32) -> Ptr<Ty<'db>> {
-        self.locals[id as usize]
+        self.locals[&LocalId(id)]
     }
 
     pub fn add_binding(
@@ -2378,16 +2393,10 @@ impl<'db> Scope<'db> {
         let id = LocalId(local_var_count as u32);
         cx.add_local_var(LocalVar { name, span });
         let var = cx.fresh_ty_var();
-        self.locals.push(var);
+        self.locals.insert(id, var);
         self.resolver
             .ribs
             .add(name, Namespace::Value, Resolution::Local(id));
-        id
-    }
-
-    pub fn push_local(&mut self, ty: Ptr<Ty<'db>>) -> u32 {
-        let id = self.locals.len() as u32;
-        self.locals.push(ty);
         id
     }
 
@@ -2410,7 +2419,7 @@ impl<'db> Scope<'db> {
                     name,
                     span: param_cst.span,
                 });
-                self.locals.push(*param_ty);
+                self.locals.insert(id, *param_ty);
                 self.resolver
                     .ribs
                     .add(name, Namespace::Value, Resolution::Local(id));

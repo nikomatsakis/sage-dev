@@ -1,3 +1,4 @@
+#![feature(rustc_private)]
 //! Production query evidence for the source-correspondence and contract checker.
 //! The checked scope is explicit: setup queries run before the observer is armed.
 

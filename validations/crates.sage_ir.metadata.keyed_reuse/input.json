@@ -1,7 +1,7 @@
 {
   "prompt": "Review this anchor as its assigned subagent. Enumerate ALL requirements, qualifications, edge cases and scenarios. Inspect all supplied implementation and test fragments and trace each aspect to implementation behavior and actual test assertions or justified TODO/N/A evidence. Passing tests and associations alone are insufficient. Follow helpers and capture every additional source dependency with cargo meta review read ANCHOR PATH [selector] before completing the report. Explain prerequisites for justified TODO tests; do not claim deferred behavior is implemented. Distinguish source inspection from commands actually executed. Write a JSON report containing reviewer, report, and requested_edits. Leave requested_edits empty only when every aspect is accounted for and no edits are needed. Otherwise list concrete changes, including missing tests or justified TODO tests with prerequisite comments. Run cargo meta review record ANCHOR REPORT_FILE to finish. After edits or stale-input rejection, run cargo meta review start ANCHOR and review the fresh inputs. The gate fails until a current report with no requested edits is recorded. Dependency capture is agent-declared.",
   "coordinator_instructions": [
-    "Review only crates.sage_ir.metadata.keyed_reuse. Follow the repository review skill. Independently reassess every claim aspect and its implementation/test evidence. Do not edit production or tests; report suspected issues to coordinator. Capture every additional source dependency using review read. Distinguish source review from commands actually executed. Record your own completed report via cargo meta review record; do not directly edit saved JSON. Existing justified TODO/N/A evidence can remain deferred.\nHistorical report supplied as context, not an approval to reuse mechanically; independently verify current evidence and rationale:\n{\n  \"decision\": \"todo\",\n  \"outcome\": true,\n  \"requested_edits\": [],\n  \"reason\": \"Claim aspects reviewed: **Raw and lowered metadata share the same narrow reuse key.** Each lowered semantic fact observes only its corresponding owned provider fact. Repeating an unchanged request reuses the lowered value without another raw request, and changing an unrelated provider fact does not invalidate it.\\n\\nexternal_trait_signature is tracked by definition and requests that definition provider signature before lowering; other metadata products have their own operations. The TODO reserves cold/warm raw-versus-lowered traces and relevant/unrelated-key edit behavior, so cache reuse is not inferred from the annotation alone.\\n\\nImplementation associations considered: crates/sage-ir/src/external_syms.rs [ordinary].\\n\\nExplicit deferred evidence sage_meta::todo::metadata_keyed_reuse: TODO: Complete the claim-specific verification matrix: Cold/warm traces pair every lowered query with its exact raw operation; the warm trace contains neither execution, relevant edits invalidate both layers, and unrelated-key edits preserve or backdate the lowered result.\\n\\nDecision: TODO. The explicit placeholders retain the missing implementation or verification scenarios described above; their empty passing bodies are not behavioral evidence. All aspects are accounted for as implemented examples or this declared gap, and this review requests no additional edit to that accounting. This outcome does not assert complete implementation or test coverage.\\n\\nValidation method: source inspection of the supplied context and associated evidence. This review did not execute tests, use old approval decisions, or read additional dependency files.\",\n  \"reviewer\": \"Codex /root/sanity — fresh Sage IR anchor review\"\n}\nCoordinator reports full functional sage-meta suite 321 passing tests and root cargo build passed. This is separately reported execution, not a command you ran. Avoid redundant full suites unless needed to investigate a specific concern. Efficiently compare unchanged evidence to earlier snapshots, but reassess claim-specific rationale independently.\n\nCoordinator baseline comparison at dispatch preparation (reviewer must verify still current):\nimplementation_sources: crates/sage-ir/src/external_syms.rs: EXACT BYTE MATCH to historical reviewed source\ntest_sources: crates/sage-meta/tests/semantic_spec.rs: EXACT BYTE MATCH to historical reviewed source\nFor unchanged legacy anchors, prior report is a completed independent source review. Reassess its claim-specific sufficiency against current claim, metadata and associated test assertions; you need not rediscover all unchanged implementation or rerun tests. For any changed source, inspect the delta and relevant complete behavior. Historical input for exact comparison is /tmp/sage-pre-fragment-validations/crates.sage_ir.metadata.keyed_reuse/input.json. If using historical source contents themselves beyond exact comparison, put them in captured coordinator instructions or use review read for their current workspace source.\n\nCoordinator clarification: evaluate the full associated set plus source reasoning; no demand for isolated field-per-test assertions where meaningful integration checks account for claim. If prior rationale relies on helper/surrounding source in historical test_sources/implementation_sources/reads beyond current initial fragments, capture each relied-on dependency via review read (whole file or precise selector). Byte-comparison alone does not persist a freshness dependency.\n\nEfficiency: unchanged legacy evidence already genuinely independently reviewed. Batch evidence reads; inspect only current inputs, deltas, and actually relied-on helpers. Avoid unrelated documentation, repeated broad checks, and rediscovery. Write concise complete claim/evidence/TODO-prerequisite reassessment, distinguish baseline/source/execution, then record promptly.\n"
+    "Follow sage-review-checklist for only the assigned anchor. Begin fresh review using cargo meta review start ANCHOR --instructions /tmp/ci-anchor-review-instructions.txt. Inspect current claim, implementation, complete tests, and capture dependencies through review read. Independently assess current evidence; do not transplant old approvals. Preserve justified TODO/N/A entries honestly. Record a complete claim-specific report. Coordinate all source edits with root BEFORE editing, to avoid invalidating concurrent reviews. Prefer reporting concrete necessary changes for root to batch; do not add unrelated evidence. You own only your assigned validation directory and unique /tmp report. Distinguish source inspection from tests executed. Do not commit.\nRoot centrally runs relevant suites. Do not repeat full suites for a source-only review unless investigating a specific concern. Report source assessment honestly without claiming execution. This does not waive regression reproduction for suspected bugs.\n"
   ],
   "fragments": [
     {
@@ -193,6 +193,7 @@
         "/// External explicit impl identities for one fixed trait and optional rigid",
         "/// self head. Header and associated-value metadata remain separate queries.",
         "#[salsa::tracked(returns(ref))]",
+        "// {anchor}`crates.sage_ir.solver.candidate_completeness`",
         "pub fn external_relevant_impls<'db>(",
         "    db: &'db dyn crate::Db,",
         "    trait_sym: SymExt<'db>,",
@@ -316,6 +317,7 @@
         "",
         "/// Apply explicit source arguments and declaration defaults in order, then",
         "/// instantiate the declaration's ordinary predicate environment.",
+        "// {anchor}`crates.sage_ir.checking.signature.storage`",
         "pub fn apply_external_adt_signature<'db>(",
         "    db: &'db dyn crate::Db,",
         "    target: &mut Stash,",
@@ -419,6 +421,7 @@
         "// ANCHOR: example_external_fn_signature",
         "#[salsa::tracked]",
         "#[sage::item(crate::symbols::ExternalFn::signature)]",
+        "// {anchor}`crates.sage_ir.checking.signature.body_independence`",
         "pub fn external_fn_signature<'db>(",
         "    db: &'db dyn crate::Db,",
         "    fn_sym: SymExt<'db>,",
@@ -804,6 +807,7 @@
         "                args: stash.alloc_slice(&args),",
         "            }))",
         "        }",
+        "        // {anchor}`crates.sage_ir.types.lifetimes.dummy`",
         "        RawTy::Ref(inner, mutability) => Ty::Ref(",
         "            lower_ty(db, stash, generics, *inner)?,",
         "            mutability,",
@@ -858,6 +862,20 @@
         "#[sage::item(crate::symbols::ExternalEnum::signature)]",
         "mod nominal_signature_anchor {}",
         "",
+        "mod todo {",
+        "    // {anchor}`crates.sage_ir.metadata.keyed_reuse`<<",
+        "    // TODO: Add independently tracked, definition/product-keyed owned provider",
+        "    // inputs and connect each lowered query to its corresponding input. The",
+        "    // current immutable TcxDb service has no per-fact update/invalidation layer;",
+        "    // Salsa memoizes lowering but does not track changes to provider facts.",
+        "    // Associated-value facts must also own the binder information needed for",
+        "    // lowering: lower_associated_type_value currently loads the impl signature",
+        "    // separately. Completing that provider representation is prerequisite to",
+        "    // the cold/warm and relevant/unrelated provider-edit verification matrix.",
+        "    mod provider_fact_reuse {}",
+        "    // >>",
+        "}",
+        "",
         "/// These modeled external branches are conceptual locations only: dedicated",
         "/// external struct fields, enum variants, and impl-item producers are not",
         "/// available at these boundaries. Their absence remains runtime coverage debt.",
@@ -886,6 +904,90 @@
         "        // backdate the lowered result.",
         "    }"
       ]
+    },
+    {
+      "path": "md/design/crates/sage_ir/metadata.sage",
+      "selector": {
+        "kind": "whole_file"
+      },
+      "contents": [
+        "module crate::metadata;",
+        "",
+        "// Sources: external_syms.rs and tcx/. External provider is injected through Db::tcx.",
+        "class ExternalFacts {",
+        "    \"\"\"",
+        "    Keyed lowering boundary over owned Tcx facts. The concrete rustc service lives in sage-rustc-bridge; sage-ir does not depend on that implementation.",
+        "",
+        "    {anchor}`provider_authority`",
+        "    **External metadata supplies owned facts, never Sage decisions.** The provider may state facts authored by a reachable dependency or the compiler, but it cannot resolve local syntax, select a Sage candidate, prove a Sage goal, normalize an alias, or type-check a Sage body. This is the typed metadata boundary established by [External providers supply facts, not Sage semantic answers](../../../rfds/architectural-foundations/README.md#external-providers-supply-facts-not-sage-semantic-answers).",
+        "",
+        "    {anchor}`explicit_incompleteness`",
+        "    **Missing metadata remains explicit incompleteness.** A missing, unsupported, or conservatively incomplete external fact is never replaced by an inferred default, a successful interface, or exhaustive logical failure. This is the metadata consequence of [Incompleteness is an explicit terminal outcome](../../../rfds/architectural-foundations/README.md#incompleteness-is-an-explicit-terminal-outcome).",
+        "",
+        "    {anchor}`product_boundaries`",
+        "    **External demand is decomposed by semantic product.** Identity enumeration, signatures, impl headers, and individual associated values are separate tracked products. Consumers enumerate identities before requesting selected details, and no external function body is available to checking. This is the metadata consequence of [Cross-item dependencies stop at semantic interfaces](../../../rfds/architectural-foundations/README.md#cross-item-dependencies-stop-at-semantic-interfaces).",
+        "",
+        "    {anchor}`keyed_reuse`",
+        "    **Raw and lowered metadata share the same narrow reuse key.** Each lowered semantic fact observes only its corresponding owned provider fact. Repeating an unchanged request reuses the lowered value without another raw request, and changing an unrelated provider fact does not invalidate it.",
+        "    \"\"\"",
+        "    input provider: crate::types::Metadata;",
+        "    query signature() -> crate::types::Signature {",
+        "        \"\"\"Request one definition-keyed signature and lower it into Sage types and generic identities.\"\"\"",
+        "        envelope {",
+        "            reads self.provider;",
+        "        }",
+        "    }",
+        "    query items() -> crate::types::Items {",
+        "        \"\"\"Request module or associated children, preserving supported kinds and unavailable metadata.\"\"\"",
+        "        envelope {",
+        "            reads self.provider;",
+        "        }",
+        "    }",
+        "    query value() -> crate::types::Value {",
+        "        \"\"\"Request an associated value, field, or declared type fact; never ask rustc to solve a Sage goal.\"\"\"",
+        "        envelope {",
+        "            reads self.provider;",
+        "        }",
+        "    }",
+        "    query candidates() -> crate::types::Candidates {",
+        "        \"\"\"Request relevant external impl headers and preserve provider completeness.\"\"\"",
+        "        envelope {",
+        "            reads self.provider;",
+        "        }",
+        "    }",
+        "}",
+        ""
+      ]
+    },
+    {
+      "path": "md/rfds/architectural-foundations/README.md",
+      "selector": {
+        "kind": "line_range",
+        "start": 375,
+        "end": 393
+      },
+      "contents": [
+        "## External providers supply facts, not Sage semantic answers",
+        "",
+        "Rustc-backed providers may authoritatively expose facts owned by reachable",
+        "dependency crates and the compilation environment: definition identity,",
+        "ownership, signatures, predicates, associated items and values, impl headers,",
+        "and other exported metadata. Sage lowers those facts into its own symbol,",
+        "type, stash, and query representations at narrow keyed boundaries.",
+        "",
+        "The provider does not resolve Sage-local source, select a method or impl for a",
+        "Sage body, prove a Sage trait goal, normalize an alias on Sage's behalf, or",
+        "produce Sage's checked body. Those operations remain in Sage even when their",
+        "inputs include authoritative external facts. Likewise, the rustc side of the",
+        "oracle is an independent comparison producer, not a hidden semantic service",
+        "used to manufacture Sage's result.",
+        "",
+        "This boundary makes external metadata reusable without masking gaps in Sage's",
+        "semantics or creating accidental whole-crate dependencies. Its local contract",
+        "is [crates.sage_ir.metadata.provider_authority](../../design/anchor/crates/sage_ir/metadata/provider_authority.html); exact oracle",
+        "independence remains [Oracle test harness](#oracle-test-harness).",
+        ""
+      ]
     }
   ],
   "implementations": [
@@ -907,6 +1009,30 @@
       "region": false,
       "status": "ordinary",
       "explanation": null
+    },
+    {
+      "crate_name": "sage_ir",
+      "target": "lib:sage_ir",
+      "module": "sage_ir::external_syms::todo",
+      "file": "crates/sage-ir/src/external_syms.rs",
+      "cfg": [],
+      "excerpt": [
+        "    // {anchor}`crates.sage_ir.metadata.keyed_reuse`<<",
+        "    // TODO: Add independently tracked, definition/product-keyed owned provider",
+        "    // inputs and connect each lowered query to its corresponding input. The",
+        "    // current immutable TcxDb service has no per-fact update/invalidation layer;",
+        "    // Salsa memoizes lowering but does not track changes to provider facts.",
+        "    // Associated-value facts must also own the binder information needed for",
+        "    // lowering: lower_associated_type_value currently loads the impl signature",
+        "    // separately. Completing that provider representation is prerequisite to",
+        "    // the cold/warm and relevant/unrelated provider-edit verification matrix.",
+        "    mod provider_fact_reuse {}",
+        "    // >>",
+        ""
+      ],
+      "region": true,
+      "status": "todo",
+      "explanation": "TODO: Add independently tracked, definition/product-keyed owned provider\ninputs and connect each lowered query to its corresponding input. The\ncurrent immutable TcxDb service has no per-fact update/invalidation layer;\nSalsa memoizes lowering but does not track changes to provider facts.\nAssociated-value facts must also own the binder information needed for\nlowering: lower_associated_type_value currently loads the impl signature\nseparately. Completing that provider representation is prerequisite to\nthe cold/warm and relevant/unrelated provider-edit verification matrix."
     }
   ],
   "tests": [

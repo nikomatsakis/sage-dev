@@ -1,7 +1,7 @@
 {
   "prompt": "Review this anchor as its assigned subagent. Enumerate ALL requirements, qualifications, edge cases and scenarios. Inspect all supplied implementation and test fragments and trace each aspect to implementation behavior and actual test assertions or justified TODO/N/A evidence. Passing tests and associations alone are insufficient. Follow helpers and capture every additional source dependency with cargo meta review read ANCHOR PATH [selector] before completing the report. Explain prerequisites for justified TODO tests; do not claim deferred behavior is implemented. Distinguish source inspection from commands actually executed. Write a JSON report containing reviewer, report, and requested_edits. Leave requested_edits empty only when every aspect is accounted for and no edits are needed. Otherwise list concrete changes, including missing tests or justified TODO tests with prerequisite comments. Run cargo meta review record ANCHOR REPORT_FILE to finish. After edits or stale-input rejection, run cargo meta review start ANCHOR and review the fresh inputs. The gate fails until a current report with no requested edits is recorded. Dependency capture is agent-declared.",
   "coordinator_instructions": [
-    "Review only crates.sage_ir.solver.shared_final_result. Follow the repository review skill. Independently reassess every claim aspect and its implementation/test evidence. Do not edit production or tests; report suspected issues to coordinator. Capture every additional source dependency using review read. Distinguish source review from commands actually executed. Record your own completed report via cargo meta review record; do not directly edit saved JSON. Existing justified TODO/N/A evidence can remain deferred.\nHistorical report supplied as context, not an approval to reuse mechanically; independently verify current evidence and rationale:\n{\n  \"decision\": \"todo\",\n  \"outcome\": true,\n  \"requested_edits\": [],\n  \"reason\": \"Claim aspects reviewed: **One whiteboard frame has one final future output.** A frame owns the producer for one canonical atomic goal, and all requesters subscribe to that work. Candidate-local and frame-level progress are revisioned side information; they do not create extra future outputs or expose raw candidate state. Suspended continuations remain Rust futures, polled in bounded rounds.\\n\\nsolve_query creates a Whiteboard and drives canonical requests, but the implementation TODO retains bounded polling and monotone progress publication. The test matrix explicitly requires one shared producer/final response, no raw candidate visibility, monotone side information and self-waking fairness.\\n\\nImplementation associations considered: crates/sage-ir/src/check/solve/prove.rs [ordinary]; crates/sage-meta/tests/semantic_spec.rs [todo]: TODO: Bounded polling rounds and monotone intermediate publication remain planned.\\nTODO: Complete the claim-specific verification matrix:.\\n\\nExplicit deferred evidence sage_meta::todo::solver_shared_final_result: TODO: Complete the claim-specific verification matrix: Duplicate requesters share one producer, receive an identical final response, and cannot observe candidate-local state; progress snapshots strengthen monotonically; a self-waking pending future is deferred to a later polling round and cannot starve sibling work.\\n\\nDecision: TODO. The explicit placeholders retain the missing implementation or verification scenarios described above; their empty passing bodies are not behavioral evidence. All aspects are accounted for as implemented examples or this declared gap, and this review requests no additional edit to that accounting. This outcome does not assert complete implementation or test coverage.\\n\\nValidation method: source inspection of the supplied context and associated evidence. This review did not execute tests, use old approval decisions, or read additional dependency files.\",\n  \"reviewer\": \"Codex /root/sanity — fresh Sage IR anchor review\"\n}\nCoordinator reports full functional sage-meta suite 321 passing tests and root cargo build passed. This is separately reported execution, not a command you ran. Avoid redundant full suites unless needed to investigate a specific concern. Efficiently compare unchanged evidence to earlier snapshots, but reassess claim-specific rationale independently.\n\nCoordinator baseline comparison at dispatch preparation (reviewer must verify still current):\nimplementation_sources: crates/sage-ir/src/check/solve/prove.rs: EXACT BYTE MATCH to historical reviewed source\nimplementation_sources: crates/sage-meta/tests/semantic_spec.rs: EXACT BYTE MATCH to historical reviewed source\ntest_sources: crates/sage-meta/tests/semantic_spec.rs: EXACT BYTE MATCH to historical reviewed source\nFor unchanged legacy anchors, prior report is a completed independent source review. Reassess its claim-specific sufficiency against current claim, metadata and associated test assertions; you need not rediscover all unchanged implementation or rerun tests. For any changed source, inspect the delta and relevant complete behavior. Historical input for exact comparison is /tmp/sage-pre-fragment-validations/crates.sage_ir.solver.shared_final_result/input.json. If using historical source contents themselves beyond exact comparison, put them in captured coordinator instructions or use review read for their current workspace source.\n\nCoordinator clarification: evaluate the full associated set plus source reasoning; no demand for isolated field-per-test assertions where meaningful integration checks account for claim. If prior rationale relies on helper/surrounding source in historical test_sources/implementation_sources/reads beyond current initial fragments, capture each relied-on dependency via review read (whole file or precise selector). Byte-comparison alone does not persist a freshness dependency.\n\nEfficiency: unchanged legacy evidence already genuinely independently reviewed. Batch evidence reads; inspect only current inputs, deltas, and actually relied-on helpers. Avoid unrelated documentation, repeated broad checks, and rediscovery. Write concise complete claim/evidence/TODO-prerequisite reassessment, distinguish baseline/source/execution, then record promptly.\n"
+    "Follow sage-review-checklist for only the assigned anchor. Begin fresh review using cargo meta review start ANCHOR --instructions /tmp/ci-anchor-review-instructions.txt. Inspect current claim, implementation, complete tests, and capture dependencies through review read. Independently assess current evidence; do not transplant old approvals. Preserve justified TODO/N/A entries honestly. Record a complete claim-specific report. Coordinate all source edits with root BEFORE editing, to avoid invalidating concurrent reviews. Prefer reporting concrete necessary changes for root to batch; do not add unrelated evidence. You own only your assigned validation directory and unique /tmp report. Distinguish source inspection from tests executed. Do not commit.\nRoot centrally runs relevant suites. Do not repeat full suites for a source-only review unless investigating a specific concern. Report source assessment honestly without claiming execution. This does not waive regression reproduction for suspected bugs.\n"
   ],
   "fragments": [
     {
@@ -657,6 +657,8 @@
         "    }",
         "}",
         "",
+        "// {anchor}`crates.sage_ir.solver.alternative_isolation`",
+        "// {anchor}`crates.sage_ir.solver.canonical_outputs`",
         "async fn solve_normalize_frame<'db>(",
         "    db: &'db dyn crate::Db,",
         "    whiteboard: &Whiteboard<'db>,",
@@ -996,6 +998,10 @@
         "        .collect()",
         "}",
         "",
+        "// {anchor}`crates.sage_ir.modules.expand.completeness`",
+        "// {anchor}`crates.sage_ir.solver.alternative_isolation`",
+        "// {anchor}`crates.sage_ir.inference.transaction_isolation`",
+        "// {anchor}`crates.sage_ir.solver.candidate_completeness`",
         "async fn solve_trait_frame<'db>(",
         "    db: &'db dyn crate::Db,",
         "    whiteboard: &Whiteboard<'db>,",
@@ -1141,6 +1147,7 @@
         "// ANCHOR_END: example_match_candidate_head",
         "",
         "// ANCHOR: example_prove_conjunction",
+        "// {anchor}`crates.sage_ir.inference.atomic_checking`",
         "async fn prove_conjunction<'db>(",
         "    db: &'db dyn crate::Db,",
         "    whiteboard: &Whiteboard<'db>,",
@@ -1556,6 +1563,7 @@
         "    }",
         "",
         "    #[test]",
+        "    #[sage::test(crates.sage_ir.solver.shared_final_result)]",
         "    fn same_parent_requests_share_one_live_producer_and_result() {",
         "        with_crate(|db, krate| {",
         "            let query = equality_query(krate, 0);",
@@ -1651,9 +1659,11 @@
         "    #[test]",
         "    #[sage::test(crates.sage_ir.resolution.lookup.precedence)]",
         "    fn resolution_lookup_precedence() {",
-        "        // TODO: Complete the claim-specific verification matrix:",
-        "        // Fixtures cover lexical shadowing, independent type/value/macro namespaces, qualified versus",
-        "        // unqualified lookup, renamed imports, glob cycles, and edition-specific preludes.",
+        "        // TODO: Complete the remaining import/path matrix: macro subnamespace distinctions and Rust 2015",
+        "        // path rules. Source fixtures now cover lexical/nested/sibling shadowing, independent",
+        "        // type/value/bang-macro namespaces, named-versus-glob precedence, renamed imports,",
+        "        // cyclic and ambiguous globs, repeated routes to one definition, local/external enum",
+        "        // globs, qualified/absolute paths, and 2018/2021/2024 preludes.",
         "    }",
         "",
         "    #[test]",
@@ -1734,6 +1744,8 @@
         "",
         "    // {anchor}`crates.sage_ir.solver.normalization_demand`",
         "    // TODO: Named alias expansion and opaque reveal context remain unsupported.",
+        "    // Local discovery still scans unrelated impl identities; excluding those reads requires",
+        "    // the tracked private index deferred by crates.sage_ir.solver.local_index_firewall.",
         "    #[test]",
         "    #[sage::test(crates.sage_ir.solver.normalization_demand)]",
         "    fn solver_normalization_demand() {",
@@ -2079,6 +2091,45 @@
       ]
     },
     {
+      "path": "crates/sage-ir/src/check/solve/prove.rs",
+      "selector": {
+        "kind": "test",
+        "crate_name": "sage_ir",
+        "target": "lib:sage_ir",
+        "rust_path": "sage_ir::check::solve::prove::whiteboard_tests::same_parent_requests_share_one_live_producer_and_result"
+      },
+      "contents": [
+        "#[test]",
+        "    #[sage::test(crates.sage_ir.solver.shared_final_result)]",
+        "    fn same_parent_requests_share_one_live_producer_and_result() {",
+        "        with_crate(|db, krate| {",
+        "            let query = equality_query(krate, 0);",
+        "            let whiteboard = Whiteboard::default();",
+        "            let first = whiteboard.request(db, query.clone(), None, 0);",
+        "            let second = whiteboard.request(db, query.clone(), None, 0);",
+        "            assert_eq!(first.frame, second.frame);",
+        "            assert_eq!(",
+        "                whiteboard.inner.borrow().frames[first.frame.0 as usize]",
+        "                    .subscriptions",
+        "                    .len(),",
+        "                2",
+        "            );",
+        "",
+        "            let (first, second) = whiteboard.drive(async move { (first.await, second.await) });",
+        "            assert_eq!(first, second);",
+        "            let reused = whiteboard.request(db, query, None, 0);",
+        "            assert!(reused.whiteboard.is_none());",
+        "            let reused = whiteboard.drive(reused);",
+        "            assert_eq!(first, reused);",
+        "            let inner = whiteboard.inner.borrow();",
+        "            assert_eq!(inner.frames.len(), 1);",
+        "            assert!(matches!(inner.frames[0].state, FrameState::Ready(_)));",
+        "            assert!(inner.frames[0].subscriptions.is_empty());",
+        "        });",
+        "    }"
+      ]
+    },
+    {
       "path": "crates/sage-meta/tests/semantic_spec.rs",
       "selector": {
         "kind": "test",
@@ -2095,6 +2146,72 @@
         "        // observe candidate-local state; progress snapshots strengthen monotonically; a self-waking",
         "        // pending future is deferred to a later polling round and cannot starve sibling work.",
         "    }"
+      ]
+    },
+    {
+      "path": "md/design/crates/sage_ir/solver.sage",
+      "selector": {
+        "kind": "whole_file"
+      },
+      "contents": [
+        "module crate::solver;",
+        "",
+        "// Sources: check/solve/{canonical,prove,clauses,boundary,result}.rs.",
+        "class Solver {",
+        "    \"\"\"Logical namespace for canonical solver queries; detailed proof rules are a separate semantic specification.\"\"\"",
+        "    query solve() -> crate::types::Answer {",
+        "        \"\"\"",
+        "        Solve a canonical positive trait or normalization goal using assumptions, applicable local/external impl clauses, and nested goals. Preserve canonical response variables, ambiguity, and explicit limits. Current lifetime handling is dummy-only. Scheduling and richer cycle semantics remain separate planned work.",
+        "",
+        "        {anchor}`normalization_demand`",
+        "        **Alias normalization preserves reveal context and narrow demand.** An alias retains its identity until an operation requests its value. Revealability participates in the canonical input, and projection normalization reads only the fixed trait, associated item, applicable impl headers, selected associated values, and predicates required for that value. It never reads unrelated impls or bodies. This is the solver consequence of [Named, associated, and opaque aliases share one semantic family](../../../rfds/architectural-foundations/README.md#named-associated-and-opaque-aliases-share-one-semantic-family) and [Cross-item dependencies stop at semantic interfaces](../../../rfds/architectural-foundations/README.md#cross-item-dependencies-stop-at-semantic-interfaces).",
+        "",
+        "        {anchor}`bounded_completeness`",
+        "        **Solver completeness is groundness-sensitive and explicitly bounded.** Non-ground queries terminate with only sound knowledge but may be ambiguous; ground queries return the complete logical answer unless a named, deterministic resource limit is exhausted. Incomplete candidate sources, ambiguity, and each overflow class remain distinct and none becomes `No`. This is the solver consequence of [Trait solving is groundness-sensitive and resource-bounded](../../../rfds/architectural-foundations/README.md#trait-solving-is-groundness-sensitive-and-resource-bounded) and [Incompleteness is an explicit terminal outcome](../../../rfds/architectural-foundations/README.md#incompleteness-is-an-explicit-terminal-outcome).",
+        "",
+        "        {anchor}`canonical_outputs`",
+        "        **Goal-specific output is canonical solver knowledge.** `Prove(P)` returns `Proven`, while input-only `Normalize(Alias)` returns a `Type`. The output's variables participate in response binding, validation, caching, comparison, merging, and caller import; the caller's expected type is related only after complete candidate answers are merged. This is the solver consequence of [Solver operations return goal-specific semantic outputs](../../../rfds/architectural-foundations/README.md#solver-operations-return-goal-specific-semantic-outputs).",
+        "",
+        "        {anchor}`alternative_isolation`",
+        "        **Alternative state is isolated and answer reduction is output-aware.** Every disjunct candidate publishes a canonical response from isolated inference state. Aggregation is order-independent, retains hard knowledge common to every live alternative, and merges value-producing answers only when their outputs agree or an explicit priority rule dominates. Conjunct cancellation is permitted only after reconciling shared hard information. This is the solver consequence of [Versioned egraph children are inference transactions](../../../rfds/architectural-foundations/README.md#versioned-egraph-children-are-inference-transactions) and [Whiteboard producers own isolated proof contexts](../../../rfds/architectural-foundations/README.md#whiteboard-producers-own-isolated-proof-contexts).",
+        "",
+        "        {anchor}`shared_final_result`",
+        "        **One whiteboard frame has one final future output.** A frame owns the producer for one canonical atomic goal, and all requesters subscribe to that work. Candidate-local and frame-level progress are revisioned side information; they do not create extra future outputs or expose raw candidate state. Suspended continuations remain Rust futures, polled in bounded rounds.",
+        "",
+        "        {anchor}`canonical_cycles`",
+        "        **Recursive semantics follow canonical cycles, not polling order.** Repeated canonical goals use explicit inductive, coinductive, or unknown path semantics and provisional fixpoint evaluation. Infinitely growing distinct goals are overflow governed by deterministic structural limits, not ordinary cycle lookup.",
+        "",
+        "        {anchor}`schedule_independence`",
+        "        **Scheduling cannot change the canonical return value.** For fixed semantic inputs and configured limits, polling order may change discovery, cancellation timing, trace order, elapsed work, and memory use, but not the answer class, output, substitutions, residuals, hints, response numbering, ambiguity/overflow distinction, or overflow kind.",
+        "        \"\"\"",
+        "        envelope {",
+        "            invokes self.candidates();",
+        "            invokes self.solve();",
+        "            invokes crate::symbols::TraitSymbol::signature();",
+        "            invokes crate::symbols::ImplSymbol::signature();",
+        "            invokes crate::symbols::LocalImplSym::associated_type_value();",
+        "            invokes crate::metadata::ExternalFacts::value();",
+        "            forbid transitive crate::symbols::LocalFnSym::body;",
+        "        }",
+        "    }",
+        "    query candidates() -> crate::types::Candidates {",
+        "        \"\"\"",
+        "        Discover local impls for the requested trait and external relevant impls. Current local discovery scans expanded module items; carry completeness evidence rather than interpreting missing facts as exhaustive failure.",
+        "",
+        "        {anchor}`candidate_completeness`",
+        "        **Candidate discovery is global, trait-keyed, conservative, and completeness-carrying.** A proof considers represented impls in the local crate and every reachable dependency, keyed first by the fixed trait. Any self-head refinement retains blanket and unclassifiable fallback candidates, and a missing or incomplete source prevents exhaustive `No`. This is the solver consequence of [Trait impl discovery is global and trait-keyed](../../../rfds/architectural-foundations/README.md#trait-impl-discovery-is-global-and-trait-keyed) and [Incompleteness is an explicit terminal outcome](../../../rfds/architectural-foundations/README.md#incompleteness-is-an-explicit-terminal-outcome).",
+        "",
+        "        {anchor}`local_index_firewall`",
+        "        **The local impl index is an incremental firewall.** Its stable crate-owned identity contains a private tracked map, and keyed tracked lookup is the only reader. An unrelated edit may rebuild the map and reexecute a cheap lookup, but an equal trait bucket is backdated before impl-header lowering, solving, normalization, or body checking; impl-body edits do not alter signature-level buckets.",
+        "        \"\"\"",
+        "        envelope {",
+        "            invokes crate::modules::LocalModSym::expanded_items();",
+        "            invokes crate::symbols::ImplSymbol::signature();",
+        "            invokes crate::metadata::ExternalFacts::candidates();",
+        "        }",
+        "    }",
+        "}",
+        ""
       ]
     }
   ],
@@ -2139,6 +2256,16 @@
     }
   ],
   "tests": [
+    {
+      "crate_name": "sage_ir",
+      "target": "lib:sage_ir",
+      "rust_path": "sage_ir::check::solve::prove::whiteboard_tests::same_parent_requests_share_one_live_producer_and_result",
+      "file": "crates/sage-ir/src/check/solve/prove.rs",
+      "cfg": [
+        "#[cfg(test)]"
+      ],
+      "status": "ordinary"
+    },
     {
       "crate_name": "sage_meta",
       "target": "test:semantic_spec",

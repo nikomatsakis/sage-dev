@@ -1,3 +1,4 @@
+// {anchor}`crates.sage_ir.resolution.lookup.precedence`
 use crate::Db;
 use crate::local_syms::mods::LocalModSym;
 use sage_macros_from_impls::FromImpls;
@@ -11,6 +12,7 @@ pub enum Edition {
     Rust2024,
 }
 
+// {anchor}`crates.sage_test_harness.compile_tests.edition`
 impl Edition {
     pub fn parse(text: &str) -> Option<Self> {
         match text {

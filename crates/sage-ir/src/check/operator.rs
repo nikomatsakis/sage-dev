@@ -19,6 +19,8 @@ use super::infer_ctx::{InferCtx, Scope};
 /// operator is represented by a provisional resolved call whose expression
 /// slot is replaced with an error node if its retained proof later fails.
 // {anchor}`crates.sage_ir.types.operators.trait_calls`
+// {anchor}`crates.sage_ir.checking.body.operator_calls`
+// {anchor}`crates.sage_ir.inference.numeric_domains`
 pub(crate) fn check_binary_operator<'db>(
     cx: &InferCtx<'_, 'db>,
     scope: &Scope<'db>,
@@ -112,6 +114,7 @@ pub(crate) fn check_binary_operator<'db>(
         cx.assume_eq(result_ty, signature.ret);
     }
 
+    // {anchor}`crates.sage_ir.types.calls.selected_semantics`
     let owner_type_args = cx.stash_mut().alloc_slice(&[left_ty, right_ty]);
     let method_type_args = cx.stash_mut().alloc_slice(&[]);
     let arguments = cx.stash_mut().alloc_slice(&[receiver, argument]);

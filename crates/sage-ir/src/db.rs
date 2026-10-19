@@ -1,3 +1,5 @@
+// {anchor}`crates.sage_test_harness.compile_tests.project_isolation`
+// {anchor}`crates.sage_test_harness.compile_tests.query_capture`
 use std::collections::HashMap;
 
 use crate::source::SourceFile;
@@ -13,6 +15,16 @@ pub struct Database {
     query_log: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     inspection_log: std::sync::Arc<std::sync::Mutex<Vec<InspectionEvent>>>,
     files: HashMap<String, SourceFile>,
+    configuration: Option<Configuration>,
+}
+
+/// Tracked compilation configuration, installed before semantic demand.
+/// None means an unknown environment: standalone semantic clients retain cfg
+/// attributes as incomplete work rather than assuming predicates are false.
+#[salsa::input]
+pub struct Configuration {
+    #[returns(ref)]
+    pub cfgs: Option<Vec<String>>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -149,6 +161,7 @@ impl Database {
         Self::storage_and_logs_with_observer(None)
     }
 
+    // {anchor}`crates.sage_inspector.inspection.balanced_traces`
     fn storage_and_logs_with_observer(
         observer: Option<Box<dyn Fn(&salsa::Event) + Send + Sync>>,
     ) -> (
@@ -252,7 +265,9 @@ impl Database {
             query_log,
             inspection_log,
             files: HashMap::new(),
+            configuration: None,
         }
+        .initialize_configuration(None)
     }
 
     /// Observe raw Salsa lifecycle events before inspection-log coalescing.
@@ -269,12 +284,21 @@ impl Database {
             query_log,
             inspection_log,
             files: HashMap::new(),
+            configuration: None,
         }
+        .initialize_configuration(None)
     }
     // ANCHOR_END: architecture_query_execution_log
 
     /// Create a database with a `ProxyTcxDb`, sharing the query log.
     pub fn with_proxy(req_tx: std::sync::mpsc::Sender<crate::tcx::TcxRequest>) -> Self {
+        Self::with_proxy_and_cfgs(req_tx, None)
+    }
+
+    pub fn with_proxy_and_cfgs(
+        req_tx: std::sync::mpsc::Sender<crate::tcx::TcxRequest>,
+        cfgs: Option<Vec<String>>,
+    ) -> Self {
         let (storage, query_log, inspection_log) = Self::storage_and_logs();
         let proxy = crate::tcx::ProxyTcxDb::new(req_tx, query_log.clone(), inspection_log.clone());
         Self {
@@ -283,7 +307,21 @@ impl Database {
             query_log,
             inspection_log,
             files: HashMap::new(),
+            configuration: None,
         }
+        .initialize_configuration(cfgs)
+    }
+
+    fn initialize_configuration(mut self, cfgs: Option<Vec<String>>) -> Self {
+        self.configuration = Some(Configuration::new(&self, cfgs));
+        self
+    }
+
+    pub fn set_cfgs(&mut self, cfgs: Vec<String>) {
+        self.configuration
+            .expect("initialized configuration")
+            .set_cfgs(self)
+            .to(Some(cfgs));
     }
 
     pub fn add_source_file(&mut self, path: String, text: String) -> SourceFile {
@@ -363,6 +401,10 @@ impl crate::Db for Database {
         } else {
             InspectionEvent::SpanExit { operation }
         });
+    }
+
+    fn configuration(&self) -> Configuration {
+        self.configuration.expect("initialized configuration")
     }
 
     fn source_file(&self, path: &str) -> Option<SourceFile> {

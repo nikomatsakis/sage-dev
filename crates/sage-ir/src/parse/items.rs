@@ -1,3 +1,7 @@
+// {anchor}`crates.sage_ir.modules.parse.syntax_identities`
+// {anchor}`crates.sage_ir.modules.parse.dependencies`
+// {anchor}`crates.sage_test_harness.compile_tests.fixtures`
+// {anchor}`crates.sage_test_harness.compile_tests.checking_scope`
 use sage_stash::{Ptr, Stash, Stashed};
 
 use crate::cst::consts::{ConstCst, ConstCstData};
@@ -61,6 +65,7 @@ impl<'a, 'db> Parser<'a, 'db> {
     // Functions
     // -----------------------------------------------------------------------
 
+    // {anchor}`crates.sage_ir.modules.parse.detail_firewall`
     pub(super) fn parse_fn(
         &self,
         node: tree_sitter::Node<'a>,
@@ -432,7 +437,9 @@ impl<'a, 'db> Parser<'a, 'db> {
         VariantCst {
             name,
             fields: stash.alloc_slice(&fields),
-            discriminant: None,
+            discriminant: node
+                .child_by_field_name("value")
+                .map(|value| self.parse_expr(stash, value, item_start)),
             span,
         }
     }
@@ -446,6 +453,10 @@ impl<'a, 'db> Parser<'a, 'db> {
         node: tree_sitter::Node<'a>,
         pending_attrs: &[tree_sitter::Node<'a>],
     ) -> LocalModItemSym<'db> {
+        if !self.associated_body_supported(node) {
+            return self.error_item(node, pending_attrs);
+        }
+
         let mut stash = Stash::new();
         let start = item_start(node, pending_attrs);
         let name = node_name(self.db, node, self.text);
@@ -492,6 +503,41 @@ impl<'a, 'db> Parser<'a, 'db> {
         LocalModItemSym::Trait(LocalTraitSym::new(self.db, name, self.scope, cst, abs_span))
     }
 
+    fn associated_body_supported(&self, node: tree_sitter::Node<'a>) -> bool {
+        let Some(body) = node.child_by_field_name("body") else {
+            return true;
+        };
+        let mut attrs = Vec::new();
+        for child in body.children(&mut body.walk()) {
+            match child.kind() {
+                "attribute_item" => attrs.push(child),
+                "line_comment" | "block_comment" | "{" | "}" => {}
+                _ => {
+                    if self.cfg_enabled(&attrs)
+                        && (!attrs
+                            .iter()
+                            .all(|attr| self.associated_attr_supported(*attr))
+                            || !matches!(
+                                child.kind(),
+                                "function_item"
+                                    | "function_signature_item"
+                                    | "associated_type"
+                                    | "type_item"
+                                    | "const_item"
+                            ))
+                    {
+                        return false;
+                    }
+                    attrs.clear();
+                }
+            }
+        }
+        attrs.is_empty()
+    }
+
+    // {anchor}`crates.sage_ir.types.spans.offset_reuse`
+    // {anchor}`crates.sage_ir.types.spans.relative_composition`
+    // {anchor}`crates.sage_ir.types.spans.item_origin`
     fn parse_associated_items(
         &self,
         stash: &mut Stash,
@@ -505,12 +551,25 @@ impl<'a, 'db> Parser<'a, 'db> {
 
         let mut items = Vec::new();
         let mut cursor = body.walk();
+        let mut pending_attrs = Vec::new();
         for child in body.children(&mut cursor) {
-            let placement = relative_span(child, item_start);
-            let child_start = child.start_byte() as u32;
+            if child.kind() == "attribute_item" {
+                pending_attrs.push(child);
+                continue;
+            }
+            if matches!(child.kind(), "line_comment" | "block_comment") {
+                continue;
+            }
+            if !self.cfg_enabled(&pending_attrs) {
+                pending_attrs.clear();
+                continue;
+            }
+            let child_start = super::util::item_start(child, &pending_attrs);
+            let mut placement = relative_span(child, item_start);
+            placement.start = child_start - item_start;
             match child.kind() {
                 "function_item" | "function_signature_item" => {
-                    let fn_data = self.parse_fn_cst_data(stash, child, child_start);
+                    let fn_data = self.parse_fn_cst_data(stash, child, &pending_attrs, child_start);
                     let ptr = stash.alloc(fn_data);
                     items.push(TraitItemCst::Fn {
                         cst: ptr,
@@ -518,7 +577,8 @@ impl<'a, 'db> Parser<'a, 'db> {
                     });
                 }
                 "associated_type" | "type_item" => {
-                    let ta_data = self.parse_type_alias_cst_data(stash, child, child_start);
+                    let ta_data =
+                        self.parse_type_alias_cst_data(stash, child, &pending_attrs, child_start);
                     let ptr = stash.alloc(ta_data);
                     items.push(TraitItemCst::Type {
                         cst: ptr,
@@ -526,7 +586,8 @@ impl<'a, 'db> Parser<'a, 'db> {
                     });
                 }
                 "const_item" => {
-                    let c_data = self.parse_const_cst_data(stash, child, child_start);
+                    let c_data =
+                        self.parse_const_cst_data(stash, child, &pending_attrs, child_start);
                     let ptr = stash.alloc(c_data);
                     items.push(TraitItemCst::Const {
                         cst: ptr,
@@ -535,6 +596,7 @@ impl<'a, 'db> Parser<'a, 'db> {
                 }
                 _ => {}
             }
+            pending_attrs.clear();
         }
         stash.alloc_slice(&items)
     }
@@ -548,6 +610,10 @@ impl<'a, 'db> Parser<'a, 'db> {
         node: tree_sitter::Node<'a>,
         pending_attrs: &[tree_sitter::Node<'a>],
     ) -> LocalModItemSym<'db> {
+        if !self.associated_body_supported(node) {
+            return self.error_item(node, pending_attrs);
+        }
+
         let mut stash = Stash::new();
         let start = item_start(node, pending_attrs);
         let attrs = self.parse_attr_nodes(&mut stash, pending_attrs, start);
@@ -618,6 +684,7 @@ impl<'a, 'db> Parser<'a, 'db> {
     // Modules
     // -----------------------------------------------------------------------
 
+    // {anchor}`crates.sage_ir.modules.expand.direct_members`
     pub(super) fn parse_mod(
         &self,
         node: tree_sitter::Node<'a>,
@@ -628,7 +695,12 @@ impl<'a, 'db> Parser<'a, 'db> {
         let abs_span = absolute_span(self.source, node, start);
 
         let mut attr_stash = Stash::new();
-        let outer_attrs = self.parse_attr_nodes(&mut attr_stash, pending_attrs, start);
+        let module_attrs: Vec<_> = pending_attrs
+            .iter()
+            .copied()
+            .filter(|attr| self.module_path(*attr).is_none())
+            .collect();
+        let outer_attrs = self.parse_attr_nodes(&mut attr_stash, &module_attrs, start);
         let attrs_cst = Stashed::new(attr_stash, outer_attrs);
 
         if let Some(body) = node.child_by_field_name("body") {
@@ -638,7 +710,12 @@ impl<'a, 'db> Parser<'a, 'db> {
                 name,
                 self.scope.local_crate(self.db).edition(self.db),
                 Some(self.scope),
-                ModBodySource::Inline,
+                ModBodySource::Inline {
+                    directory: pending_attrs
+                        .iter()
+                        .find_map(|attr| self.module_path(*attr))
+                        .map(str::to_owned),
+                },
                 attrs_cst,
                 abs_span,
             );
@@ -656,14 +733,26 @@ impl<'a, 'db> Parser<'a, 'db> {
             LocalModItemSym::Mod(mod_sym)
         } else {
             // File-backed mod — file resolution deferred to `unexpanded_items`.
-            let file = self.resolve_mod_file(name);
+            let explicit_path = pending_attrs
+                .iter()
+                .find_map(|attr| self.module_path(*attr));
+            let file = explicit_path
+                .and_then(|path| {
+                    let parent = self.module_directory(true)?;
+                    self.db
+                        .source_file(&crate::source::normalize_path(&format!("{parent}{path}")))
+                })
+                .or_else(|| {
+                    if explicit_path.is_none() {
+                        self.resolve_mod_file(name)
+                    } else {
+                        None
+                    }
+                });
             let body_source = match file {
                 Some(f) => ModBodySource::File(f),
                 None => {
-                    panic!(
-                        "cannot resolve `mod {};` — no source file found",
-                        name.text(self.db)
-                    );
+                    return self.error_item(node, pending_attrs);
                 }
             };
 
@@ -680,27 +769,59 @@ impl<'a, 'db> Parser<'a, 'db> {
         }
     }
 
-    fn resolve_mod_file(&self, name: Name<'db>) -> Option<crate::source::SourceFile> {
-        // Determine parent dir from current source file
-        let parent_file = match self.source {
-            crate::span::ParseSource::SourceFile(f) => f,
-            _ => return None,
+    fn module_directory(&self, explicit: bool) -> Option<String> {
+        let crate::span::ParseSource::SourceFile(file) = self.source else {
+            return None;
         };
-        let parent_path = parent_file.path(self.db);
+        let mut module = self.scope.module(self.db);
+        let mut inline = Vec::new();
+        loop {
+            match module.body_source(self.db) {
+                ModBodySource::Inline { directory } => {
+                    inline.push(
+                        directory
+                            .clone()
+                            .unwrap_or_else(|| module.name(self.db).text(self.db).clone()),
+                    );
+                    module = module.parent(self.db)?.module(self.db);
+                }
+                ModBodySource::File(_) => break,
+            }
+        }
+        let path = file.path(self.db);
+        let mut directory = if explicit && inline.is_empty() {
+            path.rsplit_once('/')
+                .map_or(String::new(), |(parent, _)| format!("{parent}/"))
+        } else {
+            parent_dir_for(path)
+        };
+        for name in inline.into_iter().rev() {
+            directory.push_str(&name);
+            directory.push('/');
+        }
+        Some(directory)
+    }
+
+    fn resolve_mod_file(&self, name: Name<'db>) -> Option<crate::source::SourceFile> {
         let mod_name = name.text(self.db);
-        let parent_dir = parent_dir_for(parent_path);
+        let parent_dir = self.module_directory(false)?;
 
         let candidates = [
             format!("{parent_dir}{mod_name}.rs"),
             format!("{parent_dir}{mod_name}/mod.rs"),
         ];
 
-        for candidate in &candidates {
-            if let Some(file) = self.db.source_file(candidate) {
-                return Some(file);
-            }
+        let mut files = candidates.iter().filter_map(|candidate| {
+            self.db
+                .source_file(&crate::source::normalize_path(candidate))
+        });
+        let file = files.next()?;
+        // Rust's implicit module paths must identify exactly one source file.
+        // An explicit #[path] bypasses this search and remains unambiguous.
+        if files.next().is_some() {
+            return None;
         }
-        None
+        Some(file)
     }
 
     // -----------------------------------------------------------------------
@@ -1181,13 +1302,14 @@ impl<'a, 'db> Parser<'a, 'db> {
         &self,
         stash: &mut Stash,
         node: tree_sitter::Node<'a>,
+        pending_attrs: &[tree_sitter::Node<'a>],
         item_start: u32,
     ) -> FnCstData<'db> {
         let name = node
             .child_by_field_name("name")
             .map(|n| Name::new(self.db, self.text[n.byte_range()].to_owned()))
             .unwrap_or_else(|| Name::new(self.db, "_".to_owned()));
-        let attrs = stash.alloc_slice(&[]);
+        let attrs = self.parse_attr_nodes(stash, pending_attrs, item_start);
         let generics = self.parse_generics(stash, node, item_start);
         let params = self.parse_fn_params(stash, node, item_start);
         let ret = self.parse_return_type(stash, node, item_start);
@@ -1196,7 +1318,7 @@ impl<'a, 'db> Parser<'a, 'db> {
             .map(|n| self.parse_expr(stash, n, item_start));
         let where_clauses = self.parse_where_clauses(stash, node, item_start);
         let span = RelativeSpan {
-            start: node.start_byte() as u32 - item_start,
+            start: 0,
             end: node.end_byte() as u32 - item_start,
         };
 
@@ -1216,20 +1338,21 @@ impl<'a, 'db> Parser<'a, 'db> {
         &self,
         stash: &mut Stash,
         node: tree_sitter::Node<'a>,
+        pending_attrs: &[tree_sitter::Node<'a>],
         item_start: u32,
     ) -> TypeAliasCstData<'db> {
         let name = node
             .child_by_field_name("name")
             .map(|n| Name::new(self.db, self.text[n.byte_range()].to_owned()))
             .unwrap_or_else(|| Name::new(self.db, "_".to_owned()));
-        let attrs = stash.alloc_slice(&[]);
+        let attrs = self.parse_attr_nodes(stash, pending_attrs, item_start);
         let generics = self.parse_generics(stash, node, item_start);
         let ty = node
             .child_by_field_name("type")
             .map(|n| self.parse_type(stash, n, item_start));
         let where_clauses = self.parse_where_clauses(stash, node, item_start);
         let span = RelativeSpan {
-            start: node.start_byte() as u32 - item_start,
+            start: 0,
             end: node.end_byte() as u32 - item_start,
         };
 
@@ -1247,13 +1370,14 @@ impl<'a, 'db> Parser<'a, 'db> {
         &self,
         stash: &mut Stash,
         node: tree_sitter::Node<'a>,
+        pending_attrs: &[tree_sitter::Node<'a>],
         item_start: u32,
     ) -> ConstCstData<'db> {
         let name = node
             .child_by_field_name("name")
             .map(|n| Name::new(self.db, self.text[n.byte_range()].to_owned()))
             .unwrap_or_else(|| Name::new(self.db, "_".to_owned()));
-        let attrs = stash.alloc_slice(&[]);
+        let attrs = self.parse_attr_nodes(stash, pending_attrs, item_start);
         let ty = node
             .child_by_field_name("type")
             .map(|n| self.parse_type(stash, n, item_start));
@@ -1261,7 +1385,7 @@ impl<'a, 'db> Parser<'a, 'db> {
             .child_by_field_name("value")
             .map(|n| self.parse_expr(stash, n, item_start));
         let span = RelativeSpan {
-            start: node.start_byte() as u32 - item_start,
+            start: 0,
             end: node.end_byte() as u32 - item_start,
         };
 
@@ -1287,3 +1411,4 @@ fn parent_dir_for(path: &str) -> String {
     }
     String::new()
 }
+// {anchor}`crates.sage_test_harness.compile_tests.project_isolation`

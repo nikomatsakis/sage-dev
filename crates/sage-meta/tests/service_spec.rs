@@ -30,43 +30,6 @@ mod todo {
     // TODO: No repository-wide check verifies all seven review-packet elements.
 
     #[test]
-    #[sage::test(crates.sage_stash.storage.handle_ownership)]
-    fn crates_sage_stash_storage_handle_ownership() {
-        // TODO: Associate and review the complete evidence for Debug tests reject cross-stash pointer
-        // and slice access for equal and unequal element types, copy tests reconstruct nested pointers
-        // and slices in a destination stash, and completed-query tests walk outputs under the
-        // destination stash without consulting source stashes.
-    }
-    #[test]
-    #[sage::test(crates.sage_stash.storage.typed_interning)]
-    fn crates_sage_stash_storage_typed_interning() {
-        // TODO: Associate and review the complete evidence for Scalar, nested-pointer, slice,
-        // duplicate, and forced-collision tests establish deduplication and non-aliasing; derived
-        // `AllocStashData` implementations receive the same coverage as handwritten implementations.
-    }
-    #[test]
-    #[sage::test(crates.sage_stash.storage.immutable_entries)]
-    fn crates_sage_stash_storage_immutable_entries() {
-        // TODO: Associate and review the complete evidence for The public stash API exposes no mutable
-        // indexing or mutable entry access; a focused finalization test proves that the working stash
-        // retains its inference-variable node while the separately owned output contains only its
-        // resolved type; completed-body tests reject every surviving inference variable.
-    }
-    #[test]
-    #[sage::test(crates.sage_stash.storage.rooted_equality)]
-    fn crates_sage_stash_storage_rooted_equality() {
-        // TODO: Associate and review the complete evidence for Independently allocated equal and
-        // unequal trees, shared DAGs, reordered/unreachable allocations, and repeated construction
-        // produce the expected equality, hash, ordering, fingerprint, and `salsa::Update` behavior.
-    }
-    #[test]
-    #[sage::test(crates.sage_stash.storage.query_value)]
-    fn crates_sage_stash_storage_query_value() {
-        // TODO: Associate and review the complete evidence for Query traces show equal reconstructed
-        // roots stopping downstream invalidation after a producer reexecutes, while an edit changing
-        // reachable semantic content changes the root and invalidates its consumers.
-    }
-    #[test]
     #[sage::test(crates.sage_inspector.inspection.workspace_actor)]
     fn crates_sage_inspector_inspection_workspace_actor() {
         // TODO: Associate and review the complete evidence for Same-host cold/warm/relevant/unrelated
@@ -106,10 +69,14 @@ mod todo {
     #[test]
     #[sage::test(crates.sage_inspector.inspection.detail_free_index)]
     fn crates_sage_inspector_inspection_detail_free_index() {
-        // TODO: Associate and review the complete evidence for A real-workspace trace snapshots the
-        // closed set of operation families used by directory construction, including the permitted
-        // macro metadata families, and explicitly forbids signatures, bodies, associated values, and
-        // impl discovery.
+        // TODO: Prerequisite: source-backed Inspector integration fixtures with nested modules,
+        // associated items, macro-generated items, and dependency symbols, plus a browser request
+        // recorder. Assert one complete local index excludes dependency symbols and item details.
+        // Snapshot the closed set of directory-construction operation families, including permitted
+        // macro metadata, and forbid signatures, bodies, associated values, and impl discovery.
+        // Exercise browser filtering and branch expansion against that index; assert matching
+        // results, no search-text transmission, and no additional branch or search requests.
+        // Associate and review those assertions before replacing this deferred coverage.
     }
     #[test]
     #[sage::test(crates.sage_inspector.inspection.product_availability)]
@@ -147,12 +114,18 @@ mod todo {
         // dispositions. Accumulator traversal separately proves that its internal memo refreshes use
         // the same lifecycle.
     }
+    // {anchor}`crates.sage_inspector.inspection.unknown_work`
+    // TODO: Closed dependency claim checking is absent. It needs an API accepting the complete
+    // projected trace and allowed operations, recursively rejecting unexpected unmapped query or
+    // metadata nodes without filtering them. Ordinary trace projection already retains these nodes.
+
     #[test]
     #[sage::test(crates.sage_inspector.inspection.unknown_work)]
     fn crates_sage_inspector_inspection_unknown_work() {
         // TODO: Associate and review the complete evidence for Real traces include all balanced Salsa
         // requests and metadata calls, and forbidden-demand tests cannot pass by filtering an unknown
-        // node.
+        // node. Closed-claim rejection tests require the missing complete-trace checking API above;
+        // they must include an unexpected nested unmapped query and metadata operation.
     }
     #[test]
     #[sage::test(crates.sage_inspector.inspection.semantic_phase_boundary)]

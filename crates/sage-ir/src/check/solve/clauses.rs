@@ -35,6 +35,7 @@ pub(crate) struct PreparedValueCandidate<'db> {
 // ANCHOR: example_assemble_candidates
 #[sage::item(crate::solver::Solver::candidates)]
 // {anchor}`crates.sage_ir.solver.candidate_completeness`
+// {anchor}`crates.sage_ir.modules.expand.completeness`
 pub(crate) fn assemble_candidates<'db>(
     db: &'db dyn crate::Db,
     state: &QueryProofState<'db>,
@@ -337,6 +338,7 @@ pub(crate) fn prepare_value_candidate<'db>(
     })
 }
 
+// {anchor}`crates.sage_ir.solver.normalization_demand`
 pub(crate) fn load_prepared_associated_value<'db>(
     db: &'db dyn crate::Db,
     state: &mut QueryProofState<'db>,

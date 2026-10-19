@@ -35,6 +35,7 @@ fn paired_unsupported_bodies_cannot_satisfy_conformance() {
 }
 
 mod todo {
+    // {anchor}`crates.sage_oracle_harness.crate.exact_comparison`
     // {anchor}`crates.sage_oracle_harness.crate.independent_coverage`
     // TODO: run_fixture has independent coverage checks for three named fixtures,
     // but lacks generic per-emitter source item/body inventories and rejection of

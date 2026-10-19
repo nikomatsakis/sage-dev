@@ -85,6 +85,7 @@ pub fn canonicalize_goal<'db>(
 }
 
 #[allow(clippy::too_many_arguments)]
+// {anchor}`crates.sage_ir.inference.canonical_boundary`
 pub fn canonicalize_solver_goal<'db>(
     db: &'db dyn crate::Db,
     source: &Stash,
@@ -165,6 +166,7 @@ pub fn canonicalize_solver_goal<'db>(
 }
 // ANCHOR_END: example_canonicalize_goal
 
+// {anchor}`crates.sage_ir.types.aliases.identity`
 impl<'db> Canonicalizer<'_, 'db> {
     fn fold_solver_goal(&mut self, goal: SolverGoal<'db>) -> SolverGoal<'db> {
         match goal {

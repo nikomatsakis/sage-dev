@@ -158,6 +158,7 @@ impl<'tcx> RustcTcxDb<'tcx> {
         self.external_def_path(crate_num, def_index, false)
     }
 
+    // {anchor}`crates.sage_inspector.inspection.canonical_ownership`
     pub fn canonical_def_path(
         &self,
         crate_num: CrateNum,
@@ -684,6 +685,7 @@ impl<'tcx> RustcTcxDb<'tcx> {
         })
     }
 
+    // {anchor}`crates.sage_ir.solver.candidate_completeness`
     pub fn relevant_trait_impls(
         &self,
         crate_num: CrateNum,
@@ -1249,6 +1251,7 @@ fn raw_ty(tcx: TyCtxt<'_>, source: ty::Ty<'_>) -> Option<sage_ir::tcx::RawTy> {
     })
 }
 
+// {anchor}`crates.sage_ir.symbols.external_identity`
 fn sym_ext_kind_for_def_kind(kind: DefKind) -> SymExtKind {
     use rustc_hir::def::CtorOf;
     match kind {

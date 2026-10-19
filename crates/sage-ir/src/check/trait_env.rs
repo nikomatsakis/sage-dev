@@ -45,6 +45,8 @@ pub(crate) fn source_generics_supported(
     }
 }
 
+// {anchor}`crates.sage_ir.checking.signature.storage`
+// {anchor}`crates.sage_ir.checking.signature.body_independence`
 pub(crate) fn lower_predicates<'db>(
     cx: &mut Check<'_, 'db>,
     source_generics: Slice<GenericParamCst<'db>>,

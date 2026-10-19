@@ -322,6 +322,7 @@ Text <span><em>{anchor}`example.html_inline` HTML content.</em></span>
 }
 
 #[test]
+#[sage::test(meta.anchors.unique_names)]
 fn malformed_roles_and_empty_or_misplaced_rules_are_errors() {
     for text in [
         "{anchor}missing A rule.",
@@ -603,6 +604,7 @@ fn markdown_source_links_use_published_readme_urls_in_every_book_section() {
 #[sage::test(meta.book.chapter_names)]
 #[sage::test(meta.book.authority)]
 #[sage::test(meta.book.shared_model)]
+#[sage::test(meta.anchors.unique_names)]
 fn canonical_inventory_uses_configured_chapters_and_local_names() {
     let fixture = BookFixture::new(
         "- [Design](design/README.md)\n  - [Meta](design/meta/README.md)\n  - [Rules](design/meta/call-rules.md)\n  - [Tenets](design/tenets.md)\n- [RFD](rfds/proposal.md)\n",
@@ -679,6 +681,7 @@ fn unpublished_rule_sources_do_not_silently_disappear() {
 #[sage::test(meta.anchors.context_navigation)]
 #[sage::test(meta.anchors.content.source_end)]
 #[sage::test(meta.reviews.claim_text)]
+#[sage::test(meta.anchors.unique_names)]
 fn sage_prose_rules_have_precise_spans_model_owners_and_cross_source_references() {
     let fixture =
         BookFixture::new("- [Meta](design/meta.md)\n- [Crates](design/crates/README.md)\n");
@@ -833,6 +836,7 @@ fn badges_open_rule_pages_and_keep_definition_permalinks_after_expansion() {
 
 #[test]
 #[sage::test(meta.anchors.canonical_sources)]
+#[sage::test(meta.anchors.unique_names)]
 fn reference_roles_validate_targets_but_ignore_code_examples() {
     let fixture = BookFixture::new("- [Rules](design/rules.md)\n");
     fixture.write("design/rules.md", "{anchor}`claim` A precise claim.\n\nSee {spec}`missing.rule`.\n\n`` {spec}`example` ``\n\n```text\n{spec}`code.example`\n```\n\n{spec} malformed\n");

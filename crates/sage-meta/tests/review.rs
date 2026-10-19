@@ -109,6 +109,7 @@ impl Drop for Fixture {
 #[sage::test(meta.reviews.record_required)]
 #[sage::test(meta.reviews.recorded_reads)]
 #[sage::test(meta.reviews.recording)]
+#[sage::test(meta.reviews.decisions)]
 fn start_invalidates_previous_success_and_record_is_required() {
     let fixture = Fixture::new();
     assert!(!sage_meta::check(&fixture.0).is_valid());
@@ -235,6 +236,53 @@ fn complete_claim_blocks_are_selected_but_unrelated_movement_is_not_stale() {
 
 #[test]
 #[sage::test(meta.reviews.test_source)]
+#[sage::test(crates.sage_test_harness.compile_tests.review_visibility)]
+fn inline_test_capture_preserves_intent_and_excludes_macro_implementation() {
+    let fixture = Fixture::new();
+    let inline = r##"#[test]
+#[sage::test(demo.rule)]
+fn inline_case() {
+    compile_test! {
+        source: "fn f() { missing; } //# ERROR if SAGE\n//# WARN if rustc",
+        edition: "2021",
+        diagnostics: expect![[r#"expected diagnostic"#]],
+    }
+}"##;
+    let macro_source = "macro_rules! compile_test { ($($tt:tt)*) => {} }\n";
+    fixture.write("src/tests.rs", &format!("{macro_source}{inline}"));
+    let input = fixture.start();
+    let captured = input
+        .fragments
+        .iter()
+        .find(|fragment| matches!(fragment.selector, Selector::Test { .. }))
+        .unwrap();
+    assert_eq!(captured.contents.join("\n"), inline);
+    assert!(input.fragments.iter().all(|fragment| {
+        !fragment
+            .contents
+            .join("\n")
+            .contains("macro_rules! compile_test")
+    }));
+    review::record(&fixture.0, "demo.rule", &Fixture::report()).unwrap();
+    assert!(sage_meta::check(&fixture.0).is_valid());
+    let changed_macro = macro_source.replace("=> {}", "=> { panic!() }");
+    fixture.write("src/tests.rs", &format!("{changed_macro}{inline}"));
+    assert!(sage_meta::check(&fixture.0).is_valid());
+    // Severity and compiler qualifiers express intended behavior. Each edit
+    // must invalidate approval even without any changed observed snapshot.
+    for changed in [
+        inline.replace("ERROR", "WARN"),
+        inline.replace("WARN", "ERROR"),
+        inline.replace("if SAGE", "if rustc"),
+        inline.replace("if rustc", "if SAGE"),
+    ] {
+        fixture.write("src/tests.rs", &format!("{changed_macro}{changed}"));
+        assert!(!sage_meta::check(&fixture.0).is_valid(), "{changed}");
+    }
+}
+
+#[test]
+#[sage::test(meta.reviews.test_source)]
 #[sage::test(meta.reviews.selector_test)]
 #[sage::test(meta.reviews.staleness)]
 #[sage::test(meta.reviews.fragment_associations)]
@@ -282,6 +330,7 @@ fn test_selector_preserves_metadata_and_ignores_unrelated_line_movement() {
 #[sage::test(meta.reviews.fragment_associations)]
 #[sage::test(meta.reviews.input_format)]
 #[sage::test(meta.reviews.review_diagnostics)]
+#[sage::test(meta.reviews.staleness)]
 fn added_or_removed_associations_invalidate_unchanged_saved_fragments() {
     let fixture = Fixture::new();
     fixture.approve();
@@ -335,6 +384,7 @@ fn added_or_removed_associations_invalidate_unchanged_saved_fragments() {
 #[sage::test(meta.reviews.input_format)]
 #[sage::test(meta.reviews.input_fragments)]
 #[sage::test(meta.reviews.source_representation)]
+#[sage::test(meta.reviews.staleness)]
 fn whole_files_and_ranges_preserve_exact_line_endings_and_detect_selected_edits() {
     let fixture = Fixture::new();
     fixture.start();
@@ -399,6 +449,7 @@ fn whole_files_and_ranges_preserve_exact_line_endings_and_detect_selected_edits(
 #[sage::test(meta.reviews.input_fragments)]
 #[sage::test(meta.reviews.fragment_freshness)]
 #[sage::test(meta.reviews.record_required)]
+#[sage::test(meta.reviews.staleness)]
 fn invalid_reports_and_stale_inputs_never_complete_an_active_review() {
     let fixture = Fixture::new();
     assert!(review::record(&fixture.0, "demo.rule", &Fixture::report()).is_err());
@@ -451,6 +502,7 @@ fn invalid_reports_and_stale_inputs_never_complete_an_active_review() {
 #[sage::test(meta.reviews.decisions)]
 #[sage::test(meta.reviews.review_scope)]
 #[sage::test(meta.reviews.input_format)]
+#[sage::test(meta.reviews.test_source)]
 fn accepted_placeholder_reports_preserve_todo_and_na_evidence() {
     for (module, expected) in [
         ("todo", TestStatus::Todo),
@@ -487,6 +539,7 @@ fn accepted_placeholder_reports_preserve_todo_and_na_evidence() {
 #[sage::test(meta.reviews.preparation)]
 #[sage::test(meta.reviews.recorded_reads)]
 #[sage::test(meta.reviews.gate)]
+#[sage::test(meta.reviews.validation_layout)]
 fn invalid_ids_and_paths_are_rejected_without_destroying_existing_reports() {
     let fixture = Fixture::new();
     fixture.approve();
@@ -599,6 +652,7 @@ fn diagnostics_identify_missing_unfinished_stale_and_requested_edit_reviews() {
 #[sage::test(meta.reviews.summary_format)]
 #[sage::test(meta.reviews.review_diagnostics)]
 #[sage::test(meta.reviews.staleness)]
+#[sage::test(meta.reviews.validation_layout)]
 fn unsupported_versions_and_mismatched_identity_cannot_pass() {
     for field in ["schema_version", "policy_version", "anchor"] {
         let fixture = Fixture::new();
@@ -696,12 +750,50 @@ fn cli_start_and_record_roundtrip_exact_saved_input() {
 #[sage::test(meta.reviews.review_delegation)]
 fn review_skill_assigns_one_owner_and_requires_start_read_record() {
     let skill = include_str!("../../../.agents/skills/sage-review-checklist/SKILL.md");
-    assert!(skill.contains("one") && skill.contains("subagent") && skill.contains("anchor"));
-    assert!(skill.contains("cargo meta review start"));
-    assert!(skill.contains("cargo meta review read"));
-    assert!(skill.contains("cargo meta review record"));
-    assert!(skill.contains("instructions"));
-    assert!(skill.contains("TODO") && skill.contains("N/A"));
+    // The skill is the behavior under test: check obligations within their
+    // responsible role, while allowing Markdown line wrapping to change.
+    let coordinator = skill
+        .split("## Coordinator: delegate each failing anchor")
+        .nth(1)
+        .unwrap()
+        .split("## Reviewer:")
+        .next()
+        .unwrap()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    for obligation in [
+        "one review subagent per anchor, including TODO/N/A anchors",
+        "anchor ID and the initial instruction",
+        "cargo meta review start ANCHOR",
+        "review the printed inputs",
+        "Only one agent owns an anchor's validation directory at a time",
+        "different anchors may be reviewed concurrently",
+        "Avoid supplying uncaptured source context",
+        "instructions must be saved with `start --instructions`",
+    ] {
+        assert!(coordinator.contains(obligation), "missing: {obligation}");
+    }
+    let reviewer = skill
+        .split("## Reviewer: capture initial context")
+        .nth(1)
+        .unwrap()
+        .split("## Coordinator: follow up and check")
+        .next()
+        .unwrap();
+    assert!(reviewer.contains("cargo meta review read ANCHOR path/to/file.rs"));
+    assert!(reviewer.contains("cargo meta review record ANCHOR /tmp/review-report.json"));
+    let follow_up = skill
+        .split("## Coordinator: follow up and check")
+        .nth(1)
+        .unwrap()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(follow_up.contains("Reconcile findings and coordinate requested changes"));
+    assert!(follow_up.contains("After changes, delegate fresh start/read/record reviews"));
+    assert!(follow_up.contains("for affected anchors"));
+    assert!(follow_up.contains("`cargo meta check` again"));
 }
 
 #[test]
@@ -1330,4 +1422,54 @@ fn record_rejects_invalid_active_identity_and_changed_associations() {
         );
         assert!(!sage_meta::check(&fixture.0).is_valid(), "{fault}");
     }
+}
+
+#[test]
+#[sage::test(meta.reviews.review_scope)]
+fn implementation_metadata_is_sorted_and_excludes_source_positions() {
+    let fixture = Fixture::new();
+    let alpha = "mod alpha {\n// {anchor}`demo.rule`<<\npub fn result() -> u32 { 4 }\n// >>\n}\n";
+    let zeta = "mod zeta {\n// {anchor}`demo.rule`<<\npub fn result() -> u32 { 4 }\n// >>\n}\n";
+    fixture.write("src/behavior.rs", &format!("{zeta}{alpha}"));
+    let first = fixture.start();
+    assert_eq!(
+        first
+            .implementations
+            .iter()
+            .map(|site| site.module.as_str())
+            .collect::<Vec<_>>(),
+        ["demo::behavior::alpha", "demo::behavior::zeta"]
+    );
+    for site in &first.implementations {
+        let value = serde_json::to_value(site).unwrap();
+        let mut keys = value
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        keys.sort();
+        assert_eq!(
+            keys,
+            [
+                "cfg",
+                "crate_name",
+                "excerpt",
+                "explanation",
+                "file",
+                "module",
+                "region",
+                "status",
+                "target"
+            ]
+        );
+    }
+    fixture.write(
+        "src/behavior.rs",
+        &format!("// Unrelated leading context moves source positions.\n\n{alpha}{zeta}"),
+    );
+    let moved = fixture.start();
+    assert_eq!(moved.implementations, first.implementations);
+    // Whole-file context still changes; position independence applies to metadata.
+    assert_ne!(moved.fragments, first.fragments);
 }

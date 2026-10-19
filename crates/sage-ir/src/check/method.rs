@@ -17,6 +17,7 @@ pub(crate) struct ResolvedMethod<'db> {
     pub parameter_env_published: bool,
 }
 
+// {anchor}`crates.sage_ir.types.calls.selected_semantics`
 pub(crate) fn resolve_method<'db>(
     cx: &InferCtx<'_, 'db>,
     scope: &Scope<'db>,
@@ -47,6 +48,8 @@ fn resolve_trait_method<'db>(
     span: RelativeSpan,
 ) -> Result<ResolvedMethod<'db>, ErrorReported> {
     let mut resolver = scope.resolver.clone();
+    // {anchor}`crates.sage_ir.resolution.lookup.completeness`
+    // Method-provider completeness is tracked independently of represented candidates.
     let (traits, scope_complete) = resolver.traits_in_method_scope();
     let mut definite = Vec::new();
     let bound_provider_unknown = cx.has_unhandled_method_bound_providers(receiver_ty);
@@ -304,6 +307,8 @@ struct InstantiatedExternalMethod<'db> {
     method_type_args: sage_stash::Slice<Ptr<Ty<'db>>>,
 }
 
+// {anchor}`crates.sage_ir.checking.body.isolated_completion`
+// {anchor}`crates.sage_ir.inference.atomic_checking`
 fn instantiate_external_inherent_signature<'db>(
     cx: &InferCtx<'_, 'db>,
     signature: &sage_stash::Stashed<crate::ty::Binder<'db, FnSig<'db>>>,

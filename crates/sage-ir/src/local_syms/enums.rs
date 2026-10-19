@@ -9,6 +9,7 @@ use crate::ty::{Binder, EnumSig};
 
 #[salsa::tracked(debug)]
 #[sage::item(crate::symbols::LocalEnumSym)]
+// {anchor}`crates.sage_ir.symbols.local_identity`
 pub struct LocalEnumSym<'db> {
     pub name: Name<'db>,
     pub scope: ScopeSymbol<'db>,
@@ -42,6 +43,7 @@ impl<'db> LocalEnumSym<'db> {
     /// environment under one coherent binder.
     #[salsa::tracked]
     #[sage::item(crate::symbols::LocalEnumSym::signature)]
+    // {anchor}`crates.sage_ir.checking.identity_minting`
     pub fn sig(self, db: &'db dyn crate::Db) -> Stashed<Binder<'db, EnumSig<'db>>> {
         use crate::check::Check;
         use crate::cst::generics::CheckGenerics;
@@ -93,6 +95,7 @@ impl<'db> LocalEnumSym<'db> {
 
 #[salsa::tracked(debug)]
 #[sage::item(crate::symbols::LocalVariantSym)]
+// {anchor}`crates.sage_ir.symbols.local_identity`
 pub struct LocalVariantSym<'db> {
     pub name: Name<'db>,
     pub parent_enum: LocalEnumSym<'db>,
@@ -116,6 +119,7 @@ impl<'db> LocalVariantSym<'db> {
 
 #[salsa::tracked(debug)]
 #[sage::item(crate::symbols::LocalVariantCtorSym)]
+// {anchor}`crates.sage_ir.symbols.local_identity`
 pub struct LocalVariantCtorSym<'db> {
     pub name: Name<'db>,
     pub variant: LocalVariantSym<'db>,

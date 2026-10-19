@@ -26,6 +26,7 @@ pub enum EvidenceStatus {
 /// name itself. Special modules may nest, but conflicting classifications cannot.
 // {anchor}`meta.anchors.placeholder_status`
 // {anchor}`meta.reviews.decisions`
+// {anchor}`meta.book.index_status`
 pub fn placeholder_status(module: &str) -> Result<EvidenceStatus, String> {
     let mut todo = false;
     let mut not_applicable = false;
@@ -75,6 +76,7 @@ pub(crate) struct SourceContext<'a> {
 
 /// Index one Cargo-owned source snapshot, using its inherited module context.
 // {anchor}`meta.anchors.implementation_references`
+// {anchor}`meta.anchors.evidence_status`
 pub(crate) fn index_source(
     source: &str,
     syntax: &syn::File,

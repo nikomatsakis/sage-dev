@@ -105,13 +105,6 @@ mod todo {
     }
 
     #[test]
-    #[sage::test(crates.sage_ir.types.lifetimes.unchecked_borrows)]
-    fn types_lifetimes_unchecked_borrows() {
-        // TODO: Add negative fixtures pinning intentional acceptance of programs rejected
-        // only by lifetime or borrow rules.
-    }
-
-    #[test]
     #[sage::test(crates.sage_ir.types.body.typed_provenance)]
     fn types_body_typed_provenance() {
         // TODO: Add a whole-tree completion validator covering every expression/pattern

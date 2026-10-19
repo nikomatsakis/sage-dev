@@ -6,6 +6,7 @@ use crate::span::AbsoluteSpan;
 
 #[salsa::tracked(debug)]
 #[sage::item(crate::symbols::LocalImplSym)]
+// {anchor}`crates.sage_ir.symbols.local_identity`
 pub struct LocalImplSym<'db> {
     pub scope: ScopeSymbol<'db>,
 
@@ -37,6 +38,7 @@ impl<'db> LocalImplSym<'db> {
 /// outside the current normalization slice and remain unavailable.
 #[salsa::tracked]
 #[sage::item(crate::symbols::LocalImplSym::associated_type_value)]
+// {anchor}`crates.sage_ir.solver.normalization_demand`
 pub fn local_impl_associated_type_value<'db>(
     db: &'db dyn crate::Db,
     impl_sym: LocalImplSym<'db>,
@@ -119,6 +121,11 @@ impl<'db> LocalImplSym<'db> {
 
     #[salsa::tracked]
     #[sage::item(crate::symbols::LocalImplSym::signature)]
+    // {anchor}`crates.sage_ir.symbols.associated_interfaces`
+    // {anchor}`crates.sage_ir.checking.identity_minting`
+    // {anchor}`crates.sage_ir.checking.signature.owner_binder`
+    // {anchor}`crates.sage_ir.checking.signature.body_independence`
+    // {anchor}`crates.sage_ir.checking.symbol_keyed_interfaces`
     pub fn sig(self, db: &'db dyn crate::Db) -> sage_stash::Stashed<crate::ty::ImplSignature<'db>> {
         use crate::check::Check;
         use crate::cst::generics::CheckGenerics;
@@ -172,6 +179,7 @@ impl<'db> LocalImplSym<'db> {
 
     #[salsa::tracked]
     #[sage::item(crate::symbols::LocalImplSym::items)]
+    // {anchor}`crates.sage_ir.checking.signature.narrow_detail`
     pub fn items(self, db: &'db dyn crate::Db) -> sage_stash::Stashed<crate::ty::ImplItems<'db>> {
         use crate::ty::BinderExt;
 
@@ -240,6 +248,8 @@ pub struct LocalImplCandidates<'db> {
 /// completeness. This is the trait-keyed solver boundary; the current source
 /// index still scans module impls internally.
 #[salsa::tracked(returns(ref))]
+// {anchor}`crates.sage_ir.modules.expand.completeness`
+// {anchor}`crates.sage_ir.solver.candidate_completeness`
 pub fn local_impl_candidates<'db>(
     db: &'db dyn crate::Db,
     krate: crate::scope::LocalCrateSymbol<'db>,

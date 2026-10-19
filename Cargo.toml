@@ -46,6 +46,7 @@ tokio = { version = "1", features = ["full"] }
 webbrowser = "1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 notify = "8.2.0"
+sage-host = { version = "0.1.0", path = "crates/sage-host" }
 
 [[bench]]
 name = "stash_bench"

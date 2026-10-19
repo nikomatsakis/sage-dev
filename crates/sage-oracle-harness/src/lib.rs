@@ -155,6 +155,7 @@ fn collect_rs_recursive(dir: &Path, files: &mut Vec<PathBuf>) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ANCHOR: example_exact_oracle_comparison
+// {anchor}`crates.sage_oracle_harness.crate.deterministic_emission`
 pub fn assert_crates_eq(
     fixture_name: &str,
     lhs: &Crate<NormalizedDef>,

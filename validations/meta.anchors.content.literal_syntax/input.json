@@ -1,7 +1,7 @@
 {
   "prompt": "Review this anchor as its assigned subagent. Enumerate ALL requirements, qualifications, edge cases and scenarios. Inspect all supplied implementation and test fragments and trace each aspect to implementation behavior and actual test assertions or justified TODO/N/A evidence. Passing tests and associations alone are insufficient. Follow helpers and capture every additional source dependency with cargo meta review read ANCHOR PATH [selector] before completing the report. Explain prerequisites for justified TODO tests; do not claim deferred behavior is implemented. Distinguish source inspection from commands actually executed. Write a JSON report containing reviewer, report, and requested_edits. Leave requested_edits empty only when every aspect is accounted for and no edits are needed. Otherwise list concrete changes, including missing tests or justified TODO tests with prerequisite comments. Run cargo meta review record ANCHOR REPORT_FILE to finish. After edits or stale-input rejection, run cargo meta review start ANCHOR and review the fresh inputs. The gate fails until a current report with no requested edits is recorded. Dependency capture is agent-declared.",
   "coordinator_instructions": [
-    "Review only meta.anchors.content.literal_syntax. Follow the repository review skill. Independently reassess every claim aspect and its implementation/test evidence. Do not edit production or tests; report suspected issues to coordinator. Capture every additional source dependency using review read. Distinguish source review from commands actually executed. Record your own completed report via cargo meta review record; do not directly edit saved JSON. Existing justified TODO/N/A evidence can remain deferred.\nHistorical report supplied as context, not an approval to reuse mechanically; independently verify current evidence and rationale:\n{\n  \"decision\": \"approved\",\n  \"outcome\": true,\n  \"requested_edits\": [],\n  \"reason\": \"Claim reviewed in full: Boundary-looking text inside fenced or indented code blocks, inline code, or escaped text does not open or close an anchor. Raw HTML examples do not supply anchor definitions, section headings, or end markers. A standalone end comment acts as a boundary only outside these literal contexts and enclosing HTML blocks.\\n\\nAssessment: spec.rs code/HTML tracking prevents literal examples from opening or closing anchors. boundary_examples_in_code_escapes_and_enclosing_html_are_literal exercises fenced, indented, inline, escaped, nested/multiline HTML and examples-only input. raw_html_text_does_not_hide_boundaries_after_its_closing_element checks script/style/textarea/pre/div recovery; rendering tests retain literal end markers.\\n\\nAll supplied test associations: sage_meta::prose_rendering_hides_control_comments_but_preserves_literal_examples [ordinary], sage_meta::boundary_examples_in_code_escapes_and_enclosing_html_are_literal [ordinary], sage_meta::malformed_looking_comments_are_content_and_do_not_end_claims [ordinary], sage_meta::raw_html_text_does_not_hide_boundaries_after_its_closing_element [ordinary], sage_meta::rendering_removes_only_parsed_end_markers [ordinary]. Implementation associations: crates/sage-meta/src/spec.rs::sage_meta::spec [ordinary].\\n\\nMethod: inspected supplied claim, association bodies and relevant surrounding full-file implementation/test context. This is source adequacy review; no test commands were executed by this reviewer and no run result is inferred from annotations.\",\n  \"reviewer\": \"Codex sage-sanity reviewer\"\n}\nCoordinator reports full functional sage-meta suite 321 passing tests and root cargo build passed. This is separately reported execution, not a command you ran. Avoid redundant full suites unless needed to investigate a specific concern. Efficiently compare unchanged evidence to earlier snapshots, but reassess claim-specific rationale independently.\n\nCoordinator baseline comparison at dispatch preparation (reviewer must verify still current):\nimplementation_sources: crates/sage-meta/src/spec.rs: EXACT BYTE MATCH to historical reviewed source\ntest_sources: crates/sage-meta/tests/browser.rs: EXACT BYTE MATCH to historical reviewed source\ntest_sources: crates/sage-meta/tests/spec.rs: CHANGED; inspect delta\nFor unchanged legacy anchors, prior report is a completed independent source review. Reassess its claim-specific sufficiency against current claim, metadata and associated test assertions; you need not rediscover all unchanged implementation or rerun tests. For any changed source, inspect the delta and relevant complete behavior. Historical input for exact comparison is /tmp/sage-pre-fragment-validations/meta.anchors.content.literal_syntax/input.json. If using historical source contents themselves beyond exact comparison, put them in captured coordinator instructions or use review read for their current workspace source.\n\nCoordinator clarification: evaluate the full associated set plus source reasoning; no demand for isolated field-per-test assertions where meaningful integration checks account for claim. If prior rationale relies on helper/surrounding source in historical test_sources/implementation_sources/reads beyond current initial fragments, capture each relied-on dependency via review read (whole file or precise selector). Byte-comparison alone does not persist a freshness dependency.\n\nEfficiency: unchanged legacy evidence already genuinely independently reviewed. Batch evidence reads; inspect only current inputs, deltas, and actually relied-on helpers. Avoid unrelated documentation, repeated broad checks, and rediscovery. Write concise complete claim/evidence/TODO-prerequisite reassessment, distinguish baseline/source/execution, then record promptly.\n"
+    "Follow sage-review-checklist for only the assigned anchor. Begin fresh review using cargo meta review start ANCHOR --instructions /tmp/ci-anchor-review-instructions.txt. Inspect current claim, implementation, complete tests, and capture dependencies through review read. Independently assess current evidence; do not transplant old approvals. Preserve justified TODO/N/A entries honestly. Record a complete claim-specific report. Coordinate all source edits with root BEFORE editing, to avoid invalidating concurrent reviews. Prefer reporting concrete necessary changes for root to batch; do not add unrelated evidence. You own only your assigned validation directory and unique /tmp report. Distinguish source inspection from tests executed. Do not commit.\nRoot centrally runs relevant suites. Do not repeat full suites for a source-only review unless investigating a specific concern. Report source assessment honestly without claiming execution. This does not waive regression reproduction for suspected bugs.\n"
   ],
   "fragments": [
     {
@@ -168,6 +168,7 @@
         "            .collect()",
         "    }",
         "",
+        "    // {anchor}`meta.anchors.implementation_references`",
         "    pub fn validate_implementation_references(",
         "        &self,",
         "        rust: &crate::correspondence::CorrespondenceIndex,",
@@ -438,6 +439,7 @@
         "",
         "// {anchor}`meta.anchors.content.blocks`",
         "// {anchor}`meta.reviews.claim_text`",
+        "// {anchor}`meta.reviews.selector_claim`",
         "fn finish_anchor(",
         "    source: &str,",
         "    end: usize,",
@@ -753,6 +755,7 @@
         "                let model = documents.iter().find(|doc| doc.file == absolute);",
         "                let model_namespace =",
         "                    model.and_then(|doc| crate::workspace::document_namespace(&documents, doc));",
+        "                // {anchor}`meta.book.crate_ownership`",
         "                if model_namespace.is_none() {",
         "                    return Err(format!(\"Sage chapter `{file}` has no modeled crate owner\").into());",
         "                }",
@@ -1419,7 +1422,7 @@
       "selector": {
         "kind": "line_range",
         "start": 1,
-        "end": 16
+        "end": 15
       },
       "contents": [
         "#![feature(register_tool)]",
@@ -1437,7 +1440,6 @@
         "        source: text.into(),",
         "    }",
         "}",
-        "",
         ""
       ]
     },
@@ -1445,8 +1447,8 @@
       "path": "crates/sage-meta/tests/spec.rs",
       "selector": {
         "kind": "line_range",
-        "start": 535,
-        "end": 576
+        "start": 536,
+        "end": 565
       },
       "contents": [
         "struct BookFixture(std::path::PathBuf);",
@@ -1479,18 +1481,6 @@
         "    }",
         "}",
         "",
-        "#[test]",
-        "fn markdown_source_links_use_published_readme_urls_in_every_book_section() {",
-        "    let fixture = BookFixture::new(",
-        "        \"# Summary\\n\\n- [Guide](guide/README.md)\\n- [Design](design/README.md)\\n  - [Meta](design/meta/README.md)\\n  - [Crates](design/crates/README.md)\\n  - [Anchors](design/anchor/README.md)\\n\",",
-        "    );",
-        "    let design = \"# Design\\n\\n[Crates](crates/README.md#tour), [Meta](meta/README.md), [Anchors](anchor/README.md), and [Guide](../guide/README.md).\\n\";",
-        "    let guide = \"# Guide\\n\\n[Design](../design/README.md#overview), [chapters][design], [design] again, and [source](https://example.com/README.md).\\n\\n[../design/README.md](../design/README.md \\\"../design/README.md\\\")\\n\\n[design]: ../design/README.md#overview \\\"../design/README.md#overview\\\"\\n\";",
-        "    fixture.write(\"design/README.md\", design);",
-        "    fixture.write(\"guide/README.md\", guide);",
-        "    fixture.write(\"design/meta/README.md\", \"# Meta\\n\");",
-        "    fixture.write(\"design/crates/README.md\", \"# Crates\\n\");",
-        "    fixture.write(",
         ""
       ]
     },
@@ -1498,8 +1488,8 @@
       "path": "crates/sage-meta/src/browser.rs",
       "selector": {
         "kind": "line_range",
-        "start": 143,
-        "end": 205
+        "start": 146,
+        "end": 225
       },
       "contents": [
         "pub fn render_spec_markdown(",
@@ -1565,17 +1555,6 @@
         "            Event::Start(Tag::Image {",
         "                link_type,",
         "                dest_url: href.into(),",
-        ""
-      ]
-    },
-    {
-      "path": "crates/sage-meta/src/browser.rs",
-      "selector": {
-        "kind": "line_range",
-        "start": 206,
-        "end": 219
-      },
-      "contents": [
         "                title,",
         "                id,",
         "            })",
@@ -1590,26 +1569,9 @@
         "    for (token, role) in replacements {",
         "        html = html.replace(&token, &role);",
         "    }",
-        ""
-      ]
-    },
-    {
-      "path": "crates/sage-meta/tests/spec.rs",
-      "selector": {
-        "kind": "line_range",
-        "start": 738,
-        "end": 746
-      },
-      "contents": [
-        "    );",
-        "    let rust = sage_meta::correspondence::CorrespondenceIndex::from_sources(&[]).unwrap();",
-        "    let inputs = sage_meta::review::inventory(&index, &rust).unwrap();",
-        "    assert_eq!(",
-        "        inputs[\"crates.demo.nodes.value\"].fragments.iter().find(|fragment| matches!(&fragment.selector, sage_meta::review::Selector::Claim { anchor_id } if anchor_id == \"crates.demo.nodes.value\")).unwrap().contents.join(\"\\n\"),",
-        "        \"A value with **meaning**.\\n\\nPrécise values survive edits.\\n\\n- Keep the cached value.\\n\\n```text\\n    Preserve relative indentation.\\n```\"",
-        "    );",
-        "    assert_eq!(",
-        "        index.anchors[\"crates.demo.nodes.member\"].entity.as_deref(),",
+        "    // Legacy excerpt preprocessing scans raw HTML for role-shaped source text.",
+        "    // Entity spelling leaves that source visible without reinterpreting it.",
+        "    Ok(html.replace('`', \"&#96;\"))",
         ""
       ]
     }
