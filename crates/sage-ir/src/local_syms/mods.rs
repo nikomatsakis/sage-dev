@@ -333,7 +333,11 @@ pub(crate) fn item_has_unexpanded_active_attribute<'db>(
     })
 }
 
-fn symbol_local_item<'db>(db: &'db dyn Db, symbol: Symbol<'db>) -> Option<LocalModItemSym<'db>> {
+// {anchor}`crates.sage_ir.resolution.lookup.expansion_import_ambiguity`
+pub(crate) fn symbol_local_item<'db>(
+    db: &'db dyn Db,
+    symbol: Symbol<'db>,
+) -> Option<LocalModItemSym<'db>> {
     match symbol.data(db) {
         SymbolData::FnSymbol(crate::symbol::FnSymbol::Local(item)) => {
             Some(LocalModItemSym::Function(item))

@@ -43,6 +43,23 @@ type-namespace selection; item-macro expansion exercises the independent macro
 namespace. Edition fixtures pin their edition and assert both availability and
 absence of newly introduced prelude names.
 
+Macro-generated modules require a separate import-path case: if a glob brings
+`path` into scope and expansion introduces a competing module named `path`,
+`use path::*` must diagnose the expansion-sensitive ambiguity. The controls are
+an explicitly qualified `use crate::path::*` and a competing module written
+directly in source; both select the direct module. This distinction applies
+even when the glob's imported contents are not subsequently used. It does not
+justify replacing macro-phase combined lookup with normal named-before-glob
+lookup.
+
+{spec}`crates.sage_ir.resolution.lookup.expansion_import_ambiguity`
+
+The final import audit compares generated named bindings with glob candidates
+in the applicable namespace. A named import's origin is the `use` declaration,
+not the origin of its target definition. Thus a source-written alias to a
+generated module still has ordinary named-import precedence. Glob roots use
+the type namespace, and routes to the same definition remain unambiguous.
+
 ## Entry points and callers
 
 `Resolver::resolve_path` is the common path boundary. Its fast path checks

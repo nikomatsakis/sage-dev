@@ -172,6 +172,58 @@ impl<'db> Resolver<'db> {
     }
     // ANCHOR_END: architecture_resolve_path
 
+    // {anchor}`crates.sage_ir.resolution.lookup.expansion_import_ambiguity`
+    pub fn import_root_is_expansion_ambiguous(
+        &mut self,
+        stash: &Stash,
+        path: Path<'db>,
+        namespace: Namespace,
+    ) -> bool {
+        let (first, rest) = match path {
+            Path::Relative(first, rest) => (first, rest),
+            Path::Anchored(_, _) => return false,
+        };
+        let namespace = if stash[rest].is_empty() {
+            namespace
+        } else {
+            Namespace::Type
+        };
+        let module = self.module();
+        // Keep the root in flight while following imports, just as ordinary
+        // lookup does. A cyclic route must not rediscover its own binding.
+        let query = InFlightQuery {
+            module,
+            name: first.name,
+            namespace,
+        };
+        self.in_flight.push(query);
+        let generated = self.lookup_in_module(
+            LookupFilter {
+                named: NamedLookup::Generated,
+                globs: false,
+            },
+            module,
+            first.name,
+            namespace,
+        );
+        let ambiguous = !generated.is_empty() && {
+            let globs = self.lookup_in_module(
+                LookupFilter {
+                    named: NamedLookup::None,
+                    globs: true,
+                },
+                module,
+                first.name,
+                namespace,
+            );
+            generated
+                .iter()
+                .any(|named| globs.iter().any(|glob| named != glob))
+        };
+        self.in_flight.pop();
+        ambiguous
+    }
+
     #[sage::item(crate::resolution::Resolver::resolve)]
     pub fn resolve_name_from_scope(
         &mut self,
@@ -508,7 +560,7 @@ impl<'db> Resolver<'db> {
         let mut results = match self.phase {
             ResolvePhase::MacroExpansion => self.lookup_in_module(
                 LookupFilter {
-                    named: true,
+                    named: NamedLookup::All,
                     globs: true,
                 },
                 module,
@@ -518,7 +570,7 @@ impl<'db> Resolver<'db> {
             ResolvePhase::Normal => {
                 let results = self.lookup_in_module(
                     LookupFilter {
-                        named: true,
+                        named: NamedLookup::All,
                         globs: false,
                     },
                     module,
@@ -530,7 +582,7 @@ impl<'db> Resolver<'db> {
                 } else {
                     self.lookup_in_module(
                         LookupFilter {
-                            named: false,
+                            named: NamedLookup::None,
                             globs: true,
                         },
                         module,
@@ -559,7 +611,7 @@ impl<'db> Resolver<'db> {
         if let (ModSymbol::Ext(external), Namespace::Macro(_)) = (module, namespace) {
             // Macro namespace is retained on the exported-child edge; a bare
             // external macro definition does not encode its macro flavor.
-            return if filter.named {
+            return if matches!(filter.named, NamedLookup::All) {
                 external.named_children(self.db, name, namespace).to_vec()
             } else {
                 Vec::new()
@@ -584,10 +636,11 @@ impl<'db> Resolver<'db> {
                 | SymbolData::MacroDefSymbol(..)
                 | SymbolData::IntrinsicTypeSymbol(..)
                 | SymbolData::MacroInvocationSymbol(..) => {
-                    if filter.named
+                    if !matches!(filter.named, NamedLookup::None)
                         && let Some((n, nspace)) = item.name(self.db)
                         && n == name
                         && nspace == namespace
+                        && filter.named.includes(self.db, item)
                     {
                         results.push(item);
                     }
@@ -605,7 +658,9 @@ impl<'db> Resolver<'db> {
                         for import in &stash[imports] {
                             match import.kind {
                                 UseKind::Named(n) => {
-                                    if filter.named && n == name {
+                                    // The binding's origin is this use item, not
+                                    // the definition to which it ultimately points.
+                                    if n == name && filter.named.includes(self.db, item) {
                                         results.extend(self.resolve_use(
                                             module,
                                             stash,
@@ -774,8 +829,30 @@ fn trait_symbols_in_module<'db>(
 // ---------------------------------------------------------------------------
 
 struct LookupFilter {
-    named: bool,
+    named: NamedLookup,
     globs: bool,
+}
+
+enum NamedLookup {
+    None,
+    All,
+    Generated,
+}
+
+impl NamedLookup {
+    fn includes(&self, db: &dyn Db, item: Symbol<'_>) -> bool {
+        match self {
+            Self::None => false,
+            Self::All => true,
+            Self::Generated => crate::local_syms::mods::symbol_local_item(db, item).is_some_and(
+                |local| match local.absolute_span(db).source {
+                    crate::span::ParseSource::SourceFile(_) => false,
+                    crate::span::ParseSource::BangMacro(_, _)
+                    | crate::span::ParseSource::Derive(_) => true,
+                },
+            ),
+        }
+    }
 }
 
 fn lookup_extern_prelude<'db>(

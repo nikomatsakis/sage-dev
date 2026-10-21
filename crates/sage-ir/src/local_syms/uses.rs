@@ -41,22 +41,39 @@ impl<'db> LocalUseSym<'db> {
 impl<'db> LocalUseSym<'db> {
     /// Validate imports even when no body subsequently refers to their names.
     /// Whole-crate clients must demand this explicitly; ordinary lookup remains lazy.
+    // {anchor}`crates.sage_ir.resolution.lookup.expansion_import_ambiguity`
+    // {anchor}`crates.sage_ir.resolution.lookup.precedence`
     pub fn diagnostics(self, db: &'db dyn crate::Db) -> Vec<crate::diagnostic::Diagnostic<'db>> {
+        use crate::cst::uses::UseKind;
         use crate::diagnostic::{Diagnostic, Span};
         use crate::resolve::{MacroKind, Namespace, Resolver};
         let mut resolver = Resolver::new(db, self.scope(db));
         let (stash, imports) = self.imports(db).open();
         let mut diagnostics = Vec::new();
         for import in &stash[imports] {
-            let resolved = [
+            let namespaces = [
                 Namespace::Type,
                 Namespace::Value,
                 Namespace::Macro(MacroKind::Bang),
                 Namespace::Macro(MacroKind::Attr),
                 Namespace::Macro(MacroKind::Derive),
-            ]
-            .into_iter()
-            .any(|namespace| {
+            ];
+            // This final audit observes all expanded bindings. Ordinary lookup
+            // can select a named item without exposing a conflicting glob root.
+            let root_namespaces: &[Namespace] = match import.kind {
+                UseKind::Glob => &[Namespace::Type],
+                UseKind::Named(_) | UseKind::Unnamed => &namespaces[..],
+            };
+            if root_namespaces.iter().any(|&namespace| {
+                resolver.import_root_is_expansion_ambiguous(stash, stash[import.path], namespace)
+            }) {
+                diagnostics.push(Diagnostic::error(
+                    Span::Relative(crate::local_syms::LocalModItemSym::Use(self), import.span),
+                    "ambiguous import: macro-generated binding conflicts with glob import",
+                ));
+                continue;
+            }
+            let resolved = namespaces.into_iter().any(|namespace| {
                 !resolver
                     .resolve_path(stash, stash[import.path], namespace)
                     .is_empty()
